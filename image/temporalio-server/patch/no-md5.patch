@@ -1,0 +1,80 @@
+diff --git a/common/rpc/encryption/local_store_cert_provider.go b/common/rpc/encryption/local_store_cert_provider.go
+index eb6b51f4b..afbafc43d 100644
+--- a/common/rpc/encryption/local_store_cert_provider.go
++++ b/common/rpc/encryption/local_store_cert_provider.go
+@@ -2,7 +2,7 @@ package encryption
+ 
+ import (
+ 	"bytes"
+-	"crypto/md5"
++	"crypto/sha256"
+ 	"crypto/tls"
+ 	"crypto/x509"
+ 	"encoding/base64"
+@@ -402,8 +402,10 @@ func checkCertForExpiration(
+ ) {
+ 
+ 	if cert != nil && expiresBefore(cert, pointInTime) {
++		// Use SHA-256 instead of MD5 for FIPS compliance in certificate thumbprint generation
++		sha256Hash := sha256.Sum256(cert.Raw)
+ 		record := CertExpirationData{
+-			Thumbprint: md5.Sum(cert.Raw),
++			Thumbprint: sha256Hash,
+ 			IsCA:       cert.IsCA,
+ 			DNSNames:   cert.DNSNames,
+ 			Expiration: cert.NotAfter,
+diff --git a/common/rpc/interceptor/namespace_logger.go b/common/rpc/interceptor/namespace_logger.go
+index cddffde93..c4a49b12e 100644
+--- a/common/rpc/interceptor/namespace_logger.go
++++ b/common/rpc/interceptor/namespace_logger.go
+@@ -2,7 +2,7 @@ package interceptor
+ 
+ import (
+ 	"context"
+-	"crypto/md5"
++	"crypto/sha256"
+ 	"fmt"
+ 
+ 	"go.temporal.io/server/common/api"
+@@ -47,7 +47,9 @@ func (nli *NamespaceLogInterceptor) Intercept(
+ 			serverName = tlsInfo.State.ServerName
+ 			cert := authorization.PeerCert(tlsInfo)
+ 			if cert != nil {
+-				certThumbprint = fmt.Sprintf("%x", md5.Sum(cert.Raw))
++				// Use SHA-256 instead of MD5 for FIPS compliance in certificate thumbprint generation
++				sha256Hash := sha256.Sum256(cert.Raw)
++				certThumbprint = fmt.Sprintf("%x", sha256Hash)
+ 			}
+ 		}
+ 		nli.logger.Debug(
+diff --git a/tools/common/schema/updatetask.go b/tools/common/schema/updatetask.go
+index 8930bb106..d3e920b04 100644
+--- a/tools/common/schema/updatetask.go
++++ b/tools/common/schema/updatetask.go
+@@ -2,10 +2,8 @@ package schema
+ 
+ import (
+ 	"bytes"
+-	// In this context md5 is just used for versioning the current schema. It is a weak cryptographic primitive and
+-	// should not be used for anything more important (password hashes etc.). Marking it as #nosec because of how it's
+-	// being used.
+-	"crypto/md5" // #nosec
++	// SHA-256 is FIPS-approved for schema versioning and manifest integrity checking
++	"crypto/sha256"
+ 	"encoding/hex"
+ 	"encoding/json"
+ 	"fmt"
+@@ -298,10 +296,9 @@ func readManifest(fsys fs.FS, dirPath string) (*manifest, error) {
+ 		return nil, fmt.Errorf("manifest missing SchemaUpdateCqlFiles")
+ 	}
+ 
+-	// See comment above. This is an appropriate usage of md5.
+-	// #nosec
+-	md5Bytes := md5.Sum(jsonBlob)
+-	manifest.md5 = hex.EncodeToString(md5Bytes[:])
++	// Use SHA-256 instead of MD5 for FIPS compliance in manifest integrity checking
++	sha256Hash := sha256.Sum256(jsonBlob)
++	manifest.md5 = hex.EncodeToString(sha256Hash[:])
+ 
+ 	return &manifest, nil
+ }

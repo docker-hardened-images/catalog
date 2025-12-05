@@ -1,0 +1,266 @@
+## How to use this image
+
+Before you can use any Docker Hardened Image, you must mirror the image repository from the catalog to your
+organization. To mirror the repository, select either **Mirror to repository** or **View in repository** > **Mirror to
+repository**, and then follow the on-screen instructions.
+
+See the how-to
+[work with containers and Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-how-to-custom-container)
+for more information on how to deploy function apps on Azure using docker images.
+
+If you are testing this image on Apple Silicon (M1, M2, etc) use the following command to pull the image forcing the
+correct platform:
+
+```
+docker pull --platform linux/amd64 <your-namespace>/dhi-azure-functions-python:<tag>
+```
+
+### Run a container and open a shell
+
+For production scenarios, run the following command to run the container and open a shell. Replace `<your-namespace>`
+with your organization's namespace and `<tag>` with the image variant you want to run.
+
+```
+docker run -it --rm --entrypoint bash <your-namespace>/dhi-azure-functions-python:<tag>
+```
+
+Note that Azure Functions CLI (Azure Functions Core Tools) are unavailable in this hardened image. Follow the
+instructions below to create and test a basic functions app without using the CLI.
+
+> [!NOTE]
+>
+> This hardened image can only run on the `linux/amd64` platform, as it is generally designed to run on Linux server
+> architecture. This means that for testing purposes, this image won’t run natively on Apple Silicon (M1, M2, M3) unless
+> emulation is enabled.
+
+### Create and test a minimal Azure Function
+
+Create a minimal HTTP-triggered function to confirm the Azure Functions Python runtime is operational. First create and
+enter a new directory:
+
+```
+mkdir my-python-function-app
+cd my-python-function-app
+```
+
+Next, manually create the following files in the new directory:
+
+`host.json`
+
+```json
+{
+  "version": "2.0"
+}
+```
+
+`HttpExample/function.json`
+
+```json
+{
+  "scriptFile": "__init__.py",
+  "bindings": [
+    {
+      "authLevel": "anonymous",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "methods": [ "get", "post" ]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "$return"
+    }
+  ]
+}
+```
+
+`HttpExample/__init__.py`
+
+```python
+import logging
+import azure.functions as func
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Python HTTP trigger function processed a request.')
+    name = req.params.get('name')
+    if not name:
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            req_body = {}
+        name = req_body.get('name')
+
+    if name:
+        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
+    else:
+        return func.HttpResponse(
+            "This HTTP triggered function executed successfully. "
+            "Pass a name in the query string or in the request body for a personalized response.",
+            status_code=200
+        )
+```
+
+Also create the following `Dockerfile` in the same directory. This extends the hardened image, copies in your function
+files, and starts the function host manually without dependending on the Azure Functions CLI. Replace `<your-namespace>`
+with your organization's namespace and `<tag>` with the image variant you want to run.
+
+```dockerfile
+# Use your hardened Azure Functions Python image
+FROM <your-namespace>/dhi-azure-functions-python:<tag>
+
+# Set the working directory used by Azure Functions
+WORKDIR /home/site/wwwroot
+
+# Copy your function files into the container
+COPY host.json .
+COPY HttpExample ./HttpExample
+
+# Expose the Azure Functions default port
+EXPOSE 80
+
+# Start the function host manually
+CMD ["python", "-m", "azure_functions_worker"]
+```
+
+#### Build and run the image (with amd64 emulation)
+
+Since the base image only supports `linux/amd64`, build using the platform flag:
+
+```
+docker build --platform linux/amd64 -t my-azure-python-func .
+```
+
+Then run the container, mapping the port to your local system:
+
+```
+docker run --platform linux/amd64 -p 8080:80 my-azure-python-func
+```
+
+You should see logs similar to the following, indicating the Function Host started and the function loaded.
+
+```
+Hosting environment: Production
+Content root path: /azure-functions-host
+Now listening on: http://[::]:80
+Application started. Press Ctrl+C to shut down.
+info: Host.General[337]
+      Host lock lease acquired by instance ID '0000000000000000000000004FCCEDD2'.
+```
+
+#### Test the function
+
+Now that the function is running, call the function endpoint to test it.
+
+```bash
+curl "http://localhost:8080/api/HttpExample?name=Azure"
+```
+
+You should see the following output if everything is working correctly.
+
+```
+Hello, Azure. This HTTP triggered function executed successfully.
+```
+
+## Image variants
+
+Docker Hardened Images come in different variants depending on their intended use.
+
+- Runtime variants are designed to run your application in production. These images are intended to be used either
+  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+
+  - Run as the nonroot user
+  - Do not include a shell or a package manager
+  - Contain only the minimal set of libraries needed to run the app
+
+- Build-time variants typically include `dev` in the variant name and are intended for use in the first stage of a
+  multi-stage Dockerfile. These images typically:
+
+  - Run as the root user
+  - Include a shell and package manager
+  - Are used to build or compile applications
+
+## Migrate to a Docker Hardened Image
+
+To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
+base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
+following table of migration notes.
+
+| Item               | Migration note                                                                                                                                                                                                                                                                                                               |
+| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base image         | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                                                                                                                                                    |
+| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a `dev` tag.                                                                                                                                                                                                  |
+| Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                                                                                                                                   |
+| Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                                                                                                                                                                                   |
+| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                                                           |
+| Ports              | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can’t bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues, configure your application to listen on port 1025 or higher inside the container. |
+| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                                  |
+| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                                                  |
+
+The following steps outline the general migration process.
+
+1. Find hardened images for your app.
+
+   A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
+
+1. Update the base image in your Dockerfile.
+
+   Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
+   framework images, this is typically going to be an image tagged as `dev` because it has the tools needed to install
+   packages and dependencies.
+
+1. For multi-stage Dockerfiles, update the runtime image in your Dockerfile.
+
+   To ensure that your final image is as minimal as possible, you should use a multi-stage build. All stages in your
+   Dockerfile should use a hardened image. While intermediary stages will typically use images tagged as `dev`, your
+   final runtime stage should use a non-dev image variant.
+
+1. Install additional packages
+
+   Docker Hardened Images contain minimal packages in order to reduce the potential attack surface. You may need to
+   install additional packages in your Dockerfile. Inspect the image variants to identify which packages are already
+   installed.
+
+   Only images tagged as `dev` typically have package managers. You should use a multi-stage Dockerfile to install the
+   packages. Install the packages in the build stage that uses a `dev` image. Then, if needed, copy any necessary
+   artifacts to the runtime stage that uses a non-dev image.
+
+   For Alpine-based images, you can use `apk` to install packages. For Debian-based images, you can use `apt-get` to
+   install packages.
+
+## Troubleshooting migration
+
+The following are common issues that you may encounter during migration.
+
+### General debugging
+
+The hardened images intended for runtime don't contain a shell nor any tools for debugging. The recommended method for
+debugging applications built with Docker Hardened Images is to use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers. Docker Debug provides
+a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only exists
+during the debugging session.
+
+### Permissions
+
+By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
+accessible to the nonroot user. You may need to copy files to different directories or change permissions so your
+application running as the nonroot user can access them.
+
+### Privileged ports
+
+Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to
+privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues,
+configure your application to listen on port 1025 or higher inside the container, even if you map it to a lower port on
+the host. For example, `docker run -p 80:8080 my-image` will work because the port inside the container is 8080, and
+`docker run -p 80:81 my-image` won't work because the port inside the container is 81.
+
+### No shell
+
+By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
+commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
+with no shell.
+
+### Entry point
+
+Docker Hardened Images may have different entry points than images such as Docker Official Images. Use `docker inspect`
+to inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.
