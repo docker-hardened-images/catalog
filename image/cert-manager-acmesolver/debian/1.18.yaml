@@ -20,8 +20,7 @@ vars:
     BASE_DIGEST: sha256:be441a641f2adb00fd4c0b05de4d919fffd8e791b8ac36f38a2018811d8d92cd
     BASE_TAG: 20250419-debian13
     COMMIT_SHA: 1c5d75be91b6cca4ffc385e89ce3aa9c92abbd1c
-    GO_DIGEST: sha256:3e717c75bdd2e547755fc90963578c5424b77243f4c35f97ac025ca783a41b6a
-    GO_VERSION: 1.24.11
+    GOLANG_REFERENCE: dhi/golang:1.24.11-debian13-dev@sha256:3e717c75bdd2e547755fc90963578c5424b77243f4c35f97ac025ca783a41b6a
     SEMVER_MAJOR_MINOR_VERSION: "1.18"
     SEMVER_MAJOR_VERSION: "1"
     SEMVER_VERSION: 1.18.4
@@ -32,13 +31,13 @@ contents:
     builds:
         - name: cert-manager-acmesolver
           uses: dhi/golang:1.24.11-debian13-dev@sha256:3e717c75bdd2e547755fc90963578c5424b77243f4c35f97ac025ca783a41b6a
-          privileged: true
           contents:
             packages:
                 - curl
                 - rsync
             files:
                 - url: git+https://github.com/cert-manager/cert-manager.git#v1.18.4
+                  checksum: 1c5d75be91b6cca4ffc385e89ce3aa9c92abbd1c
                   path: /go/src/github.com/cert-manager/cert-manager
                   spdx:
                     name: cert-manager
@@ -50,38 +49,34 @@ contents:
                   uid: 0
                   gid: 0
           pipeline:
-            - name: verify
-              uses: git/checkout@v1
-              with:
-                dir: /go/src/github.com/cert-manager/cert-manager
-                expected-commit: 1c5d75be91b6cca4ffc385e89ce3aa9c92abbd1c
             - name: update go dependencies
               uses: go/bump@v1
+              work-dir: /go/src/github.com/cert-manager/cert-manager
               with:
                 deps: []
-                dir: /go/src/github.com/cert-manager/cert-manager
+                download: true
             - name: Unit tests
               work-dir: /go/src/github.com/cert-manager/cert-manager
+              privileged: true
               runs: |
                 set -eux -o pipefail
 
                 make unit-test-acmesolver
             - name: build
-              work-dir: /go/src/github.com/cert-manager/cert-manager
-              runs: |
-                set -eux -o pipefail
-
-                GOLDFLAGS='-X github.com/cert-manager/cert-manager/pkg/util.AppVersion=1.18.4
-                           -X github.com/cert-manager/cert-manager/pkg/util.AppGitCommit=1c5d75be91b6cca4ffc385e89ce3aa9c92abbd1c'
-
-                CGO_ENABLED=0 go build -C cmd/acmesolver \
-                  -ldflags "$GOLDFLAGS" \
-                  -o '${target.dir}/usr/local/bin/acmesolver'
+              uses: go/build@v1
+              work-dir: /go/src/github.com/cert-manager/cert-manager/cmd/acmesolver
+              with:
+                ldflags:
+                    - -X github.com/cert-manager/cert-manager/pkg/util.AppVersion=1.18.4
+                    - -X github.com/cert-manager/cert-manager/pkg/util.AppGitCommit=1c5d75be91b6cca4ffc385e89ce3aa9c92abbd1c
+                output: ${target.dir}/usr/local/bin/acmesolver
+                packages: .
           outputs:
             - source: ${target.dir}/usr/local/bin/acmesolver
               target: /usr/local/bin/acmesolver
               uid: 0
               gid: 0
+              mode: "0755"
             - source: /opt/docker/sbom/cert-manager
               target: /opt/docker/sbom/cert-manager
               uid: 0
