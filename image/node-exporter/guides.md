@@ -263,12 +263,12 @@ steps:
 1. Build the image locally. This will produce a local image tagged as dhi/<image-name>:build (for example
    dhi/node-exporter:build):
 
-   dhi def build image/node-exporter/debian/1.yaml
+   dhi def build image/node-exporter/debian-13/1.yaml
 
 1. Generate SBOM files for the built image (the build definition also emits SBOM outputs during the build which dhi def
    sbom will collect):
 
-   dhi def sbom image/node-exporter/debian/1.yaml
+   dhi def sbom image/node-exporter/debian-13/1.yaml
 
    After running these commands, inspect the .build/ directory and the generated SBOM/VEX artifacts to confirm
    dependencies and mitigations.
