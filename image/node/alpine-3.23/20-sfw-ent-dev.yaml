@@ -1,0 +1,170 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: Node.js 20.x / Socket Firewall Enterprise (sfw-ent, dev)
+image: dhi.io/node
+variant: dev
+flavor: sfw-ent
+tags:
+  - 20-alpine3.23-sfw-ent-dev
+  - 20.19-alpine3.23-sfw-ent-dev
+  - 20.19.6-alpine3.23-sfw-ent-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-04-18"
+  end-of-life: "2026-04-30"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  DIGEST: sha256:72b6f9e87d3111ed7fd0349ee8e47a46e2011c132d8ee9c31e809b8c8b34d2a3
+  NODEJS_VERSION_MAJOR: "20"
+  NODEJS_VERSION_MAJOR_MINOR: "20.19"
+  SFW_VERSION: 1.5.3
+  VERSION: 20.19.6
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  packages:
+    - alpine-baselayout-data
+    - apk-tools
+    - busybox
+    - ca-certificates-bundle
+    - coreutils-env
+    - git
+    - libgcc
+    - libstdc++
+    - musl
+  builds:
+    - name: node
+      contents:
+        repositories:
+          - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+          - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+        packages:
+          - busybox
+        files:
+          - url: https://github.com/SocketDev/firewall-release/releases/download/v1.5.3/sfw-musl-linux-${ARCH}
+            path: ${target.dir}/opt/socket/bin/sfw
+            uid: 0
+            gid: 0
+            mode: "0755"
+        artifacts:
+          - name: dhi.io/pkg-node:20.19.6-alpine3.23@sha256:72b6f9e87d3111ed7fd0349ee8e47a46e2011c132d8ee9c31e809b8c8b34d2a3
+            includes:
+              - opt/docker
+              - opt/nodejs
+              - opt/yarn
+              - usr/local/bin
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create alias
+          runs: |
+            set -eux -o pipefail
+
+            echo "Creating npm alias"
+
+            cat > "${target.dir}/opt/socket/bin/npm" << 'EOF'
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "${DHI_NO_SFW}" = "true" ]; then
+              /opt/nodejs/node-v20.19.6/bin/npm "$@"
+            else
+              sfw /opt/nodejs/node-v20.19.6/bin/npm "$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/npm"
+
+            echo "Creating yarn alias"
+
+            YARN_PATH="$(find /opt/yarn -type f -executable -name "yarn" | head -n 1)"
+            export YARN_PATH
+
+            cat > "${target.dir}/opt/socket/bin/yarn" << EOF
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "\${DHI_NO_SFW}" = "true" ]; then
+              $YARN_PATH "\$@"
+            else
+              sfw $YARN_PATH "\$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/yarn"
+      outputs:
+        - source: /opt/nodejs
+          target: /opt/nodejs
+          uid: 0
+          gid: 0
+        - source: /opt/yarn
+          target: /opt/yarn
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/socket
+          target: /opt/socket
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: node
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: node
+      gid: 1000
+      members:
+        - node
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  NODE_VERSION: 20.19.6
+  NPM_CONFIG_UPDATE_NOTIFIER: "false"
+  PATH: /opt/socket/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  YARN_DISABLE_SELF_UPDATE_CHECK: "true"
+paths:
+  - type: directory
+    path: /tmp
+    uid: 0
+    gid: 0
+    mode: "1777"
+annotations:
+  org.opencontainers.image.description: A minimal Node.JS image
+  org.opencontainers.image.licenses: MIT
+cmd:
+  - node
+tests:
+  - name: Run base tests
+    directory: test/go-testing/base
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
+  - name: Run testcontainers tests
+    directory: image/node/tests
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
+  - name: Run APK package manager tests
+    directory: test/go-testing/package_manager
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
