@@ -1,0 +1,243 @@
+# syntax=dhi.io/build:1-debian13
+
+name: Jenkins 2.x (dev)
+image: dhi.io/jenkins
+variant: dev
+tags:
+  - 2-dev
+  - 2.528-dev
+  - 2.528.3-dev
+  - 2-debian13-dev
+  - 2.528-debian13-dev
+  - 2.528.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-01-31"
+vars:
+  BCFIPS_VERSION: 2.1.2
+  BCPKIXFIPS_VERSION: 2.1.10
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.22
+  BCUTILFIPS_VERSION: 2.1.5
+  BUILD_JDK_DIGEST: sha256:99421ea725e0905500a94ed9b10b688071e6681002d06bd6869193f55111c366
+  BUILD_JDK_REF: dhi/eclipse-temurin:21.0.9.10-jdk-debian13-dev@sha256:99421ea725e0905500a94ed9b10b688071e6681002d06bd6869193f55111c366
+  BUILD_JDK_VERSION: 21.0.9.10
+  COMMIT_SHA: 40e29179c3edf88b685d7043ab7c37cc8591138f
+  DOCKER_REPO_COMMIT_SHA: 1d22f3716cc2a5baeedeb636a006c4c38d35ce4c
+  DOCKER_REPO_VERSION: 2.528.3
+  JAVA_HOME_PATH: /opt/java/openjdk/21-jre
+  JAVA_MAJOR_VERSION: "21"
+  JDK_MAJOR_VERSION: "21"
+  JRE_DIGEST: sha256:8be38a5a3942a69d6ac8a6040c54fb588b6fc29499fa44fec189d2438be4d6a8
+  JRE_REF: dhi/eclipse-temurin:21.0.9.10-debian13@sha256:8be38a5a3942a69d6ac8a6040c54fb588b6fc29499fa44fec189d2438be4d6a8
+  JRE_VERSION: 21.0.9.10
+  LIBPNG_REF: dhi/pkg-libpng:1.6.53-debian13@sha256:c22c905dde05f2a17dbb51bb3678c1c0acfd8af8ded25db0419f47e2359c70e7
+  MAVEN_DIGEST: sha256:54dad2732e2c07f1377491e56c864c20635adf7ab2d60673a0e69455c3e1c947
+  MAVEN_REF: dhi/maven:3.9.12-jdk21-debian13-dev@sha256:54dad2732e2c07f1377491e56c864c20635adf7ab2d60673a0e69455c3e1c947
+  MAVEN_VERSION: 3.9.12
+  SEMVER_MAJOR_MINOR_VERSION: "2.528"
+  SEMVER_MAJOR_VERSION: "2"
+  VERSION: 2.528.3
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - fontconfig
+    - fonts-dejavu-core
+    - git
+    - grep
+    - libc-bin
+    - libpng16-16t64
+    - mawk
+    - openssh-client
+    - perl-base
+    - procps
+    - sed
+    - tini
+    - tzdata
+    - unzip
+    - util-linux
+  builds:
+    - name: jenkins
+      uses: dhi.io/eclipse-temurin:21.0.9.10-jdk-debian13-dev@sha256:99421ea725e0905500a94ed9b10b688071e6681002d06bd6869193f55111c366
+      contents:
+        packages:
+          - coreutils
+          - findutils
+          - bash
+          - curl
+          - git
+          - gzip
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.528.3
+            checksum: 40e29179c3edf88b685d7043ab7c37cc8591138f
+            path: ${source.dir}/jenkins-40e29179c3edf88b685d7043ab7c37cc8591138f
+            spdx:
+              name: jenkins
+              version: 2.528.3
+              packages:
+                - name: jenkins
+                  purl: pkg:dhi/jenkins@2.528.3
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jenkinsci/docker.git#1d22f3716cc2a5baeedeb636a006c4c38d35ce4c
+            checksum: 1d22f3716cc2a5baeedeb636a006c4c38d35ce4c
+            path: ${source.dir}/docker-builds
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/maven:3.9.12-jdk21-debian13-dev@sha256:54dad2732e2c07f1377491e56c864c20635adf7ab2d60673a0e69455c3e1c947
+            includes:
+              - opt/**
+              - usr/local/bin/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            downgrade: false
+            mvn-root: ${source.dir}/jenkins-40e29179c3edf88b685d7043ab7c37cc8591138f/bom
+        - name: build
+          work-dir: ${source.dir}/jenkins-40e29179c3edf88b685d7043ab7c37cc8591138f
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
+        - name: install
+          work-dir: ${source.dir}/jenkins-40e29179c3edf88b685d7043ab7c37cc8591138f
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/jenkins"
+            cp war/target/jenkins.war "${target.dir}/usr/share/jenkins/jenkins.war"
+        - name: copy-entrypoint-scripts
+          work-dir: ${source.dir}/docker-builds
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            mkdir -p "${target.dir}/usr/share/jenkins/ref/init.groovy.d"
+
+            # Copy jenkins.sh entrypoint script from upstream docker repo
+            cp jenkins.sh "${target.dir}/usr/local/bin/jenkins.sh"
+
+            # Copy jenkins-support script (required by jenkins.sh)
+            cp jenkins-support "${target.dir}/usr/local/bin/jenkins-support"
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: image/jenkins/patch/mvn-dependencies.json
+      outputs:
+        - source: ${target.dir}/usr/share/jenkins
+          target: /usr/share/jenkins
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/jenkins
+          target: /opt/docker/sbom/jenkins
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/share/jenkins/ref
+          target: /usr/share/jenkins/ref
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.9.10-debian13@sha256:8be38a5a3942a69d6ac8a6040c54fb588b6fc29499fa44fec189d2438be4d6a8
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: jenkins
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: jenkins
+      gid: 1000
+      members:
+        - jenkins
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/jenkins_home
+environment:
+  COPY_REFERENCE_FILE_LOG: /var/jenkins_home/copy_reference_file.log
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /opt/java/openjdk/21-jre
+  JENKINS_HOME: /var/jenkins_home
+  JENKINS_INCREMENTALS_REPO_MIRROR: https://repo.jenkins-ci.org/incrementals
+  JENKINS_SLAVE_AGENT_PORT: "50000"
+  JENKINS_UC: https://updates.jenkins.io
+  JENKINS_UC_EXPERIMENTAL: https://updates.jenkins.io/experimental
+  JENKINS_VERSION: 2.528.3
+  LANG: C.UTF-8
+  PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+  REF: /usr/share/jenkins/ref
+paths:
+  - type: directory
+    path: /var/jenkins_home
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Jenkins image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/jenkins.sh
+ports:
+  - 8080/tcp
+  - 50000/tcp
+tests:
+  - name: Run testcontainers tests
+    directory: image/jenkins/tests
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
+  - name: Run shared jenkins integration tests
+    directory: ecosystem/jenkins/tests
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
+  - name: Run APT package manager tests
+    directory: test/go-testing/package_manager
+    commands:
+      - go test . -count=1 -v
+    exit-code: 0
