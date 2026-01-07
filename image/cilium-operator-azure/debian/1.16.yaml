@@ -1,0 +1,123 @@
+# syntax=dhi.io/build:1-debian13
+
+name: Cilium Operator Azure 1.16.x
+image: dhi.io/cilium-operator-azure
+variant: runtime
+tags:
+  - "1.16"
+  - 1.16.18
+  - 1.16-debian13
+  - 1.16.18-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: ab50022137f1d6af6914dead0d83b13ab3119d4d
+  GO_REFERENCE: dhi/golang:1.25.5-debian13-dev@sha256:a45faad20adc1286eef26b1f30e170b54791c217ce69457784de66b0a13d1fe6
+  GOPS_REFERENCE: dhi/pkg-gops:0.3.28@sha256:acab16123f72fc94ef6280b2763948d5013c31aca46e6692a7f7d3ca8d5035e7
+  SEMVER_MAJOR_MINOR_VERSION: "1.16"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.16.18
+  VERSION: 1.16.18
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: cilium-operator-azure
+      uses: dhi.io/golang:1.25.5-debian13-dev@sha256:a45faad20adc1286eef26b1f30e170b54791c217ce69457784de66b0a13d1fe6
+      contents:
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.16.18
+            checksum: ab50022137f1d6af6914dead0d83b13ab3119d4d
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: cilium-operator-azure
+              version: 1.16.18
+              packages:
+                - name: cilium-operator-azure
+                  purl: pkg:golang/github.com/cilium/cilium@1.16.18
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cilium/cilium/operator
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+            download: true
+        - name: sync vendor directory
+          work-dir: /go/src/github.com/cilium/cilium
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: test
+          work-dir: /go/src/github.com/cilium/cilium/operator
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -v ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium/operator
+          with:
+            extra-args: -mod=vendor
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=v1.16.18
+            output: ${target.dir}/usr/local/bin/cilium-operator-azure
+            tags: osusergo,ipam_provider_azure
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cilium-operator-azure
+          target: /usr/local/bin/cilium-operator-azure
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cilium-operator-azure
+          target: /opt/docker/sbom/cilium-operator-azure
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/pkg-gops:0.3.28@sha256:acab16123f72fc94ef6280b2763948d5013c31aca46e6692a7f7d3ca8d5035e7
+      includes:
+        - opt/**
+        - usr/local/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  GOPS_CONFIG_DIR: /home/gops
+paths:
+  - type: directory
+    path: /home/gops
+    uid: 65532
+    gid: 65532
+    mode: "0777"
+  - type: directory
+    path: /var/run/cilium
+    uid: 65532
+    gid: 65532
+    mode: "0777"
+annotations:
+  org.opencontainers.image.description: A minimal Cilium Operator Azure image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/cilium-operator-azure
