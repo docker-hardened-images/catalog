@@ -131,6 +131,10 @@ directly or as the FROM image in the final stage of a multi-stage build. These i
 - Support HTTP/HTTPS, FTP, and other protocols curl supports
 - Require `docker debug` for any debugging needs
 
+**FIPS variants** include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
 ### Choosing between variants
 
 **Alpine variants** (`8.14.1-alpine3.22`):
