@@ -4,7 +4,20 @@ Go (a.k.a., Golang) is a programming language first developed at Google. It is a
 loosely derived from C, but with additional features such as garbage collection, type safety, some dynamic-typing
 capabilities, additional built-in types (e.g., variable-length arrays and key-value maps), and a large standard library.
 
-For more details, visit https://wikipedia.org/wiki/Go_(programming_language)⁠⁠.
+For more details, visit https://golang.org
+
+## About Socket Firewall
+
+The `sfw-dev` variant comes with Socket Firewall Free preinstalled and configured. Socket Firewall Free is a lightweight
+tool that protects developer machines in real time, blocking malicious dependencies before they ever reach your laptop
+or build system. It works out of the box — no API key and no configuration required.
+
+For more details, visit https://github.com/SocketDev/sfw-free.
+
+The `sfw-ent-dev` variant has the Socket Firewall Enterprise preconfigured. This version requires an API key from
+Socket.
+
+For more details, visit https://docs.socket.dev/docs/socket-firewall-overview.
 
 ## About Docker Hardened Images
 

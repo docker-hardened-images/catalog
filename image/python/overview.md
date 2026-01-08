@@ -16,6 +16,11 @@ or build system. It works out of the box — no API key and no configuration req
 
 For more details, visit https://github.com/SocketDev/sfw-free.
 
+The `sfw-ent-dev` variant has the Socket Firewall Enterprise preconfigured. This version requires an API key from
+Socket.
+
+For more details, visit https://docs.socket.dev/docs/socket-firewall-overview.
+
 ## About Docker Hardened Images
 
 Docker Hardened Images are built to meet the highest security and compliance standards. They provide a trusted
