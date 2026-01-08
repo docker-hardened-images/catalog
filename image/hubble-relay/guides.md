@@ -111,6 +111,10 @@ multi-stage Dockerfile. These images typically:
 - Include a shell and package manager
 - Are used to build or compile applications
 
+FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
 ## Migrate to a Docker Hardened Image
 
 Switching to the hardened Hubble Relay image does not require any special changes. You can use it as a drop-in
