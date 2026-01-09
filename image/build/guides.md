@@ -24,7 +24,7 @@ To build a DHI, you can run the following command:
 
 ```
 docker buildx build https://raw.githubusercontent.com/docker-hardened-images/catalog/refs/heads/main/image/alpine-base/alpine-3.23/3.23.yaml \
-  --sbom=generator=dhi.io/scout-sbom-generator:1 --provenance=1 \
+  --sbom=generator=dhi.io/scout-sbom-indexer:1 --provenance=1 \
   --tag my-alpine-base:3.22 --load
 ```
 
@@ -33,7 +33,7 @@ Alternatively, clone the [catalog repository](https://github.com/docker-hardened
 
 ```
 docker buildx build . -f image/alpine-base/alpine-3.22/3.22.yaml \
-  --sbom=generator=dhi.io/scout-sbom-generator:1 --provenance=1 \
+  --sbom=generator=dhi.io/scout-sbom-indexer:1 --provenance=1 \
   --tag my-alpine-base:3.22 --load
 ```
 
