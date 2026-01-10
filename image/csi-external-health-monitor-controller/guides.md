@@ -63,7 +63,7 @@ Monitor the health status of CSI volumes and report any detected anomalies as Ku
   args:
     - "--csi-address=/csi/csi.sock"
     - "--leader-election"
-    - "--enable-node-watcher-pod-condition=true"
+    - "--enable-node-watcher"
   volumeMounts:
     - name: socket-dir
       mountPath: /csi
