@@ -49,7 +49,7 @@ You can limit which controllers run by providing a comma-separated list:
 
 ```bash
 docker run --rm -it dhi.io/cert-manager-controller:<tag> \
-  --controllers=certificates,issuers
+  --controllers=certificates-issuing,issuers
 ```
 
 You can also disable specific controllers while keeping others enabled:
