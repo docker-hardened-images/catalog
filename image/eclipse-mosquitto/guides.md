@@ -1,6 +1,6 @@
 ## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
 For example:
@@ -62,17 +62,6 @@ services:
 Mount a custom config directory (./config) that contains mosquitto.conf and any password/certs you need. Use :ro for
 config to prevent accidental modification by the container.
 
-### Environment variables
-
-Mosquitto's official image relies primarily on configuration files rather than environment variables. The DHI mosquitto
-image follows the same pattern: configure the broker via /mosquitto/config/mosquitto.conf and supporting files (password
-file, TLS certs, etc.). Common container environment variables you may set:
-
-| Variable | Description                            | Default   | Required |
-| -------- | -------------------------------------- | --------- | -------- |
-| TZ       | Timezone for logs and system utilities | UTC       | No       |
-| VERSION  | Image/version (used by tests)          | image tag | No       |
-
 ## Common mosquitto use cases
 
 ### Local development broker
@@ -86,11 +75,10 @@ docker run -d --name local-mosq -p 1883:1883 \
   -v $(pwd)/config:/mosquitto/config \
   dhi.io/eclipse-mosquitto:<tag>
 
-# publish a test message
-docker run --rm eclipse/mosquitto mosquitto_pub -h host.docker.internal -t test/topic -m "hello"
+# publish a test message (override entrypoint to run mosquitto_pub)
+docker run --rm --entrypoint /usr/bin/mosquitto_pub \
+  dhi.io/eclipse-mosquitto:<tag> -h host.docker.internal -t test/topic -m "hello"
 ```
-
-Note: Above publisher uses upstream image for convenience; in DHI examples prefer `dhi.io/eclipse-mosquitto:<tag>`.
 
 ### Persistent broker with authentication and TLS
 
@@ -118,23 +106,92 @@ listener 9001
 protocol websockets
 ```
 
+## Differences from upstream
+
+The DHI Mosquitto image differs from the upstream image in several ways:
+
+### Entrypoint
+
+The DHI image runs the mosquitto broker directly as the entrypoint (`/usr/sbin/mosquitto`), while the upstream image
+uses a shell script entrypoint (`/docker-entrypoint.sh`) that allows running utilities directly. This means:
+
+- Standard broker usage works identically to upstream
+- Running mosquitto utilities requires overriding the entrypoint (see
+  [Running mosquitto utilities](#running-mosquitto-utilities))
+- The upstream shell script entrypoint functionality (permission setup) is not included
+
+### Running mosquitto utilities
+
+When migrating from upstream, update commands that run mosquitto utilities. The upstream image allows running utilities
+like `mosquitto_passwd` directly, but the DHI image requires overriding the entrypoint. See
+[Running mosquitto utilities](#running-mosquitto-utilities) for detailed examples of all utilities.
+
+## How to use this image
+
+### Environment variables
+
+Mosquitto's official image relies primarily on configuration files rather than environment variables. The DHI mosquitto
+image follows the same pattern: configure the broker via /mosquitto/config/mosquitto.conf and supporting files (password
+file, TLS certs, etc.). Common container environment variables you may set:
+
+| Variable | Description                            | Default | Required |
+| -------- | -------------------------------------- | ------- | -------- |
+| TZ       | Timezone for logs and system utilities | UTC     | No       |
+
 ### Managing users
 
-Use mosquitto_passwd to create a password file. Example (runs inside a temporary container):
+Use mosquitto_passwd to create a password file. The DHI image runs the mosquitto broker directly as the entrypoint, so
+you must override the entrypoint to run utilities like mosquitto_passwd:
 
 ```bash
 # create a password file with a user 'testuser'
 docker run --rm -v $(pwd)/config:/mosquitto/config \
-  dhi.io/eclipse-mosquitto:<tag> mosquitto_passwd -b /mosquitto/config/passwordfile testuser 's3cret'
+  --entrypoint /usr/bin/mosquitto_passwd \
+  dhi.io/eclipse-mosquitto:<tag> -b /mosquitto/config/passwordfile testuser 's3cret'
 ```
 
 After creating the passwordfile, restart the broker so it picks up the new file.
 
+### Running mosquitto utilities
+
+The DHI image runs the mosquitto broker directly as the entrypoint (`/usr/sbin/mosquitto`), unlike the upstream image
+which uses a shell script entrypoint. To run mosquitto utilities (mosquitto_passwd, mosquitto_pub, mosquitto_sub, etc.),
+you must override the entrypoint:
+
+```bash
+# Run mosquitto_passwd
+docker run --rm --entrypoint /usr/bin/mosquitto_passwd \
+  dhi.io/eclipse-mosquitto:<tag> -b /path/to/passwordfile username password
+
+# Run mosquitto_pub
+docker run --rm --entrypoint /usr/bin/mosquitto_pub \
+  dhi.io/eclipse-mosquitto:<tag> -h broker-host -t topic -m "message"
+
+# Run mosquitto_sub
+docker run --rm --entrypoint /usr/bin/mosquitto_sub \
+  dhi.io/eclipse-mosquitto:<tag> -h broker-host -t topic
+
+# Run mosquitto_rr (request-response)
+docker run --rm --entrypoint /usr/bin/mosquitto_rr \
+  dhi.io/eclipse-mosquitto:<tag> -h broker-host -t request-topic -t response-topic -m "request"
+
+# Run mosquitto_ctrl
+docker run --rm --entrypoint /usr/bin/mosquitto_ctrl \
+  dhi.io/eclipse-mosquitto:<tag> [ctrl-command]
+```
+
 ## Configuration and volumes
 
-- /mosquitto/config: configuration files (mosquitto.conf, password files, certs). Mount this as read-only when possible.
-- /mosquitto/data: persistence for message queues and DB (if enabled) — mount a writable volume for production.
-- /mosquitto/log: broker logs — mount if you need persistent logs.
+The DHI image uses the following paths:
+
+| Path                | Purpose                                                     | Mount guidance                         |
+| ------------------- | ----------------------------------------------------------- | -------------------------------------- |
+| `/mosquitto/config` | Configuration files (mosquitto.conf, password files, certs) | Mount as read-only when possible       |
+| `/mosquitto/data`   | Persistence for message queues and DB (if enabled)          | Mount a writable volume for production |
+| `/mosquitto/log`    | Broker logs                                                 | Mount if you need persistent logs      |
+
+All three directories exist in the image and are writable by the nonroot user. Mount volumes at these paths to persist
+data across container restarts.
 
 When updating configuration files, you must restart the Mosquitto container for changes to take effect.
 
@@ -149,10 +206,12 @@ checks:
 
 Example Dockerfile HEALTHCHECK (add to a custom image if needed):
 
-```
+```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD mosquitto_pub -h 127.0.0.1 -t health/check -m ping || exit 1
+  CMD ["/usr/bin/mosquitto_pub", "-h", "127.0.0.1", "-t", "health/check", "-m", "ping"] || exit 1
 ```
+
+Note: The healthcheck command must override the entrypoint to run mosquitto_pub instead of the broker.
 
 ## Troubleshooting
 
@@ -165,7 +224,7 @@ HEALTHCHECK --interval=30s --timeout=5s \
 ## Additional resources
 
 - Official documentation: https://mosquitto.org/documentation/
-- Docker upstream image: https://hub.docker.com/_/eclipse-mosquitto/
+- Docker Official Image: https://hub.docker.com/_/eclipse-mosquitto/
 - Source code: https://github.com/eclipse-mosquitto/mosquitto
 
 ## Image variants
@@ -207,19 +266,23 @@ following table of migration notes.
 | Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                               |
 | No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy any necessary artifacts into the runtime stage.                                                                                                                               |
 
-## Troubleshooting migration
+## Troubleshoot migration
 
 The following are common issues that you may encounter during migration.
 
 ### General debugging
 
 The hardened images intended for runtime don't contain a shell nor any tools for debugging. The recommended method for
-debugging applications built with Docker Hardened Images is to use Docker Debug to attach to these containers.
+debugging applications built with Docker Hardened Images is to use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers. Docker Debug provides
+a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only exists
+during the debugging session.
 
 ### Permissions
 
 By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
-accessible to the nonroot user.
+accessible to the nonroot user. You may need to copy files to different directories or change permissions so your
+application running as the nonroot user can access them.
 
 ### Privileged ports
 
@@ -229,7 +292,8 @@ privileged ports (below 1024) when running in Kubernetes or in Docker Engine ver
 ### No shell
 
 By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
-commands and then copy any necessary artifacts into the runtime stage.
+commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
+with no shell.
 
 ### Entry point
 
