@@ -1,0 +1,215 @@
+# syntax=dhi.io/build:2-debian13
+
+name: LINSTOR GUI 1.x (dev)
+image: dhi.io/linstor-gui
+variant: dev
+tags:
+  - 1-dev
+  - 1.9-dev
+  - 1.9.10-dev
+  - 1-debian13-dev
+  - 1.9-debian13-dev
+  - 1.9.10-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 73335b5c2628eab389918c4d810d88382112cf10
+  NGINX_REFERENCE: dhi/nginx:1.29.4-debian13@sha256:d395303c05b7c300ac1b280060d3cc5b2de1869d93763ee97a061a9dc0561242
+  NODE_BUILD_REFERENCE: dhi/node:22.21.1-debian13-dev@sha256:9f2cc2b28df3ddcbf95208b8bd18df85fdc2ef63fc89b2a8bd2e9ec31731f873
+  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.9.10
+  VERSION: 1.9.10
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - base-passwd
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: linstor-gui
+      uses: dhi.io/node:22.21.1-debian13-dev@sha256:9f2cc2b28df3ddcbf95208b8bd18df85fdc2ef63fc89b2a8bd2e9ec31731f873
+      contents:
+        packages:
+          - bash
+          - gettext-base
+          - jq
+        files:
+          - url: git+https://github.com/LINBIT/linstor-gui.git#v1.9.10
+            checksum: 73335b5c2628eab389918c4d810d88382112cf10
+            path: ${source.dir}/linstor-gui
+            spdx:
+              name: linstor-gui
+              version: 1.9.10
+              packages:
+                - name: linstor-gui
+                  purl: pkg:github/LINBIT/linstor-gui@v1.9.10
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: ${source.dir}/linstor-gui
+        - name: install dependencies
+          work-dir: ${source.dir}/linstor-gui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Install dependencies
+            npm ci
+        - name: build frontend
+          work-dir: ${source.dir}/linstor-gui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Build the frontend
+            npm run build
+        - name: copy built files
+          work-dir: ${source.dir}/linstor-gui
+          runs: |
+            set -eux -o pipefail
+
+            # Copy built files to target
+            mkdir -p "${target.dir}/app"
+            cp -r dist/* "${target.dir}/app/"
+        - name: prepare for sbom
+          work-dir: ${source.dir}/linstor-gui
+          runs: |
+            set -eux -o pipefail
+
+            # Add version to package.json for SBOM generation
+            tmp=$(mktemp)
+            jq --arg version "1.9.10" '.version = $version' package.json > "$tmp" && mv "$tmp" package.json
+        - name: reinstall dependencies for sbom
+          work-dir: ${source.dir}/linstor-gui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Clean and reinstall only production dependencies for accurate SBOM
+            rm -rf node_modules
+            npm install --omit=dev --ignore-scripts
+        - name: generate sbom
+          work-dir: ${source.dir}/linstor-gui
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/linstor-gui
+            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx \
+              > /opt/docker/sbom/linstor-gui/.spdx.linstor-gui.json
+        - name: install config files
+          runs: |
+            set -eux -o pipefail
+
+            # Copy nginx config file
+            mkdir -p "${target.dir}/etc/nginx"
+            cp ${source.dir}/config/nginx.conf "${target.dir}/etc/nginx/nginx.conf"
+
+            # Copy error page to html directory
+            cp ${source.dir}/config/50x.html "${target.dir}/app/50x.html"
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          source: image/linstor-gui/config
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: image/linstor-gui/patch/npm-bumps.json
+      outputs:
+        - source: ${target.dir}/app
+          target: /usr/share/nginx/html
+          uid: 65532
+          gid: 65532
+          mode: "0755"
+        - source: ${target.dir}/etc/nginx/nginx.conf
+          target: /etc/nginx/nginx.conf
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/linstor-gui
+          target: /opt/docker/sbom/linstor-gui
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/nginx:1.29.4-debian13@sha256:d395303c05b7c300ac1b280060d3cc5b2de1869d93763ee97a061a9dc0561242
+      includes:
+        - '**'
+      excludes:
+        - etc/nginx/nginx.conf
+        - etc/passwd
+        - usr/share/nginx/html/**
+      uid: 65532
+      gid: 65532
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nginx
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nginx
+      gid: 65532
+      members:
+        - nginx
+    - name: www-data
+      gid: 82
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /var/run
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /var/cache/nginx
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal LINSTOR GUI image
+  org.opencontainers.image.licenses: GPL-3.0
+entrypoint:
+  - nginx
+cmd:
+  - -g
+  - daemon off;
+ports:
+  - 8000/tcp
