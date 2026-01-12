@@ -1,0 +1,143 @@
+# syntax=dhi.io/build:2-debian13
+
+name: cert-manager-istio-csr 0.x (dev)
+image: dhi.io/cert-manager-istio-csr
+variant: dev
+tags:
+  - 0-dev
+  - 0.15-dev
+  - 0.15.0-dev
+  - 0-debian13-dev
+  - 0.15-debian13-dev
+  - 0.15.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: e90962f5552d31d5e24a468c41a91f21761579f9
+  GOLANG_REFERENCE: dhi/golang:1.25.5-debian13-dev@sha256:a45faad20adc1286eef26b1f30e170b54791c217ce69457784de66b0a13d1fe6
+  SEMVER_MAJOR_MINOR_VERSION: "0.15"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.15.0
+  VERSION: 0.15.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: cert-manager-istio-csr
+      uses: dhi.io/golang:1.25.5-debian13-dev@sha256:a45faad20adc1286eef26b1f30e170b54791c217ce69457784de66b0a13d1fe6
+      contents:
+        files:
+          - url: git+https://github.com/cert-manager/istio-csr.git#v0.15.0
+            checksum: e90962f5552d31d5e24a468c41a91f21761579f9
+            path: /go/src/github.com/cert-manager/istio-csr
+            spdx:
+              name: cert-manager-istio-csr
+              version: 0.15.0
+              packages:
+                - name: cert-manager-istio-csr
+                  purl: pkg:golang/github.com/cert-manager/istio-csr@0.15.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cert-manager/istio-csr
+          with:
+            deps: []
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/cert-manager/istio-csr
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Skip e2e tests that require Kubernetes cluster
+            CGO_ENABLED=0 go test $(go list ./... | grep -v '/test/e2e')
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cert-manager/istio-csr
+          with:
+            ldflags:
+              - -X github.com/cert-manager/istio-csr/internal/version.AppVersion=0.15.0
+            output: ${target.dir}/usr/local/bin/manager
+            packages: ./cmd
+      outputs:
+        - source: ${target.dir}/usr/local/bin/manager
+          target: /usr/local/bin/manager
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/cert-manager-istio-csr
+          target: /opt/docker/sbom/cert-manager-istio-csr
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal cert-manager-istio-csr image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/manager
