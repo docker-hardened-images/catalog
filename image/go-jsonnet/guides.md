@@ -21,7 +21,7 @@ name of the mirrored repository, select **View in repository**.
 ```
 $ docker run --rm \
   --mount type=bind,source="$(pwd)",target=/work --workdir /work \
-  dhi.io/jsonnet:<tag> \
+  dhi.io/go-jsonnet:<tag> \
   -e "{ x: 10, y: self.x + 1 } { x: 1 }" \
   -o output.json
 ```
@@ -40,7 +40,7 @@ To run one of the other included tools, override the entrypoint. For example, to
 ```
 $ docker run --rm --entrypoint jsonnetfmt \
    --mount type=bind,source="$(pwd)",target=/work --workdir /work \
-   dhi.io/jsonnet:<tag> \
+   dhi.io/go-jsonnet:<tag> \
    -o test_formatted.jsonnet test.jsonnet
 ```
 
