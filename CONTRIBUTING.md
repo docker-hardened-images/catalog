@@ -1,6 +1,8 @@
-# Contributing to Docker Hardened Images Discussion
+# Contributing to Docker Hardened Images
 
 Thank you for your interest in contributing to the Docker Hardened Images community! This repository serves as a central place for community discussion, questions, and collaboration around hardened container images.
+
+> **Important:** If you make any contribution to this project you agree that it is contributed under [Apache 2.0](LICENSE.txt).
 
 ## How to Contribute
 
@@ -14,7 +16,7 @@ Thank you for your interest in contributing to the Docker Hardened Images commun
 - Helping other community members
 
 **Getting Started with Discussions:**
-1. Browse existing [discussions](https://github.com/docker-hardened-images/discussion/discussions) to see if your topic is already covered
+1. Browse existing [discussions](https://github.com/orgs/docker-hardened-images/discussions) to see if your topic is already covered
 2. Choose the appropriate category for your discussion
 3. Use clear, descriptive titles
 4. Provide context and background information
@@ -38,6 +40,35 @@ Thank you for your interest in contributing to the Docker Hardened Images commun
    - Expected vs actual behavior
 4. Include relevant logs, configuration files, or screenshots
 5. Follow up on questions from maintainers
+
+### 🔧 Submit Pull Requests
+
+**Pull Requests** are welcomed for:
+- New images, packages and Helm charts
+- Documentation improvements and corrections
+- Example configurations and use cases
+- Community tooling and scripts
+- Website or catalog enhancements
+
+**Creating Quality Pull Requests:**
+1. **Fork and clone** the appropriate repository
+2. **Create a feature branch** from `main` with a descriptive name (e.g., `docs/update-postgres-guide`, `fix/typo-in-readme`)
+3. **Make your changes** following the repository's style and conventions
+4. **Test your changes** to ensure they work as expected
+5. **Write clear commit messages** that explain what and why
+6. **Submit your PR** with:
+   - A descriptive title summarizing the change
+   - Details about what you changed and why
+   - Reference to any related issues (e.g., "Fixes #123")
+   - Screenshots or examples if applicable
+7. **Respond to feedback** from reviewers promptly
+8. **Be patient** - reviews may take time depending on maintainer availability
+
+**PR Best Practices:**
+- Keep changes focused and atomic - one logical change per PR
+- Update documentation if your changes affect user-facing behavior
+- Follow existing code style and formatting conventions
+- Include relevant tests if adding new functionality
 
 ### 💡 Share Knowledge
 
