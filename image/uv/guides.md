@@ -99,7 +99,10 @@ docker run --rm -it \
 Use the uv image to manage Python dependencies in your application's Dockerfile:
 
 ```dockerfile
-FROM dhi.io/uv:<tag> AS builder
+FROM dhi.io/python:<tag>-dev AS builder
+
+COPY --from=dhi.io/uv:<tag> /usr/local/bin/uv \
+    /usr/local/bin/uvx /usr/local/bin/
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
