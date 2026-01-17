@@ -1,15 +1,16 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Redis 8.2.x (dev)
+name: Redis 8.2.x (compat, dev)
 image: dhi.io/redis
 variant: dev
+flavor: compat
 tags:
-  - 8-dev
-  - 8.2-dev
-  - 8.2.3-dev
-  - 8-debian13-dev
-  - 8.2-debian13-dev
-  - 8.2.3-debian13-dev
+  - 8-compat-dev
+  - 8.2-compat-dev
+  - 8.2.3-compat-dev
+  - 8-debian13-compat-dev
+  - 8.2-debian13-compat-dev
+  - 8.2.3-debian13-compat-dev
 platforms:
   - linux/amd64
   - linux/arm64
@@ -50,6 +51,7 @@ contents:
     - mawk
     - openssl
     - perl-base
+    - procps
     - redis-server=6:8.2.3-1rl1~trixie1
     - redis-tools=6:8.2.3-1rl1~trixie1
     - redis=6:8.2.3-1rl1~trixie1
@@ -123,12 +125,40 @@ paths:
     uid: 0
     gid: 0
     source: /usr/bin/redis-check-rdb
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    content: |
+      #!/bin/sh
+      set -e
+
+      if [ "${1#-}" != "$1" ]; then
+        # docker run dhi/redis --flag
+        set -- /etc/redis/redis.conf "$@"
+      fi
+
+      if [ "${1%.conf}" != "$1" ]; then
+        # docker run dhi/redis /path/to/custom/conf [optional flags]
+        set -- redis-server "$@"
+      fi
+
+      # set an appropriate umask (if one isn't set)
+      # - https://github.com/redis/redis/blob/bb875603fb7ff3f9d19aad906bd45d7db98d9a39/utils/systemd-redis_server.service#L37
+      um="$(umask)"
+      if [ "$um" = '0022' ]; then
+        umask 0077
+      fi
+
+      exec "$@"
+    uid: 0
+    gid: 0
+    mode: "0755"
 annotations:
   org.opencontainers.image.description: A minimal Redis image
   org.opencontainers.image.licenses: AGPL-3.0-only
 entrypoint:
   - /usr/bin/tini
   - --
+  - /usr/local/bin/docker-entrypoint.sh
 cmd:
   - redis-server
   - /etc/redis/redis.conf

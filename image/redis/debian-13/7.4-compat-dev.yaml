@@ -1,26 +1,28 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Redis 8.2.x (dev)
+name: Redis 7.4.x (compat, dev)
 image: dhi.io/redis
 variant: dev
+flavor: compat
 tags:
-  - 8-dev
-  - 8.2-dev
-  - 8.2.3-dev
-  - 8-debian13-dev
-  - 8.2-debian13-dev
-  - 8.2.3-debian13-dev
+  - 7-compat-dev
+  - 7.4-compat-dev
+  - 7.4.7-compat-dev
+  - 7-debian13-compat-dev
+  - 7.4-debian13-compat-dev
+  - 7.4.7-debian13-compat-dev
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2025-08-04"
+  release: "2024-07-29"
+  end-of-life: "2026-11-30"
 vars:
-  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "8.2"
-  DEBIAN_EPOCH_MAJOR_VERSION: "8"
-  DEBIAN_EPOCH_VERSION: 8.2.3
-  REDIS_LICENSE: AGPL-3.0-only
-  VERSION: 6:8.2.3-1rl1~trixie1
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "7.4"
+  DEBIAN_EPOCH_MAJOR_VERSION: "7"
+  DEBIAN_EPOCH_VERSION: 7.4.7
+  REDIS_LICENSE: SSPL-1.0
+  VERSION: 6:7.4.7-1rl1~trixie1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb trixie main
@@ -45,22 +47,22 @@ contents:
     - libc-bin
     - libpcre2-8-0
     - libssl3t64
-    - libstdc++6
     - libsystemd0
     - mawk
     - openssl
     - perl-base
-    - redis-server=6:8.2.3-1rl1~trixie1
-    - redis-tools=6:8.2.3-1rl1~trixie1
-    - redis=6:8.2.3-1rl1~trixie1
+    - procps
+    - redis-server=6:7.4.7-1rl1~trixie1
+    - redis-tools=6:7.4.7-1rl1~trixie1
+    - redis=6:7.4.7-1rl1~trixie1
     - sed
     - tar
     - tini
     - util-linux
   mappings:
-    redis: pkg:deb/redis/redis@6:8.2.3-1rl1~trixie1?os_name=debian&os_version=13
-    redis-server: pkg:deb/redis/redis-server@6:8.2.3-1rl1~trixie1?os_name=debian&os_version=13
-    redis-tools: pkg:deb/redis/redis-tools@6:8.2.3-1rl1~trixie1?os_name=debian&os_version=13
+    redis: pkg:deb/redis/redis@6:7.4.7-1rl1~trixie1?os_name=debian&os_version=13
+    redis-server: pkg:deb/redis/redis-server@6:7.4.7-1rl1~trixie1?os_name=debian&os_version=13
+    redis-tools: pkg:deb/redis/redis-tools@6:7.4.7-1rl1~trixie1?os_name=debian&os_version=13
 accounts:
   root: true
   run-as: root
@@ -87,7 +89,7 @@ os-release:
 work-dir: /data
 environment:
   DEBIAN_FRONTEND: noninteractive
-  REDIS_VERSION: 8.2.3
+  REDIS_VERSION: 7.4.7
 paths:
   - type: directory
     path: /var/lib/redis
@@ -123,12 +125,40 @@ paths:
     uid: 0
     gid: 0
     source: /usr/bin/redis-check-rdb
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    content: |
+      #!/bin/sh
+      set -e
+
+      if [ "${1#-}" != "$1" ]; then
+        # docker run dhi/redis --flag
+        set -- /etc/redis/redis.conf "$@"
+      fi
+
+      if [ "${1%.conf}" != "$1" ]; then
+        # docker run dhi/redis /path/to/custom/conf [optional flags]
+        set -- redis-server "$@"
+      fi
+
+      # set an appropriate umask (if one isn't set)
+      # - https://github.com/redis/redis/blob/bb875603fb7ff3f9d19aad906bd45d7db98d9a39/utils/systemd-redis_server.service#L37
+      um="$(umask)"
+      if [ "$um" = '0022' ]; then
+        umask 0077
+      fi
+
+      exec "$@"
+    uid: 0
+    gid: 0
+    mode: "0755"
 annotations:
   org.opencontainers.image.description: A minimal Redis image
-  org.opencontainers.image.licenses: AGPL-3.0-only
+  org.opencontainers.image.licenses: SSPL-1.0
 entrypoint:
   - /usr/bin/tini
   - --
+  - /usr/local/bin/docker-entrypoint.sh
 cmd:
   - redis-server
   - /etc/redis/redis.conf
