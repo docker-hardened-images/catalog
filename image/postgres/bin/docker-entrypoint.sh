@@ -35,7 +35,7 @@ file_env 'POSTGRES_DB' "$POSTGRES_USER"
 file_env 'POSTGRES_INITDB_ARGS'
 
 # Initialize the database if it doesn't already exist.
-if [ ! -e "$PGDATA" ]; then
+if [ ! -s "$PGDATA/PG_VERSION" ]; then
 	echo "ENTRYPOINT: Initializing database..."
 
 	# Prevent insecure configurations.
@@ -60,7 +60,7 @@ if [ ! -e "$PGDATA" ]; then
 		*)
 			cat >&2 <<-EOE
 				ERROR: POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD} is an invalid value. Valid values are
-				       one of "md5" or "scram-sha-256. Refer to the PostgreSQL documentation for more information:
+				       one of "md5" or "scram-sha-256". Refer to the PostgreSQL documentation for more information:
 				       https://www.postgresql.org/docs/${PG_MAJOR}/auth-password.html
 			EOE
 			exit 1
