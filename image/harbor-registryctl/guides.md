@@ -25,7 +25,7 @@ Run the following command and replace `<tag>` with the image variant you want to
 as part of a Harbor deployment.
 
 ```bash
-docker run --rm -it dhi.io/dhi-harbor-registryctl:<tag> -h
+docker run --rm -it dhi.io/harbor-registryctl:<tag> -h
 ```
 
 ## Common harbor-registryctl use cases
@@ -39,7 +39,7 @@ docker run --rm -it dhi.io/dhi-harbor-registryctl:<tag> -h
 docker run -d --name harbor-registryctl \
   -p 8080:8080 \
   -v $(pwd)/config.yml:/etc/registryctl/config.yml \
-  dhi.io/dhi-harbor-registryctl:<tag> \
+  dhi.io/harbor-registryctl:<tag> \
   -c /etc/registryctl/config.yml
 
 # Health check endpoint test
@@ -62,7 +62,7 @@ The harbor-registryctl service provides these options:
 docker run -d --name harbor-registryctl \
   -p 8080:8080 \
   -v $(pwd)/config.yml:/etc/registryctl/config.yml \
-  dhi.io/dhi-harbor-registryctl:<tag> \
+  dhi.io/harbor-registryctl:<tag> \
   -c /etc/registryctl/config.yml
 
 # Test health endpoint
@@ -78,7 +78,7 @@ curl http://localhost:8080/api/health
 registry:
   registryctl:
     image:
-      repository: dhi.io/dhi-harbor-registryctl
+      repository: dhi.io/harbor-registryctl
       tag: <tag>
       pullPolicy: IfNotPresent
 ```
@@ -88,7 +88,7 @@ registry:
 # Currently Harbor does not provide arm64 compatible images, so only amd64
 # deployments are possible.
 helm install my-harbor oci://helm.goharbor.io/harbor \
-  --set registry.registryctl.image.repository=dhi.io/dhi-harbor-registryctl \
+  --set registry.registryctl.image.repository=dhi.io/harbor-registryctl \
   --set registry.registryctl.image.tag=<tag>
 ```
 
@@ -99,11 +99,11 @@ Use `harbor-registryctl` for local development and testing:
 ```bash
 # Run with config file for testing
 docker run --rm -v $(pwd)/config.yml:/etc/registryctl/config.yml \
-  dhi.io/dhi-harbor-registryctl:<tag> \
+  dhi.io/harbor-registryctl:<tag> \
   -c /etc/registryctl/config.yml
 
 # Show help
-docker run --rm dhi.io/dhi-harbor-registryctl:<tag> -h
+docker run --rm dhi.io/harbor-registryctl:<tag> -h
 ```
 
 ## Non-hardened images vs Docker Hardened Images
@@ -142,16 +142,147 @@ that only exists during the debugging session.
 For example, you can use Docker Debug:
 
 ```
-docker debug dhi.io/dhi-harbor-registryctl
+docker debug dhi.io/harbor-registryctl
 ```
 
 or mount debugging tools with the Image Mount feature:
 
 ```
 docker run --rm -it --pid container:my-container \
-  --mount=type=image,source=dhi.io/dhi-busybox,destination=/dbg,ro \
-  dhi.io/dhi-harbor-registryctl:<tag> /dbg/bin/sh
+  --mount=type=image,source=dhi.io/busybox:1,destination=/dbg,ro \
+  --entrypoint /dbg/bin/sh \
+  dhi.io/harbor-registryctl:<tag>
 ```
+
+## Differences from upstream
+
+The Docker Hardened Image differs from the upstream `goharbor/harbor-registryctl` image in several ways:
+
+### Entrypoint and custom CA certificate installation
+
+**Upstream behavior:**
+
+- Uses an entrypoint script (`/home/harbor/start.sh`) that:
+  - Automatically installs custom CA certificates from `/etc/harbor/ssl` and `/harbor_cust_cert` directories
+  - Appends these certificates to the system CA bundle
+  - Then executes the harbor-registryctl binary
+
+**DHI behavior:**
+
+- Runs the binary directly (`/usr/local/bin/harbor-registryctl`) without the entrypoint wrapper
+- Does not automatically install custom CA certificates
+
+**Workaround for custom CA certificates:**
+
+If you need to use custom CA certificates, you have several options:
+
+1. **Use an init container** (Kubernetes):
+
+   ```yaml
+   initContainers:
+     - name: install-certs
+       image: dhi.io/busybox:1
+       command:
+         - sh
+         - -c
+         - |
+           if [ -d /etc/harbor/ssl ]; then
+             find /etc/harbor/ssl -name ca.crt -exec cat {} \; >> /shared-ca-bundle/ca-bundle.crt
+           fi
+           if [ -d /harbor_cust_cert ]; then
+             find /harbor_cust_cert -name "*.crt" -o -name "*.ca" -o -name "*.pem" | while read f; do
+               [ -f "$f" ] && cat "$f" >> /shared-ca-bundle/ca-bundle.crt
+             done
+           fi
+       volumeMounts:
+         - name: harbor-ssl
+           mountPath: /etc/harbor/ssl
+           readOnly: true
+         - name: harbor-cust-cert
+           mountPath: /harbor_cust_cert
+           readOnly: true
+         - name: shared-ca-bundle
+           mountPath: /shared-ca-bundle
+   containers:
+     - name: registryctl
+       image: dhi.io/harbor-registryctl:<tag>
+       env:
+         - name: SSL_CERT_FILE
+           value: /shared-ca-bundle/ca-bundle.crt
+       volumeMounts:
+         - name: shared-ca-bundle
+           mountPath: /shared-ca-bundle
+   volumes:
+     - name: harbor-ssl
+     - name: harbor-cust-cert
+     - name: shared-ca-bundle
+       emptyDir: {}
+   ```
+
+1. **Mount certificates and set SSL_CERT_FILE** (Docker/Docker Compose):
+
+   ```yaml
+   services:
+     registryctl:
+       image: dhi.io/harbor-registryctl:<tag>
+       environment:
+         SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+       volumes:
+         - ./custom-certs:/custom-certs:ro
+         - ./ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+   ```
+
+1. **Build a custom image** with certificates pre-installed:
+
+   ```dockerfile
+   FROM dhi.io/harbor-registryctl:<tag>
+   COPY custom-certs/*.crt /usr/local/share/ca-certificates/
+   USER root
+   RUN update-ca-certificates
+   USER nonroot
+   ```
+
+### Healthcheck
+
+**Upstream:** Includes a built-in healthcheck that tests both HTTP (port 8080) and HTTPS (port 8443) endpoints.
+
+**DHI:** Does not include a healthcheck. You should define your own healthcheck in your Kubernetes or Docker Compose
+configuration:
+
+**Kubernetes example:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+**Docker Compose example:**
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+```
+
+### Volumes
+
+**Upstream:** Declares `/var/lib/registry` as a volume in image metadata.
+
+**DHI:** Does not include volume declarations. Ensure you explicitly mount any required storage paths (such as
+`/var/lib/registry`) in your deployment configuration.
 
 ## Image variants
 
@@ -184,17 +315,18 @@ To migrate your application to a Docker Hardened Image, you must update your Kub
 configurations. At minimum, you must update the base image in your existing deployment to a Docker Hardened Image. This
 and a few other common changes are listed in the following table of migration notes.
 
-| Item               | Migration note                                                                                                                                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base image         | Replace your base images in your Kubernetes manifests with a Docker Hardened Image.                                                                                                             |
-| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a dev tag.                                                                       |
-| Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                      |
-| Multi-stage build  | Utilize images with a dev tag for build stages and non-dev images for runtime. For binary executables, use a static image for runtime.                                                          |
-| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                              |
-| Ports              | Non-dev hardened images run as a nonroot user by default. `harbor-registryctl` typically binds to port 8080 for HTTP APIs. Because hardened images run as nonroot, avoid privileged operations. |
-| Entry point        | Docker Hardened Images may have different entry points than standard images. The DHI harbor-registryctl entry point is `/usr/local/bin/harbor-registryctl`.                                     |
-| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                     |
-| Volume mounting    | When using harbor-registryctl in containers, ensure proper volume mounting for accessing configuration files from the host filesystem.                                                          |
+| Item               | Migration note                                                                                                                                                                                                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base image         | Replace your base images in your Kubernetes manifests with a Docker Hardened Image.                                                                                                                                                                                                                   |
+| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a dev tag.                                                                                                                                                                             |
+| Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                                                                                                            |
+| Multi-stage build  | Utilize images with a dev tag for build stages and non-dev images for runtime. For binary executables, use a static image for runtime.                                                                                                                                                                |
+| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. Custom CA certificate installation from `/etc/harbor/ssl` and `/harbor_cust_cert` is not automatic - see "Differences from upstream" section for workarounds.                                                                    |
+| Ports              | Non-dev hardened images run as a nonroot user by default. `harbor-registryctl` typically binds to port 8080 for HTTP APIs. Because hardened images run as nonroot, avoid privileged operations.                                                                                                       |
+| Entry point        | Docker Hardened Images may have different entry points than standard images. The DHI harbor-registryctl entry point is `/usr/local/bin/harbor-registryctl`. The upstream entrypoint script that handles custom CA certificate installation is not included - see "Differences from upstream" section. |
+| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                           |
+| Volume mounting    | When using harbor-registryctl in containers, ensure proper volume mounting for accessing configuration files from the host filesystem. Upstream declares `/var/lib/registry` as a volume - DHI does not include volume declarations, so explicitly mount required storage paths.                      |
+| Healthcheck        | Upstream includes a built-in healthcheck. DHI does not include a healthcheck - define your own in Kubernetes or Docker Compose configuration (see "Differences from upstream" section for examples).                                                                                                  |
 
 The following steps outline the general migration process.
 
@@ -208,7 +340,7 @@ The following steps outline the general migration process.
    Update the image references in your Helm values or Harbor deployment configurations to use the hardened images:
 
    - From: `goharbor/harbor-registryctl:<tag>`
-   - To: `dhi.io/dhi-harbor-registryctl:<tag>`
+   - To: `dhi.io/harbor-registryctl:<tag>`
 
 1. **For custom Harbor deployments, update the base image in your manifests.**
 
