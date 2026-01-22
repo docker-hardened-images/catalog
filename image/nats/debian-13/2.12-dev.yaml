@@ -1,0 +1,171 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NATS 2.12.x (dev)
+image: dhi.io/nats
+variant: dev
+tags:
+  - 2-dev
+  - 2.12-dev
+  - 2.12.3-dev
+  - 2-debian13-dev
+  - 2.12-debian13-dev
+  - 2.12.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-22"
+  end-of-life: "2026-09-22"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 450a519adf9c53e3d86623bb423dcad5e658ae78
+  GOLANG_REFERENCE: dhi/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.3
+  VERSION: 2.12.3
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: nats
+      uses: dhi.io/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/nats-io/nats-server.git#v2.12.3
+            checksum: 450a519adf9c53e3d86623bb423dcad5e658ae78
+            path: /go/src/github.com/nats-io/nats-server/v2
+            spdx:
+              name: nats-server
+              version: 2.12.3
+              packages:
+                - name: nats-server
+                  purl: pkg:golang/github.com/nats-io/nats-server/v2@2.12.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          with:
+            deps: []
+            download: true
+        - name: unit test
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # NATS does support FIPS but there are some tests that are not FIPS compliant.
+              export GODEBUG=fips140=on
+            fi
+
+            # NATS has a extense parallel test suite. This is a minimal set to catch possible breaking changes.
+            # We do also skip tests that won't work or are flaky in buildkit.
+            go test -v -p=1 $(go list ./... | grep -v "/server") -skip 'TestQueueDistributionAcrossRoutes|TestSysLogger|TestOCSPMust|TestOCSPAlways|TestTLSGateway|TestGatewayTLS|TestTLSPinned|TestStress' -count=1 -vet=off -timeout=30m -failfast
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          with:
+            ldflags:
+              - -X server.serverVersion=2.12.3
+              - -X server.gitCommit=450a519adf9c53e3d86623bb423dcad5e658ae78
+            output: ${target.dir}/nats-server
+            packages: .
+        - name: configure
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          runs: |
+            set -eux -o pipefail
+
+            cp docker/nats-server.conf ${target.dir}/nats-server.conf
+      outputs:
+        - source: ${target.dir}/nats-server
+          target: /nats-server
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/nats-server.conf
+          target: /nats-server.conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/nats-server
+          target: /opt/docker/sbom/nats-server
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal NATS server image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /nats-server
+cmd:
+  - --config
+  - nats-server.conf
+ports:
+  - 4222/tcp
+  - 8222/tcp
+  - 6222/tcp
