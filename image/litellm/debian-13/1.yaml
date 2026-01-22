@@ -52,6 +52,7 @@ contents:
           - ca-certificates
           - grep
           - findutils
+          - gzip
           - '!libexpat1'
         files:
           - url: git+https://github.com/BerriAI/litellm.git#17c8d8d109b5d10c8a691108c47b9ce39f2f2646
@@ -64,6 +65,10 @@ contents:
                 - name: litellm
                   purl: pkg:pypi/litellm@1.80.15
                   license: MIT
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/diff/-/diff-8.0.3.tgz
+            path: ${source.dir}/diff-8.0.3.tgz
             uid: 0
             gid: 0
       pipeline:
@@ -124,6 +129,24 @@ contents:
             pip install --upgrade 'fastapi-sso>=0.19.0'  # Fix CVE-2025-14546
             pip install --upgrade 'urllib3>=2.6.3'       # Fix CVE-2026-21441
             pip install --upgrade 'pynacl>=1.6.2'        # Fix CVE-2025-69277
+        - name: patch diff package in nodejs_wheel
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Extract fixed diff version (downloaded in files section)
+            mkdir -p /tmp/diff-fix
+            tar -xzf ${source.dir}/diff-8.0.3.tgz -C /tmp/diff-fix
+
+            # Find and replace diff package in nodejs_wheel location
+            # The path is: /opt/litellm/lib/python3.*/site-packages/nodejs_wheel/lib/node_modules/npm/node_modules/diff
+            find "$VIRTUAL_ENV/lib" -type d -path "*/nodejs_wheel/lib/node_modules/npm/node_modules/diff" -print0 | while IFS= read -r -d '' diff_dir; do
+              echo "Replacing $diff_dir"
+              rm -rf "$diff_dir"
+              cp -r /tmp/diff-fix/package "$diff_dir"
+            done
+
+            rm -rf /tmp/diff-fix
         - name: install final packages in venv
           privileged: true
           runs: |
