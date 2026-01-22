@@ -24,7 +24,7 @@ Kyverno Policy Reporter deployment. The following standalone Docker command disp
 options.
 
 ```bash
-docker run -d --name kyverno-policy-reporter-ui -p 8080:8080 dhi.io/kyverno-policy-reporter-ui:<tag>
+docker run -d --name kyverno-policy-reporter-ui -p 8080:8080 dhi.io/kyverno-policy-reporter-ui:<tag> run
 ```
 
 ## Common kyverno-policy-reporter-ui use cases
@@ -55,7 +55,7 @@ helm upgrade --install policy-reporter policy-reporter/policy-reporter \
 
 ### Access Policy Reporter UI
 
-Access the Polcy Reporter UI at http://localhost:8080 via kubectl port forward:
+Access the Policy Reporter UI at http://localhost:8080 via kubectl port forward:
 
 ```bash
 kubectl port-forward service/policy-reporter-ui 8080:8080 -n policy-reporter
@@ -104,8 +104,48 @@ or mount debugging tools with the Image Mount feature:
 
 ```
 docker run --rm -it --pid container:my-container \
-  --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/kyverno-policy-reporter-ui:<tag> /dbg/bin/sh
+  --entrypoint /dbg/bin/sh \
+  --mount=type=image,source=dhi.io/busybox:1,destination=/dbg,ro \
+  dhi.io/kyverno-policy-reporter-ui:<tag>
+```
+
+## CLI differences from upstream
+
+The Docker Hardened Image uses a cobra-style CLI with subcommands, while the upstream image uses a traditional
+flag-based CLI. This is an important difference to be aware of when migrating.
+
+**Upstream behavior:**
+
+- Binary starts the server by default when run without arguments
+- Configuration is done via command-line flags (e.g., `-port`, `-config`)
+
+**DHI behavior:**
+
+- Binary requires the `run` subcommand to start the server
+- Running without arguments displays help and exits
+- Configuration is done via flags to the `run` subcommand (e.g., `run --port`, `run --config`)
+
+**Migration impact:**
+
+All docker run commands and Kubernetes container specs must include the `run` subcommand:
+
+```bash
+# Upstream command
+docker run ghcr.io/kyverno/policy-reporter-ui:latest
+
+# DHI equivalent - requires "run" subcommand
+docker run dhi.io/kyverno-policy-reporter-ui:<tag> run
+```
+
+For Kubernetes deployments, update your container args:
+
+```yaml
+containers:
+  - name: policy-reporter-ui
+    image: dhi.io/kyverno-policy-reporter-ui:<tag>
+    args:
+      - run
+      # Add any additional flags here
 ```
 
 ## Image variants
@@ -139,7 +179,7 @@ and a few other common changes are listed in the following table of migration no
 | Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                      |
 | Multi-stage build  | Utilize images with a dev tag for build stages and non-dev images for runtime. For binary executables, use a static image for runtime.                                                                          |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                              |
-| Ports              | Non-dev hardened images run as a nonroot user by default. kyverno-policy-reporter-ui binds to port 8000 for the API and UI by default. Because hardened images run as nonroot, avoid privileged ports (\<1024). |
+| Ports              | Non-dev hardened images run as a nonroot user by default. kyverno-policy-reporter-ui binds to port 8080 for the API and UI by default. Because hardened images run as nonroot, avoid privileged ports (\<1024). |
 | Entry point        | Docker Hardened Images may have different entry points than standard kyverno images. Inspect entry points for Docker Hardened Images and update your deployment if necessary.                                   |
 | No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                     |
 
