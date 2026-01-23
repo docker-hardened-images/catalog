@@ -26,6 +26,9 @@ vars:
   SETUPTOOLS_URL: https://files.pythonhosted.org/packages/e0/76/f963c61683a39084aa575f98089253e1e852a4417cb8a3a8a422923a5246/setuptools-80.10.1-py3-none-any.whl
   SETUPTOOLS_VERSION: 80.10.1
   VERSION: 3.10.19
+  WHEEL_CHECKSUM: sha256:4b399d56c9d9338230118d705d9737a2a468ccca63d5e813e2a4fc7815d8bc4d
+  WHEEL_URL: https://files.pythonhosted.org/packages/87/22/b76d483683216dde3d67cba61fb2444be8d5be289bf628c13fc0fd90e5f9/wheel-0.46.3-py3-none-any.whl
+  WHEEL_VERSION: 0.46.3
 contents:
   repositories:
     - https://dl-cdn.alpinelinux.org/alpine/v3.22/main
@@ -80,6 +83,7 @@ contents:
           - xz-dev
           - zlib-dev
           - git
+          - zip
         files:
           - url: https://github.com/python/cpython/commit/b3a7998115e195c40e00cfa662bcaa899d937c05.patch
             path: ${source.dir}/patch/CVE-2025-13836.patch
@@ -101,6 +105,11 @@ contents:
           - url: https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl
             checksum: sha256:9655943313a94722b7774661c21049070f6bbb0a1516bf02f7c8d5d9201514cd
             path: ${source.dir}/pip-25.3-py3-none-any.whl
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/87/22/b76d483683216dde3d67cba61fb2444be8d5be289bf628c13fc0fd90e5f9/wheel-0.46.3-py3-none-any.whl
+            checksum: sha256:4b399d56c9d9338230118d705d9737a2a468ccca63d5e813e2a4fc7815d8bc4d
+            path: ${source.dir}/wheel-0.46.3-py3-none-any.whl
             uid: 0
             gid: 0
           - url: https://www.python.org/ftp/python/3.10.19/Python-3.10.19.tar.xz.sigstore
@@ -151,16 +160,70 @@ contents:
 
             gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
 
-            if [ -f "pip-25.3-py3-none-any.whl" ]; then
+            if [ -f "${source.dir}/pip-25.3-py3-none-any.whl" ]; then
               rm -rf Lib/ensurepip/_bundled/pip*
-              cp "pip-25.3-py3-none-any.whl" Lib/ensurepip/_bundled/
+              cp "${source.dir}/pip-25.3-py3-none-any.whl" Lib/ensurepip/_bundled/
               sed -i "s/_PIP_VERSION = \".*\"/_PIP_VERSION = \"25.3\"/g" Lib/ensurepip/__init__.py
             fi
 
-            if [ -f "setuptools-80.10.1-py3-none-any.whl" ]; then
+            if [ -f "${source.dir}/setuptools-80.10.1-py3-none-any.whl" ]; then
               rm -rf Lib/ensurepip/_bundled/setuptools*
-              cp "setuptools-80.10.1-py3-none-any.whl" Lib/ensurepip/_bundled/
+              cp "${source.dir}/setuptools-80.10.1-py3-none-any.whl" Lib/ensurepip/_bundled/
               sed -i "s/_SETUPTOOLS_VERSION = \".*\"/_SETUPTOOLS_VERSION = \"80.10.1\"/g" Lib/ensurepip/__init__.py
+            fi
+
+            if [ -f "${source.dir}/wheel-0.46.3-py3-none-any.whl" ]; then
+              rm -rf Lib/ensurepip/_bundled/wheel*
+              cp "${source.dir}/wheel-0.46.3-py3-none-any.whl" Lib/ensurepip/_bundled/
+              sed -i "s/_WHEEL_VERSION = \".*\"/_WHEEL_VERSION = \"0.46.3\"/g" Lib/ensurepip/__init__.py
+            fi
+
+            # Replace vendored wheel in setuptools if present
+            if [ -f "${source.dir}/setuptools-80.10.1-py3-none-any.whl" ] && [ -f "${source.dir}/wheel-0.46.3-py3-none-any.whl" ]; then
+              # Verify wheel files are valid zip archives before extracting
+              if ! python3 -m zipfile -t "${source.dir}/setuptools-80.10.1-py3-none-any.whl" > /dev/null 2>&1; then
+                echo "Error: setuptools wheel file is not a valid zip archive"
+                exit 1
+              fi
+              if ! python3 -m zipfile -t "${source.dir}/wheel-0.46.3-py3-none-any.whl" > /dev/null 2>&1; then
+                echo "Error: wheel file is not a valid zip archive"
+                exit 1
+              fi
+
+              # Extract both wheels
+              python3 -m zipfile -e "${source.dir}/setuptools-80.10.1-py3-none-any.whl" setuptools_temp/
+              python3 -m zipfile -e "${source.dir}/wheel-0.46.3-py3-none-any.whl" wheel_temp/
+
+              # Remove old vendored wheel from setuptools
+              rm -rf setuptools_temp/setuptools/_vendor/wheel*
+
+              # Copy new wheel into setuptools vendor directory
+              cp -r wheel_temp/wheel/ setuptools_temp/setuptools/_vendor/
+              cp -r wheel_temp/wheel-0.46.3.dist-info/ setuptools_temp/setuptools/_vendor/
+
+              # Repackage setuptools with all its contents (including _distutils_hack, etc.)
+              (cd setuptools_temp && zip -r "../setuptools-80.10.1-patched.whl" .)
+
+              # Verify _distutils_hack is still present in the repacked wheel if it was in the original
+              if python3 -m zipfile -l "${source.dir}/setuptools-80.10.1-py3-none-any.whl" | grep -q "_distutils_hack"; then
+                if ! python3 -m zipfile -l "setuptools-80.10.1-patched.whl" | grep -q "_distutils_hack"; then
+                  echo "ERROR: _distutils_hack was present in original setuptools but missing from repacked wheel!"
+                  python3 -m zipfile -l "setuptools-80.10.1-patched.whl" | head -30
+                  exit 1
+                fi
+              fi
+
+              mv "setuptools-80.10.1-patched.whl" "Lib/ensurepip/_bundled/setuptools-80.10.1-py3-none-any.whl"
+              rm -rf setuptools_temp wheel_temp
+            fi
+
+            # Verify the bundled setuptools wheel still has _distutils_hack if it should
+            if python3 -m zipfile -l "${source.dir}/setuptools-80.10.1-py3-none-any.whl" | grep -q "_distutils_hack"; then
+              python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools-80.10.1-py3-none-any.whl | grep "_distutils_hack" || (
+                echo "ERROR: _distutils_hack not in bundled setuptools wheel!"
+                python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools-80.10.1-py3-none-any.whl | head -30
+                exit 1
+              )
             fi
 
             ./configure --prefix="/opt/python-3.10.19" \
@@ -180,6 +243,20 @@ contents:
             make -j "$nproc" "EXTRA_CFLAGS=${EXTRA_CFLAGS:-}" "LDFLAGS=${LDFLAGS:--Wl},-rpath='\$\$ORIGIN/../lib'" python
 
             make DESTDIR="${target.dir}" install
+
+            # Verify _distutils_hack was installed if it was present in the wheel
+            if python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools-80.10.1-py3-none-any.whl | grep -q "_distutils_hack"; then
+              if [ ! -d "${target.dir}/opt/python-3.10.19/lib/python3.10/site-packages/_distutils_hack" ]; then
+                echo "ERROR: _distutils_hack directory not found in installed site-packages!"
+                ls -la "${target.dir}/opt/python-3.10.19/lib/python3.10/site-packages/" | head -20
+                exit 1
+              fi
+              if [ ! -f "${target.dir}/opt/python-3.10.19/lib/python3.10/site-packages/_distutils_hack/override.py" ]; then
+                echo "ERROR: _distutils_hack/override.py file not found!"
+                ls -la "${target.dir}/opt/python-3.10.19/lib/python3.10/site-packages/_distutils_hack/"
+                exit 1
+              fi
+            fi
 
             ln -s idle3 "${target.dir}/opt/python-3.10.19/bin/idle"
             ln -s pip3 "${target.dir}/opt/python-3.10.19/bin/pip"
