@@ -1,0 +1,270 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NATS Box 0.x
+image: dhi.io/nats-box
+variant: runtime
+tags:
+  - "0"
+  - "0.19"
+  - 0.19.2
+  - 0-debian13
+  - 0.19-debian13
+  - 0.19.2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-01-21"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: cea4fe644fdc8c838fb902855651e68dfd90afda
+  GOLANG_REFERENCE: dhi/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+  NATS_TOP_COMMIT_SHA: 812d35cc991232d7606816a15b2ea0b12fb129e7
+  NATS_TOP_VERSION: 0.6.3
+  NATSCLI_REFERENCE: dhi/natscli:0.3.0-debian13@sha256:f37bf17ed9530a0f6ae4ae70957fe0f3ad23784085c5cd0ec951ff72bb28d4a7
+  NATSCLI_VERSION: 0.3.0
+  NKEYS_COMMIT_SHA: cf5e93d3187a266d33f60aa95de13bb216db0469
+  NKEYS_VERSION: 0.4.11
+  NSC_COMMIT_SHA: 97c29246db448999624d61589de2f5282aa5f8e9
+  NSC_VERSION: 2.12.0
+  SEMVER_MAJOR_MINOR_VERSION: "0.19"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.19.2
+  VERSION: 0.19.2
+contents:
+  packages:
+    - ca-certificates
+  builds:
+    - name: nsc
+      uses: dhi.io/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/nats-io/nsc.git#v2.12.0
+            checksum: 97c29246db448999624d61589de2f5282aa5f8e9
+            path: /go/src/github.com/nats-io/nsc/v2
+            spdx:
+              name: nsc
+              version: 2.12.0
+              packages:
+                - name: nsc
+                  purl: pkg:golang/github.com/nats-io/nsc/v2@2.12.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/nats-io/nsc/v2
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps:
+              - golang.org/x/crypto@v0.47.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/nats-io/nsc/v2
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # nsc uses X25519 which is not allowed in FIPS mode
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+            CGO_ENABLED=0 go test ./...
+        - name: build nsc
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nsc/v2
+          with:
+            ldflags:
+              - -s -w
+              - -X main.version=2.12.0
+              - -X main.commit=97c29246db448999624d61589de2f5282aa5f8e9
+              - -X main.date=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/local/bin/nsc
+            packages: .
+      outputs:
+        - source: ${target.dir}/usr/local/bin/nsc
+          target: /usr/local/bin/nsc
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/nsc
+          target: /opt/docker/sbom/nsc
+          uid: 0
+          gid: 0
+    - name: nats-top
+      uses: dhi.io/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/nats-io/nats-top.git#v0.6.3
+            checksum: 812d35cc991232d7606816a15b2ea0b12fb129e7
+            path: /go/src/github.com/nats-io/nats-top
+            spdx:
+              name: nats-top
+              version: 0.6.3
+              packages:
+                - name: nats-top
+                  purl: pkg:golang/github.com/nats-io/nats-top@0.6.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/nats-io/nats-top
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps:
+              - github.com/nats-io/nats-server/v2@v2.12.3
+              - golang.org/x/crypto@v0.47.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/nats-io/nats-top
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build nats-top
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nats-top
+          with:
+            ldflags:
+              - -s -w
+              - -X main.version=0.6.3
+              - -X main.commit=812d35cc991232d7606816a15b2ea0b12fb129e7
+              - -X main.date=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/local/bin/nats-top
+            packages: .
+      outputs:
+        - source: ${target.dir}/usr/local/bin/nats-top
+          target: /usr/local/bin/nats-top
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/nats-top
+          target: /opt/docker/sbom/nats-top
+          uid: 0
+          gid: 0
+    - name: nkeys
+      uses: dhi.io/golang:1.24.11-debian13-dev@sha256:ceccc68aa29c03c808090dc4c6156bebc6d4efaea357281ecde306d6451b7428
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/nats-io/nkeys.git#v0.4.11
+            checksum: cf5e93d3187a266d33f60aa95de13bb216db0469
+            path: /go/src/github.com/nats-io/nkeys
+            spdx:
+              name: nkeys
+              version: 0.4.11
+              packages:
+                - name: nkeys
+                  purl: pkg:golang/github.com/nats-io/nkeys@0.4.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/nats-io/nkeys
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps:
+              - golang.org/x/crypto@v0.47.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/nats-io/nkeys
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # nk uses X25519 which is not allowed in FIPS mode
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+            CGO_ENABLED=0 go test ./...
+        - name: build nk
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nkeys
+          with:
+            ldflags:
+              - -X main.Version=v0.4.11_cf5e93d3187a266d33f60aa95de13bb216db0469
+            output: ${target.dir}/usr/local/bin/nk
+            packages: ./nk
+      outputs:
+        - source: ${target.dir}/usr/local/bin/nk
+          target: /usr/local/bin/nk
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/nkeys
+          target: /opt/docker/sbom/nkeys
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/natscli:0.3.0-debian13@sha256:f37bf17ed9530a0f6ae4ae70957fe0f3ad23784085c5cd0ec951ff72bb28d4a7
+      includes:
+        - opt/docker/sbom/natscli
+        - usr/local/bin/nats
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  NATS_TOP_VERSION: 0.6.3
+  NATSCLI_VERSION: 0.3.0
+  NKEYS_PATH: /nsc/nkeys
+  NKEYS_VERSION: 0.4.11
+  NSC_VERSION: 2.12.0
+  XDG_CONFIG_HOME: /nsc/.config
+  XDG_DATA_HOME: /nsc
+paths:
+  - type: directory
+    path: /nsc
+    uid: 65532
+    gid: 65532
+annotations:
+  org.opencontainers.image.description: A minimal NATS Box image
+  org.opencontainers.image.licenses: Apache-2.0
