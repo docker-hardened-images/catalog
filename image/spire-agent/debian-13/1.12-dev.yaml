@@ -1,0 +1,162 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Spiffe Spire Agent 1.12.x (dev)
+image: dhi.io/spire-agent
+variant: dev
+tags:
+  - 1.12-dev
+  - 1.12.6-dev
+  - 1.12-debian13-dev
+  - 1.12.6-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-08"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: b00ff78eeb3d6cba72bf41819367d2e2edebca3a
+  GOLANG_REFERENCE: dhi/golang:1.25.6-debian13-dev@sha256:a0607a787c801dba5f5637b939566066da29bebc0e6512e3fa0af1695c5090bc
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.6
+  VERSION: 1.12.6
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: spire-agent
+      uses: dhi.io/golang:1.25.6-debian13-dev@sha256:a0607a787c801dba5f5637b939566066da29bebc0e6512e3fa0af1695c5090bc
+      contents:
+        files:
+          - url: git+https://github.com/spiffe/spire.git#v1.12.6
+            checksum: b00ff78eeb3d6cba72bf41819367d2e2edebca3a
+            path: /go/src/github.com/spiffe/spire
+            spdx:
+              name: spire-agent
+              version: 1.12.6
+              packages:
+                - name: spire-agent
+                  purl: pkg:golang/github.com/spiffe/spire@1.12.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/spiffe/spire/
+          with:
+            deps:
+              - github.com/docker/docker@v28.5.2+incompatible
+              - github.com/sigstore/cosign/v2@v2.6.2
+              - github.com/theupdateframework/go-tuf/v2@v2.4.1
+              - github.com/sigstore/rekor@v1.5.0
+              - github.com/sigstore/sigstore@v1.10.4
+            download: true
+            replaces:
+              - github.com/sigstore/timestamp-authority=github.com/docker-hardened-images/sigstore-timestamp-authority@v1.2.10-0.20251207163215-621a8cc1532f
+        - name: test
+          work-dir: /go/src/github.com/spiffe/spire
+          runs: |
+            set -eux -o pipefail
+
+            # Exclude agent tests, server runtime tests (require full server setup), peertracker (flaky timing test), and diskcertmanager (flaky)
+            EXCLUDES='/cmd/spire-agent|/pkg/agent|/cmd/spire-server/cli/run|/pkg/server|/pkg/common/peertracker|/pkg/common/diskcertmanager'
+            PKGS=$(go list ./... | egrep -v "${EXCLUDES}")
+            CGO_ENABLED=0 GODEBUG=fips140=on go test $PKGS
+        - name: build spire-agent
+          uses: go/build@v1
+          work-dir: /go/src/github.com/spiffe/spire/cmd/spire-agent
+          with:
+            ldflags:
+              - -X github.com/spiffe/spire/pkg/common/version.gittag=1.12.6
+              - -X github.com/spiffe/spire/pkg/common/version.githash=b00ff78eeb3d6cba72bf41819367d2e2edebca3a
+            output: ${target.dir}/usr/local/bin/spire-agent
+      outputs:
+        - source: ${target.dir}/usr/local/bin/spire-agent
+          target: /usr/local/bin/spire-agent
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/spire-agent
+          target: /opt/docker/sbom/spire-agent
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/spire
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /opt/spire/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/spire/bin/spire-agent
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/spire-agent
+annotations:
+  org.opencontainers.image.description: A minimal Spiffe Spire Agent image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /opt/spire/bin/spire-agent
+  - run
