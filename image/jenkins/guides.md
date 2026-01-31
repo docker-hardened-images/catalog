@@ -44,7 +44,6 @@ This command:
 Create a `compose.yml` file with the following content:
 
 ```yaml
-version: '3.8'
 services:
   jenkins:
     image: dhi.io/jenkins:<tag>
@@ -119,7 +118,6 @@ $ docker exec jenkins-basic cat /var/jenkins_home/secrets/initialAdminPassword
 Store Jenkins data on the host filesystem for easier backups and recovery:
 
 ```yaml
-version: '3.8'
 services:
   jenkins:
     image: dhi.io/jenkins:<tag>
@@ -146,7 +144,6 @@ $ docker compose exec jenkins tar -czf /var/backups/jenkins-backup-$(date +%Y%m%
 This setup allows Jenkins agents to build Docker images:
 
 ```yaml
-version: '3.8'
 services:
   jenkins:
     image: dhi.io/jenkins:<tag>
@@ -214,120 +211,16 @@ $ docker run -d --name jenkins-custom -p 8080:8080 \
   my-jenkins:custom
 ```
 
-### Jenkins with multiple agents for distributed builds
+## Official Docker image (DOI) vs Docker Hardened Image (DHI)
 
-Run Jenkins with multiple build agents for better scalability:
-
-```yaml
-version: '3.8'
-services:
-  jenkins-master:
-    image: dhi.io/jenkins:<tag>
-    container_name: jenkins-master
-    ports:
-      - "8080:8080"
-      - "50000:50000"
-    volumes:
-      - jenkins-master-data:/var/jenkins_home
-    environment:
-      - JAVA_OPTS=-Xmx2048m
-    restart: on-failure
-    networks:
-      - jenkins-network
-
-  jenkins-agent-1:
-    image: dhi.io/jenkins:<tag>
-    container_name: jenkins-agent-1
-    environment:
-      - JENKINS_URL=http://jenkins-master:8080/
-      - JENKINS_AGENT_NAME=agent-1
-      - JENKINS_SECRET=<secret-from-jenkins-ui>
-      - JENKINS_AGENT_WORKDIR=/home/jenkins/agent
-    volumes:
-      - jenkins-agent-1-data:/home/jenkins/agent
-    depends_on:
-      - jenkins-master
-    restart: on-failure
-    networks:
-      - jenkins-network
-    command: java -jar /usr/share/jenkins/agent.jar
-
-  jenkins-agent-2:
-    image: dhi.io/jenkins:<tag>
-    container_name: jenkins-agent-2
-    environment:
-      - JENKINS_URL=http://jenkins-master:8080/
-      - JENKINS_AGENT_NAME=agent-2
-      - JENKINS_SECRET=<secret-from-jenkins-ui>
-      - JENKINS_AGENT_WORKDIR=/home/jenkins/agent
-    volumes:
-      - jenkins-agent-2-data:/home/jenkins/agent
-    depends_on:
-      - jenkins-master
-    restart: on-failure
-    networks:
-      - jenkins-network
-    command: java -jar /usr/share/jenkins/agent.jar
-
-volumes:
-  jenkins-master-data:
-  jenkins-agent-1-data:
-  jenkins-agent-2-data:
-
-networks:
-  jenkins-network:
-```
-
-## Initial setup and configuration
-
-### Accessing Jenkins for the first time
-
-After starting Jenkins, access the web interface:
-
-1. Open your browser and navigate to `http://localhost:8080`
-1. Retrieve the initial admin password:
-   ```bash
-   $ docker exec <container-name> cat /var/jenkins_home/secrets/initialAdminPassword
-   ```
-1. Enter the password on the unlock page
-1. Follow the setup wizard to install recommended plugins and create an admin user
-
-## Troubleshooting
-
-### Jenkins not responding after startup
-
-If Jenkins doesn't respond, check the logs:
-
-```bash
-$ docker logs jenkins-server
-```
-
-Common issues:
-
-- Insufficient memory: Increase JVM memory with `JAVA_OPTS=-Xmx1024m`
-- Port conflicts: Ensure ports 8080 and 50000 are available
-- Disk space: Jenkins needs sufficient disk space; check with `docker exec jenkins-server df -h /var/jenkins_home`
-
-### Plugins not loading or build failures
-
-Check plugin compatibility and Jenkins logs:
-
-```bash
-$ docker exec jenkins-server tail -f /var/jenkins_home/jenkins.log
-```
-
-### Resetting Jenkins
-
-To reset Jenkins to initial state (caution: removes all data):
-
-```bash
-$ docker stop jenkins-server
-$ docker rm jenkins-server
-$ docker volume rm jenkins-data
-$ docker run -d --name jenkins-server -p 8080:8080 \
-  -v jenkins-data:/var/jenkins_home \
-  dhi.io/jenkins:<tag>
-```
+| Feature            | DOI (`jenkins/jenkins`) | DHI (`dhi.io/jenkins`)             |
+| ------------------ | ----------------------- | ---------------------------------- |
+| User               | jenkins (UID 1000)      | jenkins (UID 1000)                 |
+| Shell              | Yes                     | No (runtime) / Yes (dev)           |
+| Package manager    | Yes (apt)               | No (runtime) / Yes (dev)           |
+| jenkins-plugin-cli | Yes                     | No                                 |
+| FIPS variant       | No                      | Yes                                |
+| Base OS            | Debian 13 (trixie)      | Docker Hardened Images (Debian 13) |
 
 ## Image variants
 
@@ -352,8 +245,8 @@ their tag.
   variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
   cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
-To view the image variants and get more information about them, select the Tags tab for this repository, and then select
-a tag.
+The Jenkins Docker Hardened Image is available in all variant types: runtime, dev, FIPS, and FIPS-dev. To view the image
+variants and get more information about them, select the Tags tab for this repository, and then select a tag.
 
 ## Migrate to a Docker Hardened Image
 
