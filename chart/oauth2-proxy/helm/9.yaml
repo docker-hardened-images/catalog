@@ -1,0 +1,93 @@
+# syntax=dhi.io/build:2-helm3
+
+name: OAuth2 Proxy Helm chart 10.x
+image: dhi.io/oauth2-proxy-chart
+variant: helm
+tags:
+  - 10.1.2
+platforms:
+  - linux/amd64
+vars:
+  ALPINE_BASE_REFERENCE: dhi/alpine-base:3.22-alpine3.22@sha256:c30e6103d653d70950cd12028436f14c26dafd2bb4fc75174265f5a71273c045
+  CHART_COMMIT_SHA: 008a0643f0d70aa220addcb9688c02e72282648c
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_REFERENCE: dhi/helm:3.20.0-debian13-dev@sha256:7cb2e3261500133ea8b5a670b731b6d200e5637b9b1d8451ccc759c358fca0dc
+  OAUTH2_PROXY_REFERENCE: dhi/oauth2-proxy:7.14.2-debian13@sha256:08a29bc5ab96e55bbfc63976b237ba356e14bb54f2547c166c297e2714290dd0
+  REDIS_CHART_REFERENCE: dhi/redis-chart:23.0.5@sha256:f3381f785f494c70f3ee662f8d2a8f937280b2dac5a3d9415a6dacf09852675e
+  SEMVER_MAJOR_MINOR_VERSION: "10.1"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.1.2
+  VERSION: 10.1.2
+contents:
+  builds:
+    - name: oauth2-proxy
+      uses: dhi.io/helm:3.20.0-debian13-dev@sha256:7cb2e3261500133ea8b5a670b731b6d200e5637b9b1d8451ccc759c358fca0dc
+      contents:
+        files:
+          - url: git+https://github.com/oauth2-proxy/manifests.git#oauth2-proxy-10.1.2
+            checksum: 008a0643f0d70aa220addcb9688c02e72282648c
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/helm/oauth2-proxy
+          with:
+            chart:
+              appRef: oauth2-proxy
+              dependencies:
+                - alias: redis
+                  condition: redis.enabled
+                  name: redis-chart
+                  ref: dhi/redis-chart:23.0.5@sha256:f3381f785f494c70f3ee662f8d2a8f937280b2dac5a3d9415a6dacf09852675e
+              description: Docker Hardened Images Helm chart for OAuth2 Proxy Cool version
+              images:
+                - name: oauth2-proxy
+                  ref: dhi/oauth2-proxy:7.14.2-debian13@sha256:08a29bc5ab96e55bbfc63976b237ba356e14bb54f2547c166c297e2714290dd0
+                - name: alpine-base
+                  ref: dhi/alpine-base:3.22-alpine3.22@sha256:c30e6103d653d70950cd12028436f14c26dafd2bb4fc75174265f5a71273c045
+              name: oauth2-proxy-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/oauth2-proxy/manifests
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/helm/oauth2-proxy
+          with:
+            cmd: patch
+            debug: true
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: helm login
+          uses: helm/login@v1
+          with:
+            registry: dhi.io
+        - name: pull dependencies
+          uses: helm/cmd@v1
+          privileged: true
+          with:
+            chart: ${source.dir}/helm-charts/helm/oauth2-proxy
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/helm
+          with:
+            chart: oauth2-proxy
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: ${source.dir}/helm-charts/helm/oauth2-proxy
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/oauth2-proxy/config
