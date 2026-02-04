@@ -1,0 +1,176 @@
+global:
+  image:
+    repository: ${argocd.registry}/${argocd.repository}
+    tag: ${argocd.tag}@${argocd.digest}
+
+dex:
+  image:
+    repository: ${dex.registry}/${dex.repository}
+    tag: ${dex.tag}@${dex.digest}
+  containerSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+
+redis:
+  name: redis
+  image:
+    repository: ${redis.registry}/${redis.repository}
+    tag: ${redis.tag}@${redis.digest}
+  volumes:
+    - name: logs
+      emptyDir:
+        medium: Memory
+  volumeMounts:
+    - name: logs
+      mountPath: /var/log/redis
+  exporter:
+    image:
+      repository: ${redis-exporter.registry}/${redis-exporter.repository}
+      tag: ${redis-exporter.tag}@${redis-exporter.digest}
+
+redis-ha:
+  redis:
+    fullnameOverride: argocd-redis
+  sentinel:
+    enabled: true
+  auth:
+    enabled: true
+    sentinel: true
+    password: ""
+    existingSecret: argocd-redis
+    existingSecretPasswordKey: ""
+    usePasswordFiles: true
+    usePasswordFileFromSecret: true
+  acl:
+    enabled: false
+    sentinel: false
+    users: []
+    userSecret: ""
+
+haproxy:
+  redis:
+    name: argocd-redis
+  enabled: false
+  servicePort: 6379
+  timeout:
+    connect: 4s
+    server: 330s
+    client: 330s
+    check: 2s
+    tunnel: 1h
+  tls:
+    enabled: false
+    secretName: ""
+    keyName:
+    certMountPath: /tmp/
+  readOnly:
+    enabled: false
+    port: 6380
+  replicas: 3
+
+  checkInterval: 30s
+  checkFall: 3
+
+  IPv6:
+    enabled: true
+
+  metrics:
+    enabled: false
+
+  config: |
+    {{- $fullName := include "argo-cd.redis.fullname" . }}
+    {{- $replicas := int (toString .Values.replicas) }}
+
+    defaults REDIS
+      mode tcp
+      timeout connect {{ .Values.timeout.connect }}
+      timeout server {{ .Values.timeout.server }}
+      timeout client {{ .Values.timeout.client }}
+      timeout check {{ .Values.timeout.check }}
+      timeout tunnel {{ .Values.timeout.tunnel }}
+
+      default-server init-addr none
+
+    listen health_check_http_url
+      bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:8888  {{ if .Values.IPv6.enabled }}v4v6{{ end }}
+      mode http
+      monitor-uri /healthz
+      option      dontlognull
+
+    {{- range $i := until $replicas }}
+    # Check Sentinel and whether they are nominated master
+    backend check_if_redis_is_master_{{ $i }}
+      mode tcp
+      option tcp-check
+      tcp-check connect
+      tcp-check send PING\r\n
+      tcp-check expect string +PONG
+      tcp-check send SENTINEL\ get-master-addr-by-name\ argocd-redis\r\n
+      tcp-check expect string REPLACE_ANNOUNCE{{ $i }}
+      tcp-check send QUIT\r\n
+      {{- range $i := until $replicas }}
+      server R{{ $i }} {{ $fullName }}-node-{{ $i }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
+      {{- end }}
+    {{- end }}
+
+    # decide redis backend to use
+    #master
+    frontend ft_redis_master
+      {{- if .Values.tls.enabled }}
+      bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ .Values.containerPort }} ssl crt {{ .Values.tls.certMountPath }}{{ .Values.tls.keyName }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
+      {{ else }}
+      bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ (int .Values.servicePort) }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
+      {{- end }}
+      use_backend bk_redis_master
+    {{- if .Values.readOnly.enabled }}
+    #slave
+    frontend ft_redis_slave
+      bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ .Values.readOnly.port }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
+      use_backend bk_redis_slave
+    {{- end }}
+
+    # Check all redis servers to see if they think they are master
+    backend bk_redis_master
+      {{- if .Values.stickyBalancing }}
+      balance source
+      hash-type consistent
+      {{- end }}
+      mode tcp
+      option tcp-check
+      tcp-check connect
+      tcp-check send PING\r\n
+      tcp-check expect string +PONG
+      tcp-check send info\ replication\r\n
+      tcp-check expect string role:master
+      tcp-check send QUIT\r\n
+      tcp-check expect string +OK
+      {{- range $i := until $replicas }}
+      use-server R{{ $i }} if { srv_is_up(R{{ $i }}) } { nbsrv(check_if_redis_is_master_{{ $i }}) ge 2 }
+      server R{{ $i }} {{ $fullName }}-node-{{ $i }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
+      {{- end }}
+    {{- if .Values.readOnly.enabled }}
+    backend bk_redis_slave
+      {{- if .Values.stickyBalancing }}
+      balance source
+      hash-type consistent
+      {{- end }}
+      mode tcp
+      option tcp-check
+      tcp-check connect
+      tcp-check send PING\r\n
+      tcp-check expect string +PONG
+      tcp-check send info\ replication\r\n
+      tcp-check expect  string role:slave
+      tcp-check send QUIT\r\n
+      tcp-check expect string +OK
+    {{- end }}
+
+    {{- if .Values.metrics.enabled }}
+    frontend stats
+      mode http
+      bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ .Values.metrics.port }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
+      http-request use-service prometheus-exporter if { path {{ .Values.metrics.scrapePath }} }
+      stats enable
+      stats uri /stats
+      stats refresh 10s
+    {{- end }}
