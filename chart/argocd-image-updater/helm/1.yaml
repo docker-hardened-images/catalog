@@ -1,0 +1,88 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Argo CD Image Updater Helm chart 1.x
+image: dhi.io/argocd-image-updater-chart
+variant: helm
+tags:
+  - 1.1.0
+platforms:
+  - linux/amd64
+vars:
+  ARGOCD_IMAGE_UPDATER_REFERENCE: dhi/argocd-image-updater:1.0.2-debian13@sha256:19feaca360942a090446ed350dd4bc65c22ea16b74fefbe4aa5d1bb0abf5f096
+  CHART_COMMIT_SHA: 8e16e9c6b5f344bba1bc7cb7ac400831ebb04665
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_REFERENCE: dhi/helm:3.20.0-debian13-dev@sha256:83f437b3254d4db06d42aa7e1e8e6043ae1feacadf709e6b12b925345c91468a
+  SEMVER_MAJOR_MINOR_VERSION: "1.1"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.1.0
+  VERSION: 1.1.0
+contents:
+  builds:
+    - name: argocd-image-updater
+      uses: dhi.io/helm:3.20.0-debian13-dev@sha256:83f437b3254d4db06d42aa7e1e8e6043ae1feacadf709e6b12b925345c91468a
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - coreutils
+          - grep
+          - libc-bin
+          - sed
+        files:
+          - url: git+https://github.com/argoproj/argo-helm#argocd-image-updater-1.1.0
+            checksum: 8e16e9c6b5f344bba1bc7cb7ac400831ebb04665
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/argocd-image-updater
+          with:
+            chart:
+              appRef: argocd-image-updater
+              description: Docker Hardened Images Helm chart for Argo CD Image Updater
+              images:
+                - name: argocd-image-updater
+                  ref: dhi/argocd-image-updater:1.0.2-debian13@sha256:19feaca360942a090446ed350dd4bc65c22ea16b74fefbe4aa5d1bb0abf5f096
+              name: argocd-image-updater-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/argoproj/argo-helm
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/argocd-image-updater
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          privileged: true
+          with:
+            chart: argocd-image-updater
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: argocd-image-updater
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: argocd-image-updater
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/argocd-image-updater/config
