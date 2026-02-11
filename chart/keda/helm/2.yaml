@@ -1,0 +1,87 @@
+# syntax=dhi.io/build:2-helm3
+
+name: KEDA Helm chart 2.x
+image: dhi.io/keda-chart
+variant: helm
+tags:
+  - 2.19.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: 86f514c2e28d70c8a0bf5ec1ad3cbec80b24ebf2
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_REFERENCE: dhi/helm:3.20.0-debian13-dev@sha256:bbd34d906c2bce0070a2daa2c7858393feb6c51862fb139a6e1afc923b6e15b0
+  KEDA_ADMISSION_WEBHOOKS_REFERENCE: dhi/keda-admission-webhooks:2.19.0-debian13@sha256:3bba7efbc2b12ba915c151983ff3a9282ee0337cd8ecb53b97c8daabd4356ee8
+  KEDA_METRICS_APISERVER_REFERENCE: dhi/keda-metrics-apiserver:2.19.0-debian13@sha256:2b826c1bd4f35088913e98ba600aa107b9bfd296676abc678a5521a524fdd71c
+  KEDA_REFERENCE: dhi/keda:2.19.0-debian13@sha256:404354261affb1c4b77ce80d9ce66a270ed4097334a699137914729449e9c047
+  SEMVER_MAJOR_MINOR_VERSION: "2.19"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.19.0
+  VERSION: 2.19.0
+contents:
+  builds:
+    - name: keda-chart
+      uses: dhi.io/helm:3.20.0-debian13-dev@sha256:bbd34d906c2bce0070a2daa2c7858393feb6c51862fb139a6e1afc923b6e15b0
+      contents:
+        files:
+          - url: git+https://github.com/kedacore/charts.git#v2.19.0
+            checksum: 86f514c2e28d70c8a0bf5ec1ad3cbec80b24ebf2
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/keda
+          with:
+            chart:
+              appRef: keda
+              description: Docker Hardened Images Helm chart for KEDA
+              images:
+                - name: keda
+                  ref: dhi/keda:2.19.0-debian13@sha256:404354261affb1c4b77ce80d9ce66a270ed4097334a699137914729449e9c047
+                - name: keda-admission-webhooks
+                  ref: dhi/keda-admission-webhooks:2.19.0-debian13@sha256:3bba7efbc2b12ba915c151983ff3a9282ee0337cd8ecb53b97c8daabd4356ee8
+                - name: keda-metrics-apiserver
+                  ref: dhi/keda-metrics-apiserver:2.19.0-debian13@sha256:2b826c1bd4f35088913e98ba600aa107b9bfd296676abc678a5521a524fdd71c
+              name: keda-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/kedacore/charts
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/keda
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts
+          privileged: true
+          with:
+            chart: keda
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts
+          with:
+            chart: keda
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts
+          with:
+            chart: keda
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/keda/config
