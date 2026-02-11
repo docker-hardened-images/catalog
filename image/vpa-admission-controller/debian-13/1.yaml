@@ -1,0 +1,138 @@
+# syntax=dhi.io/build:1-debian13
+
+name: vpa-admission-controller 1.x
+image: dhi.io/vpa-admission-controller
+variant: runtime
+tags:
+  - "1"
+  - "1.5"
+  - 1.5.1
+  - 1-debian13
+  - 1.5-debian13
+  - 1.5.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-05"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: a8ca31655b37214a6038a3e2a53b4c6d81ba21f5
+  GO_REFERENCE: dhi/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.1
+  VERSION: 1.5.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: vpa-admission-controller
+      uses: dhi.io/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+      work-dir: /go/src/k8s.io/autoscaler/vertical-pod-autoscaler
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kubernetes/autoscaler.git#vertical-pod-autoscaler-1.5.1
+            path: /go/src/k8s.io/autoscaler
+            spdx:
+              name: vpa-admission-controller
+              version: 1.5.1
+              packages:
+                - name: vpa-admission-controller
+                  purl: pkg:golang/k8s.io/autoscaler/vertical-pod-autoscaler@1.5.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/net@v0.45.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Tests use sha-1 keys
+              export GODEBUG=fips140=on
+            fi
+
+            cd pkg/admission-controller
+            go test -short ./...
+        - name: build admission-controller
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/admission-controller
+            packages: ./pkg/admission-controller
+      outputs:
+        - source: ${target.dir}/usr/local/bin/admission-controller
+          target: /usr/local/bin/admission-controller
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/vpa-admission-controller
+          target: /opt/docker/sbom/vpa-admission-controller
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nonroot
+paths:
+  - type: symlink
+    path: /admission-controller
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/admission-controller
+  - type: directory
+    path: /home/nonroot
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes VPA Admission Controller image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /admission-controller
+ports:
+  - 8000/tcp
+  - 8944/tcp
