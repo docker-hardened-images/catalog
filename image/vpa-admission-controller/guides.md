@@ -10,18 +10,19 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-This image runs the `admisstion-controller` binary, the main VPA Admission Controller component from the Kubernetes
-Autoscaler project. It must be deployed on Kubernetes as part of the complete Vertical Pod Autoscaler system.
+This image runs the `admisstion-controller` binary, the main Vertical Pod Autoscaler Admission Controller component from
+the Kubernetes Autoscaler project. It must be deployed on Kubernetes as part of the complete Vertical Pod Autoscaler
+system.
 
-VPA Admission Controller is typically deployed in Kubernetes using a Helm chart, which provides proper configuration
-management and integration with your cluster's node groups.
+Vertical Pod Autoscaler Admission Controller is typically deployed in Kubernetes using a Helm chart, which provides
+proper configuration management and integration with your cluster's node groups.
 
-## Deploy VPA Admission Controller using Helm
+## Deploy Vertical Pod Autoscaler Admission Controller using Helm
 
-The recommended way to deploy VPA Admission Controller in production is using the
-[VPA Admission Controller Helm Charts documentation](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler).
-You can override the VPA Admission Controller image to use Docker Hardened Images via the values.yaml during
-installation.
+The recommended way to deploy Vertical Pod Autoscaler Admission Controller in production is using the
+[Vertical Pod Autoscaler Admission Controller Helm Charts documentation](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler).
+You can override the Vertical Pod Autoscaler Admission Controller image to use Docker Hardened Images via the
+values.yaml during installation.
 
 ### Step 1: Add the Helm Repository
 
@@ -32,9 +33,9 @@ helm repo update
 
 ### Step 2: Create a values.yaml File
 
-Create a file with your VPA Admission Controller configuration. Replace the placeholders as needed. This is a very
-simplified setup that disables the recommender and updater components and that uses Helm certificate generation to
-create a self signed certificate.
+Create a file with your Vertical Pod Autoscaler Admission Controller configuration. Replace the placeholders as needed.
+This is a very simplified setup that disables the recommender and updater components and that uses Helm certificate
+generation to create a self signed certificate.
 
 ```yaml
 admissionController:
