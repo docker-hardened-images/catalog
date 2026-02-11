@@ -1,7 +1,7 @@
 ## About this Helm chart
 
-This is a Prometheus Blackbox Exporter Helm chart built from the upstream Node Exporter Helm chart and using a hardened
-configuration with Docker Hardened Images.
+This is a Prometheus Blackbox Exporter Helm chart built from the upstream Prometheus Blackbox Exporter Helm chart and
+using a hardened configuration with Docker Hardened Images.
 
 The following Docker Hardened Images are used in this Helm chart:
 
