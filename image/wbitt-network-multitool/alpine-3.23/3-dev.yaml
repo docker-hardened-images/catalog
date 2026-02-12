@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: WBITT Network Multitool 3.x (dev)
+image: dhi.io/wbitt-network-multitool
+variant: dev
+tags:
+  - 3-alpine3.23-dev
+  - 3.22-alpine3.23-dev
+  - 3.22.2-alpine3.23-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-24"
+vars:
+  COMMIT_SHA: 2e883bc76b4b84409f2ebe57468401d2a416a346
+  NGINX_REFERENCE: dhi/nginx:1.29.5-alpine3.23-dev@sha256:b39561369c8689e5ef2a4ca16a9528d17add69402e219b41de080a41b9097743
+  SEMVER_MAJOR_MINOR_VERSION: "3.22"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.22.2
+  VERSION: 3.22.2
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  packages:
+    - alpine-baselayout-data
+    - apk-tools
+    - bash
+    - bind-tools
+    - busybox-extras
+    - coreutils
+    - curl
+    - findutils
+    - iproute2
+    - iputils
+    - jq
+    - mtr
+    - net-tools
+    - openssh-client
+    - openssl
+    - perl-net-telnet
+    - procps
+    - rsync
+    - tcpdump
+    - tcptraceroute
+    - wget
+  builds:
+    - name: wbitt-network-multitool-setup
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - openssl
+        files:
+          - url: git+https://github.com/wbitt/Network-MultiTool.git#3.22.2
+            checksum: 2e883bc76b4b84409f2ebe57468401d2a416a346
+            path: ${source.dir}/wbitt-network-multitool
+            spdx:
+              name: network-multitool
+              version: 3.22.2
+              packages:
+                - name: network-multitool
+                  purl: pkg:github/wbitt/Network-MultiTool@3.22.2
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup-multitool
+          runs: |
+            set -eux -o pipefail
+
+            # Create required directories
+            mkdir -p ${target.dir}/certs
+            mkdir -p ${target.dir}/docker
+            mkdir -p ${target.dir}/usr/share/nginx/html
+            mkdir -p ${target.dir}/etc/nginx
+
+            # Generate self-signed SSL certificates
+            openssl req \
+              -x509 -newkey rsa:2048 -nodes -days 3650 \
+              -keyout ${target.dir}/certs/server.key \
+              -out ${target.dir}/certs/server.crt \
+              -subj '/CN=localhost'
+
+            # Copy entrypoint script
+            cp ${source.dir}/wbitt-network-multitool/entrypoint.sh ${target.dir}/docker/entrypoint.sh
+
+            # Copy custom nginx.conf
+            cp ${source.dir}/wbitt-network-multitool/nginx.conf ${target.dir}/etc/nginx/nginx.conf
+
+            # Copy custom index.html
+            cp ${source.dir}/wbitt-network-multitool/index.html ${target.dir}/usr/share/nginx/html/index.html
+      outputs:
+        - source: ${target.dir}/docker/entrypoint.sh
+          target: /docker/entrypoint.sh
+          uid: 65532
+          gid: 65532
+          mode: "0755"
+        - source: ${target.dir}/etc/nginx/nginx.conf
+          target: /etc/nginx/nginx.conf
+          uid: 65532
+          gid: 65532
+          mode: "0644"
+        - source: ${target.dir}/usr/share/nginx/html/index.html
+          target: /usr/share/nginx/html/index.html
+          uid: 65532
+          gid: 65532
+          mode: "0644"
+        - source: ${target.dir}/certs
+          target: /certs
+          uid: 65532
+          gid: 65532
+        - source: /opt/docker/sbom/network-multitool
+          target: /opt/docker/sbom/network-multitool
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/nginx:1.29.5-alpine3.23-dev@sha256:b39561369c8689e5ef2a4ca16a9528d17add69402e219b41de080a41b9097743
+      includes:
+        - '**'
+      excludes:
+        - etc/group
+        - etc/nginx/conf.d/default.conf
+        - etc/nginx/nginx.conf
+        - etc/passwd
+        - usr/share/nginx/html/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nginx
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nginx
+      gid: 65532
+      members:
+        - nginx
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Network Multitool
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /bin/sh
+  - /docker/entrypoint.sh
+cmd:
+  - /usr/sbin/nginx
+  - -g
+  - daemon off;
+ports:
+  - 80/tcp
+  - 443/tcp
+  - 1180/tcp
+  - 11443/tcp
