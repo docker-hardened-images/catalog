@@ -1,0 +1,134 @@
+# syntax=dhi.io/build:1-debian13
+
+name: Vertical Pod Autoscaler Updater 1.x
+image: dhi.io/vpa-updater
+variant: runtime
+tags:
+  - "1"
+  - "1.6"
+  - 1.6.0
+  - 1-debian13
+  - 1.6-debian13
+  - 1.6.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-05"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 9196162ba12e637ce4482107e1c17bcb80599050
+  GO_REFERENCE: dhi/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0
+  VERSION: 1.6.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: vpa-updater
+      uses: dhi.io/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+      work-dir: /go/src/k8s.io/autoscaler/vertical-pod-autoscaler
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kubernetes/autoscaler.git#vertical-pod-autoscaler-1.6.0
+            path: /go/src/k8s.io/autoscaler
+            spdx:
+              name: vpa-updater
+              version: 1.6.0
+              packages:
+                - name: vpa-updater
+                  purl: pkg:golang/k8s.io/autoscaler/vertical-pod-autoscaler@1.6.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Tests use sha-1 keys
+              export GODEBUG=fips140=on
+            fi
+
+            cd pkg/updater
+            go test -short ./...
+        - name: build updater
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/updater
+            packages: ./pkg/updater
+      outputs:
+        - source: ${target.dir}/usr/local/bin/updater
+          target: /usr/local/bin/updater
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/vpa-updater
+          target: /opt/docker/sbom/vpa-updater
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nonroot
+paths:
+  - type: symlink
+    path: /updater
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/updater
+  - type: directory
+    path: /home/nonroot
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes VPA Updater image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /updater
