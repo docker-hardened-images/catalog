@@ -1,0 +1,150 @@
+# syntax=dhi.io/build:2-debian13
+
+name: kubectl 1.35.x (compat)
+image: dhi.io/kubectl
+variant: runtime
+flavor: compat
+tags:
+  - 1-compat
+  - 1.35-compat
+  - 1.35.0-compat
+  - 1-debian13-compat
+  - 1.35-debian13-compat
+  - 1.35.0-debian13-compat
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-17"
+  end-of-life: "2027-02-28"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 66452049f3d692768c39c797b21b793dce80314e
+  DBG: '#{ target.dev ? "1" : "0" }'
+  GO_REFERENCE: dhi/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+  GO_VERSION: 1.25.7
+  SEMVER_MAJOR_MINOR_VERSION: "1.35"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.35.0
+  VERSION: 1.35.0
+contents:
+  packages:
+    - '!base-files'
+    - bash
+    - ca-certificates
+    - coreutils
+    - findutils
+  builds:
+    - name: kubectl
+      uses: dhi.io/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+      work-dir: /go/src/k8s.io/kubernetes
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gzip
+          - jq
+          - make
+          - rsync
+          - sed
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.35.0
+            checksum: 66452049f3d692768c39c797b21b793dce80314e
+            path: /go/src/k8s.io/kubernetes
+            spdx:
+              name: kubernetes
+              version: 1.35.0
+              packages:
+                - name: kubernetes
+                  purl: pkg:golang/k8s.io/kubernetes@1.35.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          privileged: true
+          environment:
+            GOFIPS140: "off"
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh golang.org/x/net v0.38.0
+            ./hack/pin-dependency.sh golang.org/x/oauth2 v0.27.0
+            ./hack/update-vendor.sh
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make WHAT=cmd/kubectl DBG=${DBG}
+            make WHAT=cmd/kubectl-convert DBG=${DBG}
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 _output/bin/kubectl \
+              '${target.dir}/usr/local/bin/kubectl'
+            install -D -m 0755 _output/bin/kubectl-convert \
+              '${target.dir}/usr/local/bin/kubectl-convert'
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kubectl
+          target: /usr/local/bin/kubectl
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/kubectl-convert
+          target: /usr/local/bin/kubectl-convert
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubernetes
+          target: /opt/docker/sbom/kubernetes
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal kubectl image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/kubectl
+cmd:
+  - --help
