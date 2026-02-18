@@ -1,0 +1,147 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kyverno Readiness Checker 1.x (dev)
+image: dhi.io/kyverno-readiness-checker
+variant: dev
+tags:
+  - 1-dev
+  - 1.17-dev
+  - 1.17.0-dev
+  - 1-debian13-dev
+  - 1.17-debian13-dev
+  - 1.17.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-02"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 3e5e775669753daae01e280298f85b4604db9198
+  GOLANG_REFERENCE: dhi/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+  SEMVER_MAJOR_MINOR_VERSION: "1.17"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.17.0
+  VERSION: 1.17.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: kyverno-readiness-checker
+      uses: dhi.io/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+      work-dir: /go/src/github.com/kyverno/kyverno
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kyverno/kyverno.git#v1.17.0
+            checksum: 3e5e775669753daae01e280298f85b4604db9198
+            path: /go/src/github.com/kyverno/kyverno
+            spdx:
+              name: kyverno-readiness-checker
+              version: 1.17.0
+              packages:
+                - name: kyverno-readiness-checker
+                  purl: pkg:golang/github.com/kyverno/kyverno@1.17.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Some unit tests will actually try to use X25519 which is not allowed in FIPS mode
+              export GODEBUG=fips140=on
+            fi
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.17.0
+            output: ${target.dir}/usr/local/bin/kyverno-readiness-checker
+            packages: ./cmd/readiness-checker
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kyverno-readiness-checker
+          target: /usr/local/bin/kyverno-readiness-checker
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kyverno-readiness-checker
+          target: /opt/docker/sbom/kyverno-readiness-checker
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Kyverno Readiness Checker image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/kyverno-readiness-checker
