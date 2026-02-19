@@ -10,13 +10,100 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-### Run a Thanos container
+### Start a Thanos instance
 
-To run a Thanos container and get the version, you can use the following command. Replace `<tag>` with the image variant
-you want to run.
+Thanos requires a subcommand to run a specific component (such as `query`, `sidecar`, `store`, etc.). The following
+example shows using the `help` command to see available Thanos commands and flags:
 
+```console
+$ docker run dhi.io/thanos:<tag> help
 ```
-$ docker run dhi.io/thanos:<tag> --version
+
+See the examples below for running different Thanos components.
+
+## Common Thanos use cases
+
+### Running a Thanos component
+
+Each Thanos component runs as a subcommand. For example, to run the query component:
+
+```console
+$ docker run -p 9090:9090 dhi.io/thanos:<tag> \
+  query \
+  --http-address=0.0.0.0:9090 \
+  --endpoint=thanos-sidecar:19090
+```
+
+### Using configuration files
+
+Thanos components that need object storage configuration require a configuration file. First, create a network and start
+Prometheus with a shared volume:
+
+```console
+$ docker network create thanos-net
+
+$ docker run -d --name prometheus --network thanos-net \
+  -v prometheus-data:/var/prometheus \
+  dhi.io/prometheus:<tag> \
+  --storage.tsdb.path=/var/prometheus
+```
+
+Then start the Thanos sidecar on the same network using the same volume to access the TSDB data:
+
+```console
+$ docker run -p 19090:19090 --network thanos-net \
+  -v ./bucket_config.yaml:/etc/thanos/bucket_config.yaml:ro \
+  -v prometheus-data:/var/prometheus \
+  dhi.io/thanos:<tag> \
+  sidecar \
+  --tsdb.path=/var/prometheus \
+  --prometheus.url=http://prometheus:9090 \
+  --objstore.config-file=/etc/thanos/bucket_config.yaml \
+  --grpc-address=0.0.0.0:19090
+```
+
+### Docker Compose setup
+
+The following example shows a basic Thanos setup with a sidecar and query component:
+
+```yaml
+services:
+  prometheus:
+    image: dhi.io/prometheus:<tag>
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/var/prometheus'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/var/prometheus
+
+  thanos-sidecar:
+    image: dhi.io/thanos:<tag>
+    command:
+      - 'sidecar'
+      - '--tsdb.path=/var/prometheus'
+      - '--prometheus.url=http://prometheus:9090'
+      - '--objstore.config-file=/etc/thanos/bucket_config.yaml'
+      - '--grpc-address=0.0.0.0:19090'
+    volumes:
+      - ./bucket_config.yaml:/etc/thanos/bucket_config.yaml:ro
+      - prometheus-data:/var/prometheus
+    depends_on:
+      - prometheus
+
+  thanos-query:
+    image: dhi.io/thanos:<tag>
+    command:
+      - 'query'
+      - '--http-address=0.0.0.0:9090'
+      - '--endpoint=thanos-sidecar:19090'
+    ports:
+      - 9090:9090
+    depends_on:
+      - thanos-sidecar
+
+volumes:
+  prometheus-data:
 ```
 
 ## Image variants
