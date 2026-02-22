@@ -33,13 +33,31 @@ contents:
       contents:
         packages:
           - jq
+          - gzip
         files:
           - url: git+https://github.com/louislam/uptime-kuma.git#1.23.17
             checksum: 40ec7158534a28e6f8b431a628c53133c327c539
             path: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
             uid: 0
             gid: 0
+          - url: https://registry.npmjs.org/minimatch/-/minimatch-10.2.1.tgz
+            path: ${source.dir}/minimatch-10.2.1.tgz
+            uid: 0
+            gid: 0
       pipeline:
+        - name: patch axios dependency
+          work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
+          runs: |
+            set -eux -o pipefail
+
+            if [ "1" = "1" ]; then
+              axios_version="0.30.3"
+            else
+              axios_version="1.13.5"
+            fi
+
+            jq --arg axios_version "${axios_version}" '.dependencies.axios = $axios_version' package.json > package.json.tmp
+            mv package.json.tmp package.json
         - name: bump
           uses: npm/bump@v1
           privileged: true
@@ -70,6 +88,21 @@ contents:
             npm run build
             # Prune dev dependencies while preserving the node_modules with overridden tar versions
             npm prune --production
+        - name: patch nested minimatch packages
+          work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/minimatch-fix
+            tar -xzf ${source.dir}/minimatch-10.2.1.tgz -C /tmp/minimatch-fix
+
+            find node_modules -type d -name "minimatch" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' minimatch_dir; do
+              echo "Replacing ${minimatch_dir}"
+              rm -rf "${minimatch_dir}"
+              cp -r /tmp/minimatch-fix/package "${minimatch_dir}"
+            done
+
+            rm -rf /tmp/minimatch-fix
         - name: copy app files
           work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
           runs: |
