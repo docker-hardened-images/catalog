@@ -1,0 +1,272 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache HTTP Server 2.4.x
+image: dhi.io/httpd
+variant: runtime
+tags:
+  - "2"
+  - "2.4"
+  - 2.4.66
+  - 2-debian13
+  - 2.4-debian13
+  - 2.4.66-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2012-02-21"
+vars:
+  APR_COMMIT: 5c18df51a91bcb3807f78eb36841d4d2ccf5563d
+  APR_VERSION: 1.7.6
+  APU_COMMIT: 28327eeca2614816c1fa33ff7c4105213e0ad938
+  APU_VERSION: 1.6.3
+  COMMIT_SHA: e4a77ef6051b3fe22eafacbcf54855b178a0bddd
+  HTTPD_SHA256: 94d7ff2b42acbb828e870ba29e4cbad48e558a79c623ad3596e4116efcfea25a
+  SEMVER_MAJOR_MINOR_VERSION: "2.4"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.4.66
+  VERSION: 2.4.66
+contents:
+  packages:
+    - ca-certificates
+    - coreutils
+    - dash
+    - libapr1t64
+    - libaprutil1t64
+    - libbrotli1
+    - libcurl4t64
+    - libexpat1
+    - liblua5.2-0
+    - libnghttp2-14
+    - libpcre2-8-0
+    - libssl3t64
+    - libxml2
+    - zlib1g
+  builds:
+    - name: build-httpd
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - bash
+          - ca-certificates
+          - coreutils
+          - dpkg-dev
+          - findutils
+          - gcc
+          - grep
+          - libbrotli-dev
+          - libcurl4-openssl-dev
+          - libexpat1-dev
+          - liblua5.2-dev
+          - libnghttp2-dev
+          - libpcre2-dev
+          - libssl-dev
+          - libtool
+          - libtool-bin
+          - libxml2-dev
+          - make
+          - patch
+          - python3
+          - sed
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/apache/apr.git#1.7.6
+            checksum: 5c18df51a91bcb3807f78eb36841d4d2ccf5563d
+            path: ${source.dir}/apr
+            spdx:
+              name: apr
+              version: 1.7.6
+              packages:
+                - name: apr
+                  purl: pkg:github/apache/apr@1.7.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/apr-util.git#1.6.3
+            checksum: 28327eeca2614816c1fa33ff7c4105213e0ad938
+            path: ${source.dir}/apr-util
+            spdx:
+              name: apr-util
+              version: 1.6.3
+              packages:
+                - name: apr-util
+                  purl: pkg:github/apache/apr-util@1.6.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/httpd.git#2.4.66
+            checksum: e4a77ef6051b3fe22eafacbcf54855b178a0bddd
+            path: ${source.dir}/httpd
+            spdx:
+              name: httpd
+              version: 2.4.66
+              packages:
+                - name: httpd
+                  purl: pkg:github/apache/httpd@2.4.66
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build apr
+          work-dir: ${source.dir}/apr
+          runs: |
+            set -eux -o pipefail
+
+            ./buildconf
+
+            ./configure \
+              --prefix=/usr/local/apr \
+              --enable-threads \
+              --enable-posix-shm \
+              --with-crypto \
+              --with-openssl=/usr
+
+            make -j "$(nproc)"
+            make install
+        - name: build apr-util
+          work-dir: ${source.dir}/apr-util
+          runs: |
+            set -eux -o pipefail
+
+            ./buildconf --with-apr=${source.dir}/apr
+
+            ./configure \
+              --prefix=/usr/local/apr-util \
+              --with-apr=/usr/local/apr \
+              --with-openssl=/usr \
+              --with-crypto
+
+            make -j "$(nproc)"
+            make install
+        - name: build httpd
+          work-dir: ${source.dir}/httpd
+          runs: |
+            set -eux -o pipefail
+
+            # Copy APR source into srclib for buildconf
+            mkdir -p srclib
+            cp -r ${source.dir}/apr srclib/
+            cp -r ${source.dir}/apr-util srclib/
+
+            ./buildconf
+
+            gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+            CFLAGS="$(dpkg-buildflags --get CFLAGS)"
+            CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"
+            LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"
+
+            # Point to installed APR
+            ./configure \
+              --build="$gnuArch" \
+              --prefix=/usr/local/apache2 \
+              --with-apr=/usr/local/apr \
+              --with-apr-util=/usr/local/apr-util \
+              --enable-mods-shared=most \
+              --enable-mpms-shared="event prefork worker" \
+              --with-mpm=event \
+              --enable-ssl \
+              --enable-proxy \
+              --enable-proxy-http \
+              --enable-rewrite \
+              --enable-deflate \
+              --enable-pie \
+              CFLAGS="-pipe $CFLAGS" \
+              CPPFLAGS="$CPPFLAGS" \
+              LDFLAGS="-Wl,--as-needed $LDFLAGS"
+
+            make -j "$(nproc)"
+            make install DESTDIR=${target.dir}
+
+            # Also copy APR libraries to target
+            mkdir -p ${target.dir}/usr/local/apr/lib
+            mkdir -p ${target.dir}/usr/local/apr-util/lib
+            cp -a /usr/local/apr/lib/* ${target.dir}/usr/local/apr/lib/
+            cp -a /usr/local/apr-util/lib/* ${target.dir}/usr/local/apr-util/lib/
+
+            # Clean up unnecessary files
+            rm -rf ${target.dir}/usr/local/apache2/man
+            rm -rf ${target.dir}/usr/local/apache2/manual
+        - name: configure httpd
+          runs: |
+            set -eux -o pipefail
+
+            # Configure logging to stdout/stderr
+            sed -ri \
+              -e 's!^(\s*CustomLog)\s+\S+!\1 /proc/self/fd/1!g' \
+              -e 's!^(\s*ErrorLog)\s+\S+!\1 /proc/self/fd/2!g' \
+              -e 's!^(\s*TransferLog)\s+\S+!\1 /proc/self/fd/1!g' \
+              -e 's!^(\s*User)\s+daemon\s*$!\1 www-data!g' \
+              -e 's!^(\s*Group)\s+daemon\s*$!\1 www-data!g' \
+              ${target.dir}/usr/local/apache2/conf/httpd.conf \
+              ${target.dir}/usr/local/apache2/conf/extra/httpd-ssl.conf
+
+            # Change port from 80 to 8080 (non-privileged)
+            sed -i 's/Listen 80/Listen 8080/' ${target.dir}/usr/local/apache2/conf/httpd.conf
+
+            # Set up permissions for www-data user
+            mkdir -p ${target.dir}/usr/local/apache2/logs
+            chown -R 65532:65532 ${target.dir}/usr/local/apache2
+            chmod -R g+w ${target.dir}/usr/local/apache2/logs
+      outputs:
+        - source: ${target.dir}/usr/local/apr
+          target: /usr/local/apr
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/apr-util
+          target: /usr/local/apr-util
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/apache2
+          target: /usr/local/apache2
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/httpd
+          target: /opt/docker/sbom/httpd
+          uid: 0
+          gid: 0
+accounts:
+  run-as: www-data
+  users:
+    - name: www-data
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: www-data
+      gid: 65532
+      members:
+        - www-data
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/local/apache2
+stop-signal: SIGWINCH
+environment:
+  HTTPD_PREFIX: /usr/local/apache2
+  HTTPD_VERSION: 2.4.66
+  LD_LIBRARY_PATH: /usr/local/apr/lib:/usr/local/apr-util/lib
+  PATH: /usr/local/apache2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: file
+    path: /usr/local/bin/httpd-foreground
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/httpd/bin/httpd-foreground
+  - type: directory
+    path: /var/www/html
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Apache HTTP Server image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - httpd-foreground
+ports:
+  - 8080/tcp
