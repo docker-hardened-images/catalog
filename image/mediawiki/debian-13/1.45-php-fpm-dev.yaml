@@ -17,6 +17,8 @@ platforms:
 dates:
   release: "2025-12-04"
 vars:
+  COMPOSER_PHAR_SHA256: c86ce603fe836bf0861a38c93ac566c8f1e69ac44b2445d9b7a6a17ea2e9972a
+  COMPOSER_VERSION: 2.9.5
   EXPAT_REFERENCE: dhi/pkg-expat:2.7.4-debian13@sha256:1a2ba4b5f4c2a647ccec8ee0d2bccba26bc8704c9c89f9940a9cebadc49cb88d
   IMAGEMAGICK_COMMIT_SHA: b5fdb90dac0e6d0bf1bbd95704bbd60216a5bc23
   IMAGEMAGICK_VERSION: 7.1.2-15
@@ -83,6 +85,7 @@ contents:
           - liblua5.1-0-dev
           - libpcre2-dev
           - tar
+          - unzip
         files:
           - url: https://releases.wikimedia.org/mediawiki/1.45/mediawiki-1.45.1.tar.gz
             path: ${source.dir}/mediawiki.tar.gz
@@ -99,6 +102,10 @@ contents:
             path: ${source.dir}/mediawiki.tar.gz.sig
             uid: 0
             gid: 0
+          - url: https://github.com/composer/composer/releases/download/2.9.5/composer.phar
+            path: ${source.dir}/composer.phar
+            uid: 0
+            gid: 0
       pipeline:
         - name: verify server GPG
           uses: gpg/verify@v1
@@ -106,6 +113,19 @@ contents:
             file: ${source.dir}/mediawiki.tar.gz
             keys: ${source.dir}/keys.txt
             signature: ${source.dir}/mediawiki.tar.gz.sig
+        - name: verify composer phar checksum
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Composer publishes a detached .asc signature, but we cannot verify it with gpg/verify@v1 because the
+            # public keys documented on https://composer.github.io/pubkeys.html are PEM/SPKI keys, not OpenPGP keys.
+            # Also explored Sigstore/GitHub attestations via cosign, but verification requires Rekor/tlog inclusion
+            # which is not reliably available in this build environment. To keep the build deterministic, we pin
+            # Composer to 2.9.5 and verify composer.phar by SHA-256 (COMPOSER_PHAR_SHA256).
+            # COMPOSER_PHAR_SHA256 is validated out-of-band by comparing the sha256 of the GitHub release asset
+            # and the https://getcomposer.org/download/2.9.5/composer.phar download.
+            echo "c86ce603fe836bf0861a38c93ac566c8f1e69ac44b2445d9b7a6a17ea2e9972a  ${source.dir}/composer.phar" | sha256sum -c -
         - name: extract source
           work-dir: ${source.dir}/mediawiki
           runs: |
@@ -156,6 +176,20 @@ contents:
             opcache.max_accelerated_files=4000
             opcache.revalidate_freq=60
             EOF
+        - name: bump firebase/php-jwt
+          work-dir: ${source.dir}/mediawiki
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # prevent dev-tool advisories from breaking the build
+            php ${source.dir}/composer.phar config audit.block-insecure false
+
+            # Bump to fixed major for CVE-2025-45769
+            php ${source.dir}/composer.phar require --no-interaction --no-ansi --no-progress --no-update firebase/php-jwt:^7.0
+
+            # Ensure vendor tree is updated (omit dev deps)
+            php ${source.dir}/composer.phar install --no-interaction --no-ansi --no-progress --no-dev --prefer-dist
       paths:
         - type: file
           path: ${source.dir}/keys.txt
