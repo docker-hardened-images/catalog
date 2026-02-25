@@ -1,0 +1,239 @@
+# syntax=dhi.io/build:2-debian13
+
+name: AWS Mountpoint S3 CSI Driver 2.x (dev)
+image: dhi.io/aws-mountpoint-s3-csi-driver
+variant: dev
+tags:
+  - 2-dev
+  - 2.3-dev
+  - 2.3.0-dev
+  - 2-debian13-dev
+  - 2.3-debian13-dev
+  - 2.3.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-07"
+vars:
+  BASE_DIGEST: sha256:d46a757d9ec2c6f6d9b7c4cdcfdb9bc65c9614c53ee28e0f489ed844fd2b79c8
+  BASE_TAG: 20250419-glibc-debian13
+  BUILD_DATE: "2026-01-07T00:00:00Z"
+  COMMIT_SHA: 1a551cd249708074f835e07cd4420a2dde69a9a1
+  GOLANG_REFERENCE: dhi/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+  MOUNTPOINT_VERSION: 1.21.0
+  MP_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  SEMVER_MAJOR_MINOR_VERSION: "2.3"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.3.0
+  VERSION: 2.3.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libfuse2t64
+    - mawk
+    - mount
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: mountpoint-s3
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - gpg
+          - gpg-agent
+          - grep
+          - gzip
+          - tar
+        files:
+          - url: https://s3.amazonaws.com/mountpoint-s3-release/public_keys/KEYS
+            path: ${source.dir}/KEYS
+            uid: 0
+            gid: 0
+          - url: https://s3.amazonaws.com/mountpoint-s3-release/1.21.0/${MP_ARCH}/mount-s3-1.21.0-${MP_ARCH}.tar.gz
+            path: ${source.dir}/mount-s3.tar.gz
+            spdx:
+              name: mountpoint-s3
+              version: 1.21.0
+              packages:
+                - name: mountpoint-s3
+                  purl: pkg:github/awslabs/mountpoint-s3@1.21.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://s3.amazonaws.com/mountpoint-s3-release/1.21.0/${MP_ARCH}/mount-s3-1.21.0-${MP_ARCH}.tar.gz.asc
+            path: ${source.dir}/mount-s3.tar.gz.asc
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify mount-s3 signature
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/mount-s3.tar.gz
+            keys: ${source.dir}/KEYS
+            signature: ${source.dir}/mount-s3.tar.gz.asc
+        - name: extract mount-s3
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf "${source.dir}/mount-s3.tar.gz" -C "${source.dir}"
+            mkdir -p "${target.dir}/usr/bin"
+            cp "${source.dir}/bin/mount-s3" "${target.dir}/usr/bin/mount-s3"
+      outputs:
+        - source: ${target.dir}/usr/bin/mount-s3
+          target: /usr/bin/mount-s3
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/mountpoint-s3
+          target: /opt/docker/sbom/mountpoint-s3
+          uid: 0
+          gid: 0
+    - name: aws-mountpoint-s3-csi-driver
+      uses: dhi.io/golang:1.25.7-debian13-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940
+      work-dir: /go/src/github.com/awslabs/mountpoint-s3-csi-driver
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/awslabs/mountpoint-s3-csi-driver.git#v2.3.0
+            checksum: 1a551cd249708074f835e07cd4420a2dde69a9a1
+            path: /go/src/github.com/awslabs/mountpoint-s3-csi-driver
+            spdx:
+              name: aws-mountpoint-s3-csi-driver
+              version: 2.3.0
+              packages:
+                - name: aws-mountpoint-s3-csi-driver
+                  purl: pkg:golang/github.com/awslabs/mountpoint-s3-csi-driver@2.3.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/net@v0.45.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests for cmd and pkg (skip mounter tests - they require Unix sockets)
+            CGO_ENABLED=0 go test -v ./cmd/... $(go list ./pkg/... | grep -v 'pkg/driver/node/mounter$')
+
+            # Skip controller tests - we don't implement controller for static provisioning
+            CGO_ENABLED=0 go test -v ./tests/sanity/... -ginkgo.skip="ControllerGetCapabilities" -ginkgo.skip="ValidateVolumeCapabilities" -ginkgo.skip="should remove target path"
+        - name: build aws-s3-csi-driver
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.driverVersion=2.3.0
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.gitCommit=1a551cd249708074f835e07cd4420a2dde69a9a1
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.buildDate=2026-01-07T00:00:00Z
+            output: ${target.dir}/usr/local/bin/aws-s3-csi-driver
+            packages: ./cmd/aws-s3-csi-driver
+        - name: build aws-s3-csi-controller
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.driverVersion=2.3.0
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.gitCommit=1a551cd249708074f835e07cd4420a2dde69a9a1
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.buildDate=2026-01-07T00:00:00Z
+            output: ${target.dir}/usr/local/bin/aws-s3-csi-controller
+            packages: ./cmd/aws-s3-csi-controller
+        - name: build aws-s3-csi-mounter
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.driverVersion=2.3.0
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.gitCommit=1a551cd249708074f835e07cd4420a2dde69a9a1
+              - -X github.com/awslabs/mountpoint-s3-csi-driver/pkg/driver/version.buildDate=2026-01-07T00:00:00Z
+            output: ${target.dir}/usr/local/bin/aws-s3-csi-mounter
+            packages: ./cmd/aws-s3-csi-mounter
+      outputs:
+        - source: ${target.dir}/usr/local/bin/aws-s3-csi-driver
+          target: /usr/bin/aws-s3-csi-driver
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/aws-s3-csi-controller
+          target: /usr/bin/aws-s3-csi-controller
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/aws-s3-csi-mounter
+          target: /usr/bin/aws-s3-csi-mounter
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/aws-mountpoint-s3-csi-driver
+          target: /opt/docker/sbom/aws-mountpoint-s3-csi-driver
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:d46a757d9ec2c6f6d9b7c4cdcfdb9bc65c9614c53ee28e0f489ed844fd2b79c8
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  MOUNTPOINT_BIN_DIR: /usr/bin
+  MOUNTPOINT_VERSION: 1.21.0
+annotations:
+  org.opencontainers.image.description: A minimal AWS Mountpoint for Amazon S3 CSI Driver image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/aws-s3-csi-driver
