@@ -1,0 +1,432 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-ruby
+variant: runtime
+tags:
+  - 3.3.10-apk-alpine3.23
+  - 3.3.10-r0-apk-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BUNDLER_VERSION: 4.0.3
+  CHECKSUM: b555baa467a306cfc8e6c6ed24d0d27b27e9a1bed1d91d95509859eac6b0e928
+  DEBUG_VERSION: 1.9.2
+  DHI_TEST_APK_PACKAGE: ruby-3.3
+  DHI_TEST_APK_PACKAGES: ruby-3.3-3.3.10-r0 ruby-3.3-libs-3.3.10-r0
+  GEMDIR: usr/lib/ruby/gems/3.3.0
+  MATRIX_VERSION: 0.4.2
+  MINITEST_VERSION: 5.20.0
+  NET_FTP_VERSION: 0.3.4
+  NET_IMAP_VERSION: 0.4.21
+  NET_POP_VERSION: 0.1.2
+  NET_SMTP_VERSION: 0.5.1
+  PACKAGE_NAME: ruby
+  POWER_ASSERT_VERSION: 2.0.3
+  PRIME_VERSION: 0.1.2
+  PRIORITY: "330"
+  RACC_VERSION: 1.7.3
+  RAKE_VERSION: 13.1.0
+  RBS_VERSION: 3.4.0
+  RDOC_VERSION: 6.14.0
+  REL: "0"
+  REXML_VERSION: 3.4.4
+  RSS_VERSION: 0.3.1
+  RUBY_COMMIT_SHA: 343ea050023cfc0374fdea6fdf625b2f57b716a4
+  RUBYDIR: usr/lib/ruby/3.3.0
+  SEMVER_MAJOR_MINOR_VERSION: "3.3"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.3.10
+  TEST_UNIT_VERSION: 3.6.1
+  TYPEPROF_VERSION: 0.21.9
+  VERSION: 3.3.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: ruby
+      work-dir: ${source.dir}/ruby-3.3.10
+      contents:
+        packages:
+          - gmp-dev
+          - libucontext-dev
+          - autoconf
+          - cargo
+          - gdbm-dev
+          - libffi-dev
+          - linux-headers
+          - openssl-dev
+          - readline-dev
+          - yaml-dev
+          - zlib-dev
+          - dpkg
+          - dpkg-dev
+          - jemalloc-dev
+        files:
+          - url: https://cache.ruby-lang.org/pub/ruby/3.3/ruby-3.3.10.tar.gz
+            checksum: sha256:b555baa467a306cfc8e6c6ed24d0d27b27e9a1bed1d91d95509859eac6b0e928
+            path: ${source.dir}/ruby.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf ruby.tar.gz
+        - name: autoconf
+          runs: |
+            set -eux -o pipefail
+
+            autoconf
+        - name: build
+          environment:
+            CFLAGS: -fno-omit-frame-pointer -fno-strict-aliasing
+            CPPFLAGS: -fno-omit-frame-pointer -fno-strict-aliasing
+            INSTALL: install
+            LIBS: -lucontext
+          runs: |
+            set -eux -o pipefail
+
+            # the configure script does not detect isnan/isinf as macros
+            export ac_cv_func_isinf="yes"
+            export ac_cv_func_isnan="yes"
+
+            gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+
+            ./configure \
+              --build="$gnuArch" \
+              --prefix=/usr \
+              --sysconfdir=/etc \
+              --mandir=/usr/share/man \
+              --infodir=/usr/share/info \
+              --with-sitedir=/usr/local/lib/site_ruby \
+              --enable-pthread \
+              --disable-rpath \
+              --enable-shared \
+              --enable-mkmf-verbose \
+              --enable-yjit \
+              --with-jemalloc \
+              --with-mantype=man
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            make -j${ncpus}
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            make DESTDIR="${target.dir}" SUDO="" install
+
+            install -m 644 -D COPYING "${target.dir}/usr/share/licenses/ruby/COPYING"
+
+            # Remove bundled CA certificates; they are provided by ca-certificates.
+            rm "${target.dir}/usr/lib/ruby/3.3.0"/rubygems/ssl_certs/*/*.pem
+            rmdir "${target.dir}/usr/lib/ruby/3.3.0"/rubygems/ssl_certs/* || true
+
+            rm -Rf "${target.dir}/usr/lib/ruby/gems/3.3.0"/cache/*
+            rm -rf "${target.dir}/usr/local"
+        - uses: sbom@v1
+          with:
+            prefix: ruby-gems
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/ruby-3.3
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/ruby-3.3
+          with:
+            depends: ca-certificates-bundle
+            depends_dev: $pkgname=$pkgver-r$pkgrel $pkgname-rdoc=$pkgver-r$pkgrel gmp-dev libucontext-dev
+            description: An object-oriented language for quick and easy programming
+            functions:
+              bundler: |
+                pkgdesc="Manage an application's gem dependencies"
+                pkgver=4.0.3
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-bundler=4.0.3-r0"
+                provider_priority=330
+                replaces="ruby-bundler"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/bundler-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/default/bundler-*
+                amove usr/bin/bundle
+                amove usr/bin/bundler
+              debug: |
+                pkgdesc="Debugger for Ruby"
+                pkgver=1.9.2
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-debug=1.9.2-r0"
+                provider_priority=330
+                replaces="ruby-debug"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/debug-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/debug-*
+                amove usr/bin/rdbg
+              full: |
+                pkgdesc="Ruby with all bundled gems"
+                depends="
+                  ruby-3.3
+                  ruby-3.3-libs
+                  ruby3.3-rdoc
+                  ruby3.3-bundler
+                  ruby3.3-minitest
+                  ruby3.3-power_assert
+                  ruby3.3-rake
+                  ruby3.3-test-unit
+                  ruby3.3-rexml
+                  ruby3.3-rss
+                  ruby3.3-net-ftp
+                  ruby3.3-net-pop
+                  ruby3.3-net-imap
+                  ruby3.3-net-smtp
+                  ruby3.3-matrix
+                  ruby3.3-prime
+                  ruby3.3-rbs
+                  ruby3.3-typeprof
+                  ruby3.3-debug
+                  ruby3.3-racc
+                "
+                provides="ruby-full=3.3.10-r0"
+                provider_priority=330
+                replaces="ruby-full"
+                replaces_priority=330
+
+                mkdir -p $subpkgdir
+              libs: |
+                pkgdesc="Libraries necessary to run Ruby"
+                depends=""
+                replaces="ruby-libs"
+                replaces_priority=330
+                provides="ruby-libs=3.3.10-r0"
+                provider_priority=330
+
+                amove usr/lib
+              matrix: |
+                pkgdesc="Matrix library for Ruby"
+                pkgver=0.4.2
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-matrix=0.4.2-r0"
+                provider_priority=330
+                replaces="ruby-matrix"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/matrix-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/matrix-*
+              minitest: |
+                pkgdesc="Suite of testing facilities supporting TDD, BDD, mocking, and benchmarking for Ruby"
+                pkgver=5.20.0
+                license="MIT"
+                depends="$pkgname"
+                provides="ruby-minitest=5.20.0-r0"
+                provider_priority=330
+                replaces="ruby-minitest"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/minitest-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/minitest-*
+              net_ftp: |
+                pkgdesc="Ruby FTP protocol library"
+                pkgver=0.3.4
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-net-ftp=0.3.4-r0"
+                provider_priority=330
+                replaces="ruby-net-ftp"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/net-ftp-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/net-ftp-*
+              net_imap: |
+                pkgdesc="Ruby IMAP protocol library"
+                pkgver=0.4.21
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-net-imap=0.4.21-r0"
+                provider_priority=330
+                replaces="ruby-net-imap"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/net-imap-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/net-imap-*
+              net_pop: |
+                pkgdesc="Ruby POP protocol library"
+                pkgver=0.1.2
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-net-pop=0.1.2-r0"
+                provider_priority=330
+                replaces="ruby-net-pop"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/net-pop-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/net-pop-*
+              net_smtp: |
+                pkgdesc="Ruby SMTP protocol library"
+                pkgver=0.5.1
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-net-smtp=0.5.1-r0"
+                provider_priority=330
+                replaces="ruby-net-smtp"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/net-smtp-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/net-smtp-*
+              power_assert: |
+                pkgdesc="Power Assert for Ruby"
+                pkgver=2.0.3
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-power_assert=2.0.3-r0"
+                provider_priority=330
+                replaces="ruby-power_assert"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/power_assert-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/power_assert-*
+              prime: |
+                pkgdesc="Prime number library for Ruby"
+                pkgver=0.1.2
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-prime=0.1.2-r0"
+                provider_priority=330
+                replaces="ruby-prime"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/prime-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/prime-*
+              racc: |
+                pkgdesc="LALR(1) parser generator for Ruby"
+                pkgver=1.7.3
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-racc=1.7.3-r0"
+                provider_priority=330
+                replaces="ruby-racc"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/racc-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/racc-*
+                amove usr/bin/racc
+              rake: |
+                pkgdesc="Ruby Make - a task runner and build utility"
+                pkgver=13.1.0
+                license="MIT"
+                depends="$pkgname"
+                provides="ruby-rake=13.1.0-r0"
+                provider_priority=330
+                replaces="ruby-rake"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/rake-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/rake-*
+                amove usr/bin/rake
+              rbs: |
+                pkgdesc="Type signature language for Ruby"
+                pkgver=3.4.0
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-rbs=3.4.0-r0"
+                provider_priority=330
+                replaces="ruby-rbs"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/rbs-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/rbs-*
+                amove usr/bin/rbs
+              rdoc: |
+                pkgdesc="Ruby documentation tool"
+                pkgver=6.14.0
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-rdoc=6.14.0-r0"
+                provider_priority=330
+                replaces="ruby-rdoc"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/rdoc-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/default/rdoc-*
+                amove usr/bin/ri
+                amove usr/bin/rdoc
+              rexml: |
+                pkgdesc="An XML toolkit for Ruby"
+                pkgver=3.4.4
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-rexml=3.4.4-r0"
+                provider_priority=330
+                replaces="ruby-rexml"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/rexml-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/rexml-*
+              rss: |
+                pkgdesc="RSS parser and generator for Ruby"
+                pkgver=0.3.1
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-rss=0.3.1-r0"
+                provider_priority=330
+                replaces="ruby-rss"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/rss-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/rss-*
+              test_unit: |
+                pkgdesc="Unit testing framework for Ruby"
+                pkgver=3.6.1
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-test-unit=3.6.1-r0"
+                provider_priority=330
+                replaces="ruby-test-unit"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/test-unit-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/test-unit-*
+              typeprof: |
+                pkgdesc="Ruby type analysis tool"
+                pkgver=0.21.9
+                license="Ruby"
+                depends="$pkgname"
+                provides="ruby-typeprof=0.21.9-r0"
+                provider_priority=330
+                replaces="ruby-typeprof"
+                replaces_priority=330
+
+                amove usr/lib/ruby/gems/3.3.0/gems/typeprof-*
+                amove usr/lib/ruby/gems/3.3.0/specifications/typeprof-*
+                amove usr/bin/typeprof
+            license: Ruby AND BSD-2-Clause AND MIT
+            name: ruby-3.3
+            provider_priority: 330
+            provides: ruby=3.3.10-r0
+            rel: 0
+            replaces: ruby
+            replaces_priority: 330
+            subpackages: $pkgname-dbg $pkgname-dev $pkgname-doc $pkgname-full ruby3.3-bundler::noarch ruby3.3-rdoc::noarch ruby3.3-minitest::noarch ruby3.3-power_assert::noarch ruby3.3-rake::noarch ruby3.3-test-unit:test_unit:noarch ruby3.3-rexml::noarch ruby3.3-rss::noarch ruby3.3-net-ftp:net_ftp:noarch ruby3.3-net-pop:net_pop:noarch ruby3.3-net-imap:net_imap:noarch ruby3.3-net-smtp:net_smtp:noarch ruby3.3-matrix::noarch ruby3.3-prime::noarch ruby3.3-rbs::noarch ruby3.3-typeprof::noarch ruby3.3-debug::noarch ruby3.3-racc::noarch $pkgname-libs
+            version: 3.3.10
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/ruby-3.3
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

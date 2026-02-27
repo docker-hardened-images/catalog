@@ -1,0 +1,191 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-eclipse-temurin
+variant: runtime
+tags:
+  - 25.0.2.10-alpine3.23
+  - 25.0.2.10-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
+  JAVA_DIR: /usr/lib/jvm/temurin-25
+  JAVA_MAJOR_VERSION: "25"
+  JAVA_TAR_GZ_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:961f13ba0ee1e18c41c50ab642361e4283dee5e7947a48ed6a72c8a661d0cca0" : "sha256:e8d928fb018eabb31a148ebadaa5a5ec69273e6562afede21c426960a6a67143" }'
+  JAVA_TAR_GZ_URL: '#{ target.arch == "amd64" ? "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.2%2B10/OpenJDK25U-jdk_x64_alpine-linux_hotspot_25.0.2_10.tar.gz" : "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.2%2B10/OpenJDK25U-jdk_aarch64_alpine-linux_hotspot_25.0.2_10.tar.gz" }'
+  JAVA_VERSION: 25.0.2
+  JAVA_VERSION_SUFFIX: "10"
+  PACKAGE_NAME: eclipse-temurin-25
+  PKG_VERSION: 25.0.2.10
+  REL: "0"
+  VERSION: 25.0.2.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: eclipse-temurin-25
+      work-dir: ${source.dir}/work
+      contents:
+        packages:
+          - busybox
+          - tar
+        files:
+          - url: ${JAVA_TAR_GZ_URL}
+            checksum: ${JAVA_TAR_GZ_CHECKSUM}
+            path: ${source.dir}/OpenJDK.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install payload into ${target.dir}
+          runs: |
+            set -eux -o pipefail
+
+            FIPS=false
+            case "eclipse-temurin-25" in
+              *-fips) FIPS=true ;;
+            esac
+
+
+            mkdir -p "${target.dir}/usr/lib/jvm/temurin-25"
+            tar -xzf "${source.dir}/OpenJDK.tar.gz" -C "${target.dir}/usr/lib/jvm/temurin-25" --strip-components=1
+
+            # Make the JVM available on PATH. We use /usr/bin (FHS-friendly).
+            mkdir -p "${target.dir}/usr/bin"
+            for tool in java javac jar jcmd jdeps jfr jimage jinfo jlink jmap jmod jps jrunscript jshell jstack jstat jstatd keytool rmiregistry; do
+              if [ -e "${target.dir}/usr/lib/jvm/temurin-25/bin/${tool}" ]; then
+                ln -sf "../lib/jvm/temurin-25/bin/${tool}" "${target.dir}/usr/bin/${tool}"
+              fi
+            done
+
+            # FIPS variant: provide an OpenSSL configuration snippet that selects the provider.
+            # Runtime dependency is expressed via APK depends.
+            mkdir -p "${target.dir}/etc/ssl"
+            if [ "${FIPS}" = "true" ]; then
+              printf '%s\n' \
+                '# OpenSSL 3 provider config for FIPS mode.' \
+                'openssl_conf = openssl_init' \
+                '' \
+                '[openssl_init]' \
+                'providers = provider_sect' \
+                '' \
+                '[provider_sect]' \
+                'fips = fips_sect' \
+                'base = base_sect' \
+                '' \
+                '[base_sect]' \
+                'activate = 1' \
+                '' \
+                '[fips_sect]' \
+                'activate = 1' \
+                > "${target.dir}/etc/ssl/openssl-fips.cnf"
+            fi
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25
+          with:
+            depends: ca-certificates-bundle libgcc libstdc++ musl tzdata so:libasound.so.2
+            description: Eclipse Temurin JDK 25
+            license: GPL-2.0-with-classpath-exception
+            name: eclipse-temurin-25
+            oci-config:
+              environment:
+                JAVA_HOME: /usr/lib/jvm/temurin-25
+            options: '!check !strip !tracedeps'
+            rel: 0
+            url: https://adoptium.net/
+            version: 25.0.2.10
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25
+        - uses: abuild/upload@v1
+    - name: eclipse-temurin-25-fips
+      work-dir: ${source.dir}/work
+      contents:
+        packages:
+          - busybox
+          - tar
+        files:
+          - url: ${JAVA_TAR_GZ_URL}
+            checksum: ${JAVA_TAR_GZ_CHECKSUM}
+            path: ${source.dir}/OpenJDK.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install payload into ${target.dir}
+          runs: |
+            set -eux -o pipefail
+
+            FIPS=false
+            case "eclipse-temurin-25-fips" in
+              *-fips) FIPS=true ;;
+            esac
+
+
+            mkdir -p "${target.dir}/usr/lib/jvm/temurin-25"
+            tar -xzf "${source.dir}/OpenJDK.tar.gz" -C "${target.dir}/usr/lib/jvm/temurin-25" --strip-components=1
+
+            # Make the JVM available on PATH. We use /usr/bin (FHS-friendly).
+            mkdir -p "${target.dir}/usr/bin"
+            for tool in java javac jar jcmd jdeps jfr jimage jinfo jlink jmap jmod jps jrunscript jshell jstack jstat jstatd keytool rmiregistry; do
+              if [ -e "${target.dir}/usr/lib/jvm/temurin-25/bin/${tool}" ]; then
+                ln -sf "../lib/jvm/temurin-25/bin/${tool}" "${target.dir}/usr/bin/${tool}"
+              fi
+            done
+
+            # FIPS variant: provide an OpenSSL configuration snippet that selects the provider.
+            # Runtime dependency is expressed via APK depends.
+            mkdir -p "${target.dir}/etc/ssl"
+            if [ "${FIPS}" = "true" ]; then
+              printf '%s\n' \
+                '# OpenSSL 3 provider config for FIPS mode.' \
+                'openssl_conf = openssl_init' \
+                '' \
+                '[openssl_init]' \
+                'providers = provider_sect' \
+                '' \
+                '[provider_sect]' \
+                'fips = fips_sect' \
+                'base = base_sect' \
+                '' \
+                '[base_sect]' \
+                'activate = 1' \
+                '' \
+                '[fips_sect]' \
+                'activate = 1' \
+                > "${target.dir}/etc/ssl/openssl-fips.cnf"
+            fi
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25-fips
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25-fips
+          with:
+            depends: ca-certificates-bundle libgcc libstdc++ musl tzdata so:libasound.so.2
+            description: Eclipse Temurin JDK 25
+            license: GPL-2.0-with-classpath-exception
+            name: eclipse-temurin-25-fips
+            oci-config:
+              environment:
+                JAVA_HOME: /usr/lib/jvm/temurin-25
+                OPENSSL_CONF: /etc/ssl/openssl-fips.cnf
+                OPENSSL_MODULES: /usr/lib/ossl-modules
+            options: '!check !strip !tracedeps'
+            rel: 0
+            url: https://adoptium.net/
+            version: 25.0.2.10
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/eclipse-temurin-25-fips
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
