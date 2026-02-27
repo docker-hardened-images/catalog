@@ -25,7 +25,7 @@ services:
          - data:/var/www/data
 
    nginx:
-      image: dhi/nginx:1-debian13
+      image: dhi.io/nginx:1-debian13
       ports:
          - "80:80"
       depends_on:
