@@ -1,0 +1,244 @@
+# syntax=dhi.io/build:2-debian13
+
+name: PyTorch 2.10.x (dev)
+image: dhi.io/pytorch
+variant: dev
+tags:
+  - 2.10.0-cuda12.9-cudnn9-python3.12-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BINUTILS_REFERENCE: dhi/pkg-binutils:2.45-debian13@sha256:ec7e4a2bd685757646c09915f5d71be3613d0bec266926caceccbb5da84e6916
+  COMMIT_SHA: 449b1768410104d3ed79d3bcfe4ba1d65c7f22c0
+  CUDA_MAJOR_MINOR_VERSION: "12.9"
+  CUDA_MAJOR_VERSION: "12"
+  CUDA_MINOR_VERSION: "9"
+  CUDA_PATH: cu129
+  CUDA_REFERENCE: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04@sha256:67d62b0967a91447f4f1ef22453dac317724e64cd7b29f4ad790216e5e2c3541
+  CUDNN_VERSION: "9"
+  DEBIAN_VERSION: "13"
+  LIBPNG_REFERENCE: dhi/pkg-libpng:1.6.55-debian13@sha256:c5c07ac5cccf14b8fcdb468bcf9609e87c1a50fd904016c52e90b675504eabc8
+  PIP_CMAKE_VERSION: 4.1.2
+  PIP_IPYTHON_VERSION: 9.6.0
+  PIP_NUMPY_VERSION: 2.3.4
+  PIP_PYYAML_VERSION: 6.0.3
+  PYTHON_DEV_REFERENCE: dhi/python:3.12.12-debian13-dev@sha256:0dc63df7a74638501b38ef95872ab7c4ce9563fc8105c7be8990e6955c686ad4
+  PYTHON_REFERENCE: dhi/python:3.12.12-debian13@sha256:b09ef62ad55e2469016d6c36d36a23efbea3e5962394132446018ca07e023ebd
+  PYTORCH_CUDA_VERSION: 12.9.1
+  PYTORCH_CUDNN_VERSION: 9.10.2.21
+  PYTORCH_PYTHON_VERSION: "3.12"
+  TAG_CUDA_VERSION: "12.9"
+  TAG_CUDNN_VERSION: "9"
+  TAG_TORCH_VERSION: "2.10"
+  TORCHAUDIO_VERSION: 2.10.0
+  TORCHVISION_VERSION: 0.25.0
+  VERSION: 2.10.0
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - build-essential
+    - ca-certificates
+    - diffutils
+    - dpkg
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+    - zlib1g-dev
+  builds:
+    - name: pytorch build
+      uses: dhi.io/python:3.12.12-debian13-dev@sha256:0dc63df7a74638501b38ef95872ab7c4ce9563fc8105c7be8990e6955c686ad4
+      environment:
+        CUDA_PATH: cu129
+        INDEX_ARGS: --index-url https://download.pytorch.org/whl/cu129/
+        INSTALL_CHANNEL: whl
+        PATH: /usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin:/opt/python/bin
+      contents:
+        packages:
+          - base-files
+          - build-essential
+          - ca-certificates
+          - ccache
+          - cmake
+          - ninja-build
+          - coreutils
+          - curl
+          - bash
+          - grep
+          - libc-bin
+          - sed
+          - libjpeg-dev
+        files:
+          - url: git+https://github.com/pytorch/pytorch.git#v2.10.0
+            checksum: 449b1768410104d3ed79d3bcfe4ba1d65c7f22c0
+            path: ${source.dir}/pytorch-src
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04@sha256:67d62b0967a91447f4f1ef22453dac317724e64cd7b29f4ad790216e5e2c3541
+            includes:
+              - usr/local/cuda-*
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create cuda symlinks
+          work-dir: /usr/local
+          runs: |
+            set -eux -o pipefail
+
+            # Create standard symlinks for the build process.
+            [ -d /usr/local/cuda-12.9 ]
+            ln -sf cuda-12.9 /usr/local/cuda-12
+            ln -sf cuda-12 /usr/local/cuda
+        - name: run ccache (logic from dev-base build in upstream)
+          work-dir: ${source.dir}/pytorch-src
+          runs: |
+            set -eux -o pipefail
+
+            /usr/sbin/update-ccache-symlinks
+            mkdir -p /opt/ccache
+            ccache --set-config=cache_dir=/opt/ccache
+        - name: preinstall setuptools
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install setuptools # CVE-2025-47273
+        - name: install runtime requirements
+          work-dir: ${source.dir}/pytorch-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install PyYAML==6.0.3 numpy==2.3.4 ipython==9.6.0 cmake==4.1.2
+            pip install urllib3==2.6.3   # CVE-2026-21441
+            pip install pillow==12.1.1   # CVE-2026-25990
+            pip install filelock==3.20.3 # CVE-2025-68146 CVE-2026-22701
+        - name: install OpenAI triton from binary captured by the pytorch dev team
+          work-dir: ${source.dir}/pytorch-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make triton
+        - name: install primary torch package
+          work-dir: ${source.dir}
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install $INDEX_ARGS torch==2.10.0
+            python3 -c 'import torch'
+        - name: verify pytorch base package and GPU integration
+          runs: |
+            set -eux -o pipefail
+
+            IS_CUDA=$(python3 -c 'import torch; print(torch.cuda._is_compiled())')
+            if [ "${IS_CUDA}" != "True" ]; then
+              echo "ERROR: CUDA support not found in PyTorch installation for ${ARCH}!"
+              exit 1
+            fi
+        - name: install torchvision, torchaudio matching versions in upstream
+          work-dir: ${source.dir}
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install $INDEX_ARGS \
+              torch==2.10.0 \
+              torchvision==0.25.0 \
+              torchaudio==2.10.0
+
+            python3 -c "import torchvision"
+            python3 -c "import torchaudio"
+      outputs:
+        - source: /opt
+          target: /opt
+          uid: 0
+          gid: 0
+          diff: true
+  artifacts:
+    - name: dhi.io/python:3.12.12-debian13-dev@sha256:0dc63df7a74638501b38ef95872ab7c4ce9563fc8105c7be8990e6955c686ad4
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04@sha256:67d62b0967a91447f4f1ef22453dac317724e64cd7b29f4ad790216e5e2c3541
+      includes:
+        - NGC-DL-CONTAINER-LICENSE
+        - usr/local/cuda-12.9
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /workspace
+environment:
+  CUDA_VERSION: 12.9.1
+  DEBIAN_FRONTEND: noninteractive
+  LD_LIBRARY_PATH: /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+  LIBRARY_PATH: /usr/local/cuda/lib64/stubs
+  NVARCH: ${target.arch}
+  NVIDIA_CTK_LIBCUDA_DIR: /usr/lib/${target.arch}-linux-gnu
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  NVIDIA_PRODUCT_NAME: CUDA
+  NVIDIA_REQUIRE_CUDA: cuda>=12.9 brand=unknown,driver>=470,driver<471 brand=grid,driver>=470,driver<471 brand=tesla,driver>=470,driver<471 brand=nvidia,driver>=470,driver<471 brand=quadro,driver>=470,driver<471 brand=quadrortx,driver>=470,driver<471 brand=nvidiartx,driver>=470,driver<471 brand=vapps,driver>=470,driver<471 brand=vpc,driver>=470,driver<471 brand=vcs,driver>=470,driver<471 brand=vws,driver>=470,driver<471 brand=cloudgaming,driver>=470,driver<471 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=560,driver<561 brand=grid,driver>=560,driver<561 brand=tesla,driver>=560,driver<561 brand=nvidia,driver>=560,driver<561 brand=quadro,driver>=560,driver<561 brand=quadrortx,driver>=560,driver<561 brand=nvidiartx,driver>=560,driver<561 brand=vapps,driver>=560,driver<561 brand=vpc,driver>=560,driver<561 brand=vcs,driver>=560,driver<561 brand=vws,driver>=560,driver<561 brand=cloudgaming,driver>=560,driver<561 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566
+  NVIDIA_VISIBLE_DEVICES: all
+  PATH: /usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin:/opt/python/bin
+  PYTORCH_VERSION: $VERSION
+paths:
+  - type: directory
+    path: /workspace
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /usr/local
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/cuda-12
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-12.9
+  - type: symlink
+    path: /usr/local/cuda
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-12.9
+annotations:
+  com.nvidia.volumes.needed: nvidia_driver
+  org.opencontainers.image.description: PyTorch - Deep learning framework with GPU acceleration
+  org.opencontainers.image.licenses: BSD-3-Clause
+cmd:
+  - /bin/bash
