@@ -106,7 +106,7 @@ metadata:
   namespace: default
 spec:
   java:
-    image: dhi/opentelemetry-auto-instrumentation-java:latest
+    image: dhi.io/opentelemetry-auto-instrumentation-java:latest
 ```
 
 ### Collector with custom configuration

@@ -103,7 +103,7 @@ Recommendations:
 ```yaml
 services:
   fetch-mcp:
-    image: dhi/fetch-mcp
+    image: dhi.io/fetch-mcp
     stdin_open: true
     tty: true
 ```
