@@ -166,14 +166,14 @@ $ docker run -d -e NGINX_ENTRYPOINT_QUIET_LOGS=1 dhi.io/nginx:<tag>-dev
 
 ### Key differences
 
-| Feature         | Non-hardened Nginx                  | Docker Hardened Nginx                               |
-| --------------- | ----------------------------------- | --------------------------------------------------- |
-| Security        | Standard base with common utilities | Minimal, hardened base with security patches        |
-| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants                        |
-| Package manager | apt/apk available                   | No package manager in runtime variants              |
-| User            | Runs as root by default             | Runs as nonroot user                                |
-| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                  |
-| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting |
+| Feature         | Non-hardened Nginx                  | Docker Hardened Nginx                                     |
+| --------------- | ----------------------------------- | --------------------------------------------------------- |
+| Security        | Standard base with common utilities | Minimal, hardened base with security patches              |
+| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants unless needed to run the app |
+| Package manager | apt/apk available                   | No package manager in runtime variants                    |
+| User            | Runs as root by default             | Runs as nonroot user                                      |
+| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                        |
+| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting       |
 
 ### Why no shell or package manager?
 
@@ -183,8 +183,9 @@ Docker Hardened Images prioritize security through minimalism:
 - Immutable infrastructure: Runtime containers shouldn't be modified after deployment
 - Compliance ready: Meets strict security requirements for regulated environments
 
-The hardened images intended for runtime don't contain a shell nor any tools for debugging. Common debugging methods for
-applications built with Docker Hardened Images include:
+The hardened images intended for runtime don't contain a shell unless it's required for the application to run. Runtime
+images also typically don't include debugging tools. Common debugging methods for applications built with Docker
+Hardened Images include:
 
 - [Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to containers
 - Docker's Image Mount feature to mount debugging tools
@@ -215,7 +216,7 @@ Docker Hardened Images come in different variants depending on their intended us
   directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
 
   - Run as the nonroot user
-  - Do not include a shell or a package manager
+  - Do not include a shell or package manager unless required for the application to run
   - Contain only the minimal set of libraries needed to run the app
 
 - Build-time variants typically include `dev` in the variant name and are intended for use in the first stage of a
@@ -244,11 +245,11 @@ The following are common issues that you may encounter during migration.
 
 ### General debugging
 
-The hardened images intended for runtime don't contain a shell nor any tools for debugging. The recommended method for
-debugging applications built with Docker Hardened Images is to use
-[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers. Docker Debug provides
-a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only exists
-during the debugging session.
+The hardened images intended for runtime don't contain a shell unless it's required for the application to run, and
+typically don't include debugging tools. The recommended method for debugging applications built with Docker Hardened
+Images is to use [Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers.
+Docker Debug provides a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer
+that only exists during the debugging session.
 
 ### Permissions
 
@@ -266,9 +267,9 @@ the host. For example, `docker run -p 80:8080 my-image` will work because the po
 
 ### No shell
 
-By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
-commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
-with no shell.
+By default, image variants intended for runtime don't contain a shell unless it's required for the application to run.
+Use `dev` images in build stages to run shell commands and then copy any necessary artifacts into the runtime stage. In
+addition, use Docker Debug to debug containers with no shell.
 
 ### Entry point
 
