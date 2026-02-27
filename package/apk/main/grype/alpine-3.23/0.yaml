@@ -1,0 +1,217 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-grype
+variant: runtime
+tags:
+  - 0.109.0-alpine3.23
+  - 0.109.0-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+  PACKAGE_NAME: grype
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "0.109"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.109.0
+  VERSION: 0.109.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: grype
+      work-dir: /go/src/github.com/anchore/grype
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.25
+          - golang-1.25-oci-config
+          - zstd
+        files:
+          - url: git+https://github.com/anchore/grype.git#v0.109.0
+            checksum: fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+            path: /go/src/github.com/anchore/grype
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch disable update check
+          uses: git/patch@v1
+          with:
+            patch: disable-update-check.patch
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - github.com/cloudflare/circl@v1.6.3
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            # skipped tests require docker run to be available which isn't in our builds
+            go test -skip 'Test_descriptorNameAndVersionSet|TestMatchByImage.*|TestCompareSBOMInputToLibResults|TestSubprocessStdin|TestDBProviders.*|TestCmd|TestPrepareWritableDB|TestSyftLocationExcludes.*|SarifIsValid|CycloneDX_Valid.*' ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.109.0
+              - -X main.gitDescription=0.109.0
+              - -X main.gitCommit=fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/grype
+            packages: ./cmd/grype
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.109.0
+              - -X main.gitDescription=0.109.0
+              - -X main.gitCommit=fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/grype-dev
+            packages: ./cmd/grype
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: grype-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/grype
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/grype
+          with:
+            description: A vulnerability scanner for container images and filesystems
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/grype-dev" "$subpkgdir/usr/bin/grype"
+            license: Apache-2.0
+            name: grype
+            options: '!check !strip'
+            rel: 1
+            subpackages: $pkgname-dev
+            url: https://github.com/anchore/grype
+            version: 0.109.0
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/grype
+        - uses: abuild/upload@v1
+      paths:
+        - type: file
+          path: /go/src/github.com/anchore/grype/disable-update-check.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/grype/patch/disable-update-check.patch
+    - name: grype-fips
+      work-dir: /go/src/github.com/anchore/grype
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.25
+          - golang-1.25-oci-config
+          - zstd
+        files:
+          - url: git+https://github.com/anchore/grype.git#v0.109.0
+            checksum: fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+            path: /go/src/github.com/anchore/grype
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch disable update check
+          uses: git/patch@v1
+          with:
+            patch: disable-update-check.patch
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - github.com/cloudflare/circl@v1.6.3
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: fips140=on
+          runs: |
+            set -eux -o pipefail
+
+            # skipped tests require docker run to be available which isn't in our builds
+            go test -skip 'Test_descriptorNameAndVersionSet|TestMatchByImage.*|TestCompareSBOMInputToLibResults|TestSubprocessStdin|TestDBProviders.*|TestCmd|TestPrepareWritableDB|TestSyftLocationExcludes.*|SarifIsValid|CycloneDX_Valid.*' ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: true
+            ldflags:
+              - -X main.version=0.109.0
+              - -X main.gitDescription=0.109.0
+              - -X main.gitCommit=fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/grype
+            packages: ./cmd/grype
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: true
+            ldflags:
+              - -X main.version=0.109.0
+              - -X main.gitDescription=0.109.0
+              - -X main.gitCommit=fe186c3e986dda3cb4c5e90798f82c52aefcb4b8
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/grype-dev
+            packages: ./cmd/grype
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: grype-fips-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/grype-fips
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/grype-fips
+          with:
+            description: A vulnerability scanner for container images and filesystems
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/grype-dev" "$subpkgdir/usr/bin/grype"
+            license: Apache-2.0
+            name: grype-fips
+            options: '!check !strip'
+            rel: 1
+            subpackages: $pkgname-dev
+            url: https://github.com/anchore/grype
+            version: 0.109.0
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/grype-fips
+        - uses: abuild/upload@v1
+      paths:
+        - type: file
+          path: /go/src/github.com/anchore/grype/disable-update-check.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/grype/patch/disable-update-check.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

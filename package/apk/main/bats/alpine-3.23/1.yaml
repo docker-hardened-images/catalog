@@ -1,0 +1,129 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-bats
+variant: runtime
+tags:
+  - 1.13.0-alpine3.23
+  - 1.13.0-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BATS_ASSERT_COMMIT_SHA: f1e9280eaae8f86cbe278a687e6ba755bc802c1a
+  BATS_ASSERT_VERSION: 2.2.4
+  BATS_DETIK_COMMIT_SHA: d42699741a2ed7b74ab8178b0038276d6e36faf1
+  BATS_DETIK_VERSION: 1.4.0
+  BATS_FILE_COMMIT_SHA: 13ad5e2ffcc360281432db3d43a306f7b3667d60
+  BATS_FILE_VERSION: 0.4.0
+  BATS_SUPPORT_COMMIT_SHA: 24a72e14349690bcbf7c151b9d2d1cdd32d36eb1
+  BATS_SUPPORT_VERSION: 0.3.0
+  COMMIT_SHA: 3bca150ec86275d6d9d5a4fd7d48ab8b6c6f3d87
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.13"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.13.0
+  VERSION: 1.13.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: bats
+      work-dir: ${source.dir}/bats-core
+      contents:
+        packages:
+          - bash
+          - busybox
+          - coreutils
+          - sed
+        files:
+          - url: git+https://github.com/bats-core/bats-core.git#v1.13.0
+            checksum: 3bca150ec86275d6d9d5a4fd7d48ab8b6c6f3d87
+            path: ${source.dir}/bats-core
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/bats-core/bats-support.git#v0.3.0
+            checksum: 24a72e14349690bcbf7c151b9d2d1cdd32d36eb1
+            path: ${source.dir}/bats-support
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/bats-core/bats-assert.git#v2.2.4
+            checksum: f1e9280eaae8f86cbe278a687e6ba755bc802c1a
+            path: ${source.dir}/bats-assert
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/bats-core/bats-file.git#v0.4.0
+            checksum: 13ad5e2ffcc360281432db3d43a306f7b3667d60
+            path: ${source.dir}/bats-file
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/bats-core/bats-detik.git#v1.4.0
+            checksum: d42699741a2ed7b74ab8178b0038276d6e36faf1
+            path: ${source.dir}/bats-detik
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage bats + plugins
+          runs: |
+            set -eux -o pipefail
+
+            # Follow the existing image layout for now (including /opt/bats).
+            mkdir -p "${target.dir}/opt/bats"
+            cp -r "${source.dir}/bats-core"/* "${target.dir}/opt/bats"
+
+            # Install the different plugins into the correct locations.
+            install -Dm755 "${source.dir}/bats-support/load.bash" "${target.dir}/usr/lib/bats/bats-support/load.bash"
+            for fn in "${source.dir}/bats-support/src/"*.bash; do
+              install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-support/src/$(basename "$fn")"
+            done
+
+            install -Dm755 "${source.dir}/bats-file/load.bash" "${target.dir}/usr/lib/bats/bats-file/load.bash"
+            for fn in "${source.dir}/bats-file/src/"*.bash; do
+              install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-file/src/$(basename "$fn")"
+            done
+
+            install -Dm755 "${source.dir}/bats-assert/load.bash" "${target.dir}/usr/lib/bats/bats-assert/load.bash"
+            for fn in "${source.dir}/bats-assert/src/"*.bash; do
+              install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-assert/src/$(basename "$fn")"
+            done
+
+            # Detik is a bit different. It does not have a load.bash and scripts don't go in a src directory.
+            for fn in "${source.dir}/bats-detik/lib/"*.bash; do
+              install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-detik/$(basename "$fn")"
+            done
+
+            # Provide the same bats path as the image uses.
+            mkdir -p "${target.dir}/usr/local/bin"
+            ln -s /opt/bats/bin/bats "${target.dir}/usr/local/bin/bats"
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/bats
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/bats
+          with:
+            depends: bash
+            description: Bash Automated Testing System (bats-core) with bundled plugins
+            files:
+              - opt/bats
+              - usr/lib/bats
+              - usr/local/bin
+            license: MIT
+            name: bats
+            options: '!check !strip !fhs'
+            rel: 0
+            url: https://github.com/bats-core/bats-core
+            version: 1.13.0
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/bats
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,207 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-golang
+variant: runtime
+tags:
+  - 1.24.13-apk-alpine3.23
+  - 1.24.13-r1-apk-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 96e4e2b1616c3c59577d48abcf2823bf1fdcd2e2
+  PACKAGE_NAME: golang-1.24
+  PACKAGE_VERSION: 1.24.13
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.24"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.24.13
+  VERSION: 1.24.13
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: golang
+      contents:
+        packages:
+          - bash
+          - build-base
+          - binutils-gold
+          - go
+        files:
+          - url: git+https://github.com/golang/go.git#go1.24.13
+            checksum: 96e4e2b1616c3c59577d48abcf2823bf1fdcd2e2
+            path: ${source.dir}/go
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: patch@v1
+          work-dir: ${source.dir}/go
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/always-emit-ldflags.patch
+              - ${source.dir}/patch/disable-telemetry.patch
+              - ${source.dir}/patch/prefer-musl-over-glibc.patch
+              - ${source.dir}/patch/drop-binutils-gold-dep.patch
+        - name: install
+          work-dir: ${source.dir}/go/src
+          runs: |
+            set -eux -o pipefail
+
+            ./make.bash -v
+        - name: cleanup
+          work-dir: ${source.dir}/go
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf .git .gitattributes .github .gitignore
+            rm -rf pkg/obj
+            rm -rf pkg/bootstrap
+            rm -rf pkg/tool/*/api
+            rm -rf pkg/tool/*/dist*
+            rm -rf pkg/*/cmd
+            rm -rf pkg/tool/*/go_bootstrap
+            rm -rf src/cmd/dist
+        - name: stage
+          work-dir: ${source.dir}/go
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin" "${target.dir}/usr/lib/go/bin" "${target.dir}/usr/share/doc/go"
+
+            for bin in go gofmt; do
+              install -Dm755 bin/$bin "${target.dir}/usr/lib/go/bin/$bin"
+              ln -s /usr/lib/go/bin/$bin "${target.dir}/usr/bin/"
+            done
+
+            cp -a pkg lib "${target.dir}/usr/lib/go/"
+            cp -r doc misc "${target.dir}/usr/share/doc/go"
+            cp -a src "${target.dir}/usr/lib/go/"
+            cp -p go.env "${target.dir}/usr/lib/go/go.env"
+
+            rm -rf "${target.dir}/usr/lib/go/pkg/obj"
+            rm -rf "${target.dir}/usr/lib/go/pkg/bootstrap"
+            rm -rf "${target.dir}/usr/lib/go/pkg/tool/*/api"
+            rm -rf "${target.dir}/usr/lib/go/pkg/*/cmd"
+            rm -rf "${target.dir}/usr/lib/go/pkg/tool/*/api"
+            rm -rf "${target.dir}/usr/lib/go/pkg/tool/*/go_bootstrap"
+            rm -rf "${target.dir}/usr/lib/go/src/cmd/dist/dist"
+
+            # Remove tests from /usr/lib/go/src, not needed at runtime
+            find "${target.dir}/usr/lib/go/src" \( -type f -a -name "*_test.go" \) \
+              -exec rm -rf \{\} \+
+            find "${target.dir}/usr/lib/go/src" \( -type d -a -name "testdata" \) \
+              -exec rm -rf \{\} \+
+            find "${target.dir}/usr/lib/go/src" \( -type f -a -name "*.rc" \) \
+              -exec rm -rf \{\} \+
+            find "${target.dir}/usr/lib/go/src" \( -type f -a -name "*.bat" \) \
+              -exec rm -rf \{\} \+
+            find "${target.dir}/usr/lib/go/src" \( -type f -a -name "*.pem" \) \
+              -exec rm -rf \{\} \+
+        - runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/config"
+            cat > "${target.dir}/opt/docker/config/golang-1.24-fips.yaml" << 'EOF'
+            environment:
+              GODEBUG: "fips140=only,tarinsecurepath=0,zipinsecurepath=0"
+              # https://go.dev/doc/security/fips140#the-gofips140-environment-variable
+              # set to the version that is currently undergoing FIPS certification
+              GOFIPS140: v1.0.0
+            EOF
+        - uses: abuild/setup@v1
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/golang-1.24
+          with:
+            depends: binutils gcc musl-dev
+            description: Go programming language compiler
+            files:
+              - opt/docker/config
+              - usr/bin/go
+              - usr/bin/gofmt
+              - usr/lib/go
+              - usr/share/doc/go
+            functions:
+              fips_oci_config: |
+                pkgdesc="OCI configuration for golang-1.24 fips"
+                depends="golang-1.24"
+                amove /opt/docker/config/golang-1.24-fips.yaml
+            license: BSD-3-Clause
+            name: golang-1.24
+            oci-config:
+              environment:
+                GODEBUG: tarinsecurepath=0,zipinsecurepath=0
+                GOPATH: /go
+                GOTOOLCHAIN: local+auto
+                PATH: /go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+              paths:
+                - gid: 65532
+                  mode: "0755"
+                  path: /go
+                  type: directory
+                  uid: 65532
+                - gid: 65532
+                  mode: "0755"
+                  path: /go/bin
+                  type: directory
+                  uid: 65532
+                - gid: 65532
+                  mode: "0755"
+                  path: /go/src
+                  type: directory
+                  uid: 65532
+                - gid: 65532
+                  mode: "0755"
+                  path: /usr/src
+                  type: directory
+                  uid: 65532
+                - gid: 65532
+                  mode: "0755"
+                  path: /go/pkg
+                  type: directory
+                  uid: 65532
+            options: '!check'
+            provider_priority: 200
+            provides: go=$pkgver-r$pkgrel
+            rel: 1
+            replaces: go
+            subpackages: $pkgname-doc $pkgname-fips-oci-config:fips_oci_config:noarch
+            version: 1.24.13
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/golang-1.24
+        - uses: abuild/upload@v1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/always-emit-ldflags.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/golang/patch/always-emit-ldflags.patch
+        - type: file
+          path: ${source.dir}/patch/disable-telemetry.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/golang/patch/disable-telemetry.patch
+        - type: file
+          path: ${source.dir}/patch/prefer-musl-over-glibc.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/golang/patch/prefer-musl-over-glibc.patch
+        - type: file
+          path: ${source.dir}/patch/drop-binutils-gold-dep.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/golang/patch/drop-binutils-gold-dep.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

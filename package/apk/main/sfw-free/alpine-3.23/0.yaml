@@ -1,0 +1,150 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-sfw-free
+variant: runtime
+tags:
+  - 1.6.0-alpine3.23
+  - 1.6.0-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  PACKAGE_NAME: sfw-free
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0
+  VERSION: 1.6.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: conf
+      work-dir: ${source.dir}/aports/sfw-free
+      contents:
+        files:
+          - url: https://github.com/SocketDev/sfw-free/releases/download/v1.6.0/sfw-free-musl-linux-${ARCH}
+            path: ${target.dir}/opt/socket/bin/sfw
+            uid: 0
+            gid: 0
+            mode: "0755"
+          - url: https://raw.githubusercontent.com/SocketDev/sfw-free/refs/tags/v1.6.0/LICENSE.md
+            path: ${target.dir}/opt/socket/LICENSE.md
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create alias
+          runs: |
+            set -eux -o pipefail
+
+            echo "Creating npm alias"
+
+            cat > "${target.dir}/opt/socket/bin/npm" << 'EOF'
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "${DHI_NO_SFW}" = "true" ]; then
+              /usr/bin/npm "$@"
+            else
+              sfw /usr/bin/npm "$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/npm"
+
+            echo "Creating yarn alias"
+
+            cat > "${target.dir}/opt/socket/bin/yarn" << EOF
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "\${DHI_NO_SFW}" = "true" ]; then
+              /usr/bin/yarn "\$@"
+            else
+              sfw /usr/bin/yarn "\$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/yarn"
+
+            echo "Creating pip alias"
+
+            cat > "${target.dir}/opt/socket/bin/pip" << 'EOF'
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "${DHI_NO_SFW}" = "true" ]; then
+              /usr/bin/pip3 "$@"
+            else
+              sfw /usr/bin/pip3 "$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/pip"
+            ln -s pip "${target.dir}/opt/socket/bin/pip3"
+
+            echo "Creating cargo alias"
+
+            cat > "${target.dir}/opt/socket/bin/cargo" << 'EOF'
+            #!/bin/sh
+
+            # if DHI_NO_SFW is set to true, run the command without sfw, otherwise run with sfw
+            if [ "${DHI_NO_SFW}" = "true" ]; then
+              /usr/bin/cargo "$@"
+            else
+              sfw /usr/bin/cargo "$@"
+            fi
+            EOF
+
+            chmod +x "${target.dir}/opt/socket/bin/cargo"
+        - uses: abuild/setup@v1
+        - uses: abuild/apk@v1
+          with:
+            depends: libstdc++ libgcc
+            description: Socket Firewall
+            files:
+              - opt/socket
+              - opt/docker
+            functions:
+              cargo: |
+                pkgdesc="$pkgdesc (cargo)"
+                depends="sfw-free cargo"
+                amove /opt/socket/bin/cargo
+              npm: |
+                pkgdesc="$pkgdesc (npm)"
+                depends="sfw-free npm"
+                amove /opt/socket/bin/npm
+              pip: |
+                pkgdesc="$pkgdesc (pip)"
+                depends="sfw-free python3"
+                amove /opt/socket/bin/pip
+                amove /opt/socket/bin/pip3
+              yarn: |
+                pkgdesc="$pkgdesc (yarn)"
+                depends="sfw-free yarn"
+                amove /opt/socket/bin/yarn
+            license: Socket Firewall
+            name: sfw-free
+            oci-config:
+              environment:
+                PATH: /opt/socket/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            options: '!check !fhs !strip'
+            rel: 1
+            subpackages: $pkgname-npm:npm:noarch $pkgname-yarn:yarn:noarch $pkgname-pip:pip:noarch $pkgname-cargo:cargo:noarch
+            version: 1.6.0
+        - uses: abuild/build@v1
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,177 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-notation
+variant: runtime
+tags:
+  - 1.3.2-alpine3.23
+  - 1.3.2-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 001cc919603c1dc16c6aad387c94b4209cb9c901
+  PACKAGE_NAME: notation
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.3"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.3.2
+  VERSION: 1.3.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: notation
+      work-dir: /go/src/github.com/notaryproject/notation
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.24
+          - golang-1.24-oci-config
+        files:
+          - url: git+https://github.com/notaryproject/notation.git#v1.3.2
+            checksum: 001cc919603c1dc16c6aad387c94b4209cb9c901
+            path: /go/src/github.com/notaryproject/notation
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            EXCLUDES='cmd/notation/internal/truststore|/internal/tree|/internal/osutil|cmd/notation/plugin|pkg/configutil'
+            PKGS=$(go list ./... | egrep -v "${EXCLUDES}")
+
+            CGO_ENABLED=0 go test $PKGS
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/notation
+            packages: ./cmd/notation
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/notation-dev
+            packages: ./cmd/notation
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: notation-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/notation
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/notation
+          with:
+            description: A CLI tool for signing and verifying OCI artifacts
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/notation-dev" "$subpkgdir/usr/bin/notation"
+            license: Apache-2.0
+            name: notation
+            options: '!check !strip'
+            rel: 0
+            subpackages: $pkgname-dev
+            url: https://notaryproject.dev/
+            version: 1.3.2
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/notation
+        - uses: abuild/upload@v1
+    - name: notation-fips
+      work-dir: /go/src/github.com/notaryproject/notation
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.24
+          - golang-1.24-oci-config
+        files:
+          - url: git+https://github.com/notaryproject/notation.git#v1.3.2
+            checksum: 001cc919603c1dc16c6aad387c94b4209cb9c901
+            path: /go/src/github.com/notaryproject/notation
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: fips140=only
+          runs: |
+            set -eux -o pipefail
+
+            EXCLUDES='cmd/notation/internal/truststore|/internal/tree|/internal/osutil|cmd/notation/plugin|pkg/configutil'
+            PKGS=$(go list ./... | egrep -v "${EXCLUDES}")
+
+            CGO_ENABLED=0 go test $PKGS
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: true
+            output: ${target.dir}/usr/bin/notation
+            packages: ./cmd/notation
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: true
+            output: ${target.dir}/usr/bin/notation-dev
+            packages: ./cmd/notation
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: notation-fips-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/notation-fips
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/notation-fips
+          with:
+            description: A CLI tool for signing and verifying OCI artifacts
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/notation-dev" "$subpkgdir/usr/bin/notation"
+            license: Apache-2.0
+            name: notation-fips
+            options: '!check !strip'
+            rel: 0
+            subpackages: $pkgname-dev
+            url: https://notaryproject.dev/
+            version: 1.3.2
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/notation-fips
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

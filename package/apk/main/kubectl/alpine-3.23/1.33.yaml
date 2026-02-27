@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kubectl
+variant: runtime
+tags:
+  - 1.33.7-alpine3.23
+  - 1.33.7-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: a7245cdf3f69e11356c7e8f92b3e78ca4ee4e757
+  PACKAGE_NAME: kubectl
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.33"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.33.7
+  VERSION: 1.33.7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubectl
+      work-dir: /go/src/k8s.io/kubernetes
+      contents:
+        packages:
+          - golang-1.25
+          - golang-1.25-oci-config
+          - bash
+          - coreutils
+          - findutils
+          - jq
+          - make
+          - rsync
+          - ca-certificates-bundle
+          - git
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.33.7
+            checksum: a7245cdf3f69e11356c7e8f92b3e78ca4ee4e757
+            path: /go/src/k8s.io/kubernetes
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          privileged: true
+          environment:
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            # Keep in sync with image/kubectl CVE pinning behavior.
+            ./hack/pin-dependency.sh golang.org/x/net v0.45.0 # CVE-2025-47911, CVE-2025-58190
+            ./hack/pin-dependency.sh golang.org/x/oauth2 v0.27.0
+            ./hack/update-vendor.sh
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make WHAT=cmd/kubectl DBG=0
+            make WHAT=cmd/kubectl-convert DBG=0
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            # Use FHS-friendly paths for packages.
+            install -D -m 0755 _output/bin/kubectl "${target.dir}/usr/bin/kubectl"
+            install -D -m 0755 _output/bin/kubectl-convert "${target.dir}/usr/bin/kubectl-convert"
+        - uses: sbom@v1
+          with:
+            prefix: kubectl-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/kubectl
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/kubectl
+          with:
+            depends: ca-certificates-bundle
+            description: Kubernetes command-line tool (kubectl)
+            license: Apache-2.0
+            name: kubectl
+            options: '!check !strip'
+            rel: 0
+            url: https://github.com/kubernetes/kubernetes
+            version: 1.33.7
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/kubectl
+        - uses: abuild/upload@v1
+    - name: kubectl-fips
+      work-dir: /go/src/k8s.io/kubernetes
+      contents:
+        packages:
+          - golang-1.25
+          - golang-1.25-oci-config
+          - bash
+          - coreutils
+          - findutils
+          - jq
+          - make
+          - rsync
+          - ca-certificates-bundle
+          - git
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.33.7
+            checksum: a7245cdf3f69e11356c7e8f92b3e78ca4ee4e757
+            path: /go/src/k8s.io/kubernetes
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          privileged: true
+          environment:
+            GODEBUG: fips140=on
+          runs: |
+            set -eux -o pipefail
+
+            # Keep in sync with image/kubectl CVE pinning behavior.
+            ./hack/pin-dependency.sh golang.org/x/net v0.45.0 # CVE-2025-47911, CVE-2025-58190
+            ./hack/pin-dependency.sh golang.org/x/oauth2 v0.27.0
+            ./hack/update-vendor.sh
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make WHAT=cmd/kubectl DBG=0
+            make WHAT=cmd/kubectl-convert DBG=0
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            # Use FHS-friendly paths for packages.
+            install -D -m 0755 _output/bin/kubectl "${target.dir}/usr/bin/kubectl"
+            install -D -m 0755 _output/bin/kubectl-convert "${target.dir}/usr/bin/kubectl-convert"
+        - uses: sbom@v1
+          with:
+            prefix: kubectl-fips-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/kubectl-fips
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/kubectl-fips
+          with:
+            depends: ca-certificates-bundle
+            description: Kubernetes command-line tool (kubectl)
+            license: Apache-2.0
+            name: kubectl-fips
+            options: '!check !strip'
+            rel: 0
+            url: https://github.com/kubernetes/kubernetes
+            version: 1.33.7
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/kubectl-fips
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,191 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-crane
+variant: runtime
+tags:
+  - 0.21.1-alpine3.23
+  - 0.21.1-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 85f2bf5f7303fc95161f334e4fc2e66c36e12b1e
+  PACKAGE_NAME: crane
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.21"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.21.1
+  VERSION: 0.21.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: crane
+      work-dir: /go/src/github.com/google/go-containerregistry
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.25
+          - golang-1.25-oci-config
+        files:
+          - url: git+https://github.com/google/go-containerregistry#v0.21.1
+            checksum: 85f2bf5f7303fc95161f334e4fc2e66c36e12b1e
+            path: /go/src/github.com/google/go-containerregistry
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            go test ./cmd/crane
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/google/go-containerregistry/cmd/crane/cmd.Version=0.21.1
+              - -X github.com/google/go-containerregistry/pkg/v1/remote/transport.Version=0.21.1
+            output: ${target.dir}/usr/bin/crane
+            packages: ./cmd/crane
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/google/go-containerregistry/cmd/crane/cmd.Version=0.21.1
+              - -X github.com/google/go-containerregistry/pkg/v1/remote/transport.Version=0.21.1
+            output: ${target.dir}/usr/bin/crane-dev
+            packages: ./cmd/crane
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: crane-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/crane
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/crane
+          with:
+            description: A tool for interacting with remote images and registries
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/crane-dev" "$subpkgdir/usr/bin/crane"
+            license: Apache-2.0
+            name: crane
+            options: '!check !strip'
+            rel: 0
+            subpackages: $pkgname-dev
+            url: https://github.com/google/go-containerregistry
+            version: 0.21.1
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/crane
+        - uses: abuild/upload@v1
+    - name: crane-fips
+      work-dir: /go/src/github.com/google/go-containerregistry
+      contents:
+        packages:
+          - busybox
+          - bash
+          - golang-1.25
+          - golang-1.25-oci-config
+        files:
+          - url: git+https://github.com/google/go-containerregistry#v0.21.1
+            checksum: 85f2bf5f7303fc95161f334e4fc2e66c36e12b1e
+            path: /go/src/github.com/google/go-containerregistry
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: fips140=on
+          runs: |
+            set -eux -o pipefail
+
+            go test ./cmd/crane
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: true
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/google/go-containerregistry/cmd/crane/cmd.Version=0.21.1
+              - -X github.com/google/go-containerregistry/pkg/v1/remote/transport.Version=0.21.1
+            output: ${target.dir}/usr/bin/crane
+            packages: ./cmd/crane
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: true
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/google/go-containerregistry/cmd/crane/cmd.Version=0.21.1
+              - -X github.com/google/go-containerregistry/pkg/v1/remote/transport.Version=0.21.1
+            output: ${target.dir}/usr/bin/crane-dev
+            packages: ./cmd/crane
+            strip: false
+        - uses: sbom@v1
+          with:
+            prefix: crane-fips-go
+            source: ${target.dir}
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/crane-fips
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/crane-fips
+          with:
+            description: A tool for interacting with remote images and registries
+            functions:
+              dev: |
+                pkgdesc="$pkgdesc (dev)"
+                mkdir -p "$subpkgdir/usr/bin"
+                mv "$pkgdir/usr/bin/crane-dev" "$subpkgdir/usr/bin/crane"
+            license: Apache-2.0
+            name: crane-fips
+            options: '!check !strip'
+            rel: 0
+            subpackages: $pkgname-dev
+            url: https://github.com/google/go-containerregistry
+            version: 0.21.1
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/crane-fips
+        - uses: abuild/upload@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
