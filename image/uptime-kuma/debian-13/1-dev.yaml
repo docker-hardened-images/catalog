@@ -56,8 +56,12 @@ contents:
             path: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
             uid: 0
             gid: 0
-          - url: https://registry.npmjs.org/minimatch/-/minimatch-10.2.1.tgz
-            path: ${source.dir}/minimatch-10.2.1.tgz
+          - url: https://registry.npmjs.org/minimatch/-/minimatch-10.2.3.tgz
+            path: ${source.dir}/minimatch-10.2.3.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/fast-xml-parser/-/fast-xml-parser-5.3.8.tgz
+            path: ${source.dir}/fast-xml-parser-5.3.8.tgz
             uid: 0
             gid: 0
       pipeline:
@@ -89,6 +93,43 @@ contents:
             # Force a clean install to ensure overrides are applied
             rm -rf node_modules
             npm install
+        - name: patch undici in package-lock
+          work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            keys_to_remove='[
+              "node_modules/@actions/http-client/node_modules/undici",
+              "node_modules/@testcontainers/hivemq/node_modules/undici",
+              "node_modules/@testcontainers/mariadb/node_modules/undici",
+              "node_modules/@testcontainers/mssqlserver/node_modules/undici",
+              "node_modules/@testcontainers/rabbitmq/node_modules/undici",
+              "node_modules/testcontainers/node_modules/undici"
+            ]'
+
+            if ! jq -e '.packages | type == "object"' package-lock.json > /dev/null 2>&1; then
+              echo "[ERROR] package-lock.json does not contain a top-level .packages object"
+              exit 1
+            fi
+
+            found=$(jq -r --argjson keys "${keys_to_remove}" '. as $pl | [ $keys[] | select($pl.packages[.] != null) ] | length' package-lock.json)
+            if [ "$found" -lt 1 ]; then
+              echo "[ERROR] No expected undici lockfile keys found; refusing to patch."
+              jq -r '.packages | keys[] | select(test("undici"))' package-lock.json | head -50 || true
+              exit 1
+            fi
+
+            jq --argjson keys "${keys_to_remove}" '. as $pl | reduce ($keys[]) as $k ($pl ; del(.packages[$k]))' package-lock.json > package-lock.json.tmp
+            mv package-lock.json.tmp package-lock.json
+
+            rm -rf node_modules
+            npm install
+
+            if jq -e '.packages | to_entries[] | select(.value.name=="undici" and .value.version=="5.29.0")' package-lock.json > /dev/null; then
+              echo "[ERROR] undici@5.29.0 still present in package-lock.json after patch"
+              exit 1
+            fi
         - name: install and build
           work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
           privileged: true
@@ -110,7 +151,7 @@ contents:
             set -eux -o pipefail
 
             mkdir -p /tmp/minimatch-fix
-            tar -xzf ${source.dir}/minimatch-10.2.1.tgz -C /tmp/minimatch-fix
+            tar -xzf ${source.dir}/minimatch-10.2.3.tgz -C /tmp/minimatch-fix
 
             find node_modules -type d -name "minimatch" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' minimatch_dir; do
               echo "Replacing ${minimatch_dir}"
@@ -119,6 +160,23 @@ contents:
             done
 
             rm -rf /tmp/minimatch-fix
+        - name: patch nested fast-xml-parser packages
+          work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/fast-xml-parser-fix
+            tar -xzf ${source.dir}/fast-xml-parser-5.3.8.tgz -C /tmp/fast-xml-parser-fix
+
+            find node_modules -type d -name "fast-xml-parser" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' fxp_dir; do
+              if grep -q '"version": "5\.3\.6"' "${fxp_dir}/package.json"; then
+                echo "Replacing ${fxp_dir}"
+                rm -rf "${fxp_dir}"
+                cp -r /tmp/fast-xml-parser-fix/package "${fxp_dir}"
+              fi
+            done
+
+            rm -rf /tmp/fast-xml-parser-fix
         - name: copy app files
           work-dir: ${source.dir}/uptime-kuma-40ec7158534a28e6f8b431a628c53133c327c539
           runs: |
