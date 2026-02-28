@@ -121,13 +121,20 @@ $ kubectl apply -n <kubernetes-namespace> -f filebeat.yaml
 
 ## Image variants
 
-Docker Hardened Images come in different variants depending on their intended use. The Filebeat image only comes in the
-runtime variant. Runtime variants are designed to run your application in production. These images are intended to be
-used either directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+Docker Hardened Images come in different variants depending on their intended use. The Filebeat image comes in both
+runtime and build-time variants. Runtime variants are designed to run your application in production. These images are
+intended to be used either directly or as the `FROM` image in the final stage of a multi-stage build. These images
+typically:
 
 - Run as the nonroot user
+
 - Do not include a shell or a package manager
+
 - Contain only the minimal set of libraries needed to run the app
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ## Non-hardened image vs. Docker Hardened Image
 
