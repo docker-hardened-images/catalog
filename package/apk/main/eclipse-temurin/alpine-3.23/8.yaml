@@ -4,7 +4,7 @@ image: dhi.io/pkg-eclipse-temurin
 variant: runtime
 tags:
   - 8.482.08-alpine3.23
-  - 8.482.08-r0-alpine3.23
+  - 8.482.08-r1-alpine3.23
 platforms:
   - linux/amd64
 vars:
@@ -15,7 +15,7 @@ vars:
   BCTLSFIPS_VERSION: 2.1.22
   BCUTILFIPS_VERSION: 2.1.5
   DHI_TEST_APK_PACKAGE: eclipse-temurin-8-jdk
-  DHI_TEST_APK_PACKAGES: eclipse-temurin-8-jdk-8.482.08-r0.apk
+  DHI_TEST_APK_PACKAGES: eclipse-temurin-8-jdk-8.482.08-r1.apk
   JAVA_DIR: /usr/lib/jvm/temurin-8
   JAVA_JDK_CHECKSUM: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u482-b08/OpenJDK8U-jdk_${ARCH}_alpine-linux_hotspot_8u482b08.tar.gz.sha256.txt
   JAVA_JDK_DOWNLOAD: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u482-b08/OpenJDK8U-jdk_${ARCH}_alpine-linux_hotspot_8u482b08.tar.gz
@@ -30,7 +30,7 @@ vars:
   PACKAGE_NAME: eclipse-temurin-8
   PACKAGE_VERSION: "8.482"
   PACKAGE_VERSION_SUFFIX: "08"
-  REL: "0"
+  REL: "1"
   VERSION: jdk8u482-b08
 contents:
   repositories:
@@ -145,9 +145,14 @@ contents:
             PASS="changeit" # Default known secret password in Java keystores
 
             CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "8" == "8" ] && [ "JDK" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "8" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JDK" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
+              fi
             fi
 
             # We must use SUN provider for this converstion to avoid errors on older JDKs
@@ -166,7 +171,7 @@ contents:
               -noprompt
 
             # This properties file is not used by the JVM but kept for information purposes
-            cat << 'EOF' >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
+            cat << EOF >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
               javax.net.ssl.trustStore=${CACERTS_PATH}/cacerts.bcfks
               javax.net.ssl.trustStoreType=FIPS
               javax.net.ssl.trustStoreProvider=BCFIPS
@@ -176,13 +181,18 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "8" == "8" ] && [ "JDK" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+            SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/conf/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "8" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JDK" == "JDK" ]; then
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+              else
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/lib/security"
+              fi
             fi
 
-            cd "${target.dir}${CACERTS_PATH}"
+            cd "${target.dir}${SECURITY_CONFIG_PATH}"
             cat << 'EOF' > java.security
 
             ### Standard Java security configuration good defaults ###
@@ -295,15 +305,23 @@ contents:
                 depends="$pkgname"
 
                 CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-                # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-                if [ "8" == "8" ] && [ "JDK" == "JDK" ]; then
-                  CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/conf/security"
+                # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+                if [ "8" == "8" ]; then
+                  # If this is a JDK, we need to use the jre/lib/security subdirectory
+                  if [ "JDK" == "JDK" ]; then
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                  else
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
+                  fi
                 fi
 
                 amove /usr/lib/bouncycastle
-                amove ${CACERTS_PATH}/java.security
                 amove ${CACERTS_PATH}/fips-ssl.properties
                 amove ${CACERTS_PATH}/cacerts.bcfks
+                amove ${SECURITY_CONFIG_PATH}/java.security
               fips_oci_config: |
                 pkgdesc="OCI configuration for eclipse-temurin-8-jdk-fips"
                 depends="eclipse-temurin-8-jdk"
@@ -316,7 +334,7 @@ contents:
                 JAVA_HOME: /usr/lib/jvm/temurin-8
                 JAVA_VERSION: jdk-8u482+b08
             options: '!check !strip !tracedeps !fhs'
-            rel: 0
+            rel: 1
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 8.482.08
@@ -425,9 +443,14 @@ contents:
             PASS="changeit" # Default known secret password in Java keystores
 
             CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "8" == "8" ] && [ "JRE" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "8" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JRE" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
+              fi
             fi
 
             # We must use SUN provider for this converstion to avoid errors on older JDKs
@@ -446,7 +469,7 @@ contents:
               -noprompt
 
             # This properties file is not used by the JVM but kept for information purposes
-            cat << 'EOF' >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
+            cat << EOF >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
               javax.net.ssl.trustStore=${CACERTS_PATH}/cacerts.bcfks
               javax.net.ssl.trustStoreType=FIPS
               javax.net.ssl.trustStoreProvider=BCFIPS
@@ -456,13 +479,18 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "8" == "8" ] && [ "JRE" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+            SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/conf/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "8" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JRE" == "JDK" ]; then
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+              else
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/lib/security"
+              fi
             fi
 
-            cd "${target.dir}${CACERTS_PATH}"
+            cd "${target.dir}${SECURITY_CONFIG_PATH}"
             cat << 'EOF' > java.security
 
             ### Standard Java security configuration good defaults ###
@@ -575,15 +603,23 @@ contents:
                 depends="$pkgname"
 
                 CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
-                # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-                if [ "8" == "8" ] && [ "JRE" == "JDK" ]; then
-                  CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/conf/security"
+                # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+                if [ "8" == "8" ]; then
+                  # If this is a JDK, we need to use the jre/lib/security subdirectory
+                  if [ "JRE" == "JDK" ]; then
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-8/jre/lib/security"
+                  else
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-8/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-8/lib/security"
+                  fi
                 fi
 
                 amove /usr/lib/bouncycastle
-                amove ${CACERTS_PATH}/java.security
                 amove ${CACERTS_PATH}/fips-ssl.properties
                 amove ${CACERTS_PATH}/cacerts.bcfks
+                amove ${SECURITY_CONFIG_PATH}/java.security
               fips_oci_config: |
                 pkgdesc="OCI configuration for eclipse-temurin-8-jre-fips"
                 depends="eclipse-temurin-8-jre"
@@ -596,7 +632,7 @@ contents:
                 JAVA_HOME: /usr/lib/jvm/temurin-8
                 JAVA_VERSION: jre-8u482+b08
             options: '!check !strip !tracedeps !fhs'
-            rel: 0
+            rel: 1
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 8.482.08

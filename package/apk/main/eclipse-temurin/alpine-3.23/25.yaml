@@ -4,7 +4,7 @@ image: dhi.io/pkg-eclipse-temurin
 variant: runtime
 tags:
   - 25.0.2.10-alpine3.23
-  - 25.0.2.10-r0-alpine3.23
+  - 25.0.2.10-r1-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   BCTLSFIPS_VERSION: 2.1.22
   BCUTILFIPS_VERSION: 2.1.5
   DHI_TEST_APK_PACKAGE: eclipse-temurin-25-jdk
-  DHI_TEST_APK_PACKAGES: eclipse-temurin-25-jdk-25.0.2.10-r0.apk
+  DHI_TEST_APK_PACKAGES: eclipse-temurin-25-jdk-25.0.2.10-r1.apk
   JAVA_DIR: /usr/lib/jvm/temurin-25
   JAVA_JDK_CHECKSUM: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.2+10/OpenJDK25U-jdk_${ARCH}_alpine-linux_hotspot_25.0.2_10.tar.gz.sha256.txt
   JAVA_JDK_DOWNLOAD: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.2+10/OpenJDK25U-jdk_${ARCH}_alpine-linux_hotspot_25.0.2_10.tar.gz
@@ -31,7 +31,7 @@ vars:
   PACKAGE_NAME: eclipse-temurin-25
   PACKAGE_VERSION: 25.0.2
   PACKAGE_VERSION_SUFFIX: "10"
-  REL: "0"
+  REL: "1"
   VERSION: jdk-25.0.2+10
 contents:
   repositories:
@@ -146,9 +146,14 @@ contents:
             PASS="changeit" # Default known secret password in Java keystores
 
             CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "25" == "8" ] && [ "JDK" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "25" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JDK" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
+              fi
             fi
 
             # We must use SUN provider for this converstion to avoid errors on older JDKs
@@ -167,7 +172,7 @@ contents:
               -noprompt
 
             # This properties file is not used by the JVM but kept for information purposes
-            cat << 'EOF' >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
+            cat << EOF >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
               javax.net.ssl.trustStore=${CACERTS_PATH}/cacerts.bcfks
               javax.net.ssl.trustStoreType=FIPS
               javax.net.ssl.trustStoreProvider=BCFIPS
@@ -177,13 +182,18 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "25" == "8" ] && [ "JDK" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+            SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/conf/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "25" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JDK" == "JDK" ]; then
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+              else
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/lib/security"
+              fi
             fi
 
-            cd "${target.dir}${CACERTS_PATH}"
+            cd "${target.dir}${SECURITY_CONFIG_PATH}"
             cat << 'EOF' > java.security
 
             ### Standard Java security configuration good defaults ###
@@ -296,15 +306,23 @@ contents:
                 depends="$pkgname"
 
                 CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-                # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-                if [ "25" == "8" ] && [ "JDK" == "JDK" ]; then
-                  CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/conf/security"
+                # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+                if [ "25" == "8" ]; then
+                  # If this is a JDK, we need to use the jre/lib/security subdirectory
+                  if [ "JDK" == "JDK" ]; then
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                  else
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
+                  fi
                 fi
 
                 amove /usr/lib/bouncycastle
-                amove ${CACERTS_PATH}/java.security
                 amove ${CACERTS_PATH}/fips-ssl.properties
                 amove ${CACERTS_PATH}/cacerts.bcfks
+                amove ${SECURITY_CONFIG_PATH}/java.security
               fips_oci_config: |
                 pkgdesc="OCI configuration for eclipse-temurin-25-jdk-fips"
                 depends="eclipse-temurin-25-jdk"
@@ -317,7 +335,7 @@ contents:
                 JAVA_HOME: /usr/lib/jvm/temurin-25
                 JAVA_VERSION: jdk-25.0.2+10
             options: '!check !strip !tracedeps !fhs'
-            rel: 0
+            rel: 1
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 25.0.2.10
@@ -426,9 +444,14 @@ contents:
             PASS="changeit" # Default known secret password in Java keystores
 
             CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "25" == "8" ] && [ "JRE" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "25" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JRE" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
+              fi
             fi
 
             # We must use SUN provider for this converstion to avoid errors on older JDKs
@@ -447,7 +470,7 @@ contents:
               -noprompt
 
             # This properties file is not used by the JVM but kept for information purposes
-            cat << 'EOF' >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
+            cat << EOF >> "${target.dir}${CACERTS_PATH}/fips-ssl.properties"
               javax.net.ssl.trustStore=${CACERTS_PATH}/cacerts.bcfks
               javax.net.ssl.trustStoreType=FIPS
               javax.net.ssl.trustStoreProvider=BCFIPS
@@ -457,13 +480,18 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-            # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-            if [ "25" == "8" ] && [ "JRE" == "JDK" ]; then
-              CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+            SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/conf/security"
+            # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+            if [ "25" == "8" ]; then
+              # If this is a JDK, we need to use the jre/lib/security subdirectory
+              if [ "JRE" == "JDK" ]; then
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+              else
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/lib/security"
+              fi
             fi
 
-            cd "${target.dir}${CACERTS_PATH}"
+            cd "${target.dir}${SECURITY_CONFIG_PATH}"
             cat << 'EOF' > java.security
 
             ### Standard Java security configuration good defaults ###
@@ -576,15 +604,23 @@ contents:
                 depends="$pkgname"
 
                 CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
-                # If JAVA_MAJOR_VERSION is 8 and this is a JDK, we need to use the jre/lib/security subdirectory
-                if [ "25" == "8" ] && [ "JRE" == "JDK" ]; then
-                  CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/conf/security"
+                # If JAVA_MAJOR_VERSION is 8, we need to use the jre/lib/security subdirectory
+                if [ "25" == "8" ]; then
+                  # If this is a JDK, we need to use the jre/lib/security subdirectory
+                  if [ "JRE" == "JDK" ]; then
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-25/jre/lib/security"
+                  else
+                    SECURITY_CONFIG_PATH="/usr/lib/jvm/temurin-25/lib/security"
+                    CACERTS_PATH="/usr/lib/jvm/temurin-25/lib/security"
+                  fi
                 fi
 
                 amove /usr/lib/bouncycastle
-                amove ${CACERTS_PATH}/java.security
                 amove ${CACERTS_PATH}/fips-ssl.properties
                 amove ${CACERTS_PATH}/cacerts.bcfks
+                amove ${SECURITY_CONFIG_PATH}/java.security
               fips_oci_config: |
                 pkgdesc="OCI configuration for eclipse-temurin-25-jre-fips"
                 depends="eclipse-temurin-25-jre"
@@ -597,7 +633,7 @@ contents:
                 JAVA_HOME: /usr/lib/jvm/temurin-25
                 JAVA_VERSION: jre-25.0.2+10
             options: '!check !strip !tracedeps !fhs'
-            rel: 0
+            rel: 1
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 25.0.2.10
