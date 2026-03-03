@@ -1,6 +1,6 @@
-## How to use this image
+## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
 For example:
@@ -15,24 +15,23 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened cert-manager-controller image includes the controller component of cert-manager in a single,
 security-hardened package:
 
-- `cert-manager-controller`: The main controller binary that manages certificate lifecycle operations, watches for
-  Certificate resources, and coordinates with ACME providers
+- `cert-manager` controller binary (`/usr/local/bin/cert-manager`) that manages certificate lifecycle operations,
+  watches for Certificate resources, and coordinates with ACME providers
 - TLS certificate management capabilities for Kubernetes clusters
 - ACME protocol support for automatic certificate provisioning from providers like Let's Encrypt
 - Certificate renewal automation and lifecycle management
+- Healthz endpoint for liveness and readiness probes
+- CIS benchmark compliance (runtime), FIPS 140 + STIG + CIS compliance (FIPS variant)
 
 ## Start a cert-manager-controller image
 
-> **Note:** The cert-manager-acmesolver image is primarily designed to run inside a Kubernetes cluster as part of a full
-> cert-manager deployment. The standalone Docker command below simply displays configuration options.
+> **Note:** The cert-manager-controller image is primarily designed to run inside a Kubernetes cluster as part of a full
+> cert-manager deployment. The standalone Docker command below displays the available configuration options.
 
-Run the following command and replace `<tag>` with the image variant you want to run.
+Run the following command and replace `<tag>` with the image variant you want to run (for example, `1.19.3-debian13`).
 
-**Note:** cert-manager-controller is primarily designed to run within a Kubernetes cluster as part of the complete
-cert-manager deployment. The following standalone Docker command displays the available configuration options.
-
-```bash
-docker run --rm -it dhi.io/cert-manager-controller:<tag> --help
+```console
+$ docker run --rm dhi.io/cert-manager-controller:<tag> --help
 ```
 
 ## Controller-specific flags
@@ -47,16 +46,17 @@ including certificates, orders, challenges, and issuers.
 
 You can limit which controllers run by providing a comma-separated list:
 
-```bash
-docker run --rm -it dhi.io/cert-manager-controller:<tag> \
+```console
+$ docker run --rm dhi.io/cert-manager-controller:<tag> \
   --controllers=certificates-issuing,issuers
 ```
 
-You can also disable specific controllers while keeping others enabled:
+You can also disable specific controllers while keeping others enabled. Note the quotes around the argument to prevent
+shell glob expansion:
 
-```bash
-docker run --rm -it dhi.io/cert-manager-controller:<tag> \
-  --controllers=*,-foo
+```console
+$ docker run --rm dhi.io/cert-manager-controller:<tag> \
+  '--controllers=*,-foo'
 ```
 
 This configuration is particularly useful in high-availability setups where different cert-manager-controller instances
@@ -71,8 +71,8 @@ manual cleanup.
 
 When enabled, Kubernetes automatically garbage-collects the corresponding Secret when a Certificate is deleted.
 
-```bash
-docker run --rm -it dhi.io/cert-manager-controller:<tag> \
+```console
+$ docker run --rm dhi.io/cert-manager-controller:<tag> \
   --enable-certificate-owner-ref=true
 ```
 
@@ -87,8 +87,8 @@ their Secrets.
 The default namespace is `kube-system`. This configuration is necessary because ClusterIssuers are cluster-wide
 resources not bound to a single namespace, but their credential Secrets must still reside in a specific namespace.
 
-```bash
-docker run --rm -it dhi.io/cert-manager-controller:<tag> \
+```console
+$ docker run --rm dhi.io/cert-manager-controller:<tag> \
   --cluster-resource-namespace=cert-manager
 ```
 
@@ -124,6 +124,10 @@ First follow the
 
 The controller is typically deployed as part of a complete cert-manager installation in Kubernetes.
 
+> **Note:** The Docker Hardened Image uses the string `nonroot` as the user, which causes a `CreateContainerConfigError`
+> with Kubernetes' `runAsNonRoot` validation. You must explicitly set `runAsUser: 65532` in the security context to
+> resolve this.
+
 The following example shows a Deployment configuration for cert-manager-controller:
 
 ```yaml
@@ -142,9 +146,27 @@ spec:
         - --v=2
         - --cluster-resource-namespace=$(POD_NAMESPACE)
         - --leader-election-namespace=$(POD_NAMESPACE)
+        securityContext:
+          runAsUser: 65532
       imagePullSecrets:
       - name: <secret name>
 ```
+
+When deploying with Helm, include the `securityContext.runAsUser` override:
+
+```console
+$ helm install cert-manager oci://registry-1.docker.io/dhi/cert-manager-chart \
+  -n cert-manager --create-namespace \
+  --set crds.enabled=true \
+  --set image.registry=dhi.io \
+  --set image.tag=1.19.3-debian13 \
+  --set securityContext.runAsUser=65532 \
+  --set "global.imagePullSecrets[0].name"=helm-pull-secret
+```
+
+> **Note:** Ensure the `--set crds.enabled=true` flag is included so that cert-manager CRDs are installed. Without this,
+> Certificate and Issuer resources won't be available in the cluster. For older Helm chart versions, use
+> `--set installCRDs=true` instead.
 
 ### Integrate with multiple certificate authorities
 
@@ -170,28 +192,48 @@ spec:
           class: nginx
 ```
 
+## Official Docker image (DOI) vs Docker Hardened Image (DHI)
+
+| Feature             | DOI (`quay.io/jetstack/cert-manager-controller`) | DHI (`dhi.io/cert-manager-controller`)  |
+| ------------------- | ------------------------------------------------ | --------------------------------------- |
+| User                | `1000` (numeric UID)                             | `nonroot` (runtime/FIPS) / `root` (dev) |
+| Shell               | No                                               | No (runtime/FIPS) / Yes (dev)           |
+| Package manager     | No                                               | No (runtime/FIPS) / Yes (dev)           |
+| Binary path         | `/app/cmd/controller/controller`                 | `/usr/local/bin/cert-manager`           |
+| Entrypoint          | ENTRYPOINT `controller`                          | ENTRYPOINT `cert-manager`               |
+| Zero CVE commitment | No                                               | Yes                                     |
+| FIPS variant        | No                                               | Yes (FIPS + STIG + CIS)                 |
+| Base OS             | Minimal (no labels)                              | Docker Hardened Images (Debian 13)      |
+| Uncompressed size   | 100 MB                                           | 110 MB (runtime), 182 MB (FIPS)         |
+| Layers              | 15                                               | 7 (runtime)                             |
+| Compliance labels   | None                                             | CIS (runtime), FIPS+STIG+CIS (fips)     |
+| ENV: SSL_CERT_FILE  | `/etc/ssl/certs/ca-certificates.crt`             | `/etc/ssl/certs/ca-certificates.crt`    |
+| Architectures       | amd64, arm64                                     | amd64, arm64                            |
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
 their tag.
 
-- Runtime variants are designed to run your application in production. These images are intended to be used either
-  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+**Runtime variants** are designed to run the cert-manager controller in production. These images typically:
 
-  - Run as a nonroot user
-  - Do not include a shell or a package manager
-  - Contain only the minimal set of libraries needed to run the app
+- Run as a nonroot user
+- Do not include a shell or a package manager
+- Contain only the `cert-manager` binary and TLS certificates
+- Include CIS benchmark compliance (`com.docker.dhi.compliance: cis`)
 
-- Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a
-  multi-stage Dockerfile. These images typically:
+**Build-time variants** typically include `dev` in the tag name and are intended for debugging and development. These
+images typically:
 
-  - Run as the root user
-  - Include a shell and package manager
-  - Are used to build or compile applications
+- Run as the root user
+- Include a shell and package manager
+- Are useful for troubleshooting cert-manager issues
 
-- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
-  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+**FIPS variants** include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. FIPS variants also include STIG and CIS compliance
+(`com.docker.dhi.compliance: fips,stig,cis`). For example, usage of MD5 fails in FIPS variants. Use FIPS variants in
+regulated environments such as FedRAMP, government, and financial services.
 
 To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
 select a tag.
@@ -201,23 +243,19 @@ Each component may be available as a separate Docker Hardened Image for deployme
 
 ### FIPS variants considerations
 
-For allowing FIPS in this image, there are some DNS standards that still use non-FIPS compliant algorithms and cannot be
-changed:
+The FIPS variant has known compatibility constraints with legacy cryptographic algorithms:
 
-1. [RFC2136](https://cert-manager.io/docs/configuration/acme/dns01/rfc2136/) DNS-01 solver
-   ([tsigHMACProvider.Generate](https://github.com/cert-manager/cert-manager/blob/master/pkg/issuer/acme/dns/rfc2136/tsig.go#L49))
+| Area                  | Issue                                                                                    | Remediation                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| RFC2136 DNS-01 solver | SHA1 and MD5 TSIG signatures are forbidden in FIPS mode                                  | Set `tsigAlgorithm: HMACSHA512` in your Issuer/ClusterIssuer                    |
+| TLS cipher suites     | Legacy ciphers (RC4, ChaCha20, SHA1) are supported in code for ACME client compatibility | Modern clients negotiate stronger ciphers automatically; no action needed       |
+| PKCS#12 profiles      | LegacyDES and LegacyRC2 profiles use non-FIPS algorithms                                 | Use the `Modern2023` certificate profile                                        |
+| CHACHA20_POLY1305     | ChaCha20Poly1305 is not allowed in FIPS 140 mode and returns an error if used            | Ensure your TLS stack does not require `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305` |
 
-If you want to use the RFC2136 DNS-01 solver, there are two signatures that are forbidden by FIPS and the application
-will Panic (sha1 and md5), some of the DNS servers may require these legacy algorithms for TSIG authentication, removing
-those would break compatibility with existing DNS infrastructure.
-
-A way to mitigate this is to specifying in the `spec.acme.solvers[dnsXX].rfc2136.tsigAlgorithm` spec of your `Issuer` or
-`ClusterIssuer` with some FIPS-approved algorithm.
-
-Example:
+For RFC2136, specify a FIPS-approved algorithm in your solver configuration:
 
 ```yaml
-  apiVersion: cert-manager.io/v1
+apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: example-rfc2136
@@ -232,41 +270,11 @@ spec:
         rfc2136:
           nameserver: 203.0.113.53:53
           tsigKeyName: example-com-key
-          tsigAlgorithm: HMACSHA512 # <- choose your algorithm here
+          tsigAlgorithm: HMACSHA512
           tsigSecretSecretRef:
             name: tsig-secret
             key: tsig-secret-key
 ```
-
-2. Legacy TLS cipher suites (RC4, ChaCha20, SHA1...):
-
-Cert-manager supports non FIPS-compliant
-[ciphers](https://github.com/cert-manager/cert-manager/blob/d7090f55e7aae3ebee6a0917a2b59eef37e36c75/third_party/forked/acme/autocert/autocert.go#L363)
-from the go's autocert library, and is needed for the ACME client to be compatible with older DNS servers.
-
-cert-manager's fork of "Go's autocert" is part of a function (supportsECDSA) that decides whether to serve an ECDSA
-certificate based on what the client's TLS handshake says it supports
-
-Note: These are only supported, not preferred - modern clients will negotiate stronger ciphers
-
-3. PKCS#12 legacy profiles (DES and RC2): Cert Manager supports
-   [LegacyDESPKCS12Profile and LegacyRC2PKCS12Profile](https://github.com/cert-manager/cert-manager/blob/d7090f55e7aae3ebee6a0917a2b59eef37e36c75/pkg/controller/certificates/issuing/internal/keystore.go#L68-L73)
-   using DES and RC2, those are required for backward compatibility with systems that only support legacy PKCS#12
-   formats. Even cert manager states that this is an experimental feature, Modern2023 profile is available as
-   FIPS-compliant alternative
-
-Remediation: Avoid keystores entirely or use the
-[Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.19.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
-Certificate profile which supports secure algorithms.
-
-4. CHACHA20_POLY1305 cipher
-   [scheme support](https://github.com/cert-manager/cert-manager/blob/d7090f55e7aae3ebee6a0917a2b59eef37e36c75/third_party/forked/acme/autocert/autocert.go#L337):
-   `autocert.go` Defines the `tlsECDSAWithSHA1` constant for client compatibility, it's logic checks the client's
-   offered cipher suites, if the client supports the `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305` cipher the application
-   will panic.
-
-Remediation: Ensure your FIPS-compliant stack does not negotiate the `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305` as a valid
-cipher.
 
 ## Migrate to a Docker Hardened Image
 
@@ -310,10 +318,6 @@ debugging applications built with Docker Hardened Images is to use
 provides a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only
 exists during the debugging session.
 
-```
---cluster-resource-namespace=cert-manager
-```
-
 ### Permissions
 
 By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
@@ -333,14 +337,3 @@ with no shell.
 
 Docker Hardened Images may have different entry points than standard cert-manager images. Use `docker inspect` to
 inspect entry points for Docker Hardened Images and update your Kubernetes deployment if necessary.
-
-### cert-manager specific troubleshooting
-
-- Missing components: cert-manager requires multiple components to function. Ensure you've deployed all necessary
-  components (controller, webhook, cainjector) with compatible hardened images.
-- Certificate issuance failures: Check the cert-manager-controller logs for ACME challenges or issuer configuration
-  problems. The controller provides detailed logging about certificate lifecycle events.
-- Webhook connectivity: If using the webhook component, ensure network policies allow communication between the
-  controller and webhook pods.
-- Leader election: In multi-replica deployments, verify that leader election is functioning correctly. The controller
-  uses leader election to ensure only one instance manages certificates at a time.
