@@ -157,8 +157,8 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            ./mvnw sortpom:sort
-            ./mvnw package -q -DskipTests -Dair.check.skip-all -Dmaven.enforcer.skip=true -Dmaven.test.failure.ignore=true \
+            ./mvnw sortpom:sort -Ddep.jackson.version=2.21.1 -Ddep.logback.version=1.5.25 -Ddep.aircompressor.version=2.0.3
+            ./mvnw package -q -DskipTests -Dair.check.skip-all -Dmaven.enforcer.skip=true -Dmaven.test.failure.ignore=true -Ddep.jackson.version=2.21.1 -Ddep.logback.version=1.5.25 -Ddep.aircompressor.version=2.0.3 \
               -pl '!:trino-docs' -am
 
             tar -C "${target.dir}" -xzf "${source.dir}/trino/core/trino-server/target/trino-server-479.tar.gz" --wildcards \
@@ -167,6 +167,25 @@ contents:
               "trino-server-479/secrets-plugin" \
               "trino-server-479/bin/launcher*" \
               "trino-server-479/bin/linux-${ARCH}"
+        - name: replace vulnerable secrets-plugin jackson jars
+          work-dir: ${target.dir}/trino-server-479/secrets-plugin/keystore-secrets-plugin
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            for old_jar in jackson-*-2.20.1.jar; do
+              [ -f "$old_jar" ] || continue
+              new_jar="${old_jar/2.20.1/2.21.1}"
+              src=$(find "${HOME}/.m2/repository" -name "$new_jar" -print -quit 2> /dev/null)
+              if [ -n "$src" ]; then
+                echo "Replacing $old_jar with $new_jar"
+                rm "$old_jar"
+                cp "$src" .
+              else
+                echo "ERROR: Could not find $new_jar in Maven cache"
+                exit 1
+              fi
+            done
         - name: remove optional plugins
           work-dir: ${target.dir}/trino-server-479/plugin
           runs: |
