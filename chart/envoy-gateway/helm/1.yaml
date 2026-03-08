@@ -1,0 +1,91 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Envoy Gateway Helm chart 1.x
+image: dhi.io/envoy-gateway-chart
+variant: helm
+tags:
+  - 1.7.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: da2aac967d53c6d5264906fef05a397cd097b23e
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  ENVOY_GATEWAY_IMAGE_REFERENCE: dhi/envoy-gateway:1.7.0-debian13@sha256:01efbb360673385a056e5658917d697f17adf4d5686c1598c7110a5881f8b746
+  ENVOY_RATELIMIT_IMAGE_REFERENCE: dhi/envoy-ratelimit:3fb702589d36ba7cb46ca33ba462a13e35ffc048-debian13@sha256:27bf3fcb8d947a451553f0b84a3b80f31b4fccf242aa7fe5203307742e359b4c
+  HELM_REFERENCE: dhi/helm:3.20.0-debian13-dev@sha256:d9fb15368eec534b9256a049385b9f843bca3f64736f14e4b6d593efdccfeaa9
+  SEMVER_MAJOR_MINOR_VERSION: "1.7"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.7.0
+  VERSION: 1.7.0
+contents:
+  builds:
+    - name: envoy-gateway-chart
+      uses: dhi.io/helm:3.20.0-debian13-dev@sha256:d9fb15368eec534b9256a049385b9f843bca3f64736f14e4b6d593efdccfeaa9
+      contents:
+        files:
+          - url: git+https://github.com/envoyproxy/gateway.git#v1.7.0
+            checksum: da2aac967d53c6d5264906fef05a397cd097b23e
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/gateway-helm
+          with:
+            chart:
+              appRef: envoy-gateway
+              description: Docker Hardened Images Helm chart for Envoy Gateway
+              images:
+                - name: envoy-gateway
+                  ref: dhi/envoy-gateway:1.7.0-debian13@sha256:01efbb360673385a056e5658917d697f17adf4d5686c1598c7110a5881f8b746
+                - name: envoy-ratelimit
+                  ref: dhi/envoy-ratelimit:3fb702589d36ba7cb46ca33ba462a13e35ffc048-debian13@sha256:27bf3fcb8d947a451553f0b84a3b80f31b4fccf242aa7fe5203307742e359b4c
+              name: envoy-gateway-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/envoyproxy/gateway
+            cmd: prepare
+            registry: dhi.io
+        - name: rename values file
+          work-dir: ${source.dir}/helm-charts/charts/gateway-helm
+          runs: |
+            set -eux -o pipefail
+
+            mv values.tmpl.yaml values.yaml
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/gateway-helm
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: verify templated variables
+          work-dir: ${source.dir}/helm-charts/charts/gateway-helm
+          runs: |
+            set -eux -o pipefail
+
+            if grep -E '\$\{[^}]+\}' values.yaml; then
+              exit 1
+            fi
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: gateway-helm
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: gateway-helm
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/envoy-gateway/config
