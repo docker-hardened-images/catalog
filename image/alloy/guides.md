@@ -232,7 +232,11 @@ You should see: `msg="now listening for http traffic" addr=0.0.0.0:12345`
 
 ## Image variants
 
-The Alloy Hardened Image is available as dev and runtime variants.
+The Alloy Hardened Image is available as dev, runtime, and FIPS variants.
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
 their tag.
