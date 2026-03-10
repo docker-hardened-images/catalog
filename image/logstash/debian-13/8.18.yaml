@@ -1,21 +1,21 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Logstash 9.1.x
+name: Logstash 8.18.x
 image: dhi.io/logstash
 variant: runtime
 tags:
-  - "9.1"
-  - 9.1.10
-  - 9.1-debian13
-  - 9.1.10-debian13
+  - "8.18"
+  - 8.18.8
+  - 8.18-debian13
+  - 8.18.8-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2025-07-22"
+  release: "2025-04-09"
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
-  COMMIT_SHA: 852e410cb3ff8a8cbf21f378f0ab7129c3dc208d
+  COMMIT_SHA: e1b101139286fed67fb694aa7dded21d140b564b
   GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2e0cae145dca1c7d4dbf51412f98c151a21bdc2ba8f4d82c9ca5a744eca7eeb4
   GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk21-debian13-dev@sha256:0f1f3437f9108998c88829e8caa98786bb65e1730c09bf5665e4cb90355a0b54
   GRADLE_VERSION: 8.14.4
@@ -25,10 +25,10 @@ vars:
   LOGSTASH_PATH: /usr/share/logstash
   LOGSTASH_SOURCE: "1"
   OSS: "true"
-  SEMVER_MAJOR_MINOR_VERSION: "9.1"
-  SEMVER_MAJOR_VERSION: "9"
-  SEMVER_VERSION: 9.1.10
-  VERSION: 9.1.10
+  SEMVER_MAJOR_MINOR_VERSION: "8.18"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.18.8
+  VERSION: 8.18.8
 contents:
   packages:
     - '!libelogind0'
@@ -39,33 +39,30 @@ contents:
     - coreutils
     - sed
   builds:
-    - name: env2yaml java for 8.19+
-      uses: dhi.io/gradle:8.14.4-jdk21-debian13-dev@sha256:0f1f3437f9108998c88829e8caa98786bb65e1730c09bf5665e4cb90355a0b54
+    - name: env2yaml go for 8.18
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2e0cae145dca1c7d4dbf51412f98c151a21bdc2ba8f4d82c9ca5a744eca7eeb4
       contents:
         packages:
           - bash
           - coreutils
         files:
-          - url: git+https://github.com/elastic/logstash.git#852e410cb3ff8a8cbf21f378f0ab7129c3dc208d
-            checksum: 852e410cb3ff8a8cbf21f378f0ab7129c3dc208d
+          - url: git+https://github.com/elastic/logstash.git#e1b101139286fed67fb694aa7dded21d140b564b
+            checksum: e1b101139286fed67fb694aa7dded21d140b564b
             path: ${source.dir}/logstash
             uid: 0
             gid: 0
       pipeline:
-        - name: build env2yaml java
-          work-dir: ${source.dir}/logstash/docker/data/logstash/env2yaml
+        - name: build env2yaml go
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            gradle build
+            mkdir -p /tmp/go/src
+            cp -r "${source.dir}/logstash/docker/data/logstash/env2yaml" /tmp/go/src/env2yaml
+            cd /tmp/go/src/env2yaml
+            go build -trimpath
       outputs:
-        - source: ${source.dir}/logstash/docker/data/logstash/env2yaml
-          target: /usr/share/logstash/env2yaml
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${source.dir}/logstash/docker/data/logstash/env2yaml/env2yaml
+        - source: /tmp/go/src/env2yaml/env2yaml
           target: /usr/local/bin/env2yaml
           uid: 0
           gid: 0
@@ -84,15 +81,15 @@ contents:
           - sed
           - tar
         files:
-          - url: git+https://github.com/elastic/logstash.git#v9.1.10
-            checksum: 852e410cb3ff8a8cbf21f378f0ab7129c3dc208d
+          - url: git+https://github.com/elastic/logstash.git#v8.18.8
+            checksum: e1b101139286fed67fb694aa7dded21d140b564b
             path: ${source.dir}/logstash
             spdx:
               name: logstash
-              version: 9.1.10
+              version: 8.18.8
               packages:
                 - name: logstash
-                  purl: pkg:dhi/logstash@9.1.10
+                  purl: pkg:dhi/logstash@8.18.8
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -109,7 +106,7 @@ contents:
           uses: git/patch@v1
           work-dir: ${source.dir}/logstash
           with:
-            patch: ${source.dir}/patch/deps-9.1.patch
+            patch: ${source.dir}/patch/deps-8.18.patch
         - name: install default gems
           work-dir: ${source.dir}/logstash
           privileged: true
@@ -129,14 +126,29 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            tar -zxf "build/logstash-9.1.10-SNAPSHOT.tar.gz" -C /usr/share
+            tar -zxf "build/logstash-8.18.8-SNAPSHOT.tar.gz" -C /usr/share
 
             mkdir -p "${target.dir}/usr/share/logstash"
 
             # Remove bundled JDK - we use DHI Java JDK instead
-            rm -rf "/usr/share/logstash-9.1.10"-SNAPSHOT/jdk
+            rm -rf "/usr/share/logstash-8.18.8"-SNAPSHOT/jdk
 
-            cp -r "/usr/share/logstash-9.1.10"-SNAPSHOT/* "${target.dir}/usr/share/logstash"
+            cp -r "/usr/share/logstash-8.18.8"-SNAPSHOT/* "${target.dir}/usr/share/logstash"
+        - name: replace vulnerable jars
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            lz4_base_path="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems/logstash-integration-kafka-11.6.4-java/vendor/jar-dependencies/org/lz4/lz4-java/"
+
+            # Remove old version
+            # This will fail if the file is not there (meaning something has changed since this patch was needed)
+            rm "$lz4_base_path/1.8.0/lz4-java-1.8.0.jar"
+            rmdir "$lz4_base_path/1.8.0"
+
+            # Insert fixed version
+            mkdir "$lz4_base_path/1.10.1"
+            cp "${source.dir}/patch/deps/lz4-java-1.10.1.jar" "$lz4_base_path/1.10.1"
         - name: replace vulnerable jackson-core jars
           work-dir: ${source.dir}/logstash
           runs: |

@@ -19,8 +19,7 @@ dates:
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   COMMIT_SHA: e5e1e455450944f9cd77f07825b6b6c0cdcfad97
-  GO_VERSION: 1.24.13
-  GOLANG_REFERENCE: dhi/golang:1.24.13-debian13-dev@sha256:d31634f74476d11ba9581fac4e97e7b5eda00422ab88ddb657b3f38e02d8e2a0
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2e0cae145dca1c7d4dbf51412f98c151a21bdc2ba8f4d82c9ca5a744eca7eeb4
   GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk21-debian13-dev@sha256:0f1f3437f9108998c88829e8caa98786bb65e1730c09bf5665e4cb90355a0b54
   GRADLE_VERSION: 8.14.4
   JAVA_MAJOR_VERSION: "21"
@@ -104,6 +103,10 @@ contents:
             path: ${source.dir}/patch/deps/lz4-java-1.10.1.jar
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.18.6/jackson-core-2.18.6.jar
+            path: ${source.dir}/patch/deps/jackson-core-2.18.6.jar
+            uid: 0
+            gid: 0
       pipeline:
         - name: patch deps
           uses: git/patch@v1
@@ -137,6 +140,112 @@ contents:
             rm -rf "/usr/share/logstash-8.19.12"-SNAPSHOT/jdk
 
             cp -r "/usr/share/logstash-8.19.12"-SNAPSHOT/* "${target.dir}/usr/share/logstash"
+        - name: replace vulnerable jackson-core jars
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-72hv-8253-57qq - Replace all vulnerable jackson-core JARs with fixed version 2.18.6
+            # We replace the JAR contents in-place to preserve the directory structure that
+            # gems like jrjackson expect (they have hardcoded paths in their Ruby loader files)
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+            jackson_fixed="${source.dir}/patch/deps/jackson-core-2.18.6.jar"
+
+            # Find and replace all jackson-core JARs in the gems directory in-place
+            # This handles all versions (jrjackson, kafka, azure, geoip, etc.)
+            find "$base" -path "*/jackson-core/*/jackson-core-*.jar" -type f | while read -r old_jar; do
+              echo "Replacing $old_jar with fixed version"
+              cp "$jackson_fixed" "$old_jar"
+            done
+
+            # Also replace jackson-core in logstash-core/lib/jars if it exists (8.19+)
+            core_jar=$(find "${target.dir}/usr/share/logstash/logstash-core/lib/jars" -name "jackson-core-*.jar" -type f 2> /dev/null | head -1)
+            if [ -n "$core_jar" ] && [ -f "$core_jar" ]; then
+              echo "Replacing $core_jar with fixed version"
+              cp "$jackson_fixed" "$core_jar"
+            fi
+        - name: patch shaded jackson-core in elastic_integration jar
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # The logstash-filter-elastic_integration JAR is a shaded/uber JAR that contains
+            # jackson-core classes embedded directly inside it. We need to replace these.
+            # GHSA-72hv-8253-57qq
+
+            JAR_CMD="/opt/java/openjdk/21/bin/jar"
+            jackson_fixed="${source.dir}/patch/deps/jackson-core-2.18.6.jar"
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+
+            # Find the elastic_integration shaded JAR (version varies by logstash version)
+            ei_jar=$(find "$base" -path "*/logstash-filter-elastic_integration-*/vendor/jar-dependencies/co/elastic/logstash-filter-elastic_integration/*/logstash-filter-elastic_integration-*.jar" -type f | head -1)
+
+            if [ -z "$ei_jar" ]; then
+              echo "WARNING: No elastic_integration JAR found, skipping"
+              exit 0
+            fi
+
+            echo "Patching shaded JAR: $ei_jar"
+            work_dir="/tmp/ei_jar_patch"
+
+            mkdir -p "$work_dir"
+            cd "$work_dir"
+
+            # Extract the shaded JAR
+            "$JAR_CMD" xf "$ei_jar"
+
+            # Remove the old embedded jackson-core classes at root level
+            rm -rf com/fasterxml/jackson/core
+
+            # Extract the fixed jackson-core classes into the same location
+            "$JAR_CMD" xf "$jackson_fixed" 'com/fasterxml/jackson/core'
+
+            # Also update the pom metadata to reflect the new version
+            "$JAR_CMD" xf "$jackson_fixed" 'META-INF/maven/com.fasterxml.jackson.core/jackson-core'
+
+            # Replace the nested JAR in IMPL-JARS/x-content with fixed version
+            # Update both the directory name AND LISTING.TXT to avoid any reference to vulnerable version
+            if [ -d "IMPL-JARS/x-content" ]; then
+              # Find the old jackson-core directory name (e.g., jackson-core-2.17.2.jar)
+              old_jackson_name=$(find IMPL-JARS/x-content -maxdepth 1 -type d -name "jackson-core-*.jar" -printf "%f\n" | head -1)
+
+              if [ -z "$old_jackson_name" ]; then
+                echo "WARNING: No existing jackson-core JAR found in IMPL-JARS/x-content, skipping"
+              else
+                echo "Replacing $old_jackson_name with jackson-core-2.18.6.jar"
+
+                # Remove old version directory completely
+                rm -rf "IMPL-JARS/x-content/$old_jackson_name"
+
+                # Create new version directory with fixed version name
+                mkdir -p "IMPL-JARS/x-content/jackson-core-2.18.6.jar"
+                cd "IMPL-JARS/x-content/jackson-core-2.18.6.jar"
+
+                # Extract fixed JAR contents
+                "$JAR_CMD" xf "$jackson_fixed"
+
+                cd "$work_dir"
+
+                # Update LISTING.TXT to reflect the new JAR name
+                if [ -f "IMPL-JARS/x-content/LISTING.TXT" ]; then
+                  sed -i "s|$old_jackson_name|jackson-core-2.18.6.jar|g" IMPL-JARS/x-content/LISTING.TXT
+                  echo "Updated LISTING.TXT: $old_jackson_name -> jackson-core-2.18.6.jar"
+                else
+                  echo "WARNING: LISTING.TXT not found in IMPL-JARS/x-content"
+                fi
+              fi
+            fi
+
+            # Repack the JAR (preserving manifest and other metadata)
+            rm "$ei_jar"
+            "$JAR_CMD" cf "$ei_jar" .
+
+            # Cleanup
+            cd /
+            rm -rf "$work_dir"
+
+            # Verify the fix was applied
+            "$JAR_CMD" tf "$ei_jar" | grep -q "com/fasterxml/jackson/core/JsonFactory.class"
       paths:
         - type: directory
           path: ${source.dir}/patch
