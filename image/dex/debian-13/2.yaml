@@ -17,9 +17,9 @@ vars:
   BASE_DIGEST: sha256:d46a757d9ec2c6f6d9b7c4cdcfdb9bc65c9614c53ee28e0f489ed844fd2b79c8
   BASE_TAG: 20250419-glibc-debian13
   COMMIT_SHA: 11d2eeb52b42e1980e14cb91e69dd9e3faab2076
-  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:921d901e2620708879f2765e77277db0b752ea0e8e995b6fffdbed1faee9728c
-  GOMPLATE_COMMIT_SHA: 3e4035cbb6f85df1a98dc9636fd4927a0b5ac00e
-  GOMPLATE_VERSION: 4.3.3
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:aa167fed4e25a97975901c225acab6751b26dfd23084033b80a610e4be860bab
+  GOMPLATE_COMMIT_SHA: 8eba961bb4e69acf85f6c3205196378967c14ef1
+  GOMPLATE_VERSION: 5.0.0
   SEMVER_MAJOR_MINOR_VERSION: "2.45"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.45.1
@@ -33,19 +33,19 @@ contents:
     - libsqlite3-0
   builds:
     - name: gomplate
-      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:921d901e2620708879f2765e77277db0b752ea0e8e995b6fffdbed1faee9728c
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:aa167fed4e25a97975901c225acab6751b26dfd23084033b80a610e4be860bab
       work-dir: /go/src/github.com/hairyhenderson/gomplate
       contents:
         files:
-          - url: git+https://github.com/hairyhenderson/gomplate.git#v4.3.3
-            checksum: 3e4035cbb6f85df1a98dc9636fd4927a0b5ac00e
+          - url: git+https://github.com/hairyhenderson/gomplate.git#v5.0.0
+            checksum: 8eba961bb4e69acf85f6c3205196378967c14ef1
             path: /go/src/github.com/hairyhenderson/gomplate
             spdx:
               name: gomplate
-              version: 4.3.3
+              version: 5.0.0
               packages:
                 - name: gomplate
-                  purl: pkg:golang/github.com/hairyhenderson/gomplate@4.3.3
+                  purl: pkg:golang/github.com/hairyhenderson/gomplate@5.0.0
                   license: MIT
             uid: 0
             gid: 0
@@ -56,19 +56,15 @@ contents:
             deps:
               - github.com/go-git/go-git/v5@v5.16.5
               - go.opentelemetry.io/otel/sdk@v1.40.0
-              - golang.org/x/net@v0.51.0
             download: true
         - name: build
-          runs: |
-            set -eux -o pipefail
-
-            GOLDFLAGS="-X github.com/hairyhenderson/gomplate/v4/version.GitCommit=3e4035cbb6f85df1a98dc9636fd4927a0b5ac00e
-                        -X github.com/hairyhenderson/gomplate/v4/version.Version=4.3.3"
-
-            CGO_ENABLED=0 go build \
-              -ldflags="$GOLDFLAGS" \
-              -o "${target.dir}/usr/local/bin/gomplate" \
-              ./cmd/gomplate
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/hairyhenderson/gomplate/v4/version.GitCommit=8eba961bb4e69acf85f6c3205196378967c14ef1
+              - -X github.com/hairyhenderson/gomplate/v4/version.Version=5.0.0
+            output: ${target.dir}/usr/local/bin/gomplate
+            packages: ./cmd/gomplate
       outputs:
         - source: ${target.dir}/usr/local/bin/gomplate
           target: /usr/local/bin/gomplate
@@ -79,7 +75,7 @@ contents:
           uid: 0
           gid: 0
     - name: dex
-      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:921d901e2620708879f2765e77277db0b752ea0e8e995b6fffdbed1faee9728c
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:aa167fed4e25a97975901c225acab6751b26dfd23084033b80a610e4be860bab
       work-dir: /go/src/github.com/dexidp/dex
       contents:
         packages:
@@ -105,28 +101,24 @@ contents:
               - go.opentelemetry.io/otel/sdk@v1.40.0
               - golang.org/x/net@v0.51.0
             download: true
-        - name: build
-          privileged: true
+        - name: build dex
+          uses: go/build@v1
           environment:
             GOFLAGS: -buildvcs=false
-          runs: |
-            set -eux -o pipefail
-
-            GOLDFLAGS="-X main.version=2.45.1"
-
-            # CGO_ENABLED=1 for go-sqlite3
-            # The libsqlite3 tag causes go-sqlite3 to be linked against the system libsqlite3, which is desirable because:
-            #   - We trust the debian version of sqlite
-            #   - The debian sqlite will automatically get included in the SBOM correctly
-            CGO_ENABLED=1 go build \
-              -tags="libsqlite3" \
-              -ldflags="$GOLDFLAGS" \
-              -o "${target.dir}/usr/local/bin/dex" \
-              ./cmd/dex
-
-            CGO_ENABLED=0 go build \
-              -o "${target.dir}/usr/local/bin/docker-entrypoint" \
-              ./cmd/docker-entrypoint
+          with:
+            cgo-enabled: 1
+            ldflags:
+              - -X main.version=2.45.1
+            output: ${target.dir}/usr/local/bin/dex
+            packages: ./cmd/dex
+            tags: libsqlite3
+        - name: build docker-entrypoint
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            output: ${target.dir}/usr/local/bin/docker-entrypoint
+            packages: ./cmd/docker-entrypoint
         - name: install static files
           runs: |
             set -eux -o pipefail
@@ -134,7 +126,7 @@ contents:
             install -D -m 0644 /go/src/github.com/dexidp/dex/config.docker.yaml '${target.dir}/etc/dex/config.docker.yaml'
 
             mkdir -p '${target.dir}/srv/dex'
-            cp -r /go/src/github.com/dexidp/dex/web '${target.dir}/srv/dex/'
+            cp -a /go/src/github.com/dexidp/dex/web '${target.dir}/srv/dex/'
       outputs:
         - source: ${target.dir}/etc/dex
           target: /etc/dex
