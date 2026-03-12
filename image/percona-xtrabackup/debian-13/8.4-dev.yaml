@@ -1,0 +1,187 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Percona XtraBackup 8.4.x (dev)
+image: dhi.io/percona-xtrabackup
+variant: dev
+tags:
+  - 8.4-dev
+  - 8.4.0-5-dev
+  - 8.4-debian13-dev
+  - 8.4.0-5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-17"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: c6054e179b5dc39d9735536ce136dc1c91834d73
+  SEMVER_MAJOR_MINOR_VERSION: "8.4"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.4.0
+  VERSION: 8.4.0-5
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libaio1t64
+    - libc-bin
+    - libgcrypt20
+    - libgpg-error0
+    - liblz4-1
+    - libncurses6
+    - libnuma1
+    - libproc2-0
+    - libprotobuf-lite32t64
+    - libssl3t64
+    - libstdc++6
+    - libzstd1
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+    - zlib1g
+  builds:
+    - name: percona-xtrabackup
+      contents:
+        packages:
+          - bash
+          - bison
+          - build-essential
+          - cmake
+          - coreutils
+          - diffutils
+          - grep
+          - libaio-dev
+          - libcurl4-openssl-dev
+          - libev-dev
+          - libgcrypt20-dev
+          - libncurses-dev
+          - libproc2-dev
+          - libprotobuf-dev
+          - libprotoc-dev
+          - libssl-dev
+          - libtirpc-dev
+          - protobuf-compiler
+          - sed
+          - xxd
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/percona/percona-xtrabackup.git#percona-xtrabackup-8.4.0-5
+            checksum: c6054e179b5dc39d9735536ce136dc1c91834d73
+            path: ${source.dir}/percona-xtrabackup
+            spdx:
+              name: percona-xtrabackup
+              version: 8.4.0-5
+              packages:
+                - name: percona-xtrabackup
+                  purl: pkg:github/percona/percona-xtrabackup@8.4.0-5
+                  license: GPL-2.0
+            uid: 0
+            gid: 0
+          - url: https://archives.boost.io/release/1.77.0/source/boost_1_77_0.tar.bz2
+            checksum: sha256:fc9f85fc030e233142908241af7a846e60630aa7388de9a5fafb1f3a26840854
+            path: ${source.dir}/boost_1_77_0.tar.bz2
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract boost
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            tar -xjf boost_1_77_0.tar.bz2
+        - name: build and install
+          work-dir: ${source.dir}/percona-xtrabackup
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p build
+            cd build
+
+            cmake -DCMAKE_INSTALL_PREFIX=/out/usr/local \
+              -DBUILD_CONFIG=xtrabackup_release \
+              -DWITH_MAN_PAGES=OFF \
+              -DWITH_PROTOBUF=system \
+              -DWITH_BOOST=${source.dir}/boost_1_77_0 \
+              ..
+
+            make -j"$(nproc)"
+            make install
+      outputs:
+        - source: ${target.dir}/usr/local/bin/xtrabackup
+          target: /usr/local/bin/xtrabackup
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/percona-xtrabackup
+          target: /opt/docker/sbom/percona-xtrabackup
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /usr/lib/${ARCH}-linux-gnu/libaio.so.1
+    uid: 0
+    gid: 0
+    source: libaio.so.1t64
+annotations:
+  org.opencontainers.image.description: A minimal Percona XtraBackup image
+  org.opencontainers.image.licenses: GPL-2.0-only
+entrypoint:
+  - /usr/local/bin/xtrabackup
