@@ -104,15 +104,23 @@ Build-time variants typically include `dev` in the variant name and are intended
 multi-stage Dockerfile. These images typically:
 
 - Run as the root user
+
 - Include a shell and package manager
+
 - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+To view the image variants and get more information about them, select the Tags tab for this repository, and then select
+a tag.
 
 ## Migrate to a Docker Hardened Image
 
 Switching to the hardened Kyverno image does not require any special changes. You can use it as a drop-in replacement
-for the standard Kyverno (`bitnami/kyverno-init`) image in your existing workflows and configurations. Note that the
-entry point for the hardened image may differ from the standard image, so ensure that your commands and arguments are
-compatible.
+for the standard Kyverno image in your existing workflows and configurations. Note that the entry point for the hardened
+image may differ from the standard image, so ensure that your commands and arguments are compatible.
 
 ### Migration steps
 
@@ -120,7 +128,7 @@ compatible.
 
    Replace the image reference in your Docker run command or Compose file, for example:
 
-   - From: `bitnami/kyverno-init:<tag>`
+   - From: `ghcr.io/kyverno/kyvernopre:<tag>`
    - To: `dhi.io/kyverno-init:<tag>`
 
 1. All your existing command-line arguments, environment variables, port mappings, and network settings remain the same.
