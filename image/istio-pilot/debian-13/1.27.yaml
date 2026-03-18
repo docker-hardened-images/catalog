@@ -18,7 +18,7 @@ vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
   COMMIT_SHA: 4aee98e195c1af3f5e9385c637050db22d8c41d8
-  GOLANG_REFERENCE: dhi/golang:1.24.13-debian13-dev@sha256:eaf2238af1a4d2dd4309daaf73ff4fe9242c28889f22b946ccb9e3d3f7050781
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:0517a2c5ce6ab35fadf27bc7e2a2e3188c379af9fa9f59c20b3cfea7d926aca6
   SEMVER_MAJOR_MINOR_VERSION: "1.27"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.27.8
@@ -28,7 +28,7 @@ contents:
     - '!base-files'
   builds:
     - name: istio-pilot
-      uses: dhi.io/golang:1.24.13-debian13-dev@sha256:eaf2238af1a4d2dd4309daaf73ff4fe9242c28889f22b946ccb9e3d3f7050781
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:0517a2c5ce6ab35fadf27bc7e2a2e3188c379af9fa9f59c20b3cfea7d926aca6
       contents:
         packages:
           - grep
@@ -60,6 +60,10 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
             # Find all test packages, exclude tests with networking requirements or FIPS violations
             go list ./pilot/... \
               | grep -v 'istio.io/istio/pilot/pkg/config/kube/gateway' \
@@ -72,27 +76,23 @@ contents:
                 echo "Testing: $pkg"
                 go test -v "$pkg" || exit 1
               done
-        - name: build-pilot-discovery
+        - name: build
+          uses: go/build@v1
           work-dir: /go/src/github.com/istio/istio
-          privileged: true
           environment:
             GOFLAGS: -buildvcs=false
-          runs: |
-            set -eux -o pipefail
-
-            GOLDFLAGS="-X istio.io/istio/pkg/version.buildVersion=1.27.8
-                       -X istio.io/istio/pkg/version.buildGitRevision=4aee98e195c1af3f5e9385c637050db22d8c41d8
-                       -X istio.io/istio/pkg/version.buildStatus=Clean
-                       -X istio.io/istio/pkg/version.buildTag=1.27.8
-                       -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
-                       -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
-                       -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)"
-
-            CGO_ENABLED=0 go build \
-              -ldflags "$GOLDFLAGS" \
-              -tags "vtprotobuf,disable_pgv" \
-              -o "${target.dir}/usr/local/bin/pilot-discovery" \
-              ./pilot/cmd/pilot-discovery
+          with:
+            ldflags:
+              - -X istio.io/istio/pkg/version.buildVersion=1.27.8
+              - -X istio.io/istio/pkg/version.buildGitRevision=4aee98e195c1af3f5e9385c637050db22d8c41d8
+              - -X istio.io/istio/pkg/version.buildStatus=Clean
+              - -X istio.io/istio/pkg/version.buildTag=1.27.8
+              - -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
+              - -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
+              - -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)
+            output: ${target.dir}/usr/local/bin/pilot-discovery
+            packages: ./pilot/cmd/pilot-discovery
+            tags: vtprotobuf,disable_pgv
       paths:
         - type: directory
           path: ${source.dir}/patch
