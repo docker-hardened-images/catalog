@@ -71,6 +71,47 @@ Note: As you might have noticed, upstream sets image pull secret slightly differ
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
 registry and namespace. Replace `helm-pull-secret` with the name of the image pull secret you created earlier.
 
+#### Step 3a: Configure imagePullSecrets for data plane proxy pods
+
+The Helm chart configures `imagePullSecrets` for the envoy-gateway controller, but the data plane envoy proxy pods are
+created dynamically by the controller, not by Helm. These proxy pods also need credentials to pull from `dhi.io`.
+
+To configure this, add `imagePullSecrets` to your `EnvoyProxy` custom resource:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: my-proxy-config
+  namespace: <namespace>
+spec:
+  provider:
+    kubernetes:
+      envoyDeployment:
+        pod:
+          imagePullSecrets:
+            - name: helm-pull-secret
+```
+
+Then reference this `EnvoyProxy` in your `GatewayClass`:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: my-proxy-config
+    namespace: <namespace>
+```
+
+Without this configuration, the proxy pods will fail with `ErrImagePull` when attempting to pull the hardened envoy
+image from `dhi.io`.
+
 #### Step 4: Verify the installation
 
 The deployment's pods should show up and running almost immediately:
