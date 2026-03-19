@@ -1,0 +1,123 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Loki Canary 3.5.x
+image: dhi.io/loki-canary
+variant: runtime
+tags:
+  - "3.5"
+  - 3.5.12
+  - 3.5-debian13
+  - 3.5.12-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-04-17"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 3b305e3fe11a23c02ba34eb0382e06d5df0e3e07
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:cebfb9f36d5446cbbde91df615209668fe656e6276f5a7a0b3472bf102fba3c3
+  SEMVER_MAJOR_MINOR_VERSION: "3.5"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.5.12
+  VERSION: 3.5.12
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: loki-canary
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:cebfb9f36d5446cbbde91df615209668fe656e6276f5a7a0b3472bf102fba3c3
+      work-dir: /go/src/github.com/grafana/loki
+      contents:
+        packages:
+          - make
+          - bash
+          - sed
+          - hostname
+        files:
+          - url: git+https://github.com/grafana/loki.git#v3.5.12
+            checksum: 3b305e3fe11a23c02ba34eb0382e06d5df0e3e07
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki-canary
+              version: 3.5.12
+              packages:
+                - name: loki-canary
+                  purl: pkg:golang/github.com/grafana/loki@3.5.12
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+            download: true
+        - name: install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Fixes golang.org/x/tools/godoc@v0.1.0-deprecated: is explicitly
+            # required in go.mod, but not marked as explicit in vendor/modules.txt
+            go get golang.org/x/tools/godoc@none
+            make loki-canary
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            cp cmd/loki-canary/loki-canary "${target.dir}/usr/local/bin/loki-canary"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/loki-canary
+          target: /usr/local/bin/loki-canary
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/loki-canary
+          target: /opt/docker/sbom/loki-canary
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Loki Canary image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/local/bin/loki-canary
