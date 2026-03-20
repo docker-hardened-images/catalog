@@ -66,9 +66,10 @@ contents:
           uses: go/bump@v1
           with:
             deps:
-              - go.opentelemetry.io/otel/sdk@v1.40.0
-              - github.com/docker/cli@v29.2.0
               - github.com/cloudflare/circl@v1.6.3
+              - github.com/docker/cli@v29.2.0
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
             tidy: true
         - uses: go/hermetic@v1
         - name: test
@@ -80,7 +81,19 @@ contents:
               # Some unit tests will actually try to use X25519 which is not allowed in FIPS mode
               export GODEBUG=fips140=on
             fi
-            CGO_ENABLED=0 go test ./cmd/background-controller/... ./pkg/...
+
+            # Pass 1: Sigstore / TUF–heavy packages (reduce ~/.sigstore contention)
+            CGO_ENABLED=0 go test -count=1 -p=1 -parallel=1 -v \
+              ./pkg/cosign ./pkg/imageverification/imageverifiers/cosign
+
+            # Pass 2: policy engine (timing / cache–sensitive under load)
+            CGO_ENABLED=0 go test -count=1 -p=1 -parallel=1 -v ./pkg/engine
+
+            # Pass 3: cmd + remaining pkg/... (no duplicate runs)
+            CGO_ENABLED=0 go test -count=1 -v \
+              ./cmd/background-controller/... \
+              $(go list ./pkg/... | grep -v -E \
+                '/pkg/cosign$|/pkg/imageverification/imageverifiers/cosign$|/pkg/engine$')
         - name: build
           uses: go/build@v1
           with:
