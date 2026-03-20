@@ -1,0 +1,86 @@
+From 381689d3d6b99920efb5a32d2c6b6fdb42385f89 Mon Sep 17 00:00:00 2001
+From: Grant Orndorff <grant.orndorff@docker.com>
+Date: Tue, 13 Jan 2026 13:07:33 -0500
+Subject: [PATCH] Remove hardcoded root checks from ospfd, ospf6d, and ldpd
+
+These daemons have had hardcoded geteuid() != 0 checks since the original
+Zebra/Quagga codebase (pre-2003). However, there is no technical reason
+for these checks:
+
+1. All other FRR daemons (bgpd, ripd, isisd, babeld, pimd, eigrpd, pbrd,
+   staticd, bfdd, fabricd, vrrpd, pathd, nhrpd, mgmtd, zebra) successfully
+   run without root using only Linux capabilities.
+
+2. The required operations (raw sockets via SOCK_RAW, binding privileged
+   ports, network administration) are all covered by capabilities:
+   - CAP_NET_RAW for raw sockets
+   - CAP_NET_BIND_SERVICE for privileged ports
+   - CAP_NET_ADMIN for network configuration
+   - CAP_SYS_ADMIN for system operations
+
+3. FRR's privilege system (lib/privs.c) was specifically designed to
+   support running with capabilities instead of requiring root.
+
+4. Running as non-root with capabilities follows the principle of least
+   privilege and improves security.
+
+This change allows ospfd, ospf6d, and ldpd to run with the same
+capabilities-based security model as all other FRR daemons.
+---
+ ldpd/ldpd.c         | 6 ------
+ ospf6d/ospf6_main.c | 5 -----
+ ospfd/ospf_main.c   | 6 ------
+ 3 files changed, 17 deletions(-)
+
+diff --git a/ldpd/ldpd.c b/ldpd/ldpd.c
+index 3838c06b2..9f9cae50f 100644
+--- a/ldpd/ldpd.c
++++ b/ldpd/ldpd.c
+@@ -302,12 +302,6 @@ main(int argc, char *argv[])
+ 	if (argc > 0 || (lflag && eflag))
+ 		frr_help_exit(1);
+ 
+-	/* check for root privileges  */
+-	if (geteuid() != 0) {
+-		errno = EPERM;
+-		perror(ldpd_di.progname);
+-		exit(1);
+-	}
+ 
+ 	if (lflag)
+ 		lde();
+diff --git a/ospf6d/ospf6_main.c b/ospf6d/ospf6_main.c
+index 4aa5771a7..1f92f8549 100644
+--- a/ospf6d/ospf6_main.c
++++ b/ospf6d/ospf6_main.c
+@@ -249,11 +249,6 @@ int main(int argc, char *argv[], char *envp[])
+ 		}
+ 	}
+ 
+-	if (geteuid() != 0) {
+-		errno = EPERM;
+-		perror(ospf6d_di.progname);
+-		exit(1);
+-	}
+ 
+ 	snprintf(state_path, sizeof(state_path), OSPF6D_STATE_NAME);
+ 	snprintf(state_compat_path, sizeof(state_compat_path),
+diff --git a/ospfd/ospf_main.c b/ospfd/ospf_main.c
+index 17c6f3f19..515e66842 100644
+--- a/ospfd/ospf_main.c
++++ b/ospfd/ospf_main.c
+@@ -238,12 +238,6 @@ int main(int argc, char **argv)
+ 		}
+ 	}
+ 
+-	/* Invoked by a priviledged user? -- endo. */
+-	if (geteuid() != 0) {
+-		errno = EPERM;
+-		perror(ospfd_di.progname);
+-		exit(1);
+-	}
+ 
+ 	if (ospf_instance) {
+ 		snprintf(state_path, sizeof(state_path),
+-- 
+2.50.1 (Apple Git-155)

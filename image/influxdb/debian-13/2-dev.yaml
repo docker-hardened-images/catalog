@@ -1,0 +1,321 @@
+# syntax=dhi.io/build:2-debian13
+
+name: InfluxDB 2.x (dev)
+image: dhi.io/influxdb
+variant: dev
+tags:
+  - 2-dev
+  - 2.8-dev
+  - 2.8.0-dev
+  - 2-debian13-dev
+  - 2.8-debian13-dev
+  - 2.8.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-11-09"
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+  CLI_COMMIT_SHA: a79a2a1b825867421d320428538f76a4c90aa34c
+  CLI_VERSION: 2.7.5
+  COMMIT_SHA: 40a633239e25dde9efcf0f21d5950897051cf8a9
+  GO_TAGS: libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm
+  GO_VERSION: 1.25.8
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  NODE_REFERENCE: dhi/node:24.14.0-debian13-dev@sha256:ede80c2ad9a2739ba25b6c76a0f1786242ae68bbee36b8e74a940e77cadf7628
+  NODE_VERSION: 24.14.0
+  OPENAPI_COMMIT_SHA: 8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f
+  PROTOC_GEN_GO_VERSION: v1.34.1
+  RUST_REFERENCE: dhi/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+  RUST_VERSION: 1.94.0
+  SEMVER_MAJOR_MINOR_VERSION: "2.8"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.8.0
+  UI_COMMIT_SHA: 5c07739ca6dfe0de32f72675179147becb2f822c
+  UI_VERSION: 2.7.12
+  VERSION: 2.8.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libc6'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libsqlite3-0
+    - mawk
+    - openssl
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: influxdb
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        packages:
+          - libprotobuf-dev
+          - libsqlite3-dev
+          - pkg-config
+          - protobuf-compiler
+        files:
+          - url: https://raw.githubusercontent.com/influxdata/openapi/8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f/contracts/oss.json
+            path: ${source.dir}/swagger.json
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/influxdata/ui.git#OSS-v2.7.12
+            checksum: 5c07739ca6dfe0de32f72675179147becb2f822c
+            path: ${source.dir}/ui
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/influxdata/influxdb.git#v2.8.0
+            checksum: 40a633239e25dde9efcf0f21d5950897051cf8a9
+            path: /go/src/github.com/influxdata/influxdb
+            spdx:
+              name: influxdb
+              version: 2.8.0
+              packages:
+                - name: influxdb
+                  purl: pkg:golang/github.com/influxdata/influxdb@2.8.0
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:24.14.0-debian13-dev@sha256:ede80c2ad9a2739ba25b6c76a0f1786242ae68bbee36b8e74a940e77cadf7628
+            includes:
+              - opt/nodejs
+              - opt/yarn
+              - usr/local/bin/node
+              - usr/local/bin/yarn
+            uid: 0
+            gid: 0
+          - name: dhi.io/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+            includes:
+              - usr/local/bin/cargo
+              - usr/local/bin/rustc
+              - usr/local/lib
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build ui
+          work-dir: ${source.dir}/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            yarn build
+        - name: place ui into go source for embedding
+          work-dir: ${source.dir}/ui
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /go/src/github.com/influxdata/influxdb/static/data
+            cp -r build /go/src/github.com/influxdata/influxdb/static/data/build
+        - name: place openapi into go source for embedding
+          runs: |
+            set -eux -o pipefail
+
+            cp ${source.dir}/swagger.json /go/src/github.com/influxdata/influxdb/static/data/
+        - name: generate embedded ui and openapi
+          work-dir: /go/src/github.com/influxdata/influxdb
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go generate --tags libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm ./static
+        - name: install extra go tools
+          work-dir: /go/src/github.com/influxdata/influxdb
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go install "google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.1"
+            go install github.com/benbjohnson/tmpl
+            go install golang.org/x/tools/cmd/stringer
+            go install golang.org/x/tools/cmd/goimports
+            go install github.com/influxdata/pkg-config
+        - name: go generate
+          work-dir: /go/src/github.com/influxdata/influxdb
+          runs: |
+            set -eux -o pipefail
+
+            go generate --tags libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm ./influxql/... ./models/... ./pkg/... ./storage/... ./tsdb/... ./v1/...
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/influxdata/influxdb
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - golang.org/x/oauth2@v0.27.0
+              - github.com/eclipse/paho.mqtt.golang@v1.5.1
+              - github.com/hashicorp/go-retryablehttp@v0.7.7
+              - github.com/hashicorp/vault/api@v1.9.2
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/influxdata/influxdb
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # This flux rust gets compiled via the pkg-config shim installed above.
+            # The pkg-config shim uses the CARGO envvar to override the default cargo binary.
+            # The same envvar is used below in the build step.
+            export CARGO=${source.dir}/helpers/bin/cargo-wrapper.sh
+
+            # The one subtest we're skipping expects a "permission denied" error on /dev/core but gets a "file in special file system" error.
+            # The errors are functionally equivalent; the test is checking an error specific to a particular environment. There is no real bug here.
+            go test --tags libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm ./... -skip TestService/DryRun_-_stack/file_URL//dev/core
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/influxdata/influxdb
+          with:
+            cgo_enabled: 1
+            extra_env: CARGO=${source.dir}/helpers/bin/cargo-wrapper.sh
+            ldflags:
+              - -X main.commit=40a633239e25dde9efcf0f21d5950897051cf8a9
+              - -X main.version=v2.8.0
+              - -X main.date=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/local/bin/influxd
+            packages: ./cmd/influxd
+            tags: libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm
+      paths:
+        - type: file
+          path: ${source.dir}/helpers/bin/cargo-wrapper.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/influxdb/bin/2/cargo-wrapper.sh
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influxdb
+          target: /opt/docker/sbom/influxdb
+          uid: 0
+          gid: 0
+    - name: influx-cli
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        files:
+          - url: git+https://github.com/influxdata/influx-cli.git#v2.7.5
+            checksum: a79a2a1b825867421d320428538f76a4c90aa34c
+            path: /go/src/github.com/influxdata/influx-cli
+            spdx:
+              name: influx-cli
+              version: 2.7.5
+              packages:
+                - name: influx-cli
+                  purl: pkg:golang/github.com/influxdata/influx-cli@2.7.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/influxdata/influx-cli
+          with:
+            deps: []
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/influxdata/influx-cli
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/influxdata/influx-cli
+          with:
+            ldflags:
+              - -X main.commit=a79a2a1b825867421d320428538f76a4c90aa34c
+              - -X main.version=v2.7.5
+              - -X main.date=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/local/bin/influx
+            packages: ./cmd/influx
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influx-cli
+          target: /opt/docker/sbom/influx-cli
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  INFLUX_CONFIGS_PATH: /var/lib/influx-cli/configs
+  INFLUXD_CONFIG_PATH: /etc/influxdb/
+paths:
+  - type: file
+    path: /etc/influxdb/config.yaml
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/influxdb/data/2/default-config.yaml
+  - type: directory
+    path: /var/lib/influxdb
+    uid: 65532
+    gid: 65532
+  - type: directory
+    path: /var/lib/influx-cli
+    uid: 65532
+    gid: 65532
+annotations:
+  org.opencontainers.image.description: A minimal InfluxDB image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - influxd
+ports:
+  - 8086/tcp

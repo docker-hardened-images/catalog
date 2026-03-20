@@ -1,0 +1,265 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Grist 1.x (dev)
+image: dhi.io/grist
+variant: dev
+tags:
+  - 1-dev
+  - 1.7-dev
+  - 1.7.11-dev
+  - 1-debian13-dev
+  - 1.7-debian13-dev
+  - 1.7.11-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: d9267bd949206a3147aa7c925003857270d1612b
+  NODE_BUILD_REFERENCE: dhi/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+  NODE_BUILD_VERSION: 22.22.1
+  NODE_REFERENCE: dhi/node:22.22.1-debian13@sha256:bf537e5b39506c80f983e03649f3be7ee56f3280a9c13d1793f20e0cc2adafc6
+  NODE_VERSION: 22.22.1
+  PYTHON_BUILD_MAJOR_MINOR: "3.13"
+  PYTHON_BUILD_REFERENCE: dhi/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+  PYTHON_BUILD_VERSION: 3.13.12
+  PYTHON_REFERENCE: dhi/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+  PYTHON_VERSION: 3.13.12
+  SEMVER_MAJOR_MINOR_VERSION: "1.7"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.7.11
+  VERSION: 1.7.11
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libsqlite3-0
+    - libstdc++6
+    - mawk
+    - perl-base
+    - sed
+    - tini
+    - util-linux
+  builds:
+    - name: grist-node
+      uses: dhi.io/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+      environment:
+        PATH: /opt/python/bin:/usr/local/bin:/usr/bin:/bin
+      contents:
+        packages:
+          - coreutils
+          - bash
+          - make
+          - gcc
+          - g++
+        files:
+          - url: git+https://github.com/gristlabs/grist-core.git#v1.7.11
+            checksum: d9267bd949206a3147aa7c925003857270d1612b
+            path: ${source.dir}/grist
+            spdx:
+              name: grist
+              version: 1.7.11
+              packages:
+                - name: grist
+                  purl: pkg:dhi/grist@1.7.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+            includes:
+              - opt/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch-node
+          uses: yarn/patch@v1
+          privileged: true
+          with:
+            patches: ${source.dir}/patches/yarn-patches.json
+            yarn-root: ${source.dir}/grist
+        - name: build-node
+          work-dir: ${source.dir}/grist
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            yarn install --frozen-lockfile --verbose --network-timeout 600000
+            yarn global add --verbose --network-timeout 600000 node-gyp node-pre-gyp node-gyp-build node-gyp-build-optional-packages
+            yarn install --prod --frozen-lockfile --modules-folder=node_modules_prod --verbose --network-timeout 600000
+
+            yarn run build:prod
+
+            rm -rf node_modules
+            mv node_modules_prod node_modules
+        - name: build-pyodide
+          work-dir: ${source.dir}/grist/sandbox/pyodide
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make setup
+        - name: copy-node
+          work-dir: ${source.dir}/grist
+          runs: |
+            set -eux -o pipefail
+
+            chmod 755 sandbox/*
+
+            mkdir -p "${target.dir}/opt/grist"
+            cp -r node_modules "${target.dir}/opt/grist/node_modules"
+            cp -r _build "${target.dir}/opt/grist/_build"
+            cp -r static "${target.dir}/opt/grist/static"
+            cp -r sandbox "${target.dir}/opt/grist/sandbox"
+            cp app/cli.sh "${target.dir}/opt/grist/cli"
+            cp package.json "${target.dir}/opt/grist/package.json"
+            cp -r bower_components "${target.dir}/opt/grist/bower_components"
+            cp -r plugins "${target.dir}/opt/grist/plugins"
+      paths:
+        - type: file
+          path: /src/patches/yarn-patches.json
+          uid: 0
+          gid: 0
+          source: image/grist/patch/yarn-patches.json
+      outputs:
+        - source: ${target.dir}/opt/grist
+          target: /grist
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/grist
+          target: /opt/docker/sbom/grist
+          uid: 0
+          gid: 0
+    - name: grist-python
+      uses: dhi.io/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+      contents:
+        packages:
+          - coreutils
+          - bash
+        files:
+          - url: git+https://github.com/gristlabs/grist-core.git#v1.7.11
+            checksum: d9267bd949206a3147aa7c925003857270d1612b
+            path: ${source.dir}/grist
+            spdx:
+              name: grist
+              version: 1.7.11
+              packages:
+                - name: grist
+                  purl: pkg:dhi/grist@1.7.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build-python
+          work-dir: ${source.dir}/grist/sandbox
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PATH=/opt/python/bin:$PATH
+
+            ls -l /opt/python/bin
+
+            # Workaround for setuptools_scm pkg_resources dependency in build isolation
+            pip3 install --upgrade setuptools pip
+            # Install lazy-object-proxy 1.7.1 first (1.6.0 has build issues with setuptools_scm)
+            pip3 install lazy-object-proxy==1.7.1
+            # Install remaining requirements, skipping lazy-object-proxy since we already installed it
+            grep -v "^lazy-object-proxy" requirements.txt > requirements-filtered.txt
+            pip3 install -r requirements-filtered.txt
+            pip3 uninstall -y setuptools
+      outputs:
+        - source: /opt/python-3.13.12/lib/python3.13
+          target: /opt/python-3.13.12/lib/python3.13
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/node:22.22.1-debian13@sha256:bf537e5b39506c80f983e03649f3be7ee56f3280a9c13d1793f20e0cc2adafc6
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /grist
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  GRIST_DATA_DIR: /persist/docs
+  GRIST_DOCKER_GROUP: nonroot
+  GRIST_DOCKER_USER: nonroot
+  GRIST_HOST: 0.0.0.0
+  GRIST_INST_DIR: /persist
+  GRIST_ORG_IN_PATH: "true"
+  GRIST_SANDBOX_FLAVOR: unsandboxed
+  GRIST_SERVE_SAME_ORIGIN: "true"
+  GRIST_SESSION_COOKIE: grist_core
+  GRIST_SINGLE_PORT: "true"
+  GVISOR_FLAGS: -unprivileged -ignore-cgroups
+  NODE_ENV: production
+  NODE_OPTIONS: --no-deprecation
+  PATH: /opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHON_VERSION_ON_CREATION: "3"
+  TYPEORM_DATABASE: /persist/home.sqlite3
+paths:
+  - type: directory
+    path: /grist
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /persist
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /persist/docs
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Grist image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /grist/sandbox/docker_entrypoint.sh
+cmd:
+  - node
+  - /grist/sandbox/supervisor.mjs
+ports:
+  - 8484/tcp

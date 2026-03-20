@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Nessie 0.x
+image: dhi.io/nessie
+variant: runtime
+tags:
+  - "0"
+  - "0.107"
+  - 0.107.4
+  - 0-debian13
+  - 0.107-debian13
+  - 0.107.4-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-09"
+vars:
+  COMMIT_SHA: 2c2e4e429aa15070c790b05d821eff8271239d3f
+  GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk21-debian13-dev@sha256:c6b1765c6b70c0bc6e29d7fc3a37ccece41598af95ece0576835d067cb648e8f
+  GRADLE_VERSION: 8.14.4
+  JAVA_MAJOR_VERSION: "21"
+  JAVA_VERSION: 21.0.10.7
+  JRE_REFERENCE: dhi/eclipse-temurin:21.0.10.7-debian13@sha256:c23e635c723671b7283df738f813938b5f0683e5d1987d128130f13373c250b8
+  SEMVER_MAJOR_MINOR_VERSION: "0.107"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.107.4
+  VERSION: 0.107.4
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: nessie-server
+      uses: dhi.io/gradle:8.14.4-jdk21-debian13-dev@sha256:c6b1765c6b70c0bc6e29d7fc3a37ccece41598af95ece0576835d067cb648e8f
+      contents:
+        packages:
+          - curl
+          - grep
+        files:
+          - url: git+https://github.com/projectnessie/nessie.git#nessie-0.107.4
+            checksum: 2c2e4e429aa15070c790b05d821eff8271239d3f
+            path: ${source.dir}/nessie
+            spdx:
+              name: nessie
+              version: 0.107.4
+              packages:
+                - name: nessie
+                  purl: pkg:github/projectnessie/nessie@0.107.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: force jackson-core 2.21.1 (GHSA-72hv-8253-57qq)
+          uses: git/patch@v1
+          work-dir: ${source.dir}/nessie
+          with:
+            patch: ${source.dir}/patch/jackson-core-2.21.1.patch
+        - name: build
+          work-dir: ${source.dir}/nessie
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./gradlew :nessie-quarkus:clean :nessie-quarkus:quarkusBuild
+
+            cp -r ${source.dir}/nessie/servers/quarkus-server/build/quarkus-app \
+              ${target.dir}/quarkus-app
+      paths:
+        - type: file
+          path: ${source.dir}/patch/jackson-core-2.21.1.patch
+          uid: 0
+          gid: 0
+          source: image/nessie/patch/jackson-core-2.21.1.patch
+      outputs:
+        - source: ${target.dir}/quarkus-app
+          target: /opt/quarkus-app
+          uid: 10000
+          gid: 10001
+        - source: /opt/docker/sbom/nessie
+          target: /opt/docker/sbom/nessie
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-debian13@sha256:c23e635c723671b7283df738f813938b5f0683e5d1987d128130f13373c250b8
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nessie
+  users:
+    - name: nessie
+      uid: 10000
+      gid: 10001
+  groups:
+    - name: nessie
+      gid: 10001
+      members:
+        - nessie
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nessie
+environment:
+  AB_JOLOKIA_OFF: ""
+  JAVA_APP_JAR: /opt/quarkus-app/quarkus-run.jar
+  LANGUAGE: en_US:en
+paths:
+  - type: directory
+    path: /home/nessie
+    uid: 10000
+    gid: 10001
+annotations:
+  org.opencontainers.image.description: A minimal Nessie image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - java
+  - -jar
+  - /opt/quarkus-app/quarkus-run.jar
+ports:
+  - 19120/tcp

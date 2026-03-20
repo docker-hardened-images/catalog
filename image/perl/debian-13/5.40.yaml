@@ -1,0 +1,207 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Perl 5.40.x
+image: dhi.io/perl
+variant: runtime
+tags:
+  - "5.40"
+  - 5.40.3
+  - 5.40-debian13
+  - 5.40.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-06-09"
+  end-of-life: "2027-06-09"
+vars:
+  COMMIT_SHA: f0594ea45aebda152be29d14a09562adcb5b00c0
+  CPANMINUS_CHECKSUM: sha256:963e63c6e1a8725ff2f624e9086396ae150db51dd0a337c3781d09a994af05a5
+  CPANMINUS_VERSION: "1.7047"
+  IO_SOCKET_SSL_CHECKSUM: sha256:c5996e7335912a5c99e06bdb47ff39df309a857cbd8fd2627a021cefdb53cf54
+  IO_SOCKET_SSL_VERSION: "2.091"
+  NET_SSLEAY_CHECKSUM: sha256:9d7be8a56d1bedda05c425306cc504ba134307e0c09bda4a788c98744ebcd95d
+  NET_SSLEAY_VERSION: "1.94"
+  SEMVER_MAJOR_MINOR_VERSION: "5.40"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.40.3
+  VERSION: 5.40.3
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates
+    - libcrypt1
+    - libssl3t64
+  builds:
+    - name: perl
+      contents:
+        packages:
+          - bash
+          - bzip2
+          - ca-certificates
+          - coreutils
+          - curl
+          - dpkg-dev
+          - findutils
+          - gcc
+          - grep
+          - libc6-dev
+          - libcap2-bin
+          - libcrypt-dev
+          - libssl-dev
+          - make
+          - netbase
+          - patch
+          - sed
+          - xz-utils
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/perl/perl5#v5.40.3
+            checksum: f0594ea45aebda152be29d14a09562adcb5b00c0
+            path: ${source.dir}/perl
+            spdx:
+              name: perl
+              version: 5.40.3
+              packages:
+                - name: perl
+                  purl: pkg:github/Perl/perl5@5.40.3
+                  license: GPL-1
+            uid: 0
+            gid: 0
+          - url: https://www.cpan.org/authors/id/M/MI/MIYAGAWA/App-cpanminus-1.7047.tar.gz
+            checksum: sha256:963e63c6e1a8725ff2f624e9086396ae150db51dd0a337c3781d09a994af05a5
+            path: ${source.dir}/cpanminus
+            spdx:
+              name: App-cpanminus
+              version: "1.7047"
+              packages:
+                - name: App-cpanminus
+                  purl: pkg:cpan/MIYAGAWA/App-cpanminus@1.7047
+                  license: Perl-5
+            uid: 0
+            gid: 0
+          - url: https://www.cpan.org/authors/id/C/CH/CHRISN/Net-SSLeay-1.94.tar.gz
+            checksum: sha256:9d7be8a56d1bedda05c425306cc504ba134307e0c09bda4a788c98744ebcd95d
+            path: ${source.dir}/net-ssleay
+            spdx:
+              name: Net-SSLeay
+              version: "1.94"
+              packages:
+                - name: Net-SSLeay
+                  purl: pkg:cpan/CHRISN/Net-SSLeay@1.94
+                  license: Artistic-2
+            uid: 0
+            gid: 0
+          - url: https://www.cpan.org/authors/id/S/SU/SULLR/IO-Socket-SSL-2.091.tar.gz
+            checksum: sha256:c5996e7335912a5c99e06bdb47ff39df309a857cbd8fd2627a021cefdb53cf54
+            path: ${source.dir}/io-socket-ssl
+            spdx:
+              name: IO-Socket-SSL
+              version: "2.091"
+              packages:
+                - name: IO-Socket-SSL
+                  purl: pkg:cpan/SULLR/IO-Socket-SSL@2.091
+                  license: Perl-5
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: configure
+          work-dir: ${source.dir}/perl
+          runs: |
+            set -eux -o pipefail
+
+            gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+            archBits="$(dpkg-architecture --query DEB_BUILD_ARCH_BITS)"
+            archFlag="$([ "$archBits" = '64' ] && echo '-Duse64bitall' || echo '-Duse64bitint')"
+
+            ./Configure \
+              -Darchname="$gnuArch" \
+              "$archFlag" \
+              -Dusethreads \
+              -Duserelocatableinc \
+              -Dprefix=${target.dir} \
+              -des
+        - name: build-and-install
+          work-dir: ${source.dir}/perl
+          runs: |
+            set -eux -o pipefail
+
+            make -j"$(nproc)"
+            make install
+        - name: install-cpanm
+          work-dir: ${source.dir}/cpanminus/App-cpanminus-1.7047
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/bin/perl -pi -E 's{http://(www\.cpan\.org|backpan\.perl\.org|cpan\.metacpan\.org|fastapi\.metacpan\.org|cpanmetadb\.plackperl\.org)}{https://$1}g' bin/cpanm
+            ${target.dir}/bin/perl -pi -E 's{try_lwp=>1}{try_lwp=>0}g' bin/cpanm
+            ${target.dir}/bin/perl bin/cpanm .
+        - name: install-cpan-libraries
+          runs: |
+            set -eux -o pipefail
+
+            export SSL_CERT_DIR=/etc/ssl/certs
+
+            ${target.dir}/bin/perl ${target.dir}/bin/cpanm --notest ${source.dir}/net-ssleay/Net-SSLeay-1.94
+            ${target.dir}/bin/perl ${target.dir}/bin/cpanm --notest ${source.dir}/io-socket-ssl/IO-Socket-SSL-2.091
+        - name: fix-shebangs
+          runs: |
+            set -eux -o pipefail
+
+            # Fix all script shebangs to point to /usr/local/bin/perl
+            # Scripts are installed with #!${target.dir}/bin/perl but will be copied to /usr/local/bin
+            find ${target.dir}/bin -type f -executable -exec sed -i "s|#!${target.dir}/bin/perl|#!/usr/local/bin/perl|g" {} \;
+      outputs:
+        - source: ${target.dir}/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/lib
+          target: /usr/local/lib
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/perl
+          target: /opt/docker/sbom/perl
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/App-cpanminus
+          target: /opt/docker/sbom/App-cpanminus
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/Net-SSLeay
+          target: /opt/docker/sbom/Net-SSLeay
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/IO-Socket-SSL
+          target: /opt/docker/sbom/IO-Socket-SSL
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/src/app
+annotations:
+  org.opencontainers.image.description: A minimal Perl image
+  org.opencontainers.image.licenses: GPL-1.0-or-later
+cmd:
+  - perl
+  - --version

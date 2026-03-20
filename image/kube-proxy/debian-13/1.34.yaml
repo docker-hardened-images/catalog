@@ -1,0 +1,139 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kubernetes Proxy 1.34.x
+image: dhi.io/kube-proxy
+variant: runtime
+tags:
+  - "1.34"
+  - 1.34.6
+  - 1.34-debian13
+  - 1.34.6-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-27"
+  end-of-life: "2026-10-27"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 8b2bf66ce7018f6e13e8767624d4ce7768a8a2e5
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.34"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.34.6
+  VERSION: 1.34.6
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: kube-proxy
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/k8s.io/kubernetes
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gzip
+          - jq
+          - libcap2-bin
+          - rsync
+          - sed
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.34.6
+            checksum: 8b2bf66ce7018f6e13e8767624d4ce7768a8a2e5
+            path: /go/src/k8s.io/kubernetes
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          environment:
+            GOWORK: "off"
+          with:
+            deps: []
+            download: true
+        - name: update dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh google.golang.org/grpc v1.79.3 v0.45.0
+            ./hack/pin-dependency.sh golang.org/x/crypto v0.45.0
+            ./hack/pin-dependency.sh github.com/opencontainers/selinux v1.13.0
+            ./hack/pin-dependency.sh go.opentelemetry.io/otel/sdk v1.40.0
+            ./hack/update-vendor.sh
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            extra-args: -installsuffix=static
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.6
+              - -X k8s.io/component-base/version.gitCommit=8b2bf66ce7018f6e13e8767624d4ce7768a8a2e5
+            output: ${target.dir}/usr/local/bin/kube-proxy
+            packages: ./cmd/kube-proxy
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_net_bind_service=+ep '${target.dir}/usr/local/bin/kube-proxy'
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kube-proxy
+          target: /usr/local/bin/kube-proxy
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /run/kubernetes
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes proxy image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - kube-proxy

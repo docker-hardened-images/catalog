@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cosign 2.x (dev)
+image: dhi.io/cosign
+variant: dev
+tags:
+  - 2-dev
+  - 2.6-dev
+  - 2.6.2-dev
+  - 2-debian13-dev
+  - 2.6-debian13-dev
+  - 2.6.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 3ade80c5f77cefc904f8c994e88618e5892e8f1c
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "2.6"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.6.2
+  VERSION: 2.6.2
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: cosign
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/github.com/sigstore/cosign
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/sigstore/cosign.git#v2.6.2
+            checksum: 3ade80c5f77cefc904f8c994e88618e5892e8f1c
+            path: /go/src/github.com/sigstore/cosign
+            spdx:
+              name: cosign
+              version: 2.6.2
+              packages:
+                - name: cosign
+                  purl: pkg:golang/github.com/sigstore/cosign/v2@2.6.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/sigstore/fulcio@v1.8.5
+              - github.com/sigstore/rekor@v1.5.0
+              - github.com/theupdateframework/go-tuf/v2@v2.4.1
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            GODEBUG=fips140=on CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/sigstore/cosign/version.Version=2.6.2
+              - -X sigs.k8s.io/release-utils/version.gitVersion=2.6.2
+              - -X sigs.k8s.io/release-utils/version.gitCommit=3ade80c5f77cefc904f8c994e88618e5892e8f1c
+              - -X sigs.k8s.io/release-utils/version.gitTreeState=clean
+              - -X sigs.k8s.io/release-utils/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/local/bin/cosign
+            packages: ./cmd/cosign
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cosign
+          target: /opt/docker/sbom/cosign
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Cosign image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - cosign

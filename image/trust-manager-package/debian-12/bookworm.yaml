@@ -1,0 +1,142 @@
+# syntax=dhi.io/build:2-debian12
+
+name: Trust Manager Package for Debian 12 (bookworm)
+image: dhi.io/trust-manager-package
+variant: runtime
+tags:
+  - bookworm-debian12
+  - bookworm-20230311-debian12
+  - bookworm-20230311-deb12u1-debian12
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-06-10"
+  end-of-life: "2026-06-10"
+vars:
+  BASE_DIGEST: sha256:fd0dfde5ff8bb7d4d0686e937d7c3fff359b5cbad34e632735201713478ca002
+  BASE_TAG: 20230311-debian12
+  CA_CERTIFICATES_VERSION: 20230311+deb12u1
+  CA_CERTIFICATES_VERSION_DATE: "20230311"
+  CA_CERTIFICATES_VERSION_DEB: deb12u1
+  CODENAME: bookworm
+  DISTRO_PRETTY_VERSION: Debian 12 (bookworm)
+  DISTRO_VERSION: "12"
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian12-dev@sha256:8561ed8a7c673370889018f5623bdceae3e8c26c6855fd7847d9fb0916d1fd6e
+  TRUST_MANAGER_COMMIT_SHA: 5dbfc12bb5af40089428f3fb5046ea727ea64048
+  TRUST_MANAGER_VERSION: 0.22.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: trust-pkg-debian-bookworm
+      uses: dhi.io/golang:1.26.1-debian12-dev@sha256:8561ed8a7c673370889018f5623bdceae3e8c26c6855fd7847d9fb0916d1fd6e
+      contents:
+        files:
+          - url: git+https://github.com/cert-manager/trust-manager.git#v0.22.0
+            checksum: 5dbfc12bb5af40089428f3fb5046ea727ea64048
+            path: /go/src/github.com/cert-manager/trust-manager
+            spdx:
+              name: trust-manager
+              version: 0.22.0
+              packages:
+                - name: trust-manager-debian-bundle-static
+                  purl: pkg:golang/github.com/cert-manager/trust-manager@0.22.0#trust-packages/debian
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager/trust-packages/debian
+          with:
+            deps: []
+            download: true
+        - name: build debian-bundle-static binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager/trust-packages/debian
+          with:
+            output: ${target.dir}/usr/local/bin/debian-bundle-static
+            packages: .
+        - name: create trust bundle JSON
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/debian-package
+
+            # ca-certificates and jq are pre-installed in the golang builder
+            # Create the JSON trust bundle matching upstream format
+            jq -n \
+              --rawfile bundle /etc/ssl/certs/ca-certificates.crt \
+              --arg name "cert-manager-debian-bookworm" \
+              --arg version "20230311+deb12u1" \
+              '.name = $name | .bundle = $bundle | .version = $version' \
+              > ${target.dir}/debian-package/cert-manager-package-debian.json
+      outputs:
+        - source: ${target.dir}/usr/local/bin/debian-bundle-static
+          target: /usr/local/bin/debian-bundle-static
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/debian-package/cert-manager-package-debian.json
+          target: /debian-package/cert-manager-package-debian.json
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/trust-manager
+          target: /opt/docker/sbom/trust-manager
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20230311-debian12@sha256:fd0dfde5ff8bb7d4d0686e937d7c3fff359b5cbad34e632735201713478ca002
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "12"
+  version-codename: bookworm
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 12 (bookworm)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /ko-app
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /ko-app/debian-bundle-static
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/debian-bundle-static
+annotations:
+  org.opencontainers.image.description: A minimal trust package image providing CA certificates for cert-manager trust-manager
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/debian-bundle-static

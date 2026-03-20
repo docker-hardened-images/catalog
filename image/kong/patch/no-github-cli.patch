@@ -1,0 +1,125 @@
+diff --git a/build/build_system.bzl b/build/build_system.bzl
+index bfd45d067..540d60b15 100644
+--- a/build/build_system.bzl
++++ b/build/build_system.bzl
+@@ -194,29 +194,39 @@ def _github_release_impl(ctx):
+     elif os_name != "linux":
+         fail("Unsupported OS %s" % os_name)
+ 
+-    gh_bin = "%s" % ctx.path(Label("@gh_%s_%s//:bin/gh" % (os_name, os_arch)))
+-    args = [gh_bin, "release", "download", ctx.attr.tag, "-R", ctx.attr.repo]
+     downloaded_file = None
++    download_url = None
++
+     if ctx.attr.pattern:
+         if "/" in ctx.attr.pattern or ".." in ctx.attr.pattern:
+             fail("/ and .. are not allowed in pattern")
+-        downloaded_file = ctx.attr.pattern.replace("*", "_")
+-        args += ["-p", ctx.attr.pattern]
++        # Remove wildcards from pattern for filename
++        downloaded_file = ctx.attr.pattern.replace("*", "")
++        # Construct GitHub release asset URL
++        download_url = "https://github.com/%s/releases/download/%s/%s" % (ctx.attr.repo, ctx.attr.tag, ctx.attr.pattern.replace("*", ""))
+     elif ctx.attr.archive:
+-        args.append("--archive=" + ctx.attr.archive)
+         downloaded_file = "gh-release." + ctx.attr.archive.split(".")[-1]
++        # Construct GitHub archive URL
++        download_url = "https://github.com/%s/archive/refs/tags/%s.%s" % (ctx.attr.repo, ctx.attr.tag, ctx.attr.archive)
+     else:
+         fail("at least one of pattern or archive must be set")
+ 
+-    args += ["-O", downloaded_file]
++    # Build curl command with authentication if GITHUB_TOKEN is set
++    github_token = ctx.os.environ.get("GITHUB_TOKEN", "")
++    curl_args = ["curl", "-L", "-f", "-o", downloaded_file]
+ 
+-    ret = ctx.execute(args)
++    if github_token:
++        curl_args += ["-H", "Authorization: token %s" % github_token]
++
++    curl_args.append(download_url)
++
++    ret = ctx.execute(curl_args)
+ 
+     if ret.return_code != 0:
+         gh_token_set = "GITHUB_TOKEN is set, is it valid?"
+         if not ctx.os.environ.get("GITHUB_TOKEN", ""):
+-            gh_token_set = "GITHUB_TOKEN is not set, is this a private repo?"
+-        fail("Failed to download release (%s): %s, exit: %d" % (gh_token_set, ret.stderr, ret.return_code))
++            gh_token_set = "GITHUB_TOKEN is not set, is this a private repo or rate-limited?"
++        fail("Failed to download release from %s (%s): %s, exit: %d" % (download_url, gh_token_set, ret.stderr, ret.return_code))
+ 
+     ctx.extract(downloaded_file, stripPrefix = ctx.attr.strip_prefix)
+ 
+@@ -226,7 +236,7 @@ def _github_release_impl(ctx):
+ 
+ github_release = repository_rule(
+     implementation = _github_release_impl,
+-    doc = "Use `gh` CLI to download a github release and optionally add license headers",
++    doc = "Use `curl` to download a github release and optionally add license headers",
+     attrs = {
+         "tag": attr.string(mandatory = True),
+         "pattern": attr.string(mandatory = False),
+@@ -237,6 +247,7 @@ github_release = repository_rule(
+         "build_file_content": attr.string(),
+         "skip_add_copyright_header": attr.bool(default = False, doc = "Whether to inject COPYRIGHT-HEADER into downloaded files, only required for webuis"),
+     },
++    environ = ["GITHUB_TOKEN"],
+ )
+ 
+ def git_or_local_repository(name, branch, **kwargs):
+diff --git a/build/repositories.bzl b/build/repositories.bzl
+index 4004b32f7..5eddff2a2 100644
+--- a/build/repositories.bzl
++++ b/build/repositories.bzl
+@@ -31,23 +31,24 @@ filegroup(
+ )
+ """
+ 
+-def github_cli_repositories():
+-    """Defines the github cli repositories"""
+-
+-    gh_matrix = [
+-        ["linux", "amd64", "tar.gz", "7f9795b3ce99351a1bfc6ea3b09b7363cb1eccca19978a046bcb477839efab82"],
+-        ["linux", "arm64", "tar.gz", "115e1a18695fcc2e060711207f0c297f1cca8b76dd1d9cd0cf071f69ccac7422"],
+-        ["macOS", "amd64", "zip", "d18acd3874c9b914e0631c308f8e2609bd45456272bacfa70221c46c76c635f6"],
+-        ["macOS", "arm64", "zip", "85fced36325e212410d0eea97970251852b317d49d6d72fd6156e522f2896bc5"],
+-    ]
+-    for name, arch, type, sha in gh_matrix:
+-        http_archive(
+-            name = "gh_%s_%s" % (name, arch),
+-            url = "https://github.com/cli/cli/releases/download/v2.50.0/gh_2.50.0_%s_%s.%s" % (name, arch, type),
+-            strip_prefix = "gh_2.50.0_%s_%s" % (name, arch),
+-            sha256 = sha,
+-            build_file_content = _SRCS_BUILD_FILE_CONTENT,
+-        )
++# GitHub CLI is no longer needed - we use curl directly in github_release rule
++# def github_cli_repositories():
++#     """Defines the github cli repositories"""
++#
++#     gh_matrix = [
++#         ["linux", "amd64", "tar.gz", "7f9795b3ce99351a1bfc6ea3b09b7363cb1eccca19978a046bcb477839efab82"],
++#         ["linux", "arm64", "tar.gz", "115e1a18695fcc2e060711207f0c297f1cca8b76dd1d9cd0cf071f69ccac7422"],
++#         ["macOS", "amd64", "zip", "d18acd3874c9b914e0631c308f8e2609bd45456272bacfa70221c46c76c635f6"],
++#         ["macOS", "arm64", "zip", "85fced36325e212410d0eea97970251852b317d49d6d72fd6156e522f2896bc5"],
++#     ]
++#     for name, arch, type, sha in gh_matrix:
++#         http_archive(
++#             name = "gh_%s_%s" % (name, arch),
++#             url = "https://github.com/cli/cli/releases/download/v2.50.0/gh_2.50.0_%s_%s.%s" % (name, arch, type),
++#             strip_prefix = "gh_2.50.0_%s_%s" % (name, arch),
++#             sha256 = sha,
++#             build_file_content = _SRCS_BUILD_FILE_CONTENT,
++#         )
+ 
+ def kong_github_repositories():
+     maybe(
+@@ -87,7 +88,7 @@ def build_repositories():
+     luarocks_repositories()
+ 
+     kong_resty_websocket_repositories()
+-    github_cli_repositories()
++    # github_cli_repositories()  # No longer needed - using curl directly
+     kong_github_repositories()
+ 
+     protoc_repositories()

@@ -1,0 +1,141 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Tigera Operator 1.38.x (dev)
+image: dhi.io/tigera-operator
+variant: dev
+tags:
+  - 1.38-dev
+  - 1.38.13-dev
+  - 1.38-debian13-dev
+  - 1.38.13-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 43aa9e8bd54dfee582e4e83105eeea5d5d06bcdd
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.38"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.38.13
+  VERSION: 1.38.13
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: tigera-operator
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      contents:
+        files:
+          - url: git+https://github.com/tigera/operator.git#v1.38.13
+            checksum: 43aa9e8bd54dfee582e4e83105eeea5d5d06bcdd
+            path: /go/src/github.com/tigera/operator
+            spdx:
+              name: tigera-operator
+              version: 1.38.13
+              packages:
+                - name: tigera-operator
+                  purl: pkg:golang/github.com/tigera/operator@1.38.13
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch 1.38 dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/tigera/operator
+          with:
+            deps:
+              - golang.org/x/net@v0.51.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/tigera/operator
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only, excluding FV (functional verification) tests
+            # which require a running Kubernetes cluster
+            CGO_ENABLED=0 go test ./pkg/...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/tigera/operator
+          with:
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.38.13
+            output: ${target.dir}/usr/local/bin/operator
+            packages: ./cmd/
+      outputs:
+        - source: ${target.dir}/usr/local/bin/operator
+          target: /usr/local/bin/operator
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/tigera-operator
+          target: /opt/docker/sbom/tigera-operator
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal tigera-operator image for managing Calico installations
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/operator

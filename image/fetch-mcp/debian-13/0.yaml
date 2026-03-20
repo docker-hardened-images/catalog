@@ -1,0 +1,126 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Fetch MCP Server 2025.x
+image: dhi.io/fetch-mcp
+variant: runtime
+tags:
+  - "2025"
+  - latest
+  - "2025.12"
+  - 2025.12.18
+  - 2025-debian13
+  - 2025.12-debian13
+  - 2025.12.18-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 24b9402fd6904e74dff78d06be313fc8b701b937
+  PYTHON_DEV_REFERENCE: dhi/python:3.14.3-debian13-sfw-dev@sha256:b236c05501ebe5b4b0ced1a1d6c88c679a46fedee085e3a70edf56d125c17c94
+  PYTHON_REFERENCE: dhi/python:3.14.3-debian13@sha256:516bc88f3c649a5e66c58f7a5e53ad915623f153a02118ae409e9565f3f928a2
+  SEMVER_MAJOR_MINOR_VERSION: "2025.12"
+  SEMVER_MAJOR_VERSION: "2025"
+  SEMVER_VERSION: 2025.12.18
+  UV_VERSION: 0.10.11
+  VERSION: 2025.12.18
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: fetch-mcp
+      uses: dhi.io/python:3.14.3-debian13-sfw-dev@sha256:b236c05501ebe5b4b0ced1a1d6c88c679a46fedee085e3a70edf56d125c17c94
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      contents:
+        packages:
+          - gzip
+          - tar
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.10.11/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/modelcontextprotocol/servers.git#2025.12.18
+            checksum: 24b9402fd6904e74dff78d06be313fc8b701b937
+            path: ${source.dir}/servers
+            spdx:
+              name: fetch-mcp
+              version: 2025.12.18
+              packages:
+                - name: fetch-mcp
+                  purl: pkg:dhi/fetch-mcp@2025.12.18
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: fix CVE and move to /app
+          runs: |
+            set -eux -o pipefail
+
+            # urllib3 is a transitive dep from requests, explicitly stating it will bump it to the desired version
+            # CVE-2026-21441
+            sed -i '/"requests>=2\.32\.3",/a\"urllib3==2.6.3",' "${source.dir}/servers/src/fetch/pyproject.toml"
+            cp -r "${source.dir}/servers/src/fetch" /app
+        - name: build python package
+          work-dir: /app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm .python-version
+
+            sfw uv lock --upgrade
+            sfw uv sync --locked --no-install-project --no-dev --no-editable
+            sfw uv sync --locked --no-dev --no-editable
+      outputs:
+        - source: /app/.venv
+          target: /app/.venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/fetch-mcp
+          target: /opt/docker/sbom/fetch-mcp
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.14.3-debian13-sfw-dev@sha256:b236c05501ebe5b4b0ced1a1d6c88c679a46fedee085e3a70edf56d125c17c94
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+annotations:
+  org.opencontainers.image.description: Fetch MCP Server
+  org.opencontainers.image.licenses: MIT
+labels:
+  io.modelcontextprotocol.server.name: io.github.modelcontextprotocol/server-fetch
+entrypoint:
+  - mcp-server-fetch

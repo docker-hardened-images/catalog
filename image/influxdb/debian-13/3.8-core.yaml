@@ -1,0 +1,185 @@
+# syntax=dhi.io/build:2-debian13
+
+name: InfluxDB 3.8.x Core (core)
+image: dhi.io/influxdb
+variant: runtime
+flavor: core
+tags:
+  - 3-core
+  - 3.8-core
+  - 3.8.3-core
+  - 3-debian13-core
+  - 3.8-debian13-core
+  - 3.8.3-debian13-core
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-18"
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+  COMMIT_SHA: 73f689bb31d5ca13c4f950fefb40d5f6e6163019
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  PYTHON_REFERENCE: dhi/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+  PYTHON_VERSION: 3.13.12
+  RUST_REFERENCE: dhi/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+  RUST_VERSION: 1.94.0
+  SEMVER_MAJOR_MINOR_VERSION: "3.8"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.8.3
+  VERSION: 3.8.3
+contents:
+  packages:
+    - '!base-files'
+    - bash
+    - coreutils
+  builds:
+    - name: influxdb3
+      uses: dhi.io/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+      contents:
+        packages:
+          - git
+          - grep
+          - libprotobuf-dev
+          - protobuf-compiler
+          - sed
+        files:
+          - url: git+https://github.com/influxdata/influxdb.git#v3.8.3
+            checksum: 73f689bb31d5ca13c4f950fefb40d5f6e6163019
+            path: ${source.dir}/influxdb3
+            spdx:
+              name: influxdb3
+              version: 3.8.3
+              packages:
+                - name: influxdb3
+                  purl: pkg:cargo/influxdb3@3.8.3
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+            excludes:
+              - etc/group
+              - etc/passwd
+              - etc/shadow
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: influxdb3-cargo
+            source: ${source.dir}/influxdb3
+        - name: configure PYO3
+          runs: |
+            set -eux -o pipefail
+
+            cat > "${source.dir}/pyo3_config_file.txt" << EOF
+            implementation=CPython
+            version=3.13
+            shared=true
+            abi3=false
+            lib_name=python3.13
+            lib_dir=/opt/python/lib
+            executable=/opt/python/bin/python3.13
+            pointer_width=64
+            build_flags=
+            suppress_build_script_link_lines=false
+            EOF
+        - name: build
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          caches:
+            - path: /usr/local/cargo/git/db
+            - path: /usr/local/cargo/registry
+          runs: |
+            set -eux -o pipefail
+
+            export PYO3_CONFIG_FILE="${source.dir}/pyo3_config_file.txt"
+            cargo build --release
+        - name: install
+          work-dir: ${source.dir}/influxdb3
+          runs: |
+            set -eux -o pipefail
+
+            install -D target/release/influxdb3 \
+              '${target.dir}/usr/local/bin/influxdb3'
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influxdb3
+          target: /opt/docker/sbom/influxdb3
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influxdb3-cargo
+          target: /opt/docker/sbom/influxdb3-cargo
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+      excludes:
+        - etc/group
+        - etc/passwd
+        - etc/shadow
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  INFLUXDB3_DB_DIR: /var/lib/influxdb3
+  INFLUXDB3_PLUGIN_DIR: /plugins
+paths:
+  - type: directory
+    path: /var/lib/influxdb3
+    uid: 65532
+    gid: 65532
+  - type: directory
+    path: /plugins
+    uid: 65532
+    gid: 65532
+annotations:
+  org.opencontainers.image.description: A minimal InfluxDB image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - influxdb3
+ports:
+  - 8181/tcp

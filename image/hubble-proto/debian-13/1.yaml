@@ -1,0 +1,137 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Hubble Proto 1.x
+image: dhi.io/hubble-proto
+variant: runtime
+tags:
+  - "1"
+  - "1.19"
+  - 1.19.1
+  - 1-debian13
+  - 1.19-debian13
+  - 1.19.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: d0d0c8792c3420b3a6739fa21e3a182827a0bbc6
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  PROTOC_GEN_GO_GRPC_VERSION: 1.5.1
+  PROTOC_GEN_GO_JSON_VERSION: 1.5.0
+  PROTOC_GEN_GO_VERSION: 1.36.10
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.1
+  VERSION: 1.19.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: hubble-proto
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.19.1
+            checksum: d0d0c8792c3420b3a6739fa21e3a182827a0bbc6
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: hubble-proto
+              version: 1.19.1
+              packages:
+                - name: hubble-proto
+                  purl: pkg:golang/github.com/cilium/cilium@1.19.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install
+          work-dir: /go/src/github.com/cilium/cilium
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Install protoc generators
+            # Versions should be kept in sync with upstream Cilium's images/builder/install-protoplugins.sh
+            # https://github.com/cilium/cilium/blob/main/images/builder/install-protoplugins.sh
+            for pkg in \
+              "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10" \
+              "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1" \
+              "github.com/mfridman/protoc-gen-go-json@v1.5.0"; do
+              CGO_ENABLED=0 go install "${pkg}"
+            done
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            deps: []
+        - name: test
+          work-dir: /go/src/github.com/cilium/cilium
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Scope test to hubble proto-related packages in api/v1 (flow, observer, peer, relay, etc.)
+            CGO_ENABLED=0 go test ./api/v1/...
+        - name: build
+          work-dir: /go/src/github.com/cilium/cilium
+          runs: |
+            set -eux -o pipefail
+
+            # Install all go-installed binaries to target directory with proper permissions
+            for bin in protoc-gen-go protoc-gen-go-grpc protoc-gen-go-json; do
+              install -D -m 0755 "/go/bin/${bin}" "${target.dir}/usr/local/bin/hubble-proto/${bin}"
+            done
+      outputs:
+        - source: ${target.dir}/usr/local/bin/hubble-proto
+          target: /usr/local/bin/hubble-proto
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/hubble-proto
+          target: /opt/docker/sbom/hubble-proto
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Hubble Proto image
+  org.opencontainers.image.licenses: Apache-2.0

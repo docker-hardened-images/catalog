@@ -1,0 +1,176 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Vault 1.x (helm)
+image: dhi.io/vault
+variant: runtime
+flavor: helm
+tags:
+  - 1-helm
+  - 1.21-helm
+  - 1.21.4-helm
+  - 1-debian13-helm
+  - 1.21-debian13-helm
+  - 1.21.4-debian13-helm
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-21"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: ffe7023c481dc1ea2d8550bbaca8d85f8e611e0b
+  GO_VERSION: "1"
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.21"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.21.4
+  VERSION: 1.21.4
+contents:
+  packages:
+    - bash
+    - coreutils
+    - findutils
+    - sed
+    - tini
+  builds:
+    - name: vault
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      contents:
+        packages:
+          - binutils
+          - libcap2-bin
+        files:
+          - url: git+https://github.com/hashicorp/vault.git#v1.21.4
+            checksum: ffe7023c481dc1ea2d8550bbaca8d85f8e611e0b
+            path: /go/src/github.com/hashicorp/vault
+            spdx:
+              name: vault
+              version: 1.21.4
+              packages:
+                - name: vault
+                  purl: pkg:dhi/vault@1.21.4
+                  license: BUSL-1.1
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/hashicorp/vault
+          with:
+            deps:
+              - github.com/dvsekhvalnov/jose2go@v1.7.0
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: bootstrap
+          work-dir: /go/src/github.com/hashicorp/vault
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make bootstrap
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/hashicorp/vault
+          with:
+            ldflags:
+              - -X github.com/hashicorp/vault/version.fullVersion=1.21.4
+              - -X github.com/hashicorp/vault/version.GitCommit=ffe7023c481dc1ea2d8550bbaca8d85f8e611e0b
+              - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/local/bin/vault
+            tags: vault
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            # Grants the binary the CAP_IPC_LOCK capability
+            # This process requires root access and was being done in the live
+            # environment in the upstream image file but does lock us into the
+            # production variant
+            setcap cap_ipc_lock=+ep '${target.dir}/usr/local/bin/vault'
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/vault
+          target: /opt/docker/sbom/vault
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: vault
+  users:
+    - name: vault
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: vault
+      gid: 1000
+      members:
+        - vault
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/vault/bin/docker-entrypoint-helm.sh
+  - type: directory
+    path: /vault/data
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /vault/config
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /vault/logs
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /vault/file
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Vault image
+  org.opencontainers.image.licenses: BUSL-1.1
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+cmd:
+  - server
+  - -config=/vault/config
+ports:
+  - 8200/tcp

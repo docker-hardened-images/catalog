@@ -1,0 +1,192 @@
+# syntax=dhi.io/build:2-debian13
+
+name: openfga 1.x (dev)
+image: dhi.io/openfga
+variant: dev
+tags:
+  - 1-dev
+  - 1.12-dev
+  - 1.12.0-dev
+  - 1-debian13-dev
+  - 1.12-debian13-dev
+  - 1.12.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+  COMMIT_SHA: 7b1751d8f7b21b6dcd9456497a9eaa8504fa0f24
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  GRPC_HEALTH_PROBE_COMMIT_SHA: cbd3f91b5371a4e6a5a6a98eda39fa92bd6d4561
+  GRPC_HEALTH_PROBE_VERSION: 0.4.46
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.0
+  VERSION: 1.12.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: grpc health probe
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        files:
+          - url: git+https://github.com/grpc-ecosystem/grpc-health-probe.git#v0.4.46
+            checksum: cbd3f91b5371a4e6a5a6a98eda39fa92bd6d4561
+            path: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+            spdx:
+              name: grpc-health-probe
+              version: 0.4.46
+              packages:
+                - name: grpc-health-probe
+                  purl: pkg:golang/github.com/grpc-ecosystem/grpc-health-probe@0.4.46
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: compile
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            ldflags:
+              - -s
+              - -w
+              - -X main.versionTag=0.4.46
+            output: ${target.dir}/usr/local/bin/grpc_health_probe
+            packages: ./main.go
+        - name: tests
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/local/bin/grpc_health_probe" --version
+      outputs:
+        - source: ${target.dir}/usr/local/bin/grpc_health_probe
+          target: /usr/local/bin/grpc_health_probe
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/grpc-health-probe
+          target: /opt/docker/sbom/grpc-health-probe
+          uid: 0
+          gid: 0
+    - name: openfga
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        files:
+          - url: git+https://github.com/openfga/openfga.git#v1.12.0
+            checksum: 7b1751d8f7b21b6dcd9456497a9eaa8504fa0f24
+            path: /go/src/github.com/openfga/openfga
+            spdx:
+              name: openfga
+              version: 1.12.0
+              packages:
+                - name: openfga
+                  purl: pkg:golang/github.com/openfga/openfga@1.12.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/openfga/openfga
+          with:
+            deps: []
+            download: true
+        - name: compile
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openfga/openfga
+          with:
+            ldflags:
+              - -X github.com/openfga/openfga/internal/build.Version=v1.12.0
+              - -X github.com/openfga/openfga/internal/build.Commit=7b1751d8f7b21b6dcd9456497a9eaa8504fa0f24
+              - -X github.com/openfga/openfga/internal/build.Date=$(date -u -d @${SOURCE_DATE_EPOCH} +%Y-%m-%dT%TZ)
+              - -X github.com/openfga/openfga/internal/build.ProjectName=openfga
+            output: ${target.dir}/usr/local/bin/openfga
+            packages: ./cmd/openfga
+        - name: tests
+          work-dir: /go/src/github.com/openfga/openfga
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/local/bin/openfga" version
+      outputs:
+        - source: ${target.dir}/usr/local/bin/openfga
+          target: /usr/local/bin/openfga
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/openfga
+          target: /opt/docker/sbom/openfga
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal openfga image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - openfga
+ports:
+  - 8081/tcp
+  - 8080/tcp
+  - 3000/tcp

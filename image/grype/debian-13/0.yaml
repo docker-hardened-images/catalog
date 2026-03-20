@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Grype 0.x
+image: dhi.io/grype
+variant: runtime
+tags:
+  - "0"
+  - "0.109"
+  - 0.109.1
+  - 0-debian13
+  - 0.109-debian13
+  - 0.109.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: baf391d5c672e8f409953baa49ea243265866b2c
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  SEMVER_MAJOR_MINOR_VERSION: "0.109"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.109.1
+  VERSION: 0.109.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: grype
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        packages:
+          - zstd
+        files:
+          - url: git+https://github.com/anchore/grype.git#v0.109.1
+            checksum: baf391d5c672e8f409953baa49ea243265866b2c
+            path: /go/src/github.com/anchore/grype
+            spdx:
+              name: grype
+              version: 0.109.1
+              packages:
+                - name: grype
+                  purl: pkg:golang/github.com/anchore/grype@0.109.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/anchore/grype
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - github.com/cloudflare/circl@v1.6.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/anchore/grype
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # skipped tests require docker run to be available which isn't in our builds
+            GODEBUG="fips140=on" CGO_ENABLED=0 go test -skip 'Test_descriptorNameAndVersionSet|TestMatchByImage.*|TestCompareSBOMInputToLibResults|TestSubprocessStdin|TestDBProviders.*|TestCmd|TestPrepareWritableDB|TestSyftLocationExcludes.*|SarifIsValid|CycloneDX_Valid.*' ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/anchore/grype
+          with:
+            ldflags:
+              - -X main.version=0.109.1
+              - -X main.gitDescription=0.109.1
+              - -X main.gitCommit=baf391d5c672e8f409953baa49ea243265866b2c
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/local/bin/grype
+            packages: ./cmd/grype
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/grype
+          target: /opt/docker/sbom/grype
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Grype image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - grype

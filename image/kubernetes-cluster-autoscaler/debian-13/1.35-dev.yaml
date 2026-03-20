@@ -1,0 +1,143 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kubernetes Cluster Autoscaler 1.35.x (dev)
+image: dhi.io/kubernetes-cluster-autoscaler
+variant: dev
+tags:
+  - 1.35-dev
+  - 1.35.0-dev
+  - 1.35-debian13-dev
+  - 1.35.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 25fc5c74f6b0f2382b65f76edc08e15ac9f41da7
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  SEMVER_MAJOR_MINOR_VERSION: "1.35"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.35.0
+  VERSION: 1.35.0
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: kubernetes-cluster-autoscaler
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        packages:
+          - grep
+        files:
+          - url: git+https://github.com/kubernetes/autoscaler.git#cluster-autoscaler-1.35.0
+            checksum: 25fc5c74f6b0f2382b65f76edc08e15ac9f41da7
+            path: /go/src/k8s.io/autoscaler
+            spdx:
+              name: kubernetes-cluster-autoscaler
+              version: 1.35.0
+              packages:
+                - name: kubernetes-cluster-autoscaler
+                  purl: pkg:golang/k8s.io/autoscaler/cluster-autoscaler@1.35.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/k8s.io/autoscaler/cluster-autoscaler
+          with:
+            deps:
+              - gopkg.in/yaml.v3@v3.0.1
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+            download: true
+        - name: test
+          work-dir: /go/src/k8s.io/autoscaler/cluster-autoscaler
+          runs: |
+            set -eux -o pipefail
+
+            # Exclude cloudprovider tests (require cloud provider credentials)
+            # Exclude simulator/dynamicresources/snapshot tests (upstream format string bug in snapshot_test.go:636)
+            EXCLUDES='/cloudprovider/|/simulator/dynamicresources/snapshot'
+            PKGS=$(go list ./... | grep -v -E "${EXCLUDES}")
+            CGO_ENABLED=0 go test $PKGS
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/k8s.io/autoscaler/cluster-autoscaler
+          with:
+            output: ${target.dir}/usr/local/bin/cluster-autoscaler
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cluster-autoscaler
+          target: /cluster-autoscaler
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubernetes-cluster-autoscaler
+          target: /opt/docker/sbom/kubernetes-cluster-autoscaler
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes Cluster Autoscaler image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /cluster-autoscaler

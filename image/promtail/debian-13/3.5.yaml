@@ -1,0 +1,128 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Promtail 3.5.x
+image: dhi.io/promtail
+variant: runtime
+tags:
+  - "3.5"
+  - 3.5.12
+  - 3.5-debian13
+  - 3.5.12-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 3b305e3fe11a23c02ba34eb0382e06d5df0e3e07
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "3.5"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.5.12
+  VERSION: 3.5.12
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: promtail
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/github.com/grafana/loki
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/grafana/loki.git#v3.5.12
+            checksum: 3b305e3fe11a23c02ba34eb0382e06d5df0e3e07
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki
+              version: 3.5.12
+              packages:
+                - name: loki
+                  purl: pkg:dhi/loki@3.5.12
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+            download: true
+            work-dir: /go/src/github.com/grafana/loki
+        - name: build
+          uses: go/build@v1
+          with:
+            commit: 3b305e3fe11a23c02ba34eb0382e06d5df0e3e07
+            output: ${target.dir}/usr/bin/promtail
+            packages: ./clients/cmd/promtail
+            version: 3.5.12
+        - name: install-config
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 \
+              clients/cmd/promtail/promtail-docker-config.yaml \
+              "${target.dir}/etc/promtail/config.yaml"
+      outputs:
+        - source: ${target.dir}/usr/bin/promtail
+          target: /usr/bin/promtail
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/promtail
+          target: /etc/promtail
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/loki
+          target: /opt/docker/sbom/loki
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Grafana Promtail image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/bin/promtail
+cmd:
+  - -config.file=/etc/promtail/config.yaml

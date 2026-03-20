@@ -1,0 +1,146 @@
+# syntax=dhi.io/build:2-debian13
+
+name: AWS CLI 1.x (dev)
+image: dhi.io/awscli
+variant: dev
+tags:
+  - 1-dev
+  - 1.44-dev
+  - 1.44.61-dev
+  - 1-debian13-dev
+  - 1.44-debian13-dev
+  - 1.44.61-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: f950c79c6d504b3bb7ba3f26927c2d5b3392557e
+  PYTHON_BUILD_REFERENCE: dhi/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+  PYTHON_REFERENCE: dhi/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+  SEMVER_MAJOR_MINOR_VERSION: "1.44"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.44.61
+  VERSION: 1.44.61
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - groff-base
+    - less
+    - libc-bin
+    - libffi8
+    - mawk
+    - ncurses-base
+    - ncurses-bin
+    - perl-base
+    - sed
+    - util-linux
+    - zlib1g
+  builds:
+    - name: awscli
+      uses: dhi.io/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+      contents:
+        packages:
+          - ca-certificates
+          - coreutils
+          - unzip
+          - '!libexpat1'
+        files:
+          - url: https://s3.amazonaws.com/aws-cli/awscli-bundle-1.44.61.zip
+            path: ${source.dir}/awscli.zip
+            spdx:
+              name: awscli
+              version: 1.44.61
+              packages:
+                - name: awscli
+                  purl: pkg:dhi/awscli@1.44.61
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            unzip -q awscli.zip
+            ./awscli-bundle/install -i "${target.dir}/opt/aws-cli"
+        - name: bump
+          work-dir: ${target.dir}/opt/aws-cli
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/opt/aws-cli/bin/python -m pip install --upgrade 'pyasn1>=0.6.2' # CVE-2026-23490
+        - name: cleanup dependencies
+          work-dir: ${target.dir}/opt/aws-cli
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/opt/aws-cli/bin/python -m pip uninstall -y setuptools setuptools-scm wheel
+        - name: fix paths
+          runs: |
+            set -eux -o pipefail
+
+            # replace invalid reference to /out directory
+            sed -i "s|${target.dir}/opt/aws-cli/bin/python|/opt/aws-cli/bin/python|g" ${target.dir}/opt/aws-cli/bin/aws
+      outputs:
+        - source: ${target.dir}/opt/aws-cli
+          target: /opt/aws-cli
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.13.12-debian13@sha256:3c17d3c016a79deb016b0fc5a4cf0e4b413f7cee61f7e50bceadb8133fc34cb8
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  AWS_CLI_VERSION: 1.44.61
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /opt/aws-cli/bin:/usr/sbin:/sbin:/usr/bin:/bin
+annotations:
+  org.opencontainers.image.description: A minimal AWS CLI image
+cmd:
+  - aws
+  - help

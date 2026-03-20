@@ -1,0 +1,288 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Grafana 12.3.x (dev)
+image: dhi.io/grafana
+variant: dev
+tags:
+  - 12-dev
+  - 12.3-dev
+  - 12.3.5-dev
+  - 12-debian13-dev
+  - 12.3-debian13-dev
+  - 12.3.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-18"
+  end-of-life: "2026-08-18"
+vars:
+  COMMIT_SHA: 6b96ceff49a8b6a5cb85773061d2ee8b1bef8f56
+  GO_VERSION: "1"
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  NODE_REFERENCE: dhi/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+  NODE_VERSION: 22.22.1
+  PYTHON_REFERENCE: dhi/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+  PYTHON_VERSION: 3.13.12
+  RUST_REFERENCE: dhi/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+  RUST_VERSION: 1.94.0
+  SEMVER_MAJOR_MINOR_VERSION: "12.3"
+  SEMVER_MAJOR_VERSION: "12"
+  SEMVER_VERSION: 12.3.5
+  VERSION: 12.3.5
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tar
+    - util-linux
+  builds:
+    - name: grafana
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        packages:
+          - bash
+          - sed
+          - grep
+          - make
+          - build-essential
+          - python3-setuptools
+          - grep
+          - gcc
+          - chromium
+          - jq
+        files:
+          - url: git+https://github.com/grafana/grafana.git#v12.3.5
+            checksum: 6b96ceff49a8b6a5cb85773061d2ee8b1bef8f56
+            path: /go/src/github.com/grafana/grafana
+            spdx:
+              name: grafana
+              version: 12.3.5
+              packages:
+                - name: grafana
+                  purl: pkg:dhi/grafana@12.3.5
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+            includes:
+              - opt/**
+              - usr/local/bin
+            uid: 0
+            gid: 0
+          - name: dhi.io/python:3.13.12-debian13-dev@sha256:5dc089782c2c9e1afcba1de406da0a80f4e200ca6d2f0dc9a86ad011e546ae96
+            includes:
+              - opt/**
+              - usr/local/bin
+            uid: 0
+            gid: 0
+          - name: dhi.io/rust:1.94.0-debian13@sha256:8066ca1113783f15644672868139bacfa10bda4eff49e39c3ff8c59f8e4b4dcd
+            includes:
+              - opt/**
+              - usr/local/bin
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update version
+          work-dir: /go/src/github.com/grafana/grafana
+          runs: |
+            set -eux -o pipefail
+
+            # The tagged source contains an old version in package.json
+            sed -i "s/\"version\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"version\": \"12.3.5\"/g" package.json
+        - name: update node-gyp
+          work-dir: /go/src/github.com/grafana/grafana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Update node-gyp version to be compatible with Python >=3.12
+            jq '.resolutions += { "node-gyp" : "^10.0.0" }' package.json > package.new.json
+            rm package.json
+            mv package.new.json package.json
+
+            # Update lockfile with updated versions
+            yarn install
+        - name: build ui
+          work-dir: /go/src/github.com/grafana/grafana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export NODE_OPTIONS=--max_old_space_size=8000
+            yarn install --immutable
+
+            export NODE_ENV=production
+            yarn build
+
+            mkdir -p "${target.dir}/usr/share/grafana/public/"
+            cp -r public/* "${target.dir}/usr/share/grafana/public/"
+        - name: update go dependencies 12.3
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/grafana/grafana
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - github.com/openfga/openfga@v1.11.1
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - github.com/cloudflare/circl@v1.6.3
+            downgrade: true
+        - name: compile
+          work-dir: /go/src/github.com/grafana/grafana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make build-go
+        - name: install
+          work-dir: /go/src/github.com/grafana/grafana
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/grafana/bin/"
+            cp ./bin/*/grafana* "${target.dir}/usr/share/grafana/bin/"
+
+            mkdir -p "${target.dir}/etc/grafana/"
+            cp conf/sample.ini "${target.dir}/etc/grafana/grafana.ini"
+            cp conf/ldap.toml "${target.dir}/etc/grafana/ldap.toml"
+
+            mkdir -p "${target.dir}/usr/share/grafana/conf/"
+            cp -r conf/* "${target.dir}/usr/share/grafana/conf/"
+      outputs:
+        - source: ${target.dir}/usr/share/grafana/public
+          target: /usr/share/grafana/public
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/share/grafana/bin
+          target: /usr/share/grafana/bin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/grafana
+          target: /etc/grafana
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/share/grafana/conf
+          target: /usr/share/grafana/conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/grafana
+          target: /opt/docker/sbom/grafana
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: grafana
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: grafana
+      gid: 65532
+      members:
+        - grafana
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/lib/grafana
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  GRAFANA_VERSION: 12.3.5
+  PATH: /usr/share/grafana/bin:/usr/sbin:/sbin:/usr/bin:/bin:/usr/local/bin
+paths:
+  - type: directory
+    path: /etc/grafana
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/provisioning
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/provisioning/alerting
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/provisioning/dashboards
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/provisioning/datasources
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/provisioning/plugins
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/grafana/plugins
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/lib/grafana
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/lib/grafana/plugins
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/grafana
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /tmp
+    uid: 65532
+    gid: 65532
+    mode: "0777"
+annotations:
+  org.opencontainers.image.description: A minimal Grafana image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - grafana
+  - server
+  - --homepath=/usr/share/grafana
+  - --config=/etc/grafana/grafana.ini
+  - --packaging=docker
+  - cfg:default.log.mode=console
+  - cfg:default.paths.data=/var/lib/grafana
+  - cfg:default.paths.logs=/var/log/grafana
+  - cfg:default.paths.plugins=/var/lib/grafana/plugins
+  - cfg:default.paths.provisioning=/etc/grafana/provisioning
+ports:
+  - 3000/tcp

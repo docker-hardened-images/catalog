@@ -1,0 +1,253 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apigee Microgateway 3.3.x
+image: dhi.io/apigee-microgateway
+variant: runtime
+tags:
+  - "3.3"
+  - 3.3.8
+  - 3.3-debian13
+  - 3.3.8-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 899ab34fdc6f84ee69b232ab27e0ad4524ea42c8
+  NODE_DEV_DIGEST: sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+  NODE_DIGEST: sha256:bf537e5b39506c80f983e03649f3be7ee56f3280a9c13d1793f20e0cc2adafc6
+  NODE_VERSION: 22.22.1
+  SEMVER_MAJOR_MINOR_VERSION: "3.3"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.3.8
+  VERSION: 3.3.8
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: apigee-npm
+      uses: dhi.io/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+      contents:
+        packages:
+          - bash
+          - gzip
+        files:
+          - url: git+https://github.com/apigee-internal/microgateway.git#v3.3.8
+            checksum: 899ab34fdc6f84ee69b232ab27e0ad4524ea42c8
+            path: ${source.dir}/edgemicro
+            spdx:
+              name: edgemicro
+              version: 3.3.8
+              packages:
+                - name: edgemicro
+                  purl: pkg:npm/edgemicro@3.3.8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/qs/-/qs-6.14.2.tgz
+            path: ${source.dir}/qs-6.14.2.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/diff/-/diff-8.0.3.tgz
+            path: ${source.dir}/diff-8.0.3.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/minimatch/-/minimatch-10.2.3.tgz
+            path: ${source.dir}/minimatch-10.2.3.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/lodash/-/lodash-4.17.23.tgz
+            path: ${source.dir}/lodash-4.17.23.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/underscore/-/underscore-1.13.8.tgz
+            path: ${source.dir}/underscore-1.13.8.tgz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/npm-patches.json
+            npm-root: ${source.dir}/edgemicro
+        - name: install dependencies
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install --omit=dev
+        - name: patch nested qs packages
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Extract fixed qs version (downloaded in files section)
+            mkdir -p /tmp/qs-fix
+            tar -xzf ${source.dir}/qs-6.14.2.tgz -C /tmp/qs-fix
+
+            # Find and replace ALL qs packages in node_modules
+            find node_modules -type d -name "qs" -print0 | while IFS= read -r -d '' qs_dir; do
+              echo "Replacing $qs_dir"
+              rm -rf "$qs_dir"
+              cp -r /tmp/qs-fix/package "$qs_dir"
+            done
+
+            rm -rf /tmp/qs-fix
+        - name: patch nested diff packages
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Extract fixed diff version (downloaded in files section)
+            mkdir -p /tmp/diff-fix
+            tar -xzf ${source.dir}/diff-8.0.3.tgz -C /tmp/diff-fix
+
+            # Find and replace ALL diff packages in node_modules
+            # Only match directories named "diff" that contain package.json (actual npm packages)
+            find node_modules -type d -name "diff" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' diff_dir; do
+              echo "Replacing $diff_dir"
+              rm -rf "$diff_dir"
+              cp -r /tmp/diff-fix/package "$diff_dir"
+            done
+
+            rm -rf /tmp/diff-fix
+        - name: patch nested minimatch packages
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Extract fixed minimatch version (downloaded in files section)
+            mkdir -p /tmp/minimatch-fix
+            tar -xzf ${source.dir}/minimatch-10.2.3.tgz -C /tmp/minimatch-fix
+
+            # Find and replace ALL minimatch packages in node_modules
+            # Only match directories named "minimatch" that contain package.json (actual npm packages)
+            find node_modules -type d -name "minimatch" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' mm_dir; do
+              echo "Replacing $mm_dir"
+              rm -rf "$mm_dir"
+              cp -r /tmp/minimatch-fix/package "$mm_dir"
+            done
+
+            rm -rf /tmp/minimatch-fix
+        - name: patch nested lodash packages
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/lodash-fix
+            tar -xzf ${source.dir}/lodash-4.17.23.tgz -C /tmp/lodash-fix
+            find node_modules -type d -name "lodash" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' lodash_dir; do
+              echo "Replacing $lodash_dir"
+              rm -rf "$lodash_dir"
+              cp -r /tmp/lodash-fix/package "$lodash_dir"
+            done
+
+            rm -rf /tmp/lodash-fix
+        - name: patch nested underscore packages
+          work-dir: ${source.dir}/edgemicro
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/underscore-fix
+            tar -xzf ${source.dir}/underscore-1.13.8.tgz -C /tmp/underscore-fix
+            find node_modules -type d -name "underscore" -exec test -f {}/package.json \; -print0 | while IFS= read -r -d '' underscore_dir; do
+              echo "Replacing $underscore_dir"
+              rm -rf "$underscore_dir"
+              cp -r /tmp/underscore-fix/package "$underscore_dir"
+            done
+
+            rm -rf /tmp/underscore-fix
+        - name: create config
+          work-dir: ${source.dir}/edgemicro
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/nonroot/config"
+
+            npx edgemicro init -c "${target.dir}/nonroot/config"
+        - name: install
+          work-dir: ${source.dir}/edgemicro
+          runs: |
+            set -eux -o pipefail
+
+            npm install -g
+      paths:
+        - type: file
+          path: /src/npm-patches.json
+          uid: 0
+          gid: 0
+          source: image/apigee-microgateway/patch/npm-patches.json
+      outputs:
+        - source: /opt/nodejs/node-v22.22.1/bin/edgemicro
+          target: /opt/nodejs/node-v22.22.1/bin/edgemicro
+          uid: 0
+          gid: 0
+        - source: /opt/nodejs/node-v22.22.1/lib/node_modules/edgemicro
+          target: /opt/nodejs/node-v22.22.1/lib/node_modules/edgemicro
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/nonroot/config
+          target: /home/nonroot/.edgemicro
+          uid: 65532
+          gid: 65532
+  artifacts:
+    - name: dhi.io/node:22.22.1-debian13@sha256:bf537e5b39506c80f983e03649f3be7ee56f3280a9c13d1793f20e0cc2adafc6
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal apigee microgateway image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - node
+  - /opt/nodejs/node-v22.22.1/lib/node_modules/edgemicro/cli/edgemicro
+cmd:
+  - start

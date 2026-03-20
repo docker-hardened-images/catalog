@@ -1,0 +1,194 @@
+# syntax=dhi.io/build:2-debian13
+
+name: OpenBao 2.x (dev)
+image: dhi.io/openbao
+variant: dev
+tags:
+  - 2-dev
+  - 2.5-dev
+  - 2.5.1-dev
+  - 2-debian13-dev
+  - 2.5-debian13-dev
+  - 2.5.1-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-05"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: e546fae8cbfe95d8f36a351deb2cd23bfb94119e
+  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  SEMVER_MAJOR_MINOR_VERSION: "2.5"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.5.1
+  VERSION: 2.5.1
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: openbao-go
+      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      contents:
+        packages:
+          - binutils
+          - binutils-gold
+        files:
+          - url: git+https://github.com/openbao/openbao.git#v2.5.1
+            checksum: e546fae8cbfe95d8f36a351deb2cd23bfb94119e
+            path: /go/src/github.com/openbao/openbao
+            spdx:
+              name: openbao
+              version: 2.5.1
+              packages:
+                - name: openbao
+                  purl: pkg:dhi/openbao@2.5.1
+                  license: MPL-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/openbao/openbao
+          with:
+            deps:
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/cloudflare/circl@v1.6.3
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: grab static files
+          runs: |
+            set -eux -o pipefail
+
+            cp /go/src/github.com/openbao/openbao/LICENSE "${target.dir}/LICENSE"
+        - name: generate
+          work-dir: /go/src/github.com/openbao/openbao
+          runs: |
+            set -eux -o pipefail
+
+            go generate ./...
+        - name: bootstrap
+          work-dir: /go/src/github.com/openbao/openbao
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make bootstrap
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openbao/openbao
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X github.com/openbao/openbao/version.fullVersion=2.5.1
+              - -X github.com/openbao/openbao/version.GitCommit=e546fae8cbfe95d8f36a351deb2cd23bfb94119e
+              - -X github.com/openbao/openbao/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/local/bin/bao
+      outputs:
+        - source: ${target.dir}/LICENSE
+          target: /licenses/mozilla.txt
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/bao
+          target: /usr/local/bin/bao
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/openbao
+          target: /opt/docker/sbom/openbao
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: openbao
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: openbao
+      gid: 1000
+      members:
+        - openbao
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /openbao
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /openbao/logs
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /openbao/file
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /openbao/config
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal OpenBao image
+  org.opencontainers.image.licenses: MPL-2.0
+entrypoint:
+  - bao
+cmd:
+  - server
+  - -config=/openbao/config
+ports:
+  - 8200/tcp

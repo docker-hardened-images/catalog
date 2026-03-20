@@ -1,0 +1,176 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Istio Install CNI 1.28.x (dev)
+image: dhi.io/istio-install-cni
+variant: dev
+tags:
+  - 1-dev
+  - 1.28-dev
+  - 1.28.5-dev
+  - 1-debian13-dev
+  - 1.28-debian13-dev
+  - 1.28.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-05"
+  end-of-life: "2026-07-31"
+vars:
+  COMMIT_SHA: 7da6662175184479cb9281f3d814d6994bf1009f
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.28"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.28.5
+  VERSION: 1.28.5
+contents:
+  packages:
+    - '!basefiles'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - iproute2
+    - iptables
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: istio-cni
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      contents:
+        packages:
+          - grep
+        files:
+          - url: git+https://github.com/istio/istio.git#1.28.5
+            checksum: 7da6662175184479cb9281f3d814d6994bf1009f
+            path: /go/src/github.com/istio/istio
+            spdx:
+              name: istio-install-cni
+              version: 1.28.5
+              packages:
+                - name: istio
+                  purl: pkg:golang/istio.io/istio@1.28.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/istio/istio
+          privileged: true
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - golang.org/x/crypto@v0.45.0
+              - github.com/containernetworking/plugins@v1.9.0
+            download: true
+        - name: run-upstream-cni-tests
+          work-dir: /go/src/github.com/istio/istio
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Run CNI tests, excluding packages that require privileged access
+            # - cni/pkg/iptables: requires iptables/netfilter kernel modules and privileged container
+            # - cni/pkg/nodeagent: has flaky race conditions in event counting tests
+            #   (see https://github.com/istio/istio/blob/master/cni/pkg/nodeagent/informers_test.go#L138-149)
+
+            go list ./cni/... \
+              | grep -v 'istio.io/istio/cni/pkg/iptables' \
+              | grep -v 'istio.io/istio/cni/pkg/nodeagent' \
+              | grep -v 'istio.io/istio/cni/pkg/nftables' \
+              | xargs go test -v
+        - name: build-cni-binaries
+          work-dir: /go/src/github.com/istio/istio
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            GOLDFLAGS="-X istio.io/istio/pkg/version.buildVersion=1.28.5
+                       -X istio.io/istio/pkg/version.buildGitRevision=7da6662175184479cb9281f3d814d6994bf1009f
+                       -X istio.io/istio/pkg/version.buildStatus=Clean
+                       -X istio.io/istio/pkg/version.buildTag=1.28.5
+                       -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
+                       -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
+                       -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)"
+
+            # Build istio-cni binary
+            CGO_ENABLED=0 go build \
+              -ldflags "$GOLDFLAGS" \
+              -buildvcs=false \
+              -tags "agent,disable_pgv,grpcnotrace,retrynotrace,vtprotobuf" \
+              -o "${target.dir}/opt/cni/bin/istio-cni" \
+              ./cni/cmd/istio-cni
+
+            # Build install-cni binary
+            CGO_ENABLED=0 go build \
+              -ldflags "$GOLDFLAGS" \
+              -buildvcs=false \
+              -tags "agent,disable_pgv,grpcnotrace,retrynotrace" \
+              -o "${target.dir}/usr/local/bin/install-cni" \
+              ./cni/cmd/install-cni
+      outputs:
+        - source: ${target.dir}/opt/cni/bin/istio-cni
+          target: /opt/cni/bin/istio-cni
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/install-cni
+          target: /usr/local/bin/install-cni
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/istio-install-cni
+          target: /opt/docker/sbom/istio-install-cni
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /opt/cni/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: iptables-nft
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: ip6tables-nft
+annotations:
+  org.opencontainers.image.description: A minimal Istio CNI installer image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/install-cni

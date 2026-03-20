@@ -1,0 +1,185 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Istio Ztunnel 1.29.x (dev)
+image: dhi.io/ztunnel
+variant: dev
+tags:
+  - 1-dev
+  - 1.29-dev
+  - 1.29.1-dev
+  - 1-debian13-dev
+  - 1.29-debian13-dev
+  - 1.29.1-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-16"
+  end-of-life: "2026-08-31"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 61888401e717c9d853eb04bfd002e2808e8af8e4
+  RUST_REFERENCE: dhi/rust:1.94.0-debian13-dev@sha256:5013c540309ba859d41fbc0817d0861cc204c7b3c53269c3a0a8f371e949223d
+  RUST_VERSION: 1.94.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.29"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.29.1
+  VERSION: 1.29.1
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: ztunnel
+      uses: dhi.io/rust:1.94.0-debian13-dev@sha256:5013c540309ba859d41fbc0817d0861cc204c7b3c53269c3a0a8f371e949223d
+      environment:
+        VERSION: 1.29.1
+      contents:
+        packages:
+          - bash
+          - sed
+          - protobuf-compiler
+          - pkg-config
+          - libssl-dev
+        files:
+          - url: git+https://github.com/istio/ztunnel.git#1.29.1
+            checksum: 61888401e717c9d853eb04bfd002e2808e8af8e4
+            path: ${source.dir}/ztunnel
+            spdx:
+              name: ztunnel
+              version: 1.29.1
+              packages:
+                - name: ztunnel
+                  purl: pkg:dhi/ztunnel@1.29.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch Cargo.lock
+          uses: git/patch@v1
+          work-dir: ${source.dir}/ztunnel
+          with:
+            patch: ${source.dir}/patch/lru-1.29.patch
+        - name: patch CVEs
+          work-dir: ${source.dir}/ztunnel
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Removed test dependencies
+            rm -rf ./fuzz/Cargo.*
+
+            # Fixes CVE-2024-7254 & CVE-2025-53605
+            sed -i \
+              's/pprof = { version = "0\.14"/pprof = { version = "0\.15"/g' \
+              Cargo.toml
+
+            # Fixes CVE-2025-58160 (ANSI escape sequence injection in tracing-subscriber)
+            sed -i \
+              's/tracing-subscriber = { version = "0\.3[^"]*"/tracing-subscriber = { version = ">=0.3.20, <0.4"/g' \
+              Cargo.toml
+
+            # Update all patched dependencies
+            cargo update --ignore-rust-version --recursive pprof tracing-subscriber aws-lc-rs time
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: ztunnel-cargo
+            source: ${source.dir}/ztunnel
+        - name: build
+          work-dir: ${source.dir}/ztunnel
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CARGO_FLAGS=$([ "${target.fips}" = "true" ] && echo "--no-default-features --features tls-openssl" || echo "")
+
+            cargo build --release --locked --target-dir "${target.dir}" $CARGO_FLAGS
+            install -D -m 755 "${target.dir}/release/ztunnel" "${target.dir}/usr/local/bin/ztunnel"
+      paths:
+        - type: file
+          path: ${source.dir}/patch/lru-1.29.patch
+          uid: 0
+          gid: 0
+          source: image/ztunnel/patch/lru-1.29.patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/ztunnel
+          target: /usr/local/bin/ztunnel
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ztunnel
+          target: /opt/docker/sbom/ztunnel
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ztunnel-cargo
+          target: /opt/docker/sbom/ztunnel-cargo
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: The ztunnel component of Istio's ambient mesh
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - ztunnel

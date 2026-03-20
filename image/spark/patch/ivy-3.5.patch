@@ -1,0 +1,65 @@
+diff --git i/core/src/main/scala/org/apache/spark/deploy/SparkSubmit.scala w/core/src/main/scala/org/apache/spark/deploy/SparkSubmit.scala
+index 43c95bed5c6..41ab06e0d8d 100644
+--- i/core/src/main/scala/org/apache/spark/deploy/SparkSubmit.scala
++++ w/core/src/main/scala/org/apache/spark/deploy/SparkSubmit.scala
+@@ -1424,10 +1424,13 @@ private[spark] object SparkSubmitUtils extends Logging {
+ 
+   /* Set ivy settings for location of cache, if option is supplied */
+   private def processIvyPathArg(ivySettings: IvySettings, ivyPath: Option[String]): Unit = {
+-    ivyPath.filterNot(_.trim.isEmpty).foreach { alternateIvyDir =>
+-      ivySettings.setDefaultIvyUserDir(new File(alternateIvyDir))
+-      ivySettings.setDefaultCache(new File(alternateIvyDir, "cache"))
++    val alternateIvyDir = ivyPath.filterNot(_.trim.isEmpty).getOrElse {
++      // To protect old Ivy-based systems like old Spark from Apache Ivy 2.5.2's incompatibility.
++      System.getProperty("ivy.home",
++        System.getProperty("user.home") + File.separator + ".ivy2.5.2")
+     }
++    ivySettings.setDefaultIvyUserDir(new File(alternateIvyDir))
++    ivySettings.setDefaultCache(new File(alternateIvyDir, "cache"))
+   }
+ 
+   /* Add any optional additional remote repositories */
+diff --git i/core/src/test/scala/org/apache/spark/deploy/IvyTestUtils.scala w/core/src/test/scala/org/apache/spark/deploy/IvyTestUtils.scala
+index 0dcdba3dfb8..50a7d9780c8 100644
+--- i/core/src/test/scala/org/apache/spark/deploy/IvyTestUtils.scala
++++ w/core/src/test/scala/org/apache/spark/deploy/IvyTestUtils.scala
+@@ -378,7 +378,8 @@ private[deploy] object IvyTestUtils {
+       f(repo.toURI.toString)
+     } finally {
+       // Clean up
+-      if (repo.toString.contains(".m2") || repo.toString.contains(".ivy2")) {
++      if (repo.toString.contains(".m2") || repo.toString.contains(".ivy2") ||
++          repo.toString.contains(".ivy2.5.2")) {
+         val groupDir = getBaseGroupDirectory(artifact, useIvyLayout)
+         FileUtils.deleteDirectory(new File(repo, groupDir + File.separator + artifact.artifactId))
+         deps.foreach { _.foreach { dep =>
+diff --git i/dev/run-tests.py w/dev/run-tests.py
+index 9bf3095edb7..688e399e7ff 100755
+--- i/dev/run-tests.py
++++ w/dev/run-tests.py
+@@ -472,6 +472,8 @@ def main():
+     rm_r(os.path.join(SPARK_HOME, "work"))
+     rm_r(os.path.join(USER_HOME, ".ivy2", "local", "org.apache.spark"))
+     rm_r(os.path.join(USER_HOME, ".ivy2", "cache", "org.apache.spark"))
++    rm_r(os.path.join(USER_HOME, ".ivy2.5.2", "local", "org.apache.spark"))
++    rm_r(os.path.join(USER_HOME, ".ivy2.5.2", "cache", "org.apache.spark"))
+ 
+     os.environ["CURRENT_BLOCK"] = str(ERROR_CODES["BLOCK_GENERAL"])
+ 
+diff --git i/pom.xml w/pom.xml
+index a0e25ce4d8d..489afdf21a3 100644
+--- i/pom.xml
++++ w/pom.xml
+@@ -146,11 +146,7 @@
+     <jetty.version>9.4.58.v20250814</jetty.version>
+     <jakartaservlet.version>4.0.3</jakartaservlet.version>
+     <chill.version>0.10.0</chill.version>
+-    <!--
+-      SPARK-44968: don't upgrade Ivy to version 2.5.2 until the test aborted of
+-      `HiveExternalCatalogVersionsSuite` in Java 11/17 daily tests is resolved.
+-    -->
+-    <ivy.version>2.5.1</ivy.version>
++    <ivy.version>2.5.3</ivy.version>
+     <oro.version>2.0.8</oro.version>
+     <!--
+     If you changes codahale.metrics.version, you also need to change

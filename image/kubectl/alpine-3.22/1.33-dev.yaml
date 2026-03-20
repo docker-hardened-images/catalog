@@ -1,0 +1,129 @@
+# syntax=dhi.io/build:2-alpine3.22
+
+name: kubectl 1.33.x (dev)
+image: dhi.io/kubectl
+variant: dev
+tags:
+  - 1.33-alpine3.22-dev
+  - 1.33.10-alpine3.22-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-04-23"
+  end-of-life: "2026-07-28"
+vars:
+  COMMIT_SHA: 51a8c572b0b772e854aaee790692d0a3c6aa9de6
+  DBG: '#{ target.dev ? "1" : "0" }'
+  GOLANG_REFERENCE: dhi/golang:1.26.1-alpine3.22-dev@sha256:3d3f233a6ff281df319414759f931d5937cc2ca6b96eb372f5aa67c680626cc8
+  SEMVER_MAJOR_MINOR_VERSION: "1.33"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.33.10
+  VERSION: 1.33.10
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.22/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.22/community
+  packages:
+    - alpine-baselayout-data
+    - apk-tools
+    - busybox
+    - ca-certificates-bundle
+  builds:
+    - name: kubectl
+      work-dir: /go/src/k8s.io/kubernetes
+      environment:
+        PATH: /usr/local/go/bin:$PATH
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - jq
+          - make
+          - rsync
+          - ca-certificates-bundle
+          - git
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.33.10
+            checksum: 51a8c572b0b772e854aaee790692d0a3c6aa9de6
+            path: /go/src/k8s.io/kubernetes
+            spdx:
+              name: kubernetes
+              version: 1.33.10
+              packages:
+                - name: kubernetes
+                  purl: pkg:golang/k8s.io/kubernetes@1.33.10
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/golang:1.26.1-alpine3.22-dev@sha256:3d3f233a6ff281df319414759f931d5937cc2ca6b96eb372f5aa67c680626cc8
+            includes:
+              - usr/local/go
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          privileged: true
+          environment:
+            GOFIPS140: "off"
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh golang.org/x/net v0.45.0 # CVE-2025-47911, CVE-2025-58190
+            ./hack/pin-dependency.sh golang.org/x/oauth2 v0.27.0
+            ./hack/update-vendor.sh
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make WHAT=cmd/kubectl DBG=${DBG}
+            make WHAT=cmd/kubectl-convert DBG=${DBG}
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 _output/bin/kubectl \
+              '${target.dir}/usr/local/bin/kubectl'
+            install -D -m 0755 _output/bin/kubectl-convert \
+              '${target.dir}/usr/local/bin/kubectl-convert'
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kubectl
+          target: /usr/local/bin/kubectl
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/kubectl-convert
+          target: /usr/local/bin/kubectl-convert
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubernetes
+          target: /opt/docker/sbom/kubernetes
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.22"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.22
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal kubectl image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/kubectl
+cmd:
+  - --help

@@ -1,0 +1,137 @@
+# syntax=dhi.io/build:2-debian13
+
+name: MLflow 3.x
+image: dhi.io/mlflow
+variant: runtime
+tags:
+  - "3"
+  - "3.10"
+  - 3.10.1
+  - 3-debian13
+  - 3.10-debian13
+  - 3.10.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: cadc323c059d08ee15c3a312afd0eefeeccedc94
+  NODE_DIGEST: sha256:2583116929bd89a495b49301f79ff0f72076922cd6a6321e305db7b742dc0ec0
+  NODE_VERSION: 22.22.1
+  PYTHON_DIGEST: sha256:b9f5c08a1a0e4d455944795cce28d51ccf30c372052958c62a660d087528ed69
+  PYTHON_MAJOR_MINOR_VERSION: "3.12"
+  PYTHON_VERSION: 3.12.13
+  SEMVER_MAJOR_MINOR_VERSION: "3.10"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.10.1
+  VERSION: 3.10.1
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: mlflow
+      uses: dhi.io/python:3.12.13-debian13@sha256:b9f5c08a1a0e4d455944795cce28d51ccf30c372052958c62a660d087528ed69
+      privileged: true
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - sed
+        files:
+          - url: git+https://github.com/mlflow/mlflow.git#v3.10.1
+            checksum: cadc323c059d08ee15c3a312afd0eefeeccedc94
+            path: ${source.dir}/mlflow
+            spdx:
+              name: mlflow
+              version: 3.10.1
+              packages:
+                - name: mlflow
+                  purl: pkg:pypi/mlflow@3.10.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/pkg-node:22.22.1-debian13@sha256:2583116929bd89a495b49301f79ff0f72076922cd6a6321e305db7b742dc0ec0
+            includes:
+              - opt/nodejs
+              - opt/yarn
+              - usr/local/bin/node
+              - usr/local/bin/yarn
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build ui
+          work-dir: ${source.dir}/mlflow/mlflow/server/js
+          runs: |
+            set -eux -o pipefail
+
+            yarn install
+            yarn build
+        - name: install
+          work-dir: ${source.dir}/mlflow
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv ${target.dir}/opt/mlflow
+
+            ${target.dir}/opt/mlflow/bin/python3 -m pip install .
+
+            # Remediate CVEs by upgrading packages
+            ${target.dir}/opt/mlflow/bin/python3 -m pip install --upgrade "urllib3==2.6.3"       # CVE-2026-21441
+            ${target.dir}/opt/mlflow/bin/python3 -m pip install --upgrade "cryptography==46.0.5" # CVE-2026-26007
+            ${target.dir}/opt/mlflow/bin/python3 -m pip install --upgrade "pillow==12.1.1"       # CVE-2026-25990
+
+            find '${target.dir}/opt/mlflow/bin' -type f -executable -exec sed -i '1s|^#!${target.dir}|#!|' {} +
+      outputs:
+        - source: ${target.dir}/opt/mlflow
+          target: /opt/mlflow
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/mlflow
+          target: /opt/docker/sbom/mlflow
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.12.13-debian13@sha256:b9f5c08a1a0e4d455944795cce28d51ccf30c372052958c62a660d087528ed69
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/mlflow/data
+environment:
+  PATH: /opt/mlflow/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  VIRTUAL_ENV: /opt/mlflow
+paths:
+  - type: directory
+    path: /opt/mlflow/data
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal MLflow image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /opt/mlflow/bin/mlflow

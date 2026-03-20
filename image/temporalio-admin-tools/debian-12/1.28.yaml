@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-debian12
+
+name: Temporal Admin Tools 1.x
+image: dhi.io/temporalio-admin-tools
+variant: runtime
+tags:
+  - 1.28-debian12
+  - 1.28.2-debian12
+  - 1.28.2-cli-1.6.1-debian12
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CLI_VERSION: 1.6.1
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "1.28"
+  DEBIAN_EPOCH_MAJOR_VERSION: "1"
+  DEBIAN_EPOCH_VERSION: 1.28.2
+  DEBIAN_VERSION: "12"
+  PYTHON_DIGEST_BUILD: sha256:29cd7cba1d28a5ff3f5f615bc6a82c0dbaf479ca85513b39d4c4b9476745ad6b
+  PYTHON_DIGEST_FINAL: sha256:fcad9bfbd3d384d77f0e6fd4b3dc6b2de61dc11b93b63f83e65317a1c277c353
+  PYTHON_VERSION_BUILD: 3.13.12
+  PYTHON_VERSION_FINAL: 3.13.12
+  SEMVER_MAJOR_MINOR_VERSION: "1.28"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.28.2
+  TEMPORALIO_SERVER_DIGEST: sha256:ed64bf7943368e82778f3c9629d5290106137fe96892b00ea225e822acc4918a
+  VARIANT_SUFFIX: ""
+  VERSION: 1.28.2
+contents:
+  packages:
+    - bash
+    - bash-completion
+    - ca-certificates
+    - coreutils
+    - curl
+    - jq
+    - tini
+    - tzdata
+  builds:
+    - name: add bash completion
+      contents:
+        packages:
+          - bash
+          - coreutils
+        artifacts:
+          - name: dhi.io/temporalio-server:1.28.2-debian12@sha256:ed64bf7943368e82778f3c9629d5290106137fe96892b00ea225e822acc4918a
+            includes:
+              - usr/local/bin/temporal
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install bash completion
+          runs: |
+            set -eux -o pipefail
+
+            # [The OS] has a /etc/bash/bashrc that sources all files named /etc/bash/*.sh for
+            # interactive shells, so we can add completion logic in /etc/bash/temporal-completion.sh
+            # Completion for temporal depends on the bash-completion package.
+            mkdir -p "${target.dir}"/etc/bash/
+            /usr/local/bin/temporal completion bash > "${target.dir}"/etc/bash/temporal-completion.sh
+      outputs:
+        - source: ${target.dir}/etc/bash/temporal-completion.sh
+          target: /etc/bash/temporal-completion.sh
+          uid: 0
+          gid: 0
+    - name: add cqlsh
+      uses: dhi.io/python:3.13.12-debian12-dev@sha256:29cd7cba1d28a5ff3f5f615bc6a82c0dbaf479ca85513b39d4c4b9476745ad6b
+      privileged: true
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+      pipeline:
+        - name: add cqlsh
+          runs: |
+            set -eux -o pipefail
+
+            export VIRTUAL_ENV='/opt/cqlsh'
+            python3 -m venv "$VIRTUAL_ENV"
+
+            # CVE-2024-5569: zipp 1.0.0 → 3.19.1+
+            "$VIRTUAL_ENV/bin/python3" -m pip install 'zipp>=3.19.1'
+
+            "$VIRTUAL_ENV/bin/python3" -m pip install cqlsh
+
+            # Make cqlsh executable available in PATH
+            mkdir -p /usr/local/bin
+            ln -s ../../../opt/cqlsh/bin/cqlsh /usr/local/bin
+      outputs:
+        - source: /opt/cqlsh
+          target: /opt/cqlsh
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/cqlsh
+          target: /usr/local/bin/cqlsh
+          uid: 0
+          gid: 0
+    - name: add yq
+      uses: dhi.io/python:3.13.12-debian12-dev@sha256:29cd7cba1d28a5ff3f5f615bc6a82c0dbaf479ca85513b39d4c4b9476745ad6b
+      privileged: true
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+      pipeline:
+        - name: add yq
+          runs: |
+            set -eux -o pipefail
+
+            export VIRTUAL_ENV='/opt/yq'
+            python3 -m venv "$VIRTUAL_ENV"
+
+            # CVE-2024-5569: zipp 1.0.0 → 3.19.1+
+            "$VIRTUAL_ENV/bin/python3" -m pip install 'zipp>=3.19.1'
+
+            "$VIRTUAL_ENV/bin/python3" -m pip install yq
+
+            # Make yq executable available in PATH
+            mkdir -p /usr/local/bin
+            ln -s ../../../opt/yq/bin/yq /usr/local/bin
+      outputs:
+        - source: /opt/yq
+          target: /opt/yq
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/yq
+          target: /usr/local/bin/yq
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/temporalio-server:1.28.2-debian12@sha256:ed64bf7943368e82778f3c9629d5290106137fe96892b00ea225e822acc4918a
+      includes:
+        - etc/temporal/schema/**
+        - usr/local/bin/tdbg
+        - usr/local/bin/temporal
+        - usr/local/bin/temporal-cassandra-tool
+        - usr/local/bin/temporal-sql-tool
+      uid: 0
+      gid: 0
+    - name: dhi.io/python:3.13.12-debian12@sha256:fcad9bfbd3d384d77f0e6fd4b3dc6b2de61dc11b93b63f83e65317a1c277c353
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: temporal
+  users:
+    - name: temporal
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: temporal
+      gid: 1000
+      members:
+        - temporal
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "12"
+  version-codename: bookworm
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 12 (bookworm)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /etc/temporal
+environment:
+  TEMPORAL_HOME: /etc/temporal
+paths:
+  - type: directory
+    path: /etc/temporal/config
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: Temporal Admin Tools - Administrative CLI tools for Temporal workflow engine
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - sleep
+  - infinity

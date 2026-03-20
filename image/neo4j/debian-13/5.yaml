@@ -1,0 +1,236 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Neo4j 5.x
+image: dhi.io/neo4j
+variant: runtime
+tags:
+  - "5"
+  - "5.26"
+  - 5.26.22
+  - 5-debian13
+  - 5.26-debian13
+  - 5.26.22-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
+  COMMIT_SHA: b6b4c8fbd8e953c19daf4be1ad1136635465f046
+  DEBIAN_REFERENCE: dhi/debian-base:trixie-debian13@sha256:75eec9a1a76a02ddf88761684efd9a72de6a5ec2c5d1abd002c03a475d5d23b7
+  GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:97555de7353b25917cd06d4794734916011285cf5a9a2cd201a7b998619f626e
+  JRE_REFERENCE: dhi/eclipse-temurin:21.0.10.7-debian13@sha256:c23e635c723671b7283df738f813938b5f0683e5d1987d128130f13373c250b8
+  MAVEN_REFERENCE: dhi/maven:3.9.14-jdk21-debian13-dev@sha256:cc59f0d9df92b37861a1269db1184362f6ff47e3d24f7bfac25004de1c5a5875
+  MVN_PROPS_VARIANT: "5"
+  NEO4J_HOME: /var/lib/neo4j
+  SEMVER_MAJOR_MINOR_VERSION: "5.26"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.26.22
+  VERSION: 5.26.22
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - coreutils
+    - grep
+    - sed
+    - tini
+  builds:
+    - name: neo4j
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:cc59f0d9df92b37861a1269db1184362f6ff47e3d24f7bfac25004de1c5a5875
+      contents:
+        packages:
+          - coreutils
+          - tar
+          - gzip
+        files:
+          - url: git+https://github.com/neo4j/neo4j.git#5.26.22
+            checksum: b6b4c8fbd8e953c19daf4be1ad1136635465f046
+            path: ${source.dir}/neo4j
+            spdx:
+              name: neo4j
+              version: 5.26.22
+              packages:
+                - name: neo4j
+                  purl: pkg:dhi/neo4j@5.26.22
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/neo4j/docker-neo4j-publish#master
+            path: ${source.dir}/docker-neo4j-publish
+            spdx:
+              name: docker-neo4j-publish
+              version: 5.26.22
+              packages:
+                - name: docker-neo4j-publish
+                  purl: pkg:dhi/docker-neo4j-publish@5.26.22
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: copy startup scripts
+          work-dir: ${source.dir}/docker-neo4j-publish
+          runs: |
+            set -eux -o pipefail
+
+            cp -R 5.26.22/bullseye/community/local-package ${target.dir}/startup
+        - name: patch entrypoint to use gosu instead of su-exec
+          work-dir: ${target.dir}/startup
+          runs: |
+            set -eux -o pipefail
+
+            # Replace su-exec with gosu in docker-entrypoint.sh
+            # su-exec syntax: su-exec user command args
+            # gosu syntax: gosu user command args (same syntax, so simple replacement works)
+            sed -i 's/su-exec/gosu/g' docker-entrypoint.sh
+        - name: patch properties
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps-5.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/neo4j
+            properties: ${source.dir}/patch/mvn-properties-5.json
+        - name: build
+          work-dir: ${source.dir}/neo4j
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Set platform-specific Maven properties
+            if [ "${ARCH}" = "aarch64" ]; then
+              export MAVEN_OPTS="-Dos.arch=aarch64 -Dos.name=Linux -Dos.version=arm64"
+              export JAVA_OPTS="-Dos.arch=aarch64"
+            fi
+
+            # Set release version (source pom.xml uses SNAPSHOT versioning)
+            mvn versions:set -DnewVersion=5.26.22 -DgenerateBackupPoms=false -q
+
+            mvn clean install -DskipTests -Doverwrite=true
+        - name: install
+          work-dir: ${source.dir}/neo4j
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/var/lib/neo4j
+            TARFILE=$(find packaging/standalone/target -name "neo4j-community-*-unix.tar.gz")
+            tar -xzf ${TARFILE} -C ${target.dir}/var/lib/neo4j --strip-components=1
+      paths:
+        - type: file
+          path: /src/patch/mvn-properties-5.json
+          uid: 0
+          gid: 0
+          source: image/neo4j/patch/mvn-properties-5.json
+        - type: file
+          path: /src/patch/mvn-deps-5.json
+          uid: 0
+          gid: 0
+          source: image/neo4j/patch/mvn-deps-5.json
+      outputs:
+        - source: ${target.dir}/var/lib/neo4j
+          target: /var/lib/neo4j
+          uid: 7474
+          gid: 7474
+          mode: "0744"
+        - source: ${target.dir}/startup
+          target: /startup
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/startup/docker-entrypoint.sh
+          target: /usr/local/bin/docker-entrypoint.sh
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/neo4j
+          target: /opt/docker/sbom/neo4j
+          uid: 0
+          gid: 0
+    - name: locale
+      uses: dhi.io/debian-base:trixie-debian13@sha256:75eec9a1a76a02ddf88761684efd9a72de6a5ec2c5d1abd002c03a475d5d23b7
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-debian13@sha256:c23e635c723671b7283df738f813938b5f0683e5d1987d128130f13373c250b8
+      includes:
+        - opt/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/pkg-gosu:1.19-debian13@sha256:97555de7353b25917cd06d4794734916011285cf5a9a2cd201a7b998619f626e
+      includes:
+        - opt/docker/sbom/gosu
+        - usr/local/sbin/gosu
+      uid: 0
+      gid: 0
+accounts:
+  run-as: neo4j
+  users:
+    - name: neo4j
+      uid: 7474
+      gid: 7474
+  groups:
+    - name: neo4j
+      gid: 7474
+      members:
+        - neo4j
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  NEO4J_EDITION: community
+  NEO4J_HOME: /var/lib/neo4j
+  PATH: /usr/local/sbin:/var/lib/neo4j/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: symlink
+    path: /data
+    uid: 7474
+    gid: 7474
+    source: /var/lib/neo4j/data
+  - type: symlink
+    path: /logs
+    uid: 7474
+    gid: 7474
+    source: /var/lib/neo4j/logs
+annotations:
+  org.opencontainers.image.description: A minimal Neo4j image
+  org.opencontainers.image.licenses: GPL-3.0
+entrypoint:
+  - /usr/bin/tini
+  - -g
+  - --
+  - /startup/docker-entrypoint.sh
+cmd:
+  - neo4j
+ports:
+  - 7473/tcp
+  - 7474/tcp
+  - 7687/tcp
