@@ -63,7 +63,8 @@ Optionally, you can also use the `--dry-run` flag to test the installation witho
 
 ```console
 helm install my-envoy-gateway oci://dhi.io/envoy-gateway-chart --version <version> \
-  --set "global.imagePullSecrets[0]=helm-pull-secret" \
+  --set "global.imagePullSecrets[0].name=helm-pull-secret" \
+  --set "config.envoyGateway.envoyProxy.provider.kubernetes.envoyDeployment.pod.imagePullSecrets[0].name=helm-pull-secret"
 ```
 
 Note: As you might have noticed, upstream sets image pull secret slightly different to most charts.

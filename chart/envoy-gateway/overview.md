@@ -7,6 +7,7 @@ The following Docker Hardened Images are used in this Helm chart:
 
 - `dhi/envoy-gateway`
 - `dhi/envoy-ratelimit`
+- `dhi/envoy`
 
 To learn more about how to use this Helm chart you can visit the upstream documentation:
 [https://github.com/envoyproxy/gateway/tree/v1.7.0/charts/gateway-helm/README.md](https://github.com/envoyproxy/gateway/tree/v1.7.0/charts/gateway-helm/README.md)
