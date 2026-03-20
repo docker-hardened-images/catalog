@@ -40,15 +40,25 @@ if [ "$1" = "mysqld" ]; then
       echo "MYSQL_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD_FILE is not set. Exiting..."
       exit 1
     fi
-    echo "ROOT: $MYSQL_ROOT_PASSWORD"
     echo "Initializing database..."
     mysqld --initialize-insecure --datadir="${MYSQLDATA}"
     echo "Starting database for initialization"
-    mysqld --daemonize --datadir="${MYSQLDATA}"
-    echo "Creating root user..."
-    mysql -uroot <<<"CREATE USER 'root'@'%' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}'; GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION ;"
+    mysqld --daemonize --skip-networking --datadir="${MYSQLDATA}"
+    echo "Configuring root users..."
+    escaped_root_password="${MYSQL_ROOT_PASSWORD//\\/\\\\}"
+    escaped_root_password="${escaped_root_password//\'/\'\'}"
+    mysql --protocol=socket -uroot <<-EOSQL
+      SET autocommit = 1;
+      SET @@SESSION.SQL_LOG_BIN = 0;
+
+      ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_root_password}';
+      GRANT ALL ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
+      CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${escaped_root_password}';
+      GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION;
+      FLUSH PRIVILEGES;
+EOSQL
     echo "Stopping database after initialization"
-    mysqladmin shutdown -uroot
+    MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" mysqladmin --protocol=socket shutdown -uroot
   fi
   # start the database
   echo "Starting database...."
