@@ -17,32 +17,109 @@ dates:
   release: "2024-07-29"
   end-of-life: "2026-11-30"
 vars:
-  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "7.4"
-  DEBIAN_EPOCH_MAJOR_VERSION: "7"
-  DEBIAN_EPOCH_VERSION: 7.4.8
+  COMMIT_SHA: 3c2f227822c358df4b7d4840d0a9b6a5ac1d20c4
   REDIS_LICENSE: SSPL-1.0
-  VERSION: 6:7.4.8-1rl1~trixie1
+  SEMVER_MAJOR_MINOR_VERSION: "7.4"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.4.8
+  VERSION: 7.4.8
 contents:
-  repositories:
-    - deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb trixie main
-  keyring:
-    - https://packages.redis.io/gpg
   packages:
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
     - base-files
+    - ca-certificates
     - libpcre2-8-0
     - libssl3t64
-    - libsystemd0
-    - redis-server=6:7.4.8-1rl1~trixie1
-    - redis-tools=6:7.4.8-1rl1~trixie1
-    - redis=6:7.4.8-1rl1~trixie1
+    - libstdc++6
     - tini
-  mappings:
-    redis: pkg:deb/redis/redis@6:7.4.8-1rl1~trixie1?os_name=debian&os_version=13
-    redis-server: pkg:deb/redis/redis-server@6:7.4.8-1rl1~trixie1?os_name=debian&os_version=13
-    redis-tools: pkg:deb/redis/redis-tools@6:7.4.8-1rl1~trixie1?os_name=debian&os_version=13
+  builds:
+    - name: redis
+      work-dir: ${source.dir}/redis
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - bash
+          - ca-certificates
+          - clang
+          - cmake
+          - coreutils
+          - findutils
+          - g++
+          - gcc
+          - git
+          - gnu-which
+          - grep
+          - libc6-dev
+          - libssl-dev
+          - libtool
+          - make
+          - pkgconf
+          - python3
+          - python3-dev
+          - python3-pip
+          - python3-venv
+          - rsync
+          - sed
+          - unzip
+          - wget
+          - xz-utils
+        files:
+          - url: git+https://github.com/redis/redis.git#7.4.8
+            checksum: 3c2f227822c358df4b7d4840d0a9b6a5ac1d20c4
+            path: ${source.dir}/redis
+            spdx:
+              name: redis
+              version: 7.4.8
+              packages:
+                - name: redis
+                  purl: pkg:github/redis/redis@7.4.8
+                  license: SSPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            # https://github.com/redis/redis/commit/edd4d555df57dc84265fdfb4ef59a4678832f6da
+            # grep -E '^ *createBoolConfig[(]"protected-mode",.*, *1 *,.*[)],$' '${source.dir}/redis/src/config.c'
+            # sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' '${source.dir}/redis/src/config.c'
+            # grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' '${source.dir}/redis/src/config.c'
+
+            # https://github.com/jemalloc/jemalloc/issues/467
+            if [ ${target.arch} = arm64 ]; then
+              jemallocFlags="--build=aarch64-linux-gnu --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-linux-gnu --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' '${source.dir}/redis/deps/Makefile'
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' '${source.dir}/redis/deps/Makefile'
+            grep -F "cd jemalloc && ./configure $jemallocFlags " '${source.dir}/redis/deps/Makefile'
+        - name: build and install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export BUILD_TLS=yes BUILD_WITH_MODULES=yes INSTALL_RUST_TOOLCHAIN=yes DISABLE_WERRORS=yes
+
+            make all -j"$(nproc)"
+            make install V=1 PREFIX=${target.dir}/usr/local
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/redis/redis.conf
+          target: /etc/redis/redis.conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/redis
+          target: /opt/docker/sbom/redis
+          uid: 0
+          gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -77,7 +154,7 @@ paths:
     gid: 65532
     mode: "0755"
   - type: directory
-    path: /run/redis/
+    path: /run/redis
     uid: 65532
     gid: 65532
     mode: "0755"
@@ -95,11 +172,6 @@ paths:
     uid: 0
     gid: 0
     mode: "0555"
-  - type: symlink
-    path: /usr/bin/redis-sentinel
-    uid: 0
-    gid: 0
-    source: /usr/bin/redis-check-rdb
 annotations:
   org.opencontainers.image.description: A minimal Redis image
   org.opencontainers.image.licenses: SSPL-1.0
