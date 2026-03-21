@@ -128,6 +128,62 @@ services:
 
 Run the environment by running `docker compose up -d` in the same directory.
 
+### Deploy with Elastic Cloud on Kubernetes (ECK)
+
+You can deploy the Debian 13 Elasticsearch image with
+[Elastic Cloud on Kubernetes (ECK)](https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s). Use a current Debian
+13 image tag, such as `dhi.io/elasticsearch:9.3.1-debian13`, so the ECK readiness probe can find `nc` in the standard
+container `PATH`.
+
+For ECK, set a numeric pod security context so Kubernetes can verify the container runs as a non-root user:
+
+```yaml
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch-sample
+spec:
+  version: 9.3.1
+  image: dhi.io/elasticsearch:9.3.1-debian13
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          securityContext:
+            runAsUser: 1000
+            fsGroup: 1000
+```
+
+Replace the `version` and image tag with the Elasticsearch release you want to run. Keep the values aligned so ECK and
+the container image use the same Elasticsearch version.
+
+After you apply the manifest, verify the workload with:
+
+```bash
+kubectl get elasticsearch
+kubectl get pods
+kubectl describe pod <pod-name>
+kubectl logs <pod-name>
+```
+
+### Troubleshooting ECK deployments
+
+- If Kubernetes reports `runAsNonRoot` errors, set `runAsUser: 1000` and `fsGroup: 1000` in the ECK `podTemplate`
+  security context.
+- If the readiness probe fails, confirm you are using a current Debian 13 image tag and check that `nc` is available in
+  the standard path:
+
+```bash
+kubectl exec -it <pod-name> -- env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin bash -c 'which nc'
+```
+
+- ECK uses its own readiness probe script. If the pod is running but not ready, inspect the probe failure with
+  `kubectl describe pod <pod-name>` and compare it with the ECK readiness probe
+  [documentation](https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/readiness-probe).
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use.
