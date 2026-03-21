@@ -180,22 +180,15 @@ networks:
   jenkins-net:
 ```
 
-### Jenkins with custom plugins and configuration
+### Jenkins with custom configuration
 
-Pre-install plugins and configure Jenkins without the setup wizard:
+Copy custom Jenkins configuration into the image without the setup wizard. The DHI Jenkins image does not include
+`jenkins-plugin-cli`, so plugin installation should use your standard Jenkins plugin management workflow.
 
 ```dockerfile
-FROM dhi.io/jenkins:latest
+FROM dhi.io/jenkins:<tag>
 
 USER jenkins
-
-# Install plugins using jenkins-plugin-cli
-RUN jenkins-plugin-cli --plugins \
-  git \
-  github \
-  pipeline-model-definition \
-  docker-workflow \
-  junit
 
 # Copy custom configuration files
 COPY --chown=jenkins:jenkins config/jenkins.yaml /usr/share/jenkins/ref/jenkins.yaml
