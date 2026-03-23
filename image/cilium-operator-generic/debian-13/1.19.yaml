@@ -29,6 +29,9 @@ contents:
   builds:
     - name: cilium-operator
       uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      work-dir: /go/src/github.com/cilium/cilium/operator
+      caches:
+        - path: /go/pkg/mod
       contents:
         files:
           - url: git+https://github.com/cilium/cilium.git#v1.19.2
@@ -44,15 +47,37 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: test
-          work-dir: /go/src/github.com/cilium/cilium/operator
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.46.0
+            download: true
+        - name: sync vendor after x/crypto bump
+          work-dir: /go/src/github.com/cilium/cilium
           runs: |
             set -eux -o pipefail
 
-            CGO_ENABLED=0 go test -v ./...
+            go mod vendor
+        - name: bump grpc for CVE-2026-33186
+          uses: go/bump@v1
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: sync vendor directory
+          work-dir: /go/src/github.com/cilium/cilium
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=vendor -v ./...
         - name: build
           uses: go/build@v1
-          work-dir: /go/src/github.com/cilium/cilium/operator
           with:
             extra-args: -mod=vendor
             ldflags:
