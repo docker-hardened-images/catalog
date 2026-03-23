@@ -22,6 +22,9 @@ helm install trivy-operator aqua/trivy-operator \
     --set image.repository=trivy-operator \
     --set image.tag=<tag> \
     --namespace trivy-system \
+    --set trivy.image.registry=dhi.io \
+    --set trivy.image.repository=trivy\
+    --set trivy.image.tag=<tag-compat> \
     --create-namespace \
     --version 0.32.0
 ```
