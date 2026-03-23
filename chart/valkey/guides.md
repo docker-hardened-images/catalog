@@ -63,7 +63,7 @@ Optionally, you can also use the `--dry-run` flag to test the installation witho
 
 ```console
 helm install my-valkey oci://dhi.io/valkey-chart --version <version> \
-  --set "imagePullSecrets[0].name=helm-pull-secret" \
+  --set "imagePullSecrets[0]=helm-pull-secret" \
 ```
 
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
