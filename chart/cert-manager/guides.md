@@ -63,7 +63,8 @@ Optionally, you can also use the `--dry-run` flag to test the installation witho
 
 ```console
 helm install my-cert-manager oci://dhi.io/cert-manager-chart --version <version> \
-  --set "imagePullSecrets[0].name=helm-pull-secret" \
+  --set "global.imagePullSecrets[0].name=helm-pull-secret" \
+  --set "crds.enabled=true"
 ```
 
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
