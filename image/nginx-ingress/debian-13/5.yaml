@@ -16,9 +16,10 @@ platforms:
 dates:
   release: "2025-04-16"
 vars:
-  AGENT_VERSION: 3.7.2~trixie
   COMMIT_SHA: adcca8e8b0a7d71f3d36a0a35a9a614eb4491df0
   GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  NGINX_AGENT_COMMIT_SHA: 4a95e5301c7d06a6b7c75971868bd508b724dfab
+  NGINX_AGENT_VERSION: 3.8.0
   NGINX_REFERENCE: dhi/nginx:1.29.6-debian13@sha256:9412273d179dcff4d61027d6d6a098e4c9af324f6775feceb1b7b35337fe96d1
   NGINX_VERSION: 1.29.6
   SEMVER_MAJOR_MINOR_VERSION: "5.4"
@@ -27,15 +28,12 @@ vars:
   VERSION: 5.4.0
 contents:
   repositories:
-    - deb [signed-by=/usr/share/keyrings/nginx-agent-keyring.gpg] http://packages.nginx.org/nginx-agent/debian/ trixie agent
     - deb [signed-by=/usr/share/keyrings/nginx-otel-keyring.gpg] http://packages.nginx.org/nginx/mainline/debian trixie nginx
   keyring:
-    - https://nginx.org/keys/nginx_signing.key
     - https://nginx.org/keys/nginx_signing.key
   packages:
     - ca-certificates
     - dash
-    - nginx-agent=3.7.2~trixie
     - nginx-module-njs
     - nginx-module-otel
   builds:
@@ -69,6 +67,57 @@ contents:
           target: /usr/sbin/nginx-debug
           uid: 0
           gid: 0
+    - name: build nginx-agent
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/github.com/nginx/agent
+      contents:
+        files:
+          - url: git+https://github.com/nginx/agent.git#v3.8.0
+            checksum: 4a95e5301c7d06a6b7c75971868bd508b724dfab
+            path: /go/src/github.com/nginx/agent
+            spdx:
+              name: nginx-ingress
+              version: 3.8.0
+              packages:
+                - name: nginx-agent
+                  purl: pkg:golang/nginx/agent@3.8.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+              - github.com/antchfx/xpath@v1.3.6
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build go
+          uses: go/build@v1
+          with:
+            extra-args: -pgo=default.pgo
+            ldflags:
+              - -X main.version=3.8.0
+              - -X main.commit=4a95e5301c7d06a6b7c75971868bd508b724dfab
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/nginx-agent
+            packages: ./cmd/agent
+        - name: setup config
+          runs: |
+            set -eux -o pipefail
+
+            cp -a /go/src/github.com/nginx/agent/nginx-agent.conf "${target.dir}/nginx-agent.conf"
+      outputs:
+        - source: ${target.dir}/nginx-agent
+          target: /usr/bin/nginx-agent
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/nginx-agent.conf
+          target: /etc/nginx-agent/nginx-agent.conf
+          uid: 0
+          gid: 0
+          mode: "0640"
     - name: nginx-ingress
       uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
       work-dir: /go/src/github.com/nginx/kubernetes-ingress
@@ -94,7 +143,7 @@ contents:
           uses: go/bump@v1
           with:
             deps:
-              - []
+              - google.golang.org/grpc@v1.79.3
             tidy: true
         - uses: go/hermetic@v1
         - name: build go
@@ -172,6 +221,10 @@ paths:
     gid: 0
   - type: directory
     path: /var/lib/nginx-agent
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/log/nginx-agent
     uid: 101
     gid: 0
   - type: directory
