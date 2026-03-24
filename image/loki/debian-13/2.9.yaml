@@ -51,12 +51,46 @@ contents:
             gid: 0
       pipeline:
         - name: update go dependencies and vendor
-          uses: go/bump@v1
-          with:
-            deps:
-              - golang.org/x/crypto@v0.45.0
-            dir: ${source.dir}/loki
-            download: true
+          work-dir: ${source.dir}/loki
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            # Keep manual go get/go mod resolution detached from the builder's
+            # strict FIPS defaults. The real build still happens with the normal
+            # FIPS-aware go/build path afterwards.
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go get golang.org/x/crypto@v0.45.0
+            go get github.com/buger/jsonparser@v1.1.2   # GHSA-6g7g-w4f8-9c9x
+            go get google.golang.org/grpc@v1.79.3       # CVE-2026-33186
+            go get go.opentelemetry.io/otel/sdk@v1.40.0 # CVE-2026-24051
+            go get google.golang.org/api@v0.272.0
+
+            go mod tidy
+            go mod vendor
+        - name: patch vendored grpcutil/health_check_list.go
+          work-dir: ${source.dir}/loki
+          runs: |
+            set -eux -o pipefail
+
+            cat >> vendor/github.com/grafana/dskit/grpcutil/health_check_list.go << 'EOF'
+            package grpcutil
+            import (
+              "context"
+              "github.com/gogo/status"
+              "google.golang.org/grpc/codes"
+              "google.golang.org/grpc/health/grpc_health_v1"
+            )
+            func (h *HealthCheck) List(_ context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
+              return nil, status.Error(codes.Unimplemented, "Listing is not supported")
+            }
+            EOF
         - name: remove godoc
           work-dir: ${source.dir}/loki
           runs: |
