@@ -52,33 +52,43 @@ Check that the stack components are running:
 
 ```bash
 kubectl get all
-NAME                                                       READY   STATUS              RESTARTS   AGE
-pod/prometheus-grafana-69fd8b9d4b-t6rgr                    3/3     Running             0          121m
-pod/prometheus-kube-prometheus-operator-7fd9b9b879-j6hbc   1/1     Running             0          121m
-pod/prometheus-kube-state-metrics-7657cf96db-qpl44         1/1     Running             0          121m
-pod/prometheus-prometheus-node-exporter-7v9zh              1/1     Running             0          121m
+NAME                                                               READY   STATUS    RESTARTS   AGE
+pod/alertmanager-my-kube-prometheus-stack-k-alertmanager-0         2/2     Running   0          3m11s
+pod/my-kube-prometheus-stack-grafana-559cc98657-t6djg              3/3     Running   0          3m12s
+pod/my-kube-prometheus-stack-k-operator-669f9b9cdf-rflrb           1/1     Running   0          3m12s
+pod/my-kube-prometheus-stack-kube-state-metrics-66559fb987-qrmlt   1/1     Running   0          3m12s
+pod/my-kube-prometheus-stack-prometheus-node-exporter-c2bzx        1/1     Running   0          3m12s
+pod/my-kube-prometheus-stack-prometheus-node-exporter-mw279        1/1     Running   0          3m12s
+pod/my-kube-prometheus-stack-prometheus-node-exporter-w84d2        1/1     Running   0          3m12s
+pod/prometheus-my-kube-prometheus-stack-k-prometheus-0             2/2     Running   0          3m11s
 
-NAME                                              TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
-service/kubernetes                                ClusterIP   10.100.0.1       <none>        443/TCP             19d
-service/prometheus-grafana                        ClusterIP   10.100.241.194   <none>        80/TCP              121m
-service/prometheus-kube-prometheus-alertmanager   ClusterIP   10.100.41.108    <none>        9093/TCP,8080/TCP   121m
-service/prometheus-kube-prometheus-operator       ClusterIP   10.100.183.149   <none>        443/TCP             121m
-service/prometheus-kube-prometheus-prometheus     ClusterIP   10.100.174.85    <none>        9090/TCP,8080/TCP   121m
-service/prometheus-kube-state-metrics             ClusterIP   10.100.105.240   <none>        8080/TCP            121m
-service/prometheus-prometheus-node-exporter       ClusterIP   10.100.151.155   <none>        9100/TCP            121m
+NAME                                                        TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+service/alertmanager-operated                               ClusterIP   None            <none>        9093/TCP,9094/TCP,9094/UDP   3m11s
+service/kubernetes                                          ClusterIP   10.43.0.1       <none>        443/TCP                      24h
+service/my-kube-prometheus-stack-grafana                    ClusterIP   10.43.223.67    <none>        80/TCP                       3m12s
+service/my-kube-prometheus-stack-k-alertmanager             ClusterIP   10.43.199.150   <none>        9093/TCP,8080/TCP            3m12s
+service/my-kube-prometheus-stack-k-operator                 ClusterIP   10.43.171.158   <none>        443/TCP                      3m12s
+service/my-kube-prometheus-stack-k-prometheus               ClusterIP   10.43.251.61    <none>        9090/TCP,8080/TCP            3m12s
+service/my-kube-prometheus-stack-kube-state-metrics         ClusterIP   10.43.180.90    <none>        8080/TCP                     3m12s
+service/my-kube-prometheus-stack-prometheus-node-exporter   ClusterIP   10.43.243.209   <none>        9100/TCP                     3m12s
+service/prometheus-operated                                 ClusterIP   None            <none>        9090/TCP                     3m11s
 
-NAME                                                 DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
-daemonset.apps/prometheus-prometheus-node-exporter   2         2         2       2            2           kubernetes.io/os=linux   121m
+NAME                                                               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/my-kube-prometheus-stack-prometheus-node-exporter   3         3         3       3            3           kubernetes.io/os=linux   3m12s
 
-NAME                                                  READY   UP-TO-DATE   AVAILABLE   AGE
-deployment.apps/prometheus-grafana                    1/1     1            1           121m
-deployment.apps/prometheus-kube-prometheus-operator   1/1     1            1           121m
-deployment.apps/prometheus-kube-state-metrics         1/1     1            1           121m
+NAME                                                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/my-kube-prometheus-stack-grafana              1/1     1            1           3m12s
+deployment.apps/my-kube-prometheus-stack-k-operator           1/1     1            1           3m12s
+deployment.apps/my-kube-prometheus-stack-kube-state-metrics   1/1     1            1           3m12s
 
-NAME                                                             DESIRED   CURRENT   READY   AGE
-replicaset.apps/prometheus-grafana-69fd8b9d4b                    1         1         1       121m
-replicaset.apps/prometheus-kube-prometheus-operator-7fd9b9b879   1         1         1       121m
-replicaset.apps/prometheus-kube-state-metrics-7657cf96db         1         1         1       121m
+NAME                                                                     DESIRED   CURRENT   READY   AGE
+replicaset.apps/my-kube-prometheus-stack-grafana-559cc98657              1         1         1       3m12s
+replicaset.apps/my-kube-prometheus-stack-k-operator-669f9b9cdf           1         1         1       3m12s
+replicaset.apps/my-kube-prometheus-stack-kube-state-metrics-66559fb987   1         1         1       3m12s
+
+NAME                                                                    READY   AGE
+statefulset.apps/alertmanager-my-kube-prometheus-stack-k-alertmanager   1/1     3m11s
+statefulset.apps/prometheus-my-kube-prometheus-stack-k-prometheus       1/1     3m11s
 ```
 
 To get the Grafana admin password, by default it will be in a secret suffixed with "-grafana"
