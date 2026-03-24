@@ -201,10 +201,6 @@ contents:
 
             # Install semantic_router without dependencies using venv pip
             pip install semantic_router --no-deps
-
-            # Generate prisma client using venv python module interface
-            # NOTE: This runs code generation that should be audited for security
-            python3 -m prisma generate
         - name: prepare system integration
           runs: |
             set -eux -o pipefail
@@ -230,9 +226,21 @@ contents:
             mkdir -p "${target.dir}/app/docker"
             cp docker/entrypoint.sh "${target.dir}/app/docker/"
             cp docker/prod_entrypoint.sh "${target.dir}/app/docker/"
+            cp schema.prisma "${target.dir}/app/"
 
             chmod +x "${target.dir}/app/docker/entrypoint.sh"
             chmod +x "${target.dir}/app/docker/prod_entrypoint.sh"
+        - name: generate prisma client
+          work-dir: ${target.dir}/app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Generate the client into /app so the runtime image can import it.
+            # Pass --schema explicitly so Prisma uses the staged runtime schema.
+            source "$VIRTUAL_ENV/bin/activate"
+            export PRISMA_HOME_DIR="${target.dir}/app"
+            python3 -m prisma generate --schema schema.prisma
         - name: python dependencies sbom
           uses: sbom@v1
           privileged: true
@@ -295,6 +303,7 @@ work-dir: /app
 environment:
   DEBIAN_FRONTEND: noninteractive
   PATH: /opt/litellm/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+  PRISMA_HOME_DIR: /app
   PYTHON_VERSION: 3.13.12
 paths:
   - type: directory
