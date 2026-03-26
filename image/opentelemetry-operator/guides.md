@@ -1,83 +1,91 @@
 ## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
 For example:
 
-- Public image: `dhi.io/<repository>:<tag>`
-- Mirrored image: `<your-namespace>/dhi-<repository>:<tag>`
+- Public image: `dhi.io/opentelemetry-operator:<tag>`
+- Mirrored image: `<your-namespace>/dhi-opentelemetry-operator:<tag>`
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
 ## What's included in this opentelemetry-operator image
 
-This Docker Hardened opentelemetry-operator image includes:
+This Docker Hardened opentelemetry-operator image includes the operator component of OpenTelemetry in a single,
+security-hardened package:
 
-- The opentelemetry-operator binary built from the official open-telemetry/opentelemetry-operator repository.
-- The operator manages OpenTelemetry Collector and auto-instrumentation deployments in Kubernetes clusters.
+- **opentelemetry-operator**: The `manager` binary built from the official
+  [open-telemetry/opentelemetry-operator](https://github.com/open-telemetry/opentelemetry-operator) repository
+- **OpenTelemetry Collector management**: Creates, configures, and manages OpenTelemetry Collector instances via the
+  `OpenTelemetryCollector` custom resource. Use `dhi.io/opentelemetry-collector:0-debian13` as the collector image for a
+  fully DHI deployment
+- **Auto-instrumentation support**: Manages automatic instrumentation for Java, Python, Node.js, .NET, Go, Apache HTTPD,
+  and Nginx workloads via the `Instrumentation` custom resource
+- **Webhook server**: Validates and mutates OpenTelemetry custom resources via admission webhooks, listening on port
+  `9443` by default
+- **Metrics endpoint**: Exposes operator metrics on port `8443` (TLS-secured by default)
+- **Health probe endpoint**: Exposes liveness and readiness probes on port `8081`
+- **TLS support**: Standard TLS certificates included for secure communication with the Kubernetes API
 
-## Start a opentelemetry-operator image
+## Start an opentelemetry-operator container
 
-The OpenTelemetry Operator is typically deployed as a Kubernetes deployment. Here's a basic example:
+> **Note:** opentelemetry-operator is designed to run inside a Kubernetes cluster as part of a full OpenTelemetry
+> deployment. The following standalone Docker command displays the available configuration options.
 
-### Basic Kubernetes deployment
+Run the following command and replace `<tag>` with the image variant you want to run.
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: opentelemetry-operator
-  namespace: opentelemetry-operator-system
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      name: opentelemetry-operator
-  template:
-    metadata:
-      labels:
-        name: opentelemetry-operator
-    spec:
-      serviceAccountName: opentelemetry-operator-controller-manager
-      containers:
-      - name: manager
-        image: dhi.io/opentelemetry-operator:<tag>
-        args:
-        - --leader-elect
+```bash
+docker run --rm dhi.io/opentelemetry-operator:<tag> --help
 ```
 
-### With Docker Compose (for testing)
+## Command-line flags
 
-```yaml
-version: '3.8'
-services:
-  opentelemetry-operator:
-    image: dhi.io/opentelemetry-operator:<tag>
-    container_name: dhi-opentelemetry-operator
-    args:
-      - --leader-elect
-    environment:
-      - WATCH_NAMESPACE=
-    volumes:
-      - /var/run/secrets/kubernetes.io/serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro
-    restart: unless-stopped
+The `manager` binary accepts configuration via command-line flags. Commonly used flags include:
+
+| Flag                         | Description                                                                                                                 | Default                      | Required                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------- |
+| `--enable-leader-election`   | Enable leader election for HA deployments — ensures only one active controller manager                                      | `false`                      | Recommended in production |
+| `--webhook-port`             | Port the webhook endpoint binds to                                                                                          | `9443`                       | No                        |
+| `--metrics-addr`             | Address the metrics endpoint binds to                                                                                       | `:8443`                      | No                        |
+| `--health-probe-addr`        | Address the health probe endpoint binds to                                                                                  | `:8081`                      | No                        |
+| `--metrics-secure`           | Enable secure serving for metrics with TLS                                                                                  | `true`                       | No                        |
+| `--tls-min-version`          | Minimum TLS version                                                                                                         | `VersionTLS12`               | No                        |
+| `--enable-webhooks`          | Enable admission webhooks                                                                                                   | `true`                       | No                        |
+| `--collector-image`          | Default OpenTelemetry Collector image. Override with `dhi.io/opentelemetry-collector:0-debian13` for a fully DHI deployment | `ghcr.io/open-telemetry/...` | No                        |
+| `--zap-log-level`            | Log verbosity: `debug`, `info`, `error`, `panic`                                                                            | `info`                       | No                        |
+| `--feature-gates`            | Comma-delimited list of feature gate identifiers                                                                            | See `--help`                 | No                        |
+| `--fips-disabled-components` | Disabled collector components on FIPS platforms                                                                             | `uppercase`                  | No                        |
+
+Example:
+
+```bash
+# Display all available flags
+docker run --rm dhi.io/opentelemetry-operator:<tag> --help
+
+# Enable verbose logging
+docker run --rm dhi.io/opentelemetry-operator:<tag> --zap-log-level=debug --help
 ```
+
+> **Note:** Running `--help` causes the binary to exit with a panic message (`pflag: help requested`). This is normal Go
+> behavior and is not an error.
 
 ## Common opentelemetry-operator use cases
 
-### Basic OpenTelemetry Collector deployment
+### Deploy an OpenTelemetry Collector instance
 
-Deploy an OpenTelemetry Collector instance using the operator's custom resources:
+The operator manages `OpenTelemetryCollector` custom resources. Once the operator is running, deploy a Collector
+instance:
 
 ```yaml
-apiVersion: opentelemetry.io/v1alpha1
+apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
   name: otel-collector
   namespace: default
 spec:
-  config: |
+  image: dhi.io/opentelemetry-collector:0-debian13
+  config:
     receivers:
       otlp:
         protocols:
@@ -86,17 +94,28 @@ spec:
           http:
             endpoint: 0.0.0.0:4318
     exporters:
-      logging:
+      debug:
+        verbosity: detailed
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          exporters: [logging]
+          exporters: [debug]
 ```
 
-### Auto-instrumentation for Java applications
+Verify the Collector pod is running:
 
-Enable automatic instrumentation for Java workloads:
+```bash
+kubectl get pods -n default | grep otel-collector
+kubectl get opentelemetrycollector -n default
+```
+
+### Enable auto-instrumentation for Java applications
+
+The operator manages `Instrumentation` custom resources for automatic language instrumentation. To enable Java
+auto-instrumentation:
+
+> **Note:** The `Instrumentation` resource remains at `v1alpha1` in opentelemetry-operator v0.147.0.
 
 ```yaml
 apiVersion: opentelemetry.io/v1alpha1
@@ -106,21 +125,31 @@ metadata:
   namespace: default
 spec:
   java:
-    image: dhi.io/opentelemetry-auto-instrumentation-java:latest
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+  exporter:
+    endpoint: http://otel-collector:4317
 ```
 
-### Collector with custom configuration
-
-Deploy a collector with a custom configuration file:
+Then annotate your Java application pod to inject instrumentation automatically:
 
 ```yaml
-apiVersion: opentelemetry.io/v1alpha1
+annotations:
+  instrumentation.opentelemetry.io/inject-java: "true"
+```
+
+### Deploy with a custom Collector configuration
+
+Deploy a Collector with batching and a remote OTLP exporter:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
   name: otel-collector-custom
   namespace: default
 spec:
-  config: |
+  image: dhi.io/opentelemetry-collector:0-debian13
+  config:
     receivers:
       otlp:
         protocols:
@@ -143,83 +172,212 @@ spec:
           exporters: [otlp]
 ```
 
+## End-to-end opentelemetry-operator deployment walkthrough
+
+The following steps demonstrate a complete deployment and verification, validated against opentelemetry-operator
+v0.147.0 and `dhi.io/opentelemetry-operator:0-debian13` with `dhi.io/opentelemetry-collector:0-debian13` — a fully DHI
+deployment with zero non-DHI images.
+
+**Prerequisites:** A running Kubernetes cluster with `kubectl` access, `cert-manager` installed (required for webhook
+TLS), and the OpenTelemetry Operator CRDs installed.
+
+**Step 1: Install cert-manager (required for webhook TLS)**
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.4/cert-manager.yaml
+kubectl wait --for=condition=Ready pod --all -n cert-manager --timeout=120s
+```
+
+**Step 2: Install the OpenTelemetry Operator CRDs and RBAC**
+
+```bash
+kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.147.0/opentelemetry-operator.yaml
+```
+
+**Step 3: Patch the operator Deployment to use the DHI image**
+
+```bash
+kubectl set image deployment/opentelemetry-operator-controller-manager \
+  manager=dhi.io/opentelemetry-operator:0-debian13 \
+  -n opentelemetry-operator-system
+
+kubectl rollout status deployment/opentelemetry-operator-controller-manager \
+  -n opentelemetry-operator-system --timeout=120s
+```
+
+**Step 4: Verify the operator pod is running with the DHI image**
+
+```bash
+kubectl get pods -n opentelemetry-operator-system
+kubectl get deployment opentelemetry-operator-controller-manager \
+  -n opentelemetry-operator-system \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+# dhi.io/opentelemetry-operator:0-debian13
+```
+
+**Step 5: Verify the operator logs**
+
+```bash
+kubectl logs -n opentelemetry-operator-system \
+  deployment/opentelemetry-operator-controller-manager --tail=10
+```
+
+Expected output confirms all three endpoints are running:
+
+```
+{"level":"INFO","message":"starting manager"}
+{"level":"INFO","message":"starting server","name":"health probe","addr":"[::]:8081"}
+{"level":"INFO","logger":"controller-runtime.webhook","message":"Serving webhook server","host":"","port":9443}
+{"level":"INFO","logger":"controller-runtime.metrics","message":"Serving metrics server","bindAddress":":8443","secure":true}
+```
+
+**Step 6: Deploy a test Collector instance**
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-test
+  namespace: default
+spec:
+  image: dhi.io/opentelemetry-collector:0-debian13
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    exporters:
+      debug:
+        verbosity: detailed
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+EOF
+
+kubectl wait --for=condition=Ready pod \
+  -l app.kubernetes.io/name=otel-test-collector \
+  -n default --timeout=120s
+
+kubectl get opentelemetrycollector otel-test -n default
+kubectl get pods -n default | grep otel-test
+```
+
+Expected output:
+
+```
+# Operator (opentelemetry-operator-system namespace)
+opentelemetry-operator-controller-manager-xxx: dhi.io/opentelemetry-operator:0-debian13
+
+# Collector (default namespace)
+otel-test-collector-xxx: dhi.io/opentelemetry-collector:0-debian13
+```
+
+**Step 7: Clean up**
+
+```bash
+kubectl delete opentelemetrycollector otel-test -n default
+kubectl delete namespace opentelemetry-operator-system
+kubectl delete namespace cert-manager
+
+# Delete leftover CRDs
+kubectl delete crd \
+  instrumentations.opentelemetry.io \
+  opampbridges.opentelemetry.io \
+  opentelemetrycollectors.opentelemetry.io \
+  targetallocators.opentelemetry.io \
+  certificaterequests.cert-manager.io \
+  certificates.cert-manager.io \
+  challenges.acme.cert-manager.io \
+  clusterissuers.cert-manager.io \
+  issuers.cert-manager.io \
+  orders.acme.cert-manager.io
+```
+
+## Official images vs Docker Hardened Images
+
+| Feature              | DOI (`ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator`) | DHI (`dhi.io/opentelemetry-operator`)   |
+| -------------------- | ---------------------------------------------------------------------------- | --------------------------------------- |
+| User                 | `65532:65532`                                                                | `nonroot` (runtime/FIPS) / `root` (dev) |
+| Shell                | None                                                                         | No (runtime/FIPS) / Yes (dev)           |
+| Package manager      | None                                                                         | No (runtime/FIPS) / APT (dev)           |
+| Binary path          | `/manager`                                                                   | `/manager`                              |
+| Entrypoint           | `["/manager"]`                                                               | `["/manager"]`                          |
+| Zero CVE commitment  | No                                                                           | Yes                                     |
+| FIPS variant         | No                                                                           | Yes (subscription required)             |
+| Base OS              | Distroless                                                                   | Docker Hardened Images (Debian 13)      |
+| Signed provenance    | No                                                                           | Yes                                     |
+| SBOM / VEX metadata  | No                                                                           | Yes                                     |
+| Compliance labels    | None                                                                         | CIS (runtime)                           |
+| ENV: `SSL_CERT_FILE` | Not set                                                                      | `/etc/ssl/certs/ca-certificates.crt`    |
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
 their tag.
 
-- Runtime variants are designed to run your application in production. These images are intended to be used either
-  directly or as the FROM image in the final stage of a multi-stage build. These images typically:
+- **Runtime variants** are designed to run the operator in production. These images are intended to be used either
+  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
 
   - Run as a nonroot user
   - Do not include a shell or a package manager
-  - Contain only the minimal set of libraries needed to run the app
+  - Contain only the minimal set of libraries needed to run the binary
 
-- Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a
+- **Build-time variants** typically include `dev` in the tag name and are intended for use in the first stage of a
   multi-stage Dockerfile. These images typically:
 
   - Run as the root user
   - Include a shell and package manager
   - Are used to build or compile applications
 
-- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
-  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+- **FIPS variants** include `fips` in the variant name and tag. They use cryptographic modules validated under FIPS 140,
+  a U.S. government standard for secure cryptographic operations. Pulling FIPS variants requires a Docker subscription —
+  the tags return 401 without one.
 
-To view the image variants and get more information about them, select the Tags tab for this repository, and then select
-a tag.
+To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
+select a tag.
 
 ## Migrate to a Docker Hardened Image
 
-To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
-base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
+To migrate your application to a Docker Hardened Image, you must update your Dockerfile or Kubernetes manifests. At
+minimum, update the base image in your existing deployment to a Docker Hardened Image. Common changes are listed in the
 following table of migration notes.
 
-| Item               | Migration note                                                                                                                                                                                                                                                                                                               |
-| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base image         | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                                                                                                                                                    |
-| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a `dev` tag.                                                                                                                                                                                                  |
-| Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                                                                                                                                   |
-| Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                                                                                                                                                                                   |
-| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                                                           |
-| Ports              | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues, configure your application to listen on port 1025 or higher inside the container. |
-| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                                  |
-| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                                                  |
+| Item               | Migration note                                                                                                                                             |
+| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base image         | Replace your base images in your Dockerfile or Kubernetes manifests with a Docker Hardened Image.                                                          |
+| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a `dev` tag.                                |
+| Non-root user      | By default, non-dev images run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                        |
+| Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                 |
+| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                         |
+| Ports              | The operator webhook listens on port `9443`, metrics on `8443`, and health probes on `8081`. All are above 1024 and work without issues as a nonroot user. |
+| Entry point        | Both the DOI and DHI use the same entrypoint `["/manager"]`. No changes required.                                                                          |
+| No shell           | By default, non-dev images don't contain a shell. Use `dev` images in build stages to run shell commands and then copy artifacts to the runtime stage.     |
 
 The following steps outline the general migration process.
 
-1. Find hardened images for your app.
+1. **Find hardened images for your app.** Inspect the image tags for `dhi.io/opentelemetry-operator` and find the
+   variant that meets your needs (runtime, dev, or FIPS).
 
-   A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
+1. **Update the image reference in your Kubernetes manifests or Helm values.**
 
-1. Update the base image in your Dockerfile.
+   ```yaml
+   # In your Deployment manifest
+   containers:
+     - name: manager
+       image: dhi.io/opentelemetry-operator:<tag>
+   ```
 
-   Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
-   framework images, this is typically going to be an image tagged as `dev` because it has the tools needed to install
-   packages and dependencies.
+1. **For custom Dockerfiles, update the runtime image.** Ensure all stages use hardened images. Intermediary stages
+   typically use `dev`-tagged images; your final runtime stage should use a non-dev image variant.
 
-1. For multi-stage Dockerfiles, update the runtime image in your Dockerfile.
+1. **Verify the operator starts correctly.** After migration, check the operator logs to confirm it starts and connects
+   to the Kubernetes API without errors.
 
-   To ensure that your final image is as minimal as possible, you should use a multi-stage build. All stages in your
-   Dockerfile should use a hardened image. While intermediary stages will typically use images tagged as `dev`, your
-   final runtime stage should use a non-dev image variant.
-
-1. Install additional packages
-
-   Docker Hardened Images contain minimal packages in order to reduce the potential attack surface. You may need to
-   install additional packages in your Dockerfile. Inspect the image variants to identify which packages are already
-   installed.
-
-   Only images tagged as `dev` typically have package managers. You should use a multi-stage Dockerfile to install the
-   packages. Install the packages in the build stage that uses a `dev` image. Then, if needed, copy any necessary
-   artifacts to the runtime stage that uses a non-dev image.
-
-   For Alpine-based images, you can use `apk` to install packages. For Debian-based images, you can use `apt-get` to
-   install packages.
-
-## Troubleshooting migration
-
-The following are common issues that you may encounter during migration.
+## Troubleshoot migration
 
 ### General debugging
 
@@ -231,17 +389,16 @@ during the debugging session.
 
 ### Permissions
 
-By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
-accessible to the nonroot user. You may need to copy files to different directories or change permissions so your
-application running as the nonroot user can access them.
+By default, image variants intended for runtime run as the nonroot user. Ensure that necessary files and directories are
+accessible to the nonroot user.
+
+The opentelemetry-operator requires appropriate RBAC permissions to manage `OpenTelemetryCollector`, `Instrumentation`,
+and related custom resources. Ensure your service account has the necessary ClusterRole bindings.
 
 ### Privileged ports
 
-Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to
-privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues,
-configure your application to listen on port 1025 or higher inside the container, even if you map it to a lower port on
-the host. For example, `docker run -p 80:8080 my-image` will work because the port inside the container is 8080, and
-`docker run -p 80:81 my-image` won't work because the port inside the container is 81.
+The operator webhook listens on port `9443`, metrics on `8443`, and health probes on `8081`. All ports are above 1024
+and work without issues when running as a nonroot user.
 
 ### No shell
 
