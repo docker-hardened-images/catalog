@@ -1,0 +1,174 @@
+# syntax=dhi.io/build:2-debian13
+
+name: CDI Importer 1.x (dev)
+image: dhi.io/cdi-importer
+variant: dev
+tags:
+  - 1-dev
+  - 1.64-dev
+  - 1.64.0-dev
+  - 1-debian13-dev
+  - 1.64-debian13-dev
+  - 1.64.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2018-06-14"
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+  COMMIT_SHA: 58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.64"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.64.0
+  VERSION: 1.64.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libc6'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libnbd0
+    - mawk
+    - nbdkit
+    - perl-base
+    - qemu-utils
+    - sed
+    - util-linux
+  builds:
+    - name: cdi-importer
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/kubevirt.io/containerized-data-importer
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - libnbd-dev
+          - pkg-config
+        files:
+          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.64.0
+            checksum: 58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+            path: /go/src/kubevirt.io/containerized-data-importer
+            spdx:
+              name: cdi-importer
+              version: 1.64.0
+              packages:
+                - name: cdi-importer
+                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.64.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch vulnerable Go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - github.com/go-jose/go-jose/v3@v3.0.4
+              - github.com/ulikunitz/xz@v0.5.14
+            download: true
+        - name: patch grpc CVE
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            go get google.golang.org/grpc@v1.79.3 # CVE-2026-33186
+
+            go mod tidy
+            go mod vendor
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test ./pkg/importer/...
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.64.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+            output: ${target.dir}/usr/local/bin/cdi-importer
+            packages: ./cmd/cdi-importer
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cdi-importer
+          target: /usr/local/bin/cdi-importer
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cdi-importer
+          target: /opt/docker/sbom/cdi-importer
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/cdi-importer
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /home/cdi-importer
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal CDI Importer image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/cdi-importer
+  - -alsologtostderr
+ports:
+  - 8443/tcp
