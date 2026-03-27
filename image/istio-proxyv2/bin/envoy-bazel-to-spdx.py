@@ -14,12 +14,15 @@ Example:
 
 import ast
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime
 
 BAZEL = "/opt/bazel/bin/bazel"
+BazelExtraArgs = shlex.split(os.environ.get("ENVOY_BAZEL_FLAGS", ""))
 
 
 def run_bazel_query():
@@ -32,6 +35,7 @@ def run_bazel_query():
         BAZEL,
         "--batch",
         "query",
+        *BazelExtraArgs,
         "--output=build",
         'kind("http_archive", //external:*)',
     ]
@@ -53,6 +57,7 @@ def run_bazel_aquery():
         BAZEL,
         "--batch",
         "aquery",
+        *BazelExtraArgs,
         'outputs(".*envoy$", //:envoy)',
     ]
 
