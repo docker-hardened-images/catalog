@@ -117,7 +117,12 @@ docker run --rm -it --pid container:my-container \
 
 ## Image variants
 
-Docker Hardened Images come in different variants depending on their intended use.
+The Velero Docker Hardened Image is available as dev, runtime, and FIPS variants.
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants. Docker Hardened Images come in different
+  variants depending on their intended use.
 
 Runtime variants are designed to run your application in production. These images are intended to be used either
 directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
