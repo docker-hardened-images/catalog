@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-debian13
+
+name: CDI Cloner 1.x
+image: dhi.io/cdi-cloner
+variant: runtime
+tags:
+  - "1"
+  - "1.64"
+  - 1.64.0
+  - 1-debian13
+  - 1.64-debian13
+  - 1.64.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2018-06-14"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.64"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.64.0
+  VERSION: 1.64.0
+contents:
+  packages:
+    - '!base-files'
+    - bash
+    - coreutils
+    - tar
+    - util-linux
+  builds:
+    - name: cdi-cloner
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/kubevirt.io/containerized-data-importer
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.64.0
+            checksum: 58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+            path: /go/src/kubevirt.io/containerized-data-importer
+            spdx:
+              name: cdi-cloner
+              version: 1.64.0
+              packages:
+                - name: cdi-cloner
+                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.64.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch vulnerable Go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - github.com/go-jose/go-jose/v3@v3.0.4
+              - github.com/ulikunitz/xz@v0.5.14
+            download: true
+        - name: sync vendor directory
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # pkg/controller/clone/ tests belong to cdi-controller, not cdi-cloner.
+            # cmd/cdi-cloner has 1 unit test (prometheus endpoint cert generation).
+            # The cloner binary's core logic (tar streaming, snappy compression,
+            # mutual TLS upload) has no unit tests upstream — only e2e tests.
+            CGO_ENABLED=0 go test ./cmd/cdi-cloner/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.64.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=58b908c6731c55da28e02ee5034d7d3fbb9be2e3
+            output: ${target.dir}/usr/bin/cdi-cloner
+            packages: ./cmd/cdi-cloner
+      outputs:
+        - source: ${target.dir}/usr/bin/cdi-cloner
+          target: /usr/bin/cdi-cloner
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cdi-cloner
+          target: /opt/docker/sbom/cdi-cloner
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/cdi-cloner
+paths:
+  - type: file
+    path: /usr/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cdi-cloner/bin/docker-entrypoint.sh
+  - type: directory
+    path: /home/cdi-cloner
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal CDI Cloner image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/docker-entrypoint.sh
