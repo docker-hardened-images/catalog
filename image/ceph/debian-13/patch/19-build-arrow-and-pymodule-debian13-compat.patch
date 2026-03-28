@@ -1,0 +1,53 @@
+diff --git a/cmake/modules/BuildArrow.cmake b/cmake/modules/BuildArrow.cmake
+index 8a16b9b..3b3f93a 100644
+--- a/cmake/modules/BuildArrow.cmake
++++ b/cmake/modules/BuildArrow.cmake
+@@ -80,6 +80,7 @@ function(build_arrow)
+ 
+   list(APPEND arrow_CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+   list(APPEND arrow_CMAKE_ARGS -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
++  list(APPEND arrow_CMAKE_ARGS -DCMAKE_CXX_STANDARD=14)
+   list(APPEND arrow_CMAKE_ARGS -DCMAKE_AR=${CMAKE_AR})
+   if(CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "None")
+     list(APPEND arrow_CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
+diff --git a/src/mgr/PyModule.cc b/src/mgr/PyModule.cc
+index 084cf3f..ff7e778 100644
+--- a/src/mgr/PyModule.cc
++++ b/src/mgr/PyModule.cc
+@@ -365,7 +365,21 @@ int PyModule::load(PyThreadState *pMainThreadState)
+       string paths = (g_conf().get_val<std::string>("mgr_module_path") + ':' +
+                       get_site_packages() + ':');
+       wstring sys_path(wstring(begin(paths), end(paths)) + Py_GetPath());
+-      PySys_SetPath(const_cast<wchar_t*>(sys_path.c_str()));
++      auto py_sys_path = PySys_GetObject("path");
++      ceph_assert(py_sys_path);
++      ceph_assert(PyList_Check(py_sys_path));
++      std::stringstream sys_path_entries(paths);
++      std::string path_entry;
++      Py_ssize_t sys_path_index = 0;
++      while (std::getline(sys_path_entries, path_entry, ':')) {
++        if (path_entry.empty()) {
++          continue;
++        }
++        auto py_path = PyUnicode_FromString(path_entry.c_str());
++        ceph_assert(py_path);
++        ceph_assert(PyList_Insert(py_sys_path, sys_path_index++, py_path) == 0);
++        Py_DECREF(py_path);
++      }
+       dout(10) << "Computed sys.path '"
+ 	       << string(begin(sys_path), end(sys_path)) << "'" << dendl;
+     }
+diff --git a/src/arrow/cpp/src/arrow/compute/kernels/scalar_string.cc b/src/arrow/cpp/src/arrow/compute/kernels/scalar_string.cc
+index 11562b06d1..c2410a72d5 100644
+--- a/src/arrow/cpp/src/arrow/compute/kernels/scalar_string.cc
++++ b/src/arrow/cpp/src/arrow/compute/kernels/scalar_string.cc
+@@ -3012,7 +3012,8 @@ struct ExtractRegex : public ExtractRegexBase {
+         result->value.reserve(group_count);
+         for (int i = 0; i < group_count; i++) {
+           result->value.push_back(
+-              std::make_shared<ScalarType>(found_values[i].as_string()));
++              std::make_shared<ScalarType>(
++                  std::string(found_values[i].data(), found_values[i].size())));
+         }
+         result->is_valid = true;
+       } else {
