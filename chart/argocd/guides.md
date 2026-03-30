@@ -63,7 +63,7 @@ Optionally, you can also use the `--dry-run` flag to test the installation witho
 
 ```console
 helm install my-argocd oci://dhi.io/argocd-chart --version <version> \
-  --set "imagePullSecrets[0].name=helm-pull-secret" \
+  --set "global.imagePullSecrets[0].name=helm-pull-secret" \
 ```
 
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
