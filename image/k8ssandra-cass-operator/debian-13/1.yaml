@@ -1,0 +1,134 @@
+# syntax=dhi.io/build:2-debian13
+
+name: k8ssandra-cass-operator 1.x
+image: dhi.io/k8ssandra-cass-operator
+variant: runtime
+tags:
+  - "1"
+  - "1.30"
+  - 1.30.0
+  - 1-debian13
+  - 1.30-debian13
+  - 1.30.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-24"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: c5a43b79af96fa7404827ad85c5623a7bc48cc03
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.30"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.30.0
+  VERSION: 1.30.0
+contents:
+  packages:
+    - '!base-files'
+    - ca-certificates
+  builds:
+    - name: k8ssandra-cass-operator
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/github.com/k8ssandra/cass-operator
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - git
+        files:
+          - url: git+https://github.com/k8ssandra/cass-operator.git#v1.30.0
+            checksum: c5a43b79af96fa7404827ad85c5623a7bc48cc03
+            path: /go/src/github.com/k8ssandra/cass-operator
+            spdx:
+              name: k8ssandra-cass-operator
+              version: 1.30.0
+              packages:
+                - name: k8ssandra-cass-operator
+                  purl: pkg:golang/github.com/k8ssandra/cass-operator@1.30.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/k8ssandra/cass-operator
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test after bump
+          work-dir: /go/src/github.com/k8ssandra/cass-operator
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Some unit tests exercise SHA-1/JKS code paths that fail in strict FIPS mode.
+              export GODEBUG=fips140=on
+            fi
+
+            go test -v -count=1 ./pkg/...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/k8ssandra/cass-operator
+          with:
+            output: ${target.dir}/manager
+            packages: ./cmd
+      outputs:
+        - source: ${target.dir}/manager
+          target: /manager
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/k8ssandra-cass-operator
+          target: /opt/docker/sbom/k8ssandra-cass-operator
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal k8ssandra-cass-operator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /manager
