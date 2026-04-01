@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Virt Export Proxy 1.x
+image: dhi.io/virt-exportproxy
+variant: runtime
+tags:
+  - "1.5"
+  - 1.5.3
+  - 1.5-debian13
+  - 1.5.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-26"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 4f27e414aa0e7c805b04911902b888bc9c3b2f82
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.3
+  VERSION: 1.5.3
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: virt-exportproxy
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
+      work-dir: /go/src/kubevirt.io/kubevirt
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kubevirt/kubevirt.git#v1.5.3
+            checksum: 4f27e414aa0e7c805b04911902b888bc9c3b2f82
+            path: /go/src/kubevirt.io/kubevirt
+            spdx:
+              name: virt-exportproxy
+              version: 1.5.3
+              packages:
+                - name: virt-exportproxy
+                  purl: pkg:golang/kubevirt.io/kubevirt@1.5.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch no-op
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: false
+        - name: manual patch vulnerable Go dependencies
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/crypto@v0.47.0               # CVE-2025-47913, CVE-2025-22869
+            go get github.com/opencontainers/selinux@v1.13.0 # CVE-2025-52881
+            go get golang.org/x/oauth2@v0.27.0               # CVE-2025-22868
+            go get golang.org/x/net@v0.45.0                  # CVE-2025-58190, CVE-2025-47911
+            go get google.golang.org/grpc@v1.79.3            # CVE-2026-33186
+
+            go mod tidy
+            # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
+            if [ -f go.work ]; then
+              go work vendor
+            else
+              go mod vendor
+            fi
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Some unit tests will actually try to use X25519 which is not allowed in FIPS mode
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test ./cmd/virt-exportproxy/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.5.3
+              - -X kubevirt.io/client-go/version.gitCommit=4f27e414aa0e7c805b04911902b888bc9c3b2f82
+            output: ${target.dir}/usr/local/bin/virt-exportproxy
+            packages: ./cmd/virt-exportproxy
+      outputs:
+        - source: ${target.dir}/usr/local/bin/virt-exportproxy
+          target: /usr/local/bin/virt-exportproxy
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/virt-exportproxy
+          target: /opt/docker/sbom/virt-exportproxy
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /usr/bin/virt-exportproxy
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/virt-exportproxy
+annotations:
+  org.opencontainers.image.description: A minimal Virt Export Proxy image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/virt-exportproxy
