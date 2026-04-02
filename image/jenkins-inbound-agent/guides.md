@@ -1,6 +1,6 @@
 ## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
 For example:
@@ -15,10 +15,14 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened Jenkins Inbound Agent image includes:
 
 - Jenkins Remoting library (agent.jar) for connecting agents to Jenkins controllers
-- Eclipse Temurin JRE for running the agent
+- Eclipse Temurin JRE 21 at `/opt/java/openjdk/21-jre` for running the agent
 - Pre-configured agent work directory at `/home/jenkins/agent`
-- Entrypoint script (`jenkins-agent`) that automatically starts the agent using environment variables
+- Entrypoint script (`/usr/local/bin/jenkins-agent`) that automatically starts the agent using environment variables
 - Backward compatibility symlink (slave.jar -> agent.jar)
+
+> **Note:** The Jenkins Inbound Agent image is designed to run as-is and connect to a Jenkins controller. Extending this
+> image is uncommon — most customization is handled through environment variables. Use the `dev` variant if you need a
+> shell or package manager for build stages.
 
 ## Start a Jenkins Inbound Agent image
 
@@ -35,7 +39,7 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e JENKINS_URL=http://jenkins-controller:8080 \
   -e JENKINS_SECRET=<secret-from-controller> \
   -e JENKINS_AGENT_NAME=agent1 \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 This command:
@@ -47,6 +51,9 @@ This command:
 
 **Note:** The `JENKINS_SECRET` and `JENKINS_AGENT_NAME` values must match what is configured in your Jenkins controller.
 You can find these values in the Jenkins UI when creating a new agent node.
+
+> **Deprecation notice:** Providing the secret and agent name as positional arguments is deprecated. Always use the
+> `-secret` and `-name` flags, or configure them via environment variables as shown above.
 
 ### With work directory
 
@@ -60,27 +67,31 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e JENKINS_AGENT_NAME=agent1 \
   -e JENKINS_AGENT_WORKDIR=/home/jenkins/agent \
   -v agent-workdir:/home/jenkins/agent \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 ### Environment variables
 
 Jenkins Inbound Agent supports configuration through environment variables:
 
-| Variable                | Description                                                      | Default                    | Required |
-| ----------------------- | ---------------------------------------------------------------- | -------------------------- | -------- |
-| `JENKINS_URL`           | URL of the Jenkins controller                                    | (empty)                    | Yes      |
-| `JENKINS_SECRET`        | Secret token from the Jenkins controller                         | (empty)                    | Yes      |
-| `JENKINS_AGENT_NAME`    | Name of the agent (must match controller configuration)          | (empty)                    | Yes      |
-| `JENKINS_AGENT_WORKDIR` | Agent work directory path                                        | `/home/jenkins/agent`      | No       |
-| `AGENT_WORKDIR`         | Agent work directory path (alternative to JENKINS_AGENT_WORKDIR) | `/home/jenkins/agent`      | No       |
-| `JAVA_HOME`             | Java installation directory                                      | `/opt/java/openjdk/21-jre` | No       |
-| `JAVA_OPTS`             | Additional JVM options                                           | (empty)                    | No       |
-| `JENKINS_JAVA_OPTS`     | Java options specifically for the remoting process               | (empty)                    | No       |
-| `REMOTING_OPTS`         | Additional CLI options to pass to agent.jar                      | (empty)                    | No       |
-| `USER`                  | User running the agent                                           | `jenkins`                  | No       |
-| `TZ`                    | Timezone                                                         | `Etc/UTC`                  | No       |
-| `LANG`                  | Locale setting                                                   | `C.UTF-8`                  | No       |
+| Variable                    | Description                                                                                              | Default                    | Required |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------- | -------- |
+| `JENKINS_URL`               | URL of the Jenkins controller                                                                            | (empty)                    | Yes      |
+| `JENKINS_SECRET`            | Secret token from the Jenkins controller                                                                 | (empty)                    | Yes      |
+| `JENKINS_AGENT_NAME`        | Name of the agent (must match controller configuration)                                                  | (empty)                    | Yes      |
+| `JENKINS_AGENT_WORKDIR`     | Agent work directory path                                                                                | `/home/jenkins/agent`      | No       |
+| `AGENT_WORKDIR`             | Agent work directory path (alternative to JENKINS_AGENT_WORKDIR)                                         | `/home/jenkins/agent`      | No       |
+| `JAVA_HOME`                 | Java installation directory                                                                              | `/opt/java/openjdk/21-jre` | No       |
+| `JAVA_OPTS`                 | Additional JVM options                                                                                   | (empty)                    | No       |
+| `JENKINS_JAVA_OPTS`         | Java options specifically for the remoting process                                                       | (empty)                    | No       |
+| `REMOTING_OPTS`             | Additional CLI options to pass to agent.jar                                                              | (empty)                    | No       |
+| `JENKINS_WEB_SOCKET`        | Set to `true` to use WebSocket instead of TCP port                                                       | (empty)                    | No       |
+| `JENKINS_DIRECT_CONNECTION` | Connect directly to TCP agent port (e.g. `myjenkins:50000`), skipping HTTP(S)                            | (empty)                    | No       |
+| `JENKINS_INSTANCE_IDENTITY` | Base64-encoded instance identity of the Jenkins controller. When set, skips HTTP(S) for connection info. | (empty)                    | No       |
+| `JENKINS_PROTOCOLS`         | Whitelist of remoting protocols to attempt (used with `JENKINS_INSTANCE_IDENTITY`)                       | (empty)                    | No       |
+| `USER`                      | User running the agent                                                                                   | `jenkins`                  | No       |
+| `TZ`                        | Timezone                                                                                                 | `Etc/UTC`                  | No       |
+| `LANG`                      | Locale setting                                                                                           | `en_US.UTF-8`              | No       |
 
 Example with custom environment variables:
 
@@ -93,7 +104,7 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e TZ=America/New_York \
   -e JAVA_OPTS="-Xmx512m -Xms256m" \
   -v agent-workdir:/home/jenkins/agent \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 ## Common Jenkins Inbound Agent use cases
@@ -107,7 +118,7 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e JENKINS_URL=http://jenkins-controller:8080 \
   -e JENKINS_SECRET=<secret-from-controller> \
   -e JENKINS_AGENT_NAME=agent1 \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 ### Agent with persistent work directory
@@ -121,19 +132,45 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e JENKINS_AGENT_NAME=agent1 \
   -e JENKINS_AGENT_WORKDIR=/home/jenkins/agent \
   -v jenkins-agent-work:/home/jenkins/agent \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
+```
+
+### Agent with WebSocket connection
+
+Use WebSocket instead of the TCP port (port 50000) to connect to the Jenkins controller. This is useful when firewall
+rules block direct TCP connections:
+
+```bash
+$ docker run -d --name jenkins-inbound-agent --init \
+  -e JENKINS_URL=http://jenkins-controller:8080 \
+  -e JENKINS_SECRET=<secret-from-controller> \
+  -e JENKINS_AGENT_NAME=agent1 \
+  -e JENKINS_WEB_SOCKET=true \
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 ### Agent in Kubernetes
 
 Deploy Jenkins inbound agents in Kubernetes using a Deployment. The following example shows a basic Kubernetes
-deployment that automatically connects to a Jenkins controller:
+deployment that automatically connects to a Jenkins controller.
+
+First, store the agent secret in a Kubernetes Secret:
+
+```bash
+kubectl create secret generic jenkins-agent-secret \
+  --from-literal=secret=<secret-from-controller>
+```
+
+Then apply the following Deployment manifest:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: jenkins-inbound-agent
+  namespace: default
+  labels:
+    app: jenkins-inbound-agent
 spec:
   replicas: 1
   selector:
@@ -146,7 +183,11 @@ spec:
     spec:
       containers:
       - name: jenkins-inbound-agent
-        image: dhi.io/jenkins-inbound-agent:<tag>
+        image: dhi.io/jenkins-inbound-agent:3345-debian13
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
         env:
         - name: JENKINS_URL
           value: "http://jenkins-controller:8080"
@@ -159,6 +200,13 @@ spec:
           value: "k8s-agent-1"
         - name: JENKINS_AGENT_WORKDIR
           value: "/home/jenkins/agent"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
         volumeMounts:
         - name: agent-work
           mountPath: /home/jenkins/agent
@@ -167,15 +215,26 @@ spec:
         emptyDir: {}
 ```
 
+**Note:** When running the Kubernetes agent on Docker Desktop and connecting to a Jenkins controller running outside the
+cluster (for example, in Docker Compose), use `http://host.docker.internal:8080` as the `JENKINS_URL` instead of
+`http://jenkins-controller:8080`.
+
 ### Agent with Docker Compose
 
-Use Docker Compose to run a Jenkins controller with an inbound agent:
+Use Docker Compose to run a Jenkins controller with an inbound agent. Save the agent secret to a `.env` file before
+starting:
+
+```bash
+echo "JENKINS_SECRET=<secret-from-controller>" > .env
+```
+
+**Note:** Use `compose.yaml` as the filename. Docker Compose will warn if both `compose.yaml` and `docker-compose.yaml`
+are present in the same directory and will prefer `compose.yaml`.
 
 ```yaml
-version: '3.8'
 services:
   jenkins-controller:
-    image: dhi.io/jenkins:<tag>
+    image: dhi.io/jenkins:2.534-debian13
     container_name: jenkins-controller
     ports:
       - "8080:8080"
@@ -184,20 +243,27 @@ services:
       - jenkins-data:/var/jenkins_home
     networks:
       - jenkins-network
+    healthcheck:
+      test: ["CMD", "java", "-jar", "/usr/share/jenkins/jenkins.war", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
   jenkins-inbound-agent:
-    image: dhi.io/jenkins-inbound-agent:<tag>
+    image: dhi.io/jenkins-inbound-agent:3345-debian13
     container_name: jenkins-inbound-agent
     init: true
     environment:
       - JENKINS_URL=http://jenkins-controller:8080
-      - JENKINS_SECRET=<secret-from-controller>
+      - JENKINS_SECRET=${JENKINS_SECRET}
       - JENKINS_AGENT_NAME=agent1
       - JENKINS_AGENT_WORKDIR=/home/jenkins/agent
     volumes:
       - agent-work:/home/jenkins/agent
     depends_on:
-      - jenkins-controller
+      jenkins-controller:
+        condition: service_healthy
     networks:
       - jenkins-network
 
@@ -209,6 +275,9 @@ networks:
   jenkins-network:
 ```
 
+**Note:** The DHI Jenkins controller runtime image does not include `curl` or `wget`. The healthcheck uses `java`
+directly, which is guaranteed to be present in the image.
+
 ### Agent with custom Java options
 
 Configure JVM options for the agent:
@@ -219,36 +288,65 @@ $ docker run -d --name jenkins-inbound-agent --init \
   -e JENKINS_SECRET=<secret-from-controller> \
   -e JENKINS_AGENT_NAME=agent1 \
   -e JAVA_OPTS="-Xmx1024m -Xms512m" \
-  dhi.io/jenkins-inbound-agent:<tag>
+  dhi.io/jenkins-inbound-agent:3345-debian13
 ```
 
 ## Image variants
 
-Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
-their tag.
+Docker Hardened Images come in different variants depending on their intended use. The following variants are available
+for this image:
 
-- Runtime variants are designed to run your application in production. These images are intended to be used either
-  directly or as the FROM image in the final stage of a multi-stage build. These images typically:
+| Tag                      | Alias           | Base OS   | User           | Compliance      | Purpose                |
+| ------------------------ | --------------- | --------- | -------------- | --------------- | ---------------------- |
+| `3345-debian13`          | `3345`          | Debian 13 | jenkins (1000) | CIS             | Production runtime     |
+| `3345-debian13-dev`      | `3345-dev`      | Debian 13 | root           | CIS             | Build/CI stages        |
+| `3345-debian13-fips`     | `3345-fips`     | Debian 13 | jenkins (1000) | CIS, FIPS, STIG | FIPS-compliant runtime |
+| `3345-debian13-fips-dev` | `3345-fips-dev` | Debian 13 | root           | CIS, FIPS, STIG | FIPS-compliant build   |
 
-  - Run as a nonroot user
-  - Do not include a shell or a package manager
-  - Contain only the minimal set of libraries needed to run the app
+> **Note:** FIPS and STIG variants (`*-fips`, `*-fips-dev`) require a Docker subscription. Start a 30-day free trial at
+> [dhi.io](https://dhi.io) to access them.
 
-- Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a
-  multi-stage Dockerfile. These images typically:
+### Runtime variants
 
-  - Run as the root user
-  - Include a shell and package manager
-  - Are used to build or compile applications
+Runtime variants are designed to run your application in production. These images are intended to be used either
+directly or as the FROM image in the final stage of a multi-stage build. These images typically:
 
-- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
-  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+- Run as a nonroot user (`jenkins`, UID 1000)
+- Do not include a shell, `curl`, `wget`, or a package manager
+- Contain only the minimal set of libraries needed to run the agent
 
-To view the image variants and get more information about them, select the Tags tab for this repository, and then select
-a tag.
+### Build-time variants
+
+Build-time variants include `dev` in the tag name and are intended for use in the first stage of a multi-stage
+Dockerfile. These images typically:
+
+- Run as the root user
+- Include a shell and package manager
+- Are used to build or compile applications
+
+### FIPS variants
+
+FIPS variants include `fips` in the tag name and come in both runtime and build-time variants. They use cryptographic
+modules validated under FIPS 140, a U.S. government standard for secure cryptographic operations. Both FIPS variants for
+this image are also STIG-compliant at 100%, making them suitable for government and regulated industry deployments.
+
+To use the FIPS-compliant runtime agent:
+
+```bash
+$ docker run -d --name jenkins-inbound-agent --init \
+  -e JENKINS_URL=http://jenkins-controller:8080 \
+  -e JENKINS_SECRET=<secret-from-controller> \
+  -e JENKINS_AGENT_NAME=agent1 \
+  dhi.io/jenkins-inbound-agent:3345-debian13-fips
+```
+
+To view all available tags, select the **Tags** tab for this repository in the DHI registry.
 
 ## Migrate to a Docker Hardened Image
+
+> **Note:** The Jenkins Inbound Agent image is designed to run as-is. Extending it with a custom Dockerfile is uncommon
+> — most customization is handled through environment variables. If you need to build on top of this image, use the
+> `dev` variant as your base.
 
 To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
 base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
@@ -327,6 +425,12 @@ the host. For example, `docker run -p 80:8080 my-image` will work because the po
 By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
 commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
 with no shell.
+
+### No curl or wget
+
+The DHI Jenkins runtime image does not include `curl`, `wget`, or other HTTP clients. Do not use these tools in
+healthchecks or scripts that run inside the container. Use `java` directly for connectivity checks, or use Docker Debug
+to install tools temporarily for debugging purposes.
 
 ### Entry point
 
