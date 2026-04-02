@@ -387,22 +387,26 @@ docker debug <container-id>
 
 Docker Hardened Images come in different variants depending on their intended use.
 
-**Runtime variants** are designed to run your application in production. These images are intended to be used either
-directly or as the FROM image in the final stage of a multi-stage build. These images typically:
+- Runtime variants are designed to run your application in production. These images are intended to be used either
+  directly or as the FROM image in the final stage of a multi-stage build. These images typically:
 
-- Run as the nonroot user
-- Do not include a shell or a package manager
-- Contain only the minimal set of libraries needed to run the app
+  - Run as the nonroot user
+  - Do not include a shell or a package manager
+  - Contain only the minimal set of libraries needed to run the app
 
-**Build-time variants** typically include `dev` in the variant name and are intended for use in the first stage of a
-multi-stage Dockerfile. These images typically:
+- Build-time variants typically include `dev` in the variant name and are intended for use in the first stage of a
+  multi-stage Dockerfile. These images typically:
 
-- Run as the root user
-- Include a shell and package manager
-- Are used to build or compile applications
+  - Run as the root user
+  - Include a shell and package manager
+  - Are used to build or compile applications
 
-The Vault K8s Docker Hardened Image is available in both runtime and dev variants. Use `dev` variants for building
-custom configurations or extensions, and runtime variants for production deployments.
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+The Vault K8s Docker Hardened Image is available in all variant types: runtime, dev, FIPS, and FIPS-dev. To view the
+image variants and get more information about them, select the Tags tab for this repository, and then select a tag.
 
 ## Migrate to a Docker Hardened Image
 
