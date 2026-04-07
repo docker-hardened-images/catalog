@@ -69,11 +69,16 @@ helm install my-argocd oci://dhi.io/argocd-chart --version <version> \
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
 registry and namespace. Replace `helm-pull-secret` with the name of the image pull secret you created earlier.
 
-This helm chart replaces the `redis-ha` depedency with `dhi/redis-chart` and `dhi/haproxy-chart` when the
-`redis-ha.enabled` and `haproxy.enabled` values are set to `true`. Beacause of this, enabling `redis-ha` acts similarly
-to using an external redis and requires `redisSecretInit.enabled` to be `false`. As such, the default configuration
-using an existingSecret for auth requires creating the specified kubernetes secret containing `redis-password`.
-Additionally, configuration values for haproxy are defined underunder `haproxy` instead of `redis-ha.haproxy`.
+If you turn on Redis HA (`redis-ha.enabled`) and HAProxy (`haproxy.enabled`), this chart uses the `dhi/redis-chart`
+subchart as `redis-ha` and a separate `dhi/haproxy-chart` as HAProxy.
+
+With the defaults, the redis-secret-init hook creates a Secret named `argocd-redis` with the password under the key
+`auth`. Argo CD’s own tooling uses that name and key; the chart sets `redis-ha.auth.existingSecretPasswordKey` to `auth`
+so the Redis chart reads the same field. If you turn off `redisSecretInit` and supply your own Secret, use the `auth`
+key or set `existingSecretPasswordKey` to whatever key you chose. The HAProxy pod loads the check password from
+`haproxy.extraEnvs`; point that at the same Secret name and key as `redis-ha.auth`. By default that is still
+`argocd-redis` / `auth`, which matches redis-secret-init and **does not** depend on the Helm release name. If you change
+the Secret or the key, update both the Redis auth settings and HAProxy’s `extraEnvs` so they stay in sync.
 
 #### Step 4: Verify the installation
 

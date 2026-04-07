@@ -41,8 +41,9 @@ redis-ha:
     enabled: true
     sentinel: true
     password: ""
+    # Default matches redis-secret-init (fixed name argocd-redis, key auth)—not derived from Release.Name.
     existingSecret: argocd-redis
-    existingSecretPasswordKey: ""
+    existingSecretPasswordKey: auth
     usePasswordFiles: true
     usePasswordFileFromSecret: true
   acl:
@@ -54,8 +55,23 @@ redis-ha:
 haproxy:
   redis:
     name: argocd-redis
+  # When non-empty, must match the redis-ha StatefulSet name prefix (pods {prefix}-node-0). Required if
+  # redis-ha uses fullnameOverride; tpl() cannot see parent redis-ha values from the HAProxy subchart.
+  redisWorkloadFullnameOverride: ""
   enabled: false
+  # When true, add option tcplog on Redis TCP frontends (one line per connection; noisy).
+  debug: false
   servicePort: 6379
+  # Must match ports bound in haproxy.config. Keys become Kubernetes port names (≤15 chars, [a-z0-9-] only).
+  # Nulls drop the HAProxy subchart defaults (http/https/stat) which Helm would otherwise deep-merge in.
+  containerPorts:
+    http: null
+    https: null
+    stat: null
+    health-http: 8888
+    redis: 6379
+    readonly: 6380
+    metrics: 9101
   timeout:
     connect: 4s
     server: 330s
@@ -75,17 +91,61 @@ haproxy:
   checkInterval: 30s
   checkFall: 3
 
+  # Env name for tcp-check AUTH ${VAR} (HAProxy expands only inside double quotes). Wired into the pod via
+  # extraEnvs below; empty disables AUTH in checks (passwordless Redis only). If you replace extraEnvs entirely,
+  # re-add an entry for this name + secretKeyRef or clear redisCheckAuthEnvVar.
+  redisCheckAuthEnvVar: ARGOCD_REDIS_HAPROXY_AUTH
+  extraEnvs:
+    # Must match redis-ha.auth.existingSecret / existingSecretPasswordKey above (same Secret the data nodes use).
+    - name: ARGOCD_REDIS_HAPROXY_AUTH
+      valueFrom:
+        secretKeyRef:
+          name: argocd-redis
+          key: auth
+
+  # Suffix for the redis-ha headless Service ({redisWorkloadFullname}-headless).
+  redisHeadlessServiceSuffix: "-headless"
+  # Cluster DNS zone for per-pod addresses (same as redis-ha.clusterDomain when non-default).
+  redisClusterDomain: cluster.local
+  # Passed to default-server resolve-prefer (k3d/k3s often IPv4-single-stack; HAProxy default can prefer IPv6).
+  redisDnsResolvePrefer: ipv4
+
   IPv6:
     enabled: true
 
   metrics:
     enabled: false
+    port: 9101
+    scrapePath: /metrics
 
   config: |
-    {{- $fullName := include "argo-cd.redis.fullname" . }}
+    {{- $fullName := .Values.redisWorkloadFullnameOverride | default (include "argo-cd.redis-ha.fullname" .) }}
     {{- $replicas := int (toString .Values.replicas) }}
+    {{- $checkPwEnv := .Values.redisCheckAuthEnvVar | default "" | trim }}
+    {{- $headlessSvc := printf "%s%s" $fullName (default "-headless" .Values.redisHeadlessServiceSuffix) }}
+    {{- $redisNS := .Release.Namespace }}
+    {{- $dnsZone := default "cluster.local" .Values.redisClusterDomain }}
+    {{/*
+      Master: tcp-check on data port 6379 expects role:master in INFO replication. Three servers R0-R2 are the
+      StatefulSet replicas; exactly one is primary—the others are replicas and intentionally fail this check.
+      balance first + first healthy backend = traffic to the current master. Use headless FQDNs only.
+    */}}
+
+    global
+      log stdout format raw local0
+      maxconn 4096
+
+    # Runtime DNS via pod /etc/resolv.conf (CoreDNS). libc-only init-addr resolves at config load; if Redis/Services
+    # are not ready yet, HAProxy disables servers permanently. With resolvers + init-addr last,none, names re-resolve.
+    resolvers k8s
+      parse-resolv-conf
+      timeout resolve 5s
+      timeout retry 1s
+      hold obsolete 10s
+      hold valid 10s
 
     defaults REDIS
+      log global
       mode tcp
       timeout connect {{ .Values.timeout.connect }}
       timeout server {{ .Values.timeout.server }}
@@ -93,7 +153,8 @@ haproxy:
       timeout check {{ .Values.timeout.check }}
       timeout tunnel {{ .Values.timeout.tunnel }}
 
-      default-server init-addr none
+      # Do not use libc here when resolvers are set (HAProxy manual). last = state file; none = start down until DNS OK.
+      default-server init-addr last,none resolvers k8s resolve-prefer {{ default "ipv4" .Values.redisDnsResolvePrefer }}
 
     listen health_check_http_url
       bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:8888  {{ if .Values.IPv6.enabled }}v4v6{{ end }}
@@ -101,25 +162,12 @@ haproxy:
       monitor-uri /healthz
       option      dontlognull
 
-    {{- range $i := until $replicas }}
-    # Check Sentinel and whether they are nominated master
-    backend check_if_redis_is_master_{{ $i }}
-      mode tcp
-      option tcp-check
-      tcp-check connect
-      tcp-check send PING\r\n
-      tcp-check expect string +PONG
-      tcp-check send SENTINEL\ get-master-addr-by-name\ {{ $fullName }}\r\n
-      tcp-check expect string REPLACE_ANNOUNCE{{ $i }}
-      tcp-check send QUIT\r\n
-      {{- range $i := until $replicas }}
-      server R{{ $i }} {{ $fullName }}-node-{{ $i }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
-      {{- end }}
-    {{- end }}
-
     # decide redis backend to use
     #master
     frontend ft_redis_master
+      {{- if .Values.debug }}
+      option tcplog
+      {{- end }}
       {{- if .Values.tls.enabled }}
       bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ .Values.containerPort }} ssl crt {{ .Values.tls.certMountPath }}{{ .Values.tls.keyName }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
       {{ else }}
@@ -129,19 +177,28 @@ haproxy:
     {{- if .Values.readOnly.enabled }}
     #slave
     frontend ft_redis_slave
+      {{- if .Values.debug }}
+      option tcplog
+      {{- end }}
       bind {{ if .Values.IPv6.enabled }}[::]{{ end }}:{{ .Values.readOnly.port }} {{ if .Values.IPv6.enabled }}v4v6{{ end }}
       use_backend bk_redis_slave
     {{- end }}
 
-    # Check all redis servers to see if they think they are master
+    # Route to the node that reports role:master (redis-ha / redis-chart data port).
     backend bk_redis_master
       {{- if .Values.stickyBalancing }}
       balance source
       hash-type consistent
+      {{- else }}
+      balance first
       {{- end }}
       mode tcp
       option tcp-check
       tcp-check connect
+      {{- if $checkPwEnv }}
+      tcp-check send "AUTH {{ printf "${%s}" $checkPwEnv }}"\r\n
+      tcp-check expect string +OK
+      {{- end }}
       tcp-check send PING\r\n
       tcp-check expect string +PONG
       tcp-check send info\ replication\r\n
@@ -149,8 +206,7 @@ haproxy:
       tcp-check send QUIT\r\n
       tcp-check expect string +OK
       {{- range $i := until $replicas }}
-      use-server R{{ $i }} if { srv_is_up(R{{ $i }}) } { nbsrv(check_if_redis_is_master_{{ $i }}) ge 2 }
-      server R{{ $i }} {{ $fullName }}-node-{{ $i }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
+      server R{{ $i }} {{ printf "%s-node-%d.%s.%s.svc.%s" $fullName $i $headlessSvc $redisNS $dnsZone }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
       {{- end }}
     {{- if .Values.readOnly.enabled }}
     backend bk_redis_slave
@@ -161,12 +217,19 @@ haproxy:
       mode tcp
       option tcp-check
       tcp-check connect
+      {{- if $checkPwEnv }}
+      tcp-check send "AUTH {{ printf "${%s}" $checkPwEnv }}"\r\n
+      tcp-check expect string +OK
+      {{- end }}
       tcp-check send PING\r\n
       tcp-check expect string +PONG
       tcp-check send info\ replication\r\n
       tcp-check expect  string role:slave
       tcp-check send QUIT\r\n
       tcp-check expect string +OK
+      {{- range $i := until $replicas }}
+      server R{{ $i }} {{ printf "%s-node-%d.%s.%s.svc.%s" $fullName $i $headlessSvc $redisNS $dnsZone }}:{{ $.Values.servicePort }} check inter {{ $.Values.checkInterval }} fall {{ $.Values.checkFall }} rise 3
+      {{- end }}
     {{- end }}
 
     {{- if .Values.metrics.enabled }}
