@@ -141,9 +141,20 @@ contents:
 
             tar -xaf python.tar.xz --strip-components=1
 
-            git apply "${source.dir}/patch/0001-backport-python-security-fixes.patch"
+            for _subdir in common "3.14"; do
+              _dir="${source.dir}/patch/${_subdir}"
+              [ -d "${_dir}" ] || continue
+              for _p in $(find "${_dir}" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort); do
+                git apply "${_p}"
+              done
+            done
 
             gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+
+            # setuptools wheel checks: avoid zipfile CLI piped to grep/head (BrokenPipeError with pipefail)
+            _wheel_name_contains() {
+              python3 -c 'import sys, zipfile; w, frag = sys.argv[1], sys.argv[2]; sys.exit(0 if any(frag in n for n in zipfile.ZipFile(w).namelist()) else 1)' "$1" "$2"
+            }
 
             if [ -f "${source.dir}/pip-26.0.1-py3-none-any.whl" ]; then
               rm -rf Lib/ensurepip/_bundled/pip*
@@ -190,10 +201,10 @@ contents:
               (cd setuptools_temp && zip -r "../setuptools--patched.whl" .)
 
               # Verify _distutils_hack is still present in the repacked wheel if it was in the original
-              if python3 -m zipfile -l "${source.dir}/setuptools--py3-none-any.whl" | grep -q "_distutils_hack"; then
-                if ! python3 -m zipfile -l "setuptools--patched.whl" | grep -q "_distutils_hack"; then
+              if _wheel_name_contains "${source.dir}/setuptools--py3-none-any.whl" "_distutils_hack"; then
+                if ! _wheel_name_contains "setuptools--patched.whl" "_distutils_hack"; then
                   echo "ERROR: _distutils_hack was present in original setuptools but missing from repacked wheel!"
-                  python3 -m zipfile -l "setuptools--patched.whl" | head -30
+                  python3 -c 'import zipfile,sys; print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()[:30]))' "setuptools--patched.whl"
                   exit 1
                 fi
               fi
@@ -203,12 +214,12 @@ contents:
             fi
 
             # Verify the bundled setuptools wheel still has _distutils_hack if it should
-            if python3 -m zipfile -l "${source.dir}/setuptools--py3-none-any.whl" | grep -q "_distutils_hack"; then
-              python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | grep "_distutils_hack" || (
+            if _wheel_name_contains "${source.dir}/setuptools--py3-none-any.whl" "_distutils_hack"; then
+              if ! _wheel_name_contains "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl" "_distutils_hack"; then
                 echo "ERROR: _distutils_hack not in bundled setuptools wheel!"
-                python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | head -30
+                python3 -c 'import zipfile,sys; print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()[:30]))' "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl"
                 exit 1
-              )
+              fi
             fi
 
             ./configure --prefix="/opt/python-3.14.3" \
@@ -230,7 +241,7 @@ contents:
             make DESTDIR="${target.dir}" install
 
             # Verify _distutils_hack was installed if it was present in the wheel
-            if python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | grep -q "_distutils_hack"; then
+            if _wheel_name_contains "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl" "_distutils_hack"; then
               if [ ! -d "${target.dir}/opt/python-3.14.3/lib/python3.14/site-packages/_distutils_hack" ]; then
                 echo "ERROR: _distutils_hack directory not found in installed site-packages!"
                 ls -la "${target.dir}/opt/python-3.14.3/lib/python3.14/site-packages/" | head -20
@@ -262,11 +273,12 @@ contents:
           with:
             dir: ${target.dir}/opt
       paths:
-        - type: file
-          path: ${source.dir}/patch/0001-backport-python-security-fixes.patch
+        - type: directory
+          path: ${source.dir}/patch
           uid: 0
           gid: 0
-          source: package/python/patch/0001-backport-python-security-fixes.patch
+          source: package/python/patch
+          recursive: true
         - type: directory
           path: /tmp
           uid: 0
