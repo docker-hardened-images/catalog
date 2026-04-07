@@ -160,6 +160,14 @@ contents:
             sed -i 's/requests==.*/requests==2.33.0/' ./constraints.txt                       # CVE-2026-25645
             sed -i 's/Pygments==.*/Pygments==2.20.0/' ./constraints.txt                       # CVE-2026-4539
             sed -i 's/litellm==.*/litellm==1.83.0/' ./constraints.txt                         # CVE-2026-35030, CVE-2026-35029
+
+            # protobuf 5.29.6 fixes CVE-2026-0994 (Scout: vulnerable <5.29.6 on 4.x line).
+            sed -i 's/^protobuf==4\.25\.8/protobuf==5.29.6/g' ./constraints.txt # CVE-2026-0994
+            echo "protobuf==5.29.6" >> ./overrides.txt                          # CVE-2026-0994
+
+            # aiohttp 3.13.4 fixes multiple CVEs (CVE-2026-22815, CVE-2026-34513–CVE-2026-34520, CVE-2026-34525).
+            sed -i 's/^aiohttp==3\.13\.3/aiohttp==3.13.4/g' ./constraints.txt
+            echo "aiohttp==3.13.4" >> ./overrides.txt
         - name: build
           work-dir: ${source.dir}/airflow
           privileged: true
@@ -226,29 +234,25 @@ contents:
             # pkg-node currently does not contain corepack
             npm install -g corepack
 
+            export PATH=/opt/nodejs/node-v22.22.2/bin:$PATH
+
             # we must cd as corepack has no flag to set cwd (nodejs/corepack#677)
             cd '${source.dir}/airflow/airflow-core/src/airflow/ui'
 
-            # Add overrides. At time of writing, pnpm-workspace.yaml doesn't exist. If it ever does, we'll need to properly merge our contents with it.
-            test ! -f pnpm-workspace.yaml
-            cat > pnpm-workspace.yaml << EOF
-            overrides:
-              "prismjs@1.27.0": "1.30.0"  # CVE-2024-53382
-              "axios": "1.13.5"            # CVE-2025-58754, CVE-2026-25639
-              "mdast-util-to-hast@13.2.0": "13.2.1"    # CVE-2025-66400
-              "@remix-run/router": "1.23.2" # CVE-2026-22029
-              "react-router-dom@6.30.0": "6.30.3"
-              "lodash": "4.18.0"          # CVE-2025-13465, CVE-2026-4800, CVE-2026-2950
-              "yaml@1.10.2": "1.10.3"     # CVE-2026-33532
-              "yaml@2.8.0": "2.8.3"       # CVE-2026-33532
-            EOF
+            npm pkg set pnpm.overrides.prismjs=1.30.0
+            npm pkg set pnpm.overrides.axios=1.13.5
+            npm pkg set pnpm.overrides.mdast-util-to-hast=13.2.1
+            npm pkg set pnpm.overrides."@remix-run/router"=1.23.2
+            npm pkg set pnpm.overrides.react-router-dom=6.30.2
+            npm pkg set pnpm.overrides.lodash=4.18.0
+            npm pkg set pnpm.overrides.yaml=2.8.3
 
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm install
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm run build --outDir ${target.dir}/ui
+            corepack pnpm install
+            corepack pnpm run build --outDir ${target.dir}/ui
 
             # prep for sbom
             rm -rf node_modules
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm install --frozen-lockfile --production
+            corepack pnpm install --frozen-lockfile --production
         - name: main ui sbom
           uses: sbom@v1
           with:
@@ -261,20 +265,19 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Add overrides. At time of writing, pnpm-workspace.yaml doesn't exist. If it ever does, we'll need to properly merge our contents with it.
-            test ! -f pnpm-workspace.yaml
-            cat > pnpm-workspace.yaml << EOF
-            overrides:
-              "axios": "1.13.5"           # CVE-2025-58754, CVE-2026-25639
-              "react-router-dom": "7.12.0" # CVE-2026-21884
-            EOF
+            export PATH=/opt/nodejs/node-v22.22.2/bin:$PATH
 
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm install
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm run build --outDir ${target.dir}/simple-auth-ui
+            npm pkg set pnpm.overrides.axios=1.13.5
+            npm pkg set pnpm.overrides."@remix-run/router"=1.23.2
+            npm pkg set pnpm.overrides.react-router-dom=6.30.2
+            npm pkg set pnpm.overrides.yaml=2.8.3
+
+            corepack pnpm install
+            corepack pnpm run build --outDir ${target.dir}/simple-auth-ui
 
             # prep for sbom
             rm -rf node_modules
-            /opt/nodejs/node-v22.22.2/bin/corepack pnpm install --frozen-lockfile --production
+            corepack pnpm install --frozen-lockfile --production
         - name: simple auth ui sbom
           uses: sbom@v1
           with:
