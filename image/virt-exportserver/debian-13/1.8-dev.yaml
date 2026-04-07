@@ -66,6 +66,8 @@ contents:
       pipeline:
         - name: patch no-op
           uses: go/bump@v1
+          environment:
+            GOWORK: "off"
           with:
             deps: []
             download: false
@@ -85,12 +87,21 @@ contents:
 
             go mod tidy
 
+            if [ "1.8.1" = "1.8.1" ]; then
+              go get github.com/opencontainers/runc@v1.2.8 # CVE-2025-52881, CVE-2025-52565, CVE-2025-31133
+            fi
+
             # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
             if [ -f go.work ]; then
               go work vendor
             else
               go mod vendor
             fi
+        - name: patch runc cgroup devices API compat
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/runc-cgroup-devices-api-compat.patch
         - name: test
           runs: |
             set -eux -o pipefail
@@ -111,6 +122,12 @@ contents:
               - -X kubevirt.io/client-go/version.gitCommit=ae865b624b443450f7aedadc30cf9223a6176015
             output: ${target.dir}/usr/local/bin/virt-exportserver
             packages: ./cmd/virt-exportserver
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: image/virt-exportserver/patch
       outputs:
         - source: ${target.dir}/usr/local/bin/virt-exportserver
           target: /usr/local/bin/virt-exportserver
