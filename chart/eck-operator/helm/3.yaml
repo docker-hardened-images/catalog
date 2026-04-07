@@ -1,0 +1,86 @@
+# syntax=dhi.io/build:2-helm3
+
+name: ECK Operator Helm chart 3.x
+image: dhi.io/eck-operator-chart
+variant: helm
+tags:
+  - 3.3.1
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: ee6ca7f5987f5118f578ce8dd0b4e02880484f3e
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  ECK_OPERATOR_REFERENCE: dhi/eck-operator:3.3.1-debian13@sha256:ca66bda785c856599b26f34389eafc20c7506392158c4123b4be03df1f140db5
+  ELASTICSEARCH_REFERENCE: dhi/elasticsearch:9.3.2-debian13@sha256:9b1e86d0a7214e488105dfa6dd7bdbd1a85fda8b07577b298234aa1034786c83
+  HELM_REFERENCE: dhi/helm:3.20.1-debian13-dev@sha256:7bee3e50c815757f78414dcd850621d0cca82d3660da2376f1111069073f3bd5
+  KIBANA_REFERENCE: dhi/kibana:9.3.0-debian13@sha256:bb960d1887252c3eadb614a1304fb561e71711613f773b4030d89eb48c9cfd0a
+  LOGSTASH_COMPAT_REFERENCE: dhi/logstash:9.3.2-debian13-compat@sha256:4c74c1d963819aa0bd5541290303ab950b24377cdbdd6c40b0f4d64e3336a949
+  SEMVER_MAJOR_MINOR_VERSION: "3.3"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.3.1
+  VERSION: 3.3.1
+contents:
+  builds:
+    - name: eck-operator
+      uses: dhi.io/helm:3.20.1-debian13-dev@sha256:7bee3e50c815757f78414dcd850621d0cca82d3660da2376f1111069073f3bd5
+      contents:
+        files:
+          - url: git+https://github.com/elastic/cloud-on-k8s.git#v3.3.1
+            checksum: ee6ca7f5987f5118f578ce8dd0b4e02880484f3e
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/eck-operator
+          with:
+            chart:
+              appRef: eck-operator
+              dependencies:
+                - condition: installCRDs
+                  keep: true
+                  name: eck-operator-crds
+              description: Docker Hardened Images Helm chart for Elastic Cloud on Kubernetes (ECK) Operator
+              images:
+                - name: eck-operator
+                  ref: dhi/eck-operator:3.3.1-debian13@sha256:ca66bda785c856599b26f34389eafc20c7506392158c4123b4be03df1f140db5
+                - name: logstash
+                  ref: dhi/logstash:9.3.2-debian13-compat@sha256:4c74c1d963819aa0bd5541290303ab950b24377cdbdd6c40b0f4d64e3336a949
+                - name: kibana
+                  ref: dhi/kibana:9.3.0-debian13@sha256:bb960d1887252c3eadb614a1304fb561e71711613f773b4030d89eb48c9cfd0a
+                - name: elasticsearch
+                  ref: dhi/elasticsearch:9.3.2-debian13@sha256:9b1e86d0a7214e488105dfa6dd7bdbd1a85fda8b07577b298234aa1034786c83
+              name: eck-operator-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/elastic/cloud-on-k8s
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/eck-operator
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/deploy
+          with:
+            chart: eck-operator
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: ${source.dir}/helm-charts/deploy/eck-operator
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/eck-operator/config

@@ -20,5 +20,6 @@ into existing Docker and Kubernetes workflows.
 
 ## Trademarks
 
-Elasticsearch® is a registered trademark of Elasticsearch B.V.. Any rights therein are reserved to Elasticsearch B.V..
-Any use by Docker is for referential purposes only and does not indicate sponsorship, endorsement, or affiliation.
+Elasticsearch® and Elastic® are trademarks of Elasticsearch B.V., registered in the U.S. and in other countries. All
+rights in the marks are reserved to Elasticsearch B.V. Any use by Docker is for referential purposes only and does not
+indicate sponsorship, endorsement, or affiliation.
