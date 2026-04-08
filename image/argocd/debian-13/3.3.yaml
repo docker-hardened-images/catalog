@@ -20,7 +20,7 @@ vars:
   COMMIT_SHA: 998fb59dc355653c0657908a6ea2f87136e022d1
   EXPAT_REF: dhi/pkg-expat:2.7.5-debian13@sha256:6bb36827ea9fdd0cb5064de572070fc0c82a1443054c91c60a63a80da0552897
   GIT_LFS_REF: dhi/pkg-git-lfs:3.7.1-debian13@sha256:a310d438dcfaa5034c222f4a063a2cb29fd1dca1749f1391e7ae0bf1895bf8f1
-  GOLANG_REFERENCE: dhi/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+  GOLANG_REFERENCE: dhi/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
   HELM_REF: dhi/helm:3.20.1-debian13@sha256:a58a5d2fa2bca428dac180d78651b8b158d17440eeca6303405c6dc791f1f308
   KUSTOMIZE_REF: dhi/kustomize:5.8.1-debian13@sha256:c62a93b8dc52dcf8a6dd3380eb52d06fc0aa7cd65a12206cd4ddcdafec25476d
   NODE_REF: dhi/node:20.20.2-debian13-dev@sha256:78fa7504a3ad483c64479090ad66cff4d41c7a100a8db939b0d3354daac51040
@@ -47,7 +47,7 @@ contents:
     - tzdata
   builds:
     - name: argocd-go
-      uses: dhi.io/golang:1.25.8-debian13-dev@sha256:b2c03c829a4df4f724712501d18321e46a2ac770377f0b6e2f383bc9d02b99d3
+      uses: dhi.io/golang:1.26.1-debian13-dev@sha256:2eaf3936008b4a31091eda26511748c1b872925fa5f674f13fbf5b53e7e777c2
       contents:
         packages:
           - curl
@@ -100,35 +100,26 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: patch ui source
-          uses: patch@v1
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3
-          with:
-            options: -p1
-            patches:
-              - /src/patch/ui-3.3.patch
-        - name: patch-go (3.3)
+        - name: patch-go (3.3 only)
           uses: go/bump@v1
           work-dir: /go/src/github.com/argoproj/argo-cd/v3
           caches:
             - path: /go/pkg/mod
           with:
             deps:
-              - go.opentelemetry.io/otel/sdk@v1.40.0
-              - github.com/go-git/go-git/v5@v5.16.5
               - github.com/cloudflare/circl@v1.6.3
+              - github.com/go-git/go-git/v5@v5.17.1
+              - go.opentelemetry.io/otel/sdk@v1.40.0
               - google.golang.org/grpc@v1.79.3
+              - github.com/go-jose/go-jose/v4@v4.1.4
             download: true
         - name: patch-node
-          uses: yarn/bump@v1
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
-          privileged: true
+          uses: yarn/bump@v2
           caches:
             - path: /usr/local/share/.cache/yarn
           with:
-            patches: ${source.dir}/patches/yarn-patches-3.3.json
-            skip-yarn-add: true
-            yarn-root: .
+            bumps: ${source.dir}/patches/yarn-patches-3.3.json
+            yarn-root: /go/src/github.com/argoproj/argo-cd/v3/ui
         - name: build-ui
           work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
           privileged: true
@@ -158,48 +149,31 @@ contents:
           with:
             prefix: argocd-ui
             source: /go/src/github.com/argoproj/argo-cd/v3/ui
-        - name: build-backend
+        - name: build
+          uses: go/build@v1
           work-dir: /go/src/github.com/argoproj/argo-cd/v3
-          privileged: true
+          environment:
+            GODEBUG: tarinsecurepath=0,zipinsecurepath=0
           caches:
             - path: /go/pkg/mod
-          runs: |
-            set -eux -o pipefail
-
-            KUBECTL_VERSION=$(go list -m k8s.io/client-go | head -n 1 | rev | cut -d' ' -f1 | rev)
-
-            GOLDFLAGS="-extldflags '-static'
-                       -X github.com/argoproj/argo-cd/v3/common.version=3.3.6
-                       -X github.com/argoproj/argo-cd/v3/common.gitTag=v3.3.6
-                       -X github.com/argoproj/argo-cd/v3/common.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
-                       -X github.com/argoproj/argo-cd/v3/common.gitCommit=998fb59dc355653c0657908a6ea2f87136e022d1
-                       -X github.com/argoproj/argo-cd/v3/common.gitTreeState=clean
-                       -X github.com/argoproj/argo-cd/v3/common.kubectlVersion=${KUBECTL_VERSION}"
-
-            CGO_ENABLED=0 GODEBUG="tarinsecurepath=0,zipinsecurepath=0" go build \
-              -ldflags "$GOLDFLAGS" \
-              -o "${target.dir}/usr/local/bin/argocd" ./cmd
+          with:
+            ldflags:
+              - -extldflags '-static'
+              - -X github.com/argoproj/argo-cd/v3/common.version=3.3.6
+              - -X github.com/argoproj/argo-cd/v3/common.gitTag=v3.3.6
+              - -X github.com/argoproj/argo-cd/v3/common.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/argoproj/argo-cd/v3/common.gitCommit=998fb59dc355653c0657908a6ea2f87136e022d1
+              - -X github.com/argoproj/argo-cd/v3/common.gitTreeState=clean
+              - -X github.com/argoproj/argo-cd/v3/common.kubectlVersion=$(go list -m k8s.io/client-go | head -n 1 | rev | cut -d' ' -f1 | rev)
+            output: ${target.dir}/usr/local/bin/argocd
+            packages: ./cmd
+            tidy: true
       paths:
         - type: file
           path: /src/patches/yarn-patches-3.3.json
           uid: 0
           gid: 0
           source: image/argocd/patch/yarn-patches-3.3.json
-        - type: file
-          path: /src/patches/downgrade-yarn-patches.json
-          uid: 0
-          gid: 0
-          source: image/argocd/patch/downgrade-yarn-patches.json
-        - type: file
-          path: /src/patch/3.3.patch
-          uid: 0
-          gid: 0
-          source: image/argocd/patch/3.3.patch
-        - type: file
-          path: /src/patch/ui-3.3.patch
-          uid: 0
-          gid: 0
-          source: image/argocd/patch/ui-3.3.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/argocd
           target: /usr/local/bin/argocd
