@@ -6,10 +6,10 @@ variant: runtime
 tags:
   - "9"
   - "9.3"
-  - 9.3.2
+  - 9.3.3
   - 9-debian13
   - 9.3-debian13
-  - 9.3.2-debian13
+  - 9.3.3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -17,16 +17,16 @@ dates:
   release: "2026-02-03"
 vars:
   ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
-  COMMIT_SHA: 80a75d1ae44e8a67f79adf9709bba3075d85afc7
+  COMMIT_SHA: bf7be757e102e9c064ff7161919d283963c7d93d
   GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
-  NODE_DIGEST: sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+  NODE_DIGEST: sha256:a620047a62f01b4a96525c42280dc2b9b02f3793b743ce0d7e96548a6dedc28d
   NODE_MAJOR_VERSION: "22"
-  NODE_VERSION: 22.22.1
+  NODE_VERSION: 22.22.2
   SEMVER_MAJOR_MINOR_VERSION: "9.3"
   SEMVER_MAJOR_VERSION: "9"
-  SEMVER_VERSION: 9.3.2
-  VERSION: 9.3.2
+  SEMVER_VERSION: 9.3.3
+  VERSION: 9.3.3
 contents:
   packages:
     - '!libelogind0'
@@ -41,22 +41,22 @@ contents:
     - tini
   builds:
     - name: kibana
-      uses: dhi.io/node:22.22.1-debian13-dev@sha256:9f778002856d3311c3809b0c653d8cd05dabd3e684e5b5b617c832c3b4a3a223
+      uses: dhi.io/node:22.22.2-debian13-dev@sha256:a620047a62f01b4a96525c42280dc2b9b02f3793b743ce0d7e96548a6dedc28d
       contents:
         packages:
           - bash
           - gzip
           - jq
         files:
-          - url: git+https://github.com/elastic/kibana.git#v9.3.2
-            checksum: 80a75d1ae44e8a67f79adf9709bba3075d85afc7
+          - url: git+https://github.com/elastic/kibana.git#v9.3.3
+            checksum: bf7be757e102e9c064ff7161919d283963c7d93d
             path: ${source.dir}/kibana
             spdx:
               name: kibana
-              version: 9.3.2
+              version: 9.3.3
               packages:
                 - name: kibana
-                  purl: pkg:dhi/kibana@9.3.2
+                  purl: pkg:dhi/kibana@9.3.3
                   license: Apache-2.0
             uid: 65532
             gid: 65532
@@ -82,7 +82,7 @@ contents:
 
             # Then, update the "engines.node" requirement to reference the current Node build version;
             # otherwise the upstream version check logic will fail
-            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"22.22.1\"/g" package.json
+            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"22.22.2\"/g" package.json
         - name: bump yarn deps (9.3)
           uses: yarn/bump@v1
           run-as: "65532"
@@ -100,17 +100,13 @@ contents:
             # yarn/bump@v1 sets **/ resolutions but skips yarn add to avoid verification failure.
             # Manually update direct dependencies and yarn.lock to respect the resolutions.
             yarn add '@langchain/core@^0.3.80' 'langchain@^0.3.37' '@langchain/community@^0.3.58' --exact
-            yarn add 'tar@^7.5.7' --exact
-            yarn add 'undici@^7.18.2' --exact
-            yarn add 'lodash@4.17.23' --exact
-            yarn add 'systeminformation@5.31.0' --exact
-            yarn add 'markdown-it@14.1.1' --exact
+            yarn add 'undici@^6.24.0' --exact # CVE-2026-2229, CVE-2026-1528, CVE-2026-1526, CVE-2026-1525, CVE-2026-1527
+            yarn add 'lodash@4.18.1' --exact
             yarn add 'langsmith@0.4.6' --exact
-            yarn add 'basic-ftp@5.2.0' --exact
-            yarn add 'fast-xml-parser@5.3.8' --exact
-            yarn add 'axios@1.13.5' --exact
-            yarn add 'qs@6.14.2' --exact
-            yarn add 'minimatch@^10.2.3' --exact # CVE-2026-26996, CVE-2026-27904, CVE-2026-27903
+            yarn add 'handlebars@4.7.9' --exact # CVE-2026-32286
+            yarn add 'node-forge@1.4.0' --exact # CVE-2026-33891, CVE-2026-33894, CVE-2026-33895, CVE-2026-33896
+            yarn add 'liquidjs@10.25.5' --exact # CVE-2026-35525, CVE-2026-39859, CVE-2026-39412, CVE-2026-34166
+            yarn add 'yaml@2.8.3' --exact       # CVE-2026-33532
         - name: build kibana
           work-dir: ${source.dir}/kibana
           privileged: true
@@ -118,6 +114,11 @@ contents:
             set -eux -o pipefail
 
             echo "startup --batch" > .bazelrc.user
+
+            mkdir -p ~/.moon/plugins/toolchains
+            # Work around intermittent Moon CI rename failures while installing
+            # toolchain plugins from ~/.moon/temp into the global store.
+            export MOON_TOOLCHAIN_FORCE_GLOBALS=1
 
             yarn kbn bootstrap
 
@@ -127,11 +128,11 @@ contents:
             # Note: There's a hardcoded dependency on `linux-x64` directory in the build tooling
             # when it gathers package info to create NOTICE.txt, so create that directory always,
             # regardless of arch.
-            mkdir -p "${source.dir}/kibana/.node_binaries/22.22.1/glibc-217/linux-x64"
-            ln -s "/opt/nodejs/node-v22.22.1" "${source.dir}/kibana/.node_binaries/22.22.1/glibc-217/linux-x64/extract"
+            mkdir -p "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-x64"
+            ln -s "/opt/nodejs/node-v22.22.2" "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-x64/extract"
             if [ ${NODE_ARCH} != "x64" ]; then
-              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.1/glibc-217/linux-${NODE_ARCH}"
-              ln -s "/opt/nodejs/node-v22.22.1" "${source.dir}/kibana/.node_binaries/22.22.1/glibc-217/linux-${NODE_ARCH}/extract"
+              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-${NODE_ARCH}"
+              ln -s "/opt/nodejs/node-v22.22.2" "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-${NODE_ARCH}/extract"
             fi
 
             # 1. Invoke the build script directly (instead of using "yarn build"), since the option to
@@ -147,28 +148,12 @@ contents:
               --skip-docker-wolfi --skip-docker-cloud --skip-docker-cloud-fips \
               --skip-docker-serverless --skip-docker-fips
 
-            mkdir -p "${target.dir}/opt/kibana/kibana-9.3.2"
+            mkdir -p "${target.dir}/opt/kibana/kibana-9.3.3"
 
-            cp -r "${source.dir}/kibana/build/default/kibana-9.3.2-SNAPSHOT-linux-${GO_ARCH}"/* "${target.dir}/opt/kibana/kibana-9.3.2"
+            cp -r "${source.dir}/kibana/build/default/kibana-9.3.3-SNAPSHOT-linux-${GO_ARCH}"/* "${target.dir}/opt/kibana/kibana-9.3.3"
 
-            cd "${target.dir}/opt/kibana/kibana-9.3.2"
+            cd "${target.dir}/opt/kibana/kibana-9.3.3"
             rm -rf data
-        - name: patch nested vulnerable dependencies
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            DEST="${target.dir}/opt/kibana/kibana-9.3.2/node_modules/glob/node_modules/minimatch"
-
-            # CVE-2026-26996: Replace vulnerable minimatch@3.x nested under glob
-            # glob@7.x bundles minimatch@3.1.2; the 10.x CJS API is backward-compatible
-            if [ -d "$DEST" ]; then
-              rm -rf "$DEST"
-              mkdir -p "$DEST"
-              npm pack minimatch@10.2.3 --pack-destination /tmp
-              tar xzf /tmp/minimatch-10.2.3.tgz -C "$DEST" --strip-components=1
-              rm /tmp/minimatch-10.2.3.tgz
-            fi
       paths:
         - type: file
           path: ${source.dir}/patches/yarn-patches_9.1.json
@@ -201,8 +186,8 @@ contents:
             uid: 65532
             gid: 65532
       outputs:
-        - source: ${target.dir}/opt/kibana/kibana-9.3.2
-          target: /opt/kibana/kibana-9.3.2
+        - source: ${target.dir}/opt/kibana/kibana-9.3.3
+          target: /opt/kibana/kibana-9.3.3
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/kibana
@@ -230,8 +215,8 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   ELASTIC_CONTAINER: "true"
-  KIBANA_VERSION: 9.3.2
-  PATH: /opt/kibana/kibana-9.3.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  KIBANA_VERSION: 9.3.3
+  PATH: /opt/kibana/kibana-9.3.3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
   - type: directory
     path: /usr/share
@@ -242,9 +227,9 @@ paths:
     path: /usr/share/kibana
     uid: 0
     gid: 0
-    source: /opt/kibana/kibana-9.3.2
+    source: /opt/kibana/kibana-9.3.3
   - type: directory
-    path: /opt/kibana/kibana-9.3.2/data
+    path: /opt/kibana/kibana-9.3.3/data
     uid: 65532
     gid: 65532
     mode: "0755"
@@ -255,7 +240,7 @@ paths:
     mode: "0755"
     source: image/kibana/bin/kibana-docker
   - type: file
-    path: /opt/kibana/kibana-9.3.2/config/kibana.yml
+    path: /opt/kibana/kibana-9.3.3/config/kibana.yml
     uid: 65532
     gid: 65532
     mode: "0644"
