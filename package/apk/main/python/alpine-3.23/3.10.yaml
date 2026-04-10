@@ -4,7 +4,7 @@ image: dhi.io/pkg-python
 variant: runtime
 tags:
   - 3.10.20-apk-alpine3.23
-  - 3.10.20-r1-apk-alpine3.23
+  - 3.10.20-r2-apk-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -23,7 +23,7 @@ vars:
   PYTHON_MAJOR_MINOR_VERSION: "3.10"
   PYTHON_MAJOR_VERSION: "3"
   PYTHON_VERSION: 3.10.20
-  REL: "1"
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "3.10"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.10.20
@@ -116,7 +116,20 @@ contents:
 
             tar -xaf python.tar.xz --strip-components=1
 
+            for _subdir in common "3.10"; do
+              _dir="${source.dir}/patch/${_subdir}"
+              [ -d "${_dir}" ] || continue
+              for _p in $(find "${_dir}" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort); do
+                git apply "${_p}"
+              done
+            done
+
             gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+
+            # setuptools wheel checks: avoid zipfile CLI piped to grep/head (BrokenPipeError with pipefail)
+            _wheel_name_contains() {
+              python3 -c 'import sys, zipfile; w, frag = sys.argv[1], sys.argv[2]; sys.exit(0 if any(frag in n for n in zipfile.ZipFile(w).namelist()) else 1)' "$1" "$2"
+            }
 
             if [ -f "${source.dir}/pip-26.0.1-py3-none-any.whl" ]; then
               rm -rf Lib/ensurepip/_bundled/pip*
@@ -163,10 +176,10 @@ contents:
               (cd setuptools_temp && zip -r "../setuptools--patched.whl" .)
 
               # Verify _distutils_hack is still present in the repacked wheel if it was in the original
-              if python3 -m zipfile -l "${source.dir}/setuptools--py3-none-any.whl" | grep -q "_distutils_hack"; then
-                if ! python3 -m zipfile -l "setuptools--patched.whl" | grep -q "_distutils_hack"; then
+              if _wheel_name_contains "${source.dir}/setuptools--py3-none-any.whl" "_distutils_hack"; then
+                if ! _wheel_name_contains "setuptools--patched.whl" "_distutils_hack"; then
                   echo "ERROR: _distutils_hack was present in original setuptools but missing from repacked wheel!"
-                  python3 -m zipfile -l "setuptools--patched.whl" | head -30
+                  python3 -c 'import zipfile,sys; print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()[:30]))' "setuptools--patched.whl"
                   exit 1
                 fi
               fi
@@ -176,12 +189,12 @@ contents:
             fi
 
             # Verify the bundled setuptools wheel still has _distutils_hack if it should
-            if python3 -m zipfile -l "${source.dir}/setuptools--py3-none-any.whl" | grep -q "_distutils_hack"; then
-              python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | grep "_distutils_hack" || (
+            if _wheel_name_contains "${source.dir}/setuptools--py3-none-any.whl" "_distutils_hack"; then
+              if ! _wheel_name_contains "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl" "_distutils_hack"; then
                 echo "ERROR: _distutils_hack not in bundled setuptools wheel!"
-                python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | head -30
+                python3 -c 'import zipfile,sys; print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()[:30]))' "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl"
                 exit 1
-              )
+              fi
             fi
 
             # force system libs
@@ -229,7 +242,7 @@ contents:
             ln -s pydoc3 "${target.dir}/usr/bin/pydoc"
 
             # Verify _distutils_hack was installed if it was present in the wheel
-            if python3 -m zipfile -l Lib/ensurepip/_bundled/setuptools--py3-none-any.whl | grep -q "_distutils_hack"; then
+            if _wheel_name_contains "Lib/ensurepip/_bundled/setuptools--py3-none-any.whl" "_distutils_hack"; then
               if [ ! -d "${target.dir}/usr/lib/python3.10/site-packages/_distutils_hack" ]; then
                 echo "ERROR: _distutils_hack directory not found in installed site-packages!"
                 ls -la "${target.dir}/usr/lib/python3.10/site-packages/" | head -20
@@ -249,7 +262,7 @@ contents:
             functions:
               _default_pyc: |
                 replaces="python3-pyc"
-                provides="python3-pyc=3.10.20-r1"
+                provides="python3-pyc=3.10.20-r2"
                 pkgdesc="$pkgdesc (install .pyc cache files)"
                 install_if="$pkgname=$pkgver-r$pkgrel"
                 depends="
@@ -259,13 +272,13 @@ contents:
                 mkdir -p "$subpkgdir"
               _pyc_meta: |
                 replaces="pyc"
-                provides="pyc=3.10.20-r1"
+                provides="pyc=3.10.20-r2"
                 pkgdesc="Meta package for pulling in all -pyc packages"
                 depends=""
                 mkdir -p "$subpkgdir"
               dev: |
                 replaces="python3-dev"
-                provides="python3-dev=3.10.20-r1"
+                provides="python3-dev=3.10.20-r2"
                 default_dev
 
                 # pyconfig.h is needed runtime so we move it back
@@ -274,44 +287,51 @@ contents:
                   "$pkgdir"/usr/include/python3.10/
               gdbm: |
                 replaces="python3-gdbm"
-                provides="python3-gdbm=3.10.20-r1"
+                provides="python3-gdbm=3.10.20-r2"
                 pkgdesc="Python backend for GNU gdbm"
                 amove usr/lib/python3.10*/lib-dynload/_gdbm.cpython*
               pyc0: |
                 replaces="python3-pycache-pyc0"
-                provides="python3-pycache-pyc0=3.10.20-r1"
+                provides="python3-pycache-pyc0=3.10.20-r2"
                 pkgdesc="$pkgdesc (.pyc pycache files)"
                 cd "$pkgdir"
                 amove $(find usr/lib/python3* -name "*.pyc")
               pyc1: |
                 replaces="python3-pycache-pyc1"
-                provides="python3-pycache-pyc1=3.10.20-r1"
+                provides="python3-pycache-pyc1=3.10.20-r2"
                 pkgdesc="$pkgdesc (.opt-1.pyc pycache files)"
                 cd "$pkgdir"
                 amove $(find usr/lib/python3* -name "*.opt-1.pyc")
               pyc2: |
                 replaces="python3-pycache-pyc2"
-                provides="python3-pycache-pyc2=3.10.20-r1"
+                provides="python3-pycache-pyc2=3.10.20-r2"
                 pkgdesc="$pkgdesc (.opt-2.pyc pycache files)"
                 cd "$pkgdir"
                 amove $(find usr/lib/python3* -name "*.opt-2.pyc")
               tests: |
                 replaces="python3-tests"
-                provides="python3-tests=3.10.20-r1"
+                provides="python3-tests=3.10.20-r2"
                 pkgdesc="The test modules from the main python package"
                 amove usr/lib/python3.10/test
             license: PSF-2.0
             name: python-3.10
             options: '!check'
             provider_priority: 200
-            provides: python3=3.10.20-r1
-            rel: 1
+            provides: python3=3.10.20-r2
+            rel: 2
             replaces: python3
             subpackages: $pkgname-dbg $pkgname-dev $pkgname-doc $pkgname-tests::noarch $pkgname-pyc:_default_pyc $pkgname-pycache-pyc2 $pkgname-pycache-pyc1 $pkgname-pycache-pyc0 $pkgname-gdbm pyc-3.10:_pyc_meta:noarch
             url: https://www.python.org/
             version: 3.10.20
         - uses: abuild/build@v1
           work-dir: ${source.dir}/aports/python-3.10
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/python/patch
+          recursive: true
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
