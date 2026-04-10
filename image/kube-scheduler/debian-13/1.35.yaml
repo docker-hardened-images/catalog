@@ -1,0 +1,153 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kubernetes Scheduler 1.35.x
+image: dhi.io/kube-scheduler
+variant: runtime
+tags:
+  - "1"
+  - "1.35"
+  - 1.35.2
+  - 1-debian13
+  - 1.35-debian13
+  - 1.35.2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-17"
+  end-of-life: "2027-02-28"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: fdc9d74cbf2da6754ebf81d56f80ae2948cd6425
+  DBG: '#{ target.dev ? "1" : "0" }'
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "1.35"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.35.2
+  VERSION: 1.35.2
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: kube-scheduler
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      work-dir: /go/src/k8s.io/kubernetes
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gzip
+          - jq
+          - make
+          - rsync
+          - sed
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.35.2
+            checksum: fdc9d74cbf2da6754ebf81d56f80ae2948cd6425
+            path: /go/src/k8s.io/kubernetes
+            spdx:
+              name: kubernetes
+              version: 1.35.2
+              packages:
+                - name: kubernetes
+                  purl: pkg:golang/k8s.io/kubernetes@1.35.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          environment:
+            GOWORK: "off"
+          with:
+            deps: []
+            download: true
+        - name: update dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh golang.org/x/crypto v0.45.0
+            ./hack/pin-dependency.sh github.com/opencontainers/selinux v1.13.0
+            ./hack/pin-dependency.sh go.opentelemetry.io/otel/sdk v1.43.0
+            ./hack/pin-dependency.sh google.golang.org/grpc v1.79.3
+            ./hack/update-vendor.sh
+        - name: clean git state
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git add -A
+            git -c user.name=build -c user.email=build@build commit -q -m "dependency updates" --no-verify
+            git tag -f "v1.35.2"
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make WHAT=cmd/kube-scheduler DBG=${DBG}
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 _output/bin/kube-scheduler \
+              '${target.dir}/usr/local/bin/kube-scheduler'
+        - name: smoke test
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/local/bin/kube-scheduler --help > /dev/null
+            ${target.dir}/usr/local/bin/kube-scheduler --version
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kube-scheduler
+          target: /usr/local/bin/kube-scheduler
+          uid: 0
+          gid: 0
+          mode: "0755"
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes scheduler image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - kube-scheduler
