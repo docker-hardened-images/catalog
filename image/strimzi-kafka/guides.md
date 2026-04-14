@@ -1,131 +1,195 @@
-## How to use this image
+## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
-For example:
+|                | Example                                    |
+| -------------- | ------------------------------------------ |
+| Public image   | `dhi.io/strimzi-kafka:<tag>`               |
+| Mirrored image | `<your-namespace>/dhi-strimzi-kafka:<tag>` |
 
-- Public image: `dhi.io/<repository>:<tag>`
-- Mirrored image: `<your-namespace>/dhi-<repository>:<tag>`
-
-For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
-
-This image contains the Kafka broker and related binaries. You can run it directly with Docker to explore the included
-tools or check versions.
-
-For the following examples, replace `<tag>` with the image variant you want to run. To confirm the correct namespace and
-repository name of the mirrored repository, select **View in repository**.
-
-Run a simple command to check the Kafka version:
+Before pulling images, authenticate to the registry:
 
 ```bash
-docker run --rm dhi.io/strimzi-kafka:<tag> /opt/kafka/bin/kafka-server-start.sh --version
+docker login dhi.io
 ```
 
-This image is designed to be used with the Strimzi Kafka Operator Helm chart. The operator manages the deployment and
-configuration of Kafka clusters on Kubernetes. For detailed information on deploying Kafka with the Strimzi operator,
-refer to the official Strimzi documentation at https://strimzi.io/
+### What's included in this image
 
-## Image variants
+- Kafka broker and related binaries
+- CIS benchmark compliance (runtime variant)
+- FIPS 140, STIG, and CIS compliance (FIPS variant)
 
-Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
-their tag.
+## Start a strimzi-kafka instance
 
-- Runtime variants are designed to run your application in production. These images are intended to be used either
-  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+Replace `<tag>` with the image variant you want to run:
 
-  - Run as a nonroot user
-  - Do not include a shell or a package manager
-  - Contain only the minimal set of libraries needed to run the app
+```bash
+docker run --rm dhi.io/strimzi-kafka:<tag> \
+  /opt/kafka/bin/kafka-server-start.sh --version
+```
 
-- Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a
-  multi-stage Dockerfile. These images typically:
+## Common use cases
 
-  - Run as the root user
-  - Include a shell and package manager
-  - Are used to build or compile applications
+### Single Kafka broker setup
 
-To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
-select a tag.
+This image uses **KRaft mode** (ZooKeeper-free), which is the only supported mode in Kafka 4.x. KRaft requires the log
+directory to be formatted with a cluster ID before the broker can start for the first time.
+
+1. Create the `docker-compose.yml`:
+
+   ```bash
+   cat > docker-compose.yml << 'EOF'
+   services:
+     kafka:
+       image: dhi.io/strimzi-kafka:<tag>
+       container_name: kafka
+       ports:
+         - "9092:9092"
+       environment:
+         KAFKA_NODE_ID: 1
+         KAFKA_PROCESS_ROLES: broker,controller
+         KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+         KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+         KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+         KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+         KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+       command:
+         - /bin/bash
+         - -c
+         - |
+           /opt/kafka/bin/kafka-storage.sh format \
+             --config /opt/kafka/config/server.properties \
+             --cluster-id $(cat /proc/sys/kernel/random/uuid | tr -d '-') && \
+           /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+   EOF
+   ```
+
+Start the broker and verify it is running:
+
+```bash
+docker compose up -d
+docker logs kafka
+```
+
+Look for the following lines to confirm a successful start:
+
+```text
+Transition from STARTING to STARTED
+Kafka version: 4.2.0
+Kafka Server started
+Awaiting socket connections on 0.0.0.0:9092
+```
+
+Verify the broker API and create a test topic:
+
+```bash
+docker exec kafka /opt/kafka/bin/kafka-broker-api-versions.sh \
+   --bootstrap-server localhost:9092
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create --topic test-topic \
+  --partitions 1 --replication-factor 1
+```
+
+### Multiple broker configuration
+
+Use Docker Compose to run a multi-broker KRaft cluster. Each broker requires a unique `KAFKA_NODE_ID`, listener port,
+and shared `KAFKA_CONTROLLER_QUORUM_VOTERS` pointing to all three brokers. The structure for each service is identical
+to the single broker setup above — duplicate the service block for `kafka-2` and `kafka-3`, updating `KAFKA_NODE_ID`,
+the host port mapping, `KAFKA_ADVERTISED_LISTENERS`, and `KAFKA_CONTROLLER_QUORUM_VOTERS` accordingly:
+
+```yaml
+services:
+  kafka-1:
+    image: dhi.io/strimzi-kafka:<tag>
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      # ... same remaining env vars as single broker
+    command: ["/bin/bash", "-c", "...same format+start command..."]
+
+  kafka-2:
+    image: dhi.io/strimzi-kafka:<tag>
+    ports:
+      - "9093:9092"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      # ...
+    command: ["/bin/bash", "-c", "..."]
+
+  kafka-3:
+    image: dhi.io/strimzi-kafka:<tag>
+    ports:
+      - "9094:9092"
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      # ...
+    command: ["/bin/bash", "-c", "..."]
+```
+
+Start and verify all brokers:
+
+```bash
+docker compose up -d
+docker compose logs kafka-1 kafka-2 kafka-3
+```
+
+## Key Differences
+
+| Feature         | DOI (`strimzi/kafka`)         | DHI (`dhi.io/strimzi-kafka`)                      |
+| --------------- | ----------------------------- | ------------------------------------------------- |
+| Base image      | CentOS 7                      | Debian 13 hardened base                           |
+| Security        | Standard image, no CVE SLA    | Hardened build with security patches and metadata |
+| Shell access    | Shell (`/bin/bash`) available | Shell available (runtime and dev variants)        |
+| Package manager | `apt-get` available           | No package manager (runtime variants)             |
+| User            | UID 1001                      | `kafka` user (UID 1001, nonroot)                  |
+| FIPS compliance | No                            | Yes (FIPS variant, requires subscription)         |
+| Architectures   | amd64                         | amd64, arm64                                      |
+| Debugging       | Full shell and utilities      | Use Docker Debug for troubleshooting              |
 
 ## Migrate to a Docker Hardened Image
 
-To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
-base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
-following table of migration notes.
+| Item                 | Migration note                                                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Base image           | Replace your base image in the Dockerfile with a Docker Hardened Image.                                                                                                                                                        |
+| Package management   | Non-dev (runtime) images don't include package managers. Use package managers only in `dev`-tagged images.                                                                                                                     |
+| Non-root user        | Runtime images run as the `kafka` user (UID 1001) by default. Ensure all required files and directories are accessible to this user.                                                                                           |
+| Multi-stage builds   | Use `dev`-tagged images for build stages and non-dev images for the runtime stage.                                                                                                                                             |
+| TLS certificates     | Docker Hardened Images include standard TLS certificates. No separate installation is needed.                                                                                                                                  |
+| Ports                | Runtime images run as a nonroot user and cannot bind to privileged ports (below 1024) in Kubernetes or Docker Engine versions older than 20.10. Configure your application to listen on port 1025 or higher.                   |
+| Entrypoint           | No entrypoint is set — pass the full binary path explicitly (e.g., `/opt/kafka/bin/kafka-server-start.sh`). Always supply an explicit `command` in Compose or Kubernetes manifests, otherwise the container exits immediately. |
+| KRaft storage format | Kafka 4.x requires KRaft mode. Run `kafka-storage.sh format` before starting the broker for the first time.                                                                                                                    |
+| No ZooKeeper         | Kafka 4.x does not support ZooKeeper. Remove any `zookeeper.connect` references from your config.                                                                                                                              |
 
-| Item               | Migration note                                                                                                                                                                                                                                                                                                               |
-| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base image         | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                                                                                                                                                    |
-| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a `dev` tag.                                                                                                                                                                                                  |
-| Nonroot user       | By default, non-dev images, intended for runtime, run as a nonroot user. Ensure that necessary files and directories are accessible to that user.                                                                                                                                                                            |
-| Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                                                                                                                                                                                   |
-| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                                                           |
-| Ports              | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can’t bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues, configure your application to listen on port 1025 or higher inside the container. |
-| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                                  |
-
-The following steps outline the general migration process.
-
-1. Find hardened images for your app.
-
-   A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
-
-1. Update the base image in your Dockerfile.
-
-   Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
-   framework images, this is typically going to be an image tagged as `dev` because it has the tools needed to install
-   packages and dependencies.
-
-1. For multi-stage Dockerfiles, update the runtime image in your Dockerfile.
-
-   To ensure that your final image is as minimal as possible, you should use a multi-stage build. All stages in your
-   Dockerfile should use a hardened image. While intermediary stages will typically use images tagged as `dev`, your
-   final runtime stage should use a non-dev image variant.
-
-1. Install additional packages
-
-   Docker Hardened Images contain minimal packages in order to reduce the potential attack surface. You may need to
-   install additional packages in your Dockerfile. To view if a package manager is available for an image variant,
-   select the **Tags** tab for this repository. To view what packages are already installed in an image variant, select
-   the **Tags** tab for this repository, and then select a tag.
-
-   Only images tagged as `dev` typically have package managers. You should use a multi-stage Dockerfile to install the
-   packages. Install the packages in the build stage that uses a `dev` image. Then, if needed, copy any necessary
-   artifacts to the runtime stage that uses a non-dev image.
-
-   For Alpine-based images, you can use `apk` to install packages. For Debian-based images, you can use `apt-get` to
-   install packages.
-
-## Troubleshooting migration
-
-The following are common issues that you may encounter during migration.
+## Troubleshoot migration
 
 ### General debugging
 
-The recommended method for debugging applications built with Docker Hardened Images is to use
-[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers. Docker Debug provides
-a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only exists
-during the debugging session.
+Runtime images don't include a shell or debugging tools. Use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to containers — it provides a shell,
+common debugging tools, and lets you install additional tools in an ephemeral writable layer that exists only for the
+duration of the session.
 
 ### Permissions
 
-By default image variants intended for runtime, run as a nonroot user. Ensure that necessary files and directories are
-accessible to that user. You may need to copy files to different directories or change permissions so your application
-running as a nonroot user can access them.
-
-To view the user for an image variant, select the **Tags** tab for this repository.
+Runtime images run as the `kafka` user (UID 1001) by default. If your application can't access required files or
+directories, copy them to a different path or update permissions so the `kafka` user can read them.
 
 ### Privileged ports
 
-Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to
-privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues,
-configure your application to listen on port 1025 or higher inside the container, even if you map it to a lower port on
-the host. For example, `docker run -p 80:8080 my-image` will work because the port inside the container is 8080, and
-`docker run -p 80:81 my-image` won't work because the port inside the container is 81.
+Runtime images run as a nonroot user and cannot bind to ports below 1024 in Kubernetes or Docker Engine versions older
+than 20.10. Configure your application to use port 1025 or higher.
 
-### Entry point
+### Entrypoint
 
-Docker Hardened Images may have different entry points than images such as Docker Official Images.
-
-To view the Entrypoint or CMD defined for an image variant, select the **Tags** tab for this repository, select a tag,
-and then select the **Specifications** tab.
+No entrypoint is set on this image. Run `docker inspect` to verify and always pass the full binary path explicitly in
+your `command`.
