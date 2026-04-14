@@ -165,6 +165,11 @@ their tag.
 To view the image variants and get more information about them, select the Tags tab for this repository, and then select
 a tag.
 
+- FIPS variants include `fips` in the tag. They layer the OpenSSL FIPS provider and a `dhi/python` runtime tagged for
+  FIPS (`-debian13-fips`) so TLS and other OpenSSL-backed crypto use FIPS-validated modules. Application-level Python
+  cryptography (for example via PyPI packages) depends on those libraries; behavior may differ from non-FIPS images for
+  algorithms that are not allowed under FIPS policy.
+
 ## Migrate to a Docker Hardened Image
 
 To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
