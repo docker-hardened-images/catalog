@@ -1,0 +1,122 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Trust Manager 0.x
+image: dhi.io/trust-manager
+variant: runtime
+tags:
+  - "0"
+  - "0.22"
+  - 0.22.0
+  - 0-debian13
+  - 0.22-debian13
+  - 0.22.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 5dbfc12bb5af40089428f3fb5046ea727ea64048
+  GO_VERSION: 1.26.2
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "0.22"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.22.0
+  VERSION: 0.22.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: trust-manager
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/cert-manager/trust-manager.git#v0.22.0
+            checksum: 5dbfc12bb5af40089428f3fb5046ea727ea64048
+            path: /go/src/github.com/cert-manager/trust-manager/
+            spdx:
+              name: trust-manager
+              version: 0.22.0
+              packages:
+                - name: trust-manager
+                  purl: pkg:golang/github.com/cert-manager/trust-manager/cmd/trust-manager@0.22.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager
+          with:
+            deps: []
+            download: true
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager
+          with:
+            output: ${target.dir}/usr/local/bin/trust-manager
+            packages: ./cmd/trust-manager
+        - name: copy certs from ca-certificates
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/ssl/certs"
+
+            cp /etc/ssl/certs/ca-certificates.crt "${target.dir}/etc/ssl/certs/ca-certificates.crt"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/trust-manager
+          target: /usr/local/bin/trust-manager
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/ssl/certs/ca-certificates.crt
+          target: /etc/ssl/certs/ca-certificates.crt
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/trust-manager
+          target: /opt/docker/sbom/trust-manager
+          uid: 0
+          gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+paths:
+  - type: directory
+    path: /ko-app
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /ko-app/trust-manager
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/trust-manager
+  - type: symlink
+    path: /etc/ssl/certs.pem
+    uid: 0
+    gid: 0
+    source: /etc/ssl/certs/ca-certificates.crt
+annotations:
+  org.opencontainers.image.description: A minimal cert-manager trust-manager image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/trust-manager

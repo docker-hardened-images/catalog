@@ -1,0 +1,260 @@
+# syntax=dhi.io/build:2-debian13
+
+name: amazon-vpc-cni-k8s 1.x
+image: dhi.io/amazon-k8s-cni
+variant: runtime
+tags:
+  - "1"
+  - "1.21"
+  - 1.21.1
+  - 1-debian13
+  - 1.21-debian13
+  - 1.21.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-24"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: e082bae7c03ddc28357b01595f3746b117ac08c7
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  IPTABLES_WRAPPER_COMMIT_SHA: c6b9b2d4ee8701f3d476768ab8732d1b85ec7fef
+  SEMVER_MAJOR_MINOR_VERSION: "1.21"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.21.1
+  VERSION: 1.21.1
+contents:
+  packages:
+    - '!base-files'
+    - iptables
+  builds:
+    - name: iptables wrapper
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+      contents:
+        files:
+          - url: git+https://github.com/kubernetes-sigs/iptables-wrappers.git#c6b9b2d4ee8701f3d476768ab8732d1b85ec7fef
+            checksum: c6b9b2d4ee8701f3d476768ab8732d1b85ec7fef
+            path: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+            spdx:
+              name: iptables-wrappers
+              version: c6b9b2d4ee8701f3d476768ab8732d1b85ec7fef
+              packages:
+                - name: iptables-wrappers
+                  purl: pkg:github/kubernetes-sigs/iptables-wrappers@c6b9b2d4ee8701f3d476768ab8732d1b85ec7fef
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps: []
+            download: true
+        - name: build iptables-wrappers
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -w
+              - -extldflags=-static
+              - -buildid=
+            output: ${target.dir}/usr/sbin/iptables-wrapper
+            packages: ./
+      outputs:
+        - source: ${target.dir}/usr/sbin/iptables-wrapper
+          target: /usr/sbin/iptables-wrapper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/iptables-wrappers
+          target: /opt/docker/sbom/iptables-wrappers
+          uid: 0
+          gid: 0
+    - name: amazon-k8s-cni
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/aws/amazon-vpc-cni-k8s
+      contents:
+        files:
+          - url: git+https://github.com/aws/amazon-vpc-cni-k8s.git#v1.21.1
+            checksum: e082bae7c03ddc28357b01595f3746b117ac08c7
+            path: /go/src/github.com/aws/amazon-vpc-cni-k8s
+            spdx:
+              name: amazon-vpc-cni-k8s
+              version: 1.21.1
+              packages:
+                - name: amazon-vpc-cni-k8s
+                  purl: pkg:golang/github.com/aws/amazon-vpc-cni-k8s@1.21.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test -v ./cmd/... ./pkg/...
+        - name: build aws-cni
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X pkg/version/info.Version=1.21.1
+              - -X pkg/awsutils/awssession.version=1.21.1
+            output: ${target.dir}/app/aws-cni
+            packages: ./cmd/routed-eni-cni-plugin
+        - name: build aws-k8s-agent
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X pkg/version/info.Version=1.21.1
+              - -X pkg/awsutils/awssession.version=1.21.1
+            output: ${target.dir}/app/aws-k8s-agent
+            packages: ./cmd/aws-k8s-agent
+        - name: build grpc-health-probe
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X pkg/version/info.Version=1.21.1
+              - -X pkg/awsutils/awssession.version=1.21.1
+            output: ${target.dir}/app/grpc-health-probe
+            packages: ./cmd/grpc-health-probe
+        - name: build egress-cni
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X pkg/version/info.Version=1.21.1
+              - -X pkg/awsutils/awssession.version=1.21.1
+            output: ${target.dir}/app/egress-cni
+            packages: ./cmd/egress-cni-plugin
+        - name: build aws-vpc-cni
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X pkg/version/info.Version=1.21.1
+              - -X pkg/awsutils/awssession.version=1.21.1
+            output: ${target.dir}/app/aws-vpc-cni
+            packages: ./cmd/aws-vpc-cni
+      outputs:
+        - source: ${target.dir}/app/aws-cni
+          target: /app/aws-cni
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/app/aws-k8s-agent
+          target: /app/aws-k8s-agent
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/app/grpc-health-probe
+          target: /app/grpc-health-probe
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/app/egress-cni
+          target: /app/egress-cni
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/app/aws-vpc-cni
+          target: /app/aws-vpc-cni
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/aws/amazon-vpc-cni-k8s/misc/10-aws.conflist
+          target: /app/10-aws.conflist
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/aws/amazon-vpc-cni-k8s/misc/eni-max-pods.txt
+          target: /app/eni-max-pods.txt
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/amazon-vpc-cni-k8s
+          target: /opt/docker/sbom/amazon-vpc-cni-k8s
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+paths:
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+  - type: symlink
+    path: /usr/sbin/iptables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+  - type: symlink
+    path: /usr/sbin/iptables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+  - type: symlink
+    path: /usr/sbin/ip6tables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+  - type: symlink
+    path: /usr/sbin/ip6tables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-wrapper
+annotations:
+  org.opencontainers.image.description: A minimal amazon-vpc-cni-k8s image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /app/aws-vpc-cni

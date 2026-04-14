@@ -1,0 +1,120 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Azul Platform Prime 17.x
+image: dhi.io/azul
+variant: runtime
+tags:
+  - 17-jdk-zulu
+  - 17-jdk-zulu-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-09-15"
+  end-of-life: "2029-09-30"
+vars:
+  DHI_SKIP_PACKAGE_CHECK: "true"
+  JAVA_MAJOR_VERSION: "17"
+  JAVA_VERSION: 17.0.0
+  VERSION: 17.64.19.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - libc6
+    - zlib1g
+  builds:
+    - name: azul
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main
+        keyring:
+          - https://repos.azul.com/azul-repo.key
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - zulu17-jdk
+        mappings:
+          zulu17.0.0-jdk: pkg:deb/azul/zulu17-jdk@17.64.19.0?os_name=debian&os_version=13
+      pipeline:
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/zulu"
+
+            if [ -d "/usr/lib/jvm" ]; then
+              mv /usr/lib/jvm/zulu* "${target.dir}/opt/zulu"
+            else
+              mv /opt/zulu* "${target.dir}/opt"
+            fi
+            ZULU_JDK_DIR=$(find "${target.dir}/opt/zulu" -type d -name "zulu*" -print)
+            ZULU_JDK_DIR_BASENAME=$(basename "${ZULU_JDK_DIR}")
+            ln -s "/opt/zulu/${ZULU_JDK_DIR_BASENAME}" "${target.dir}/opt/zulu/zulu-jdk17"
+      outputs:
+        - source: ${target.dir}/opt/zulu
+          target: /opt/zulu
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  JAVA_HOME: /opt/zulu/zulu-jdk17
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /opt/zulu/zulu-jdk17/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+annotations:
+  org.opencontainers.image.description: A minimal Azul Platform Prime image
+cmd:
+  - java
+  - --help

@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+name: KServe Storage Initializer 0.17.x
+image: dhi.io/kserve-storage-initializer
+variant: runtime
+tags:
+  - "0"
+  - "0.17"
+  - 0.17.0
+  - 0-debian13
+  - 0-python3.11
+  - 0.17-debian13
+  - 0.17-python3.11
+  - 0.17.0-debian13
+  - 0.17.0-python3.11
+  - 0-python3.11-debian13
+  - 0.17-python3.11-debian13
+  - 0.17.0-python3.11-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: c71eba91631b976ff7b111f3061df9af86399e99
+  DEBIAN_TRIPLE: '#{ (target.arch == "amd64" ? "x86-64" : "aarch64") + "-linux-gnu" }'
+  POETRY_VERSION: 2.1.3
+  PYTHON_BUILD_REFERENCE: dhi/python:3.11.15-debian13-dev@sha256:5058307ba2a84c17565262ebf66bc5fe96f0d0fc8d887dbd3bf0c3390ddfe51d
+  PYTHON_MAJOR_MINOR_VERSION: "3.11"
+  PYTHON_REFERENCE: dhi/python:3.11.15-debian13@sha256:5b5c45b01a5f85e2b11f174459326f48dd945c6fcf45af2964ef31d816ae2bf9
+  PYTHON_VERSION: 3.11.15
+  SEMVER_MAJOR_MINOR_VERSION: "0.17"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.17.0
+  VERSION: 0.17.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: kserve-storage-initializer
+      uses: dhi.io/python:3.11.15-debian13-dev@sha256:5058307ba2a84c17565262ebf66bc5fe96f0d0fc8d887dbd3bf0c3390ddfe51d
+      contents:
+        packages:
+          - binutils-${DEBIAN_TRIPLE}
+          - build-essential
+          - ca-certificates
+          - git
+          - krb5-config
+          - libkrb5-dev
+        files:
+          - url: git+https://github.com/kserve/kserve.git#v0.17.0
+            checksum: c71eba91631b976ff7b111f3061df9af86399e99
+            path: ${source.dir}/kserve
+            spdx:
+              name: kserve
+              version: 0.17.0
+              packages:
+                - name: kserve
+                  purl: pkg:pypi/kserve@0.17.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export POETRY_HOME=/opt/poetry
+            export VIRTUAL_ENV='${target.dir}/opt/kserve/storage-initializer-env'
+            export PATH="$VIRTUAL_ENV/bin:$POETRY_HOME/bin:$PATH"
+
+            python3 -m venv "$POETRY_HOME"
+            "$POETRY_HOME/bin/pip" install 'poetry==2.1.3'
+
+            python3 -m venv "$VIRTUAL_ENV"
+            cp -r '${source.dir}/kserve/python/kserve' '${target.dir}/opt/kserve/kserve-python'
+
+            poetry install --no-interaction --extras 'storage' --project '${target.dir}/opt/kserve/kserve-python'
+            pip install 'krbcontext==0.10' 'hdfs~=2.6.0' 'requests-kerberos==0.14.0'
+
+            # CVE remediation
+            pip install --upgrade 'urllib3>=2.6.3'       # CVE-2026-21441
+            pip install --upgrade 'cryptography>=46.0.6' # CVE-2026-26007, CVE-2026-34073
+            pip install --upgrade 'aiohttp>=3.13.4'      # CVE-2026-22815, CVE-2026-34515, CVE-2026-34516, CVE-2026-34525, CVE-2026-34513, CVE-2026-34514, CVE-2026-34517, CVE-2026-34518, CVE-2026-34519, CVE-2026-34520
+            pip install --upgrade 'requests>=2.33.0'     # CVE-2026-25645
+        - name: pth and entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's#^${target.dir}##' '${target.dir}/opt/kserve/storage-initializer-env/lib/python3.11/site-packages/kserve.pth'
+
+            sed '1c#!/opt/kserve/storage-initializer-env/bin/python3' \
+              '${source.dir}/kserve/python/storage-initializer/scripts/initializer-entrypoint' \
+              > '${target.dir}/opt/kserve/storage-initializer-entrypoint'
+
+            chmod +x '${target.dir}/opt/kserve/storage-initializer-entrypoint'
+      outputs:
+        - source: ${target.dir}/opt/kserve
+          target: /opt/kserve
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kserve
+          target: /opt/docker/sbom/kserve
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.11.15-debian13@sha256:5b5c45b01a5f85e2b11f174459326f48dd945c6fcf45af2964ef31d816ae2bf9
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /work
+environment:
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /work
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /mnt
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /opt/kserve/storage-initializer-entrypoint

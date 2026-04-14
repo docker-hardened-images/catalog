@@ -1,0 +1,159 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Harbor Registry Control 2.14.x (dev)
+image: dhi.io/harbor-registryctl
+variant: dev
+tags:
+  - 2.14-dev
+  - 2.14.3-dev
+  - 2.14-debian13-dev
+  - 2.14.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: dcdb8baf86bcdbb6c3dec07cc58c450edd4f4c38
+  GO_SWAGGER_VERSION: v0.31.0
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "2.14"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.14.3
+  VERSION: 2.14.3
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: harbor-registryctl
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      contents:
+        packages:
+          - build-essential
+          - wget
+          - binutils
+        files:
+          - url: git+https://github.com/goharbor/harbor.git#v2.14.3
+            checksum: dcdb8baf86bcdbb6c3dec07cc58c450edd4f4c38
+            path: /go/src/github.com/goharbor/harbor
+            spdx:
+              name: harbor-registryctl
+              version: 2.14.3
+              packages:
+                - name: harbor-registryctl
+                  purl: pkg:golang/github.com/goharbor/harbor@2.14.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/go-swagger/go-swagger/releases/download/v0.31.0/swagger_linux_${target.arch}
+            path: /usr/local/bin/swagger
+            uid: 0
+            gid: 0
+            mode: "755"
+      pipeline:
+        - name: generate-swagger
+          work-dir: /go/src/github.com/goharbor/harbor
+          runs: |
+            set -eux -o pipefail
+
+            SWAGGER_TARGET="src/server/v2.0"
+
+            /usr/local/bin/swagger generate server \
+              --template-dir=tools/swagger/templates \
+              --exclude-main \
+              --additional-initialism=CVE \
+              --additional-initialism=GC \
+              --additional-initialism=OIDC \
+              -f api/v2.0/swagger.yaml \
+              -A harbor \
+              --target ${SWAGGER_TARGET}
+        - name: Patch vulnerable Go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/goharbor/harbor/src
+          with:
+            deps:
+              - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/goharbor/harbor/src/registryctl
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/goharbor/harbor/src/registryctl
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=2.14.3
+            output: ${target.dir}/usr/local/bin/harbor-registryctl
+      outputs:
+        - source: ${target.dir}/usr/local/bin/harbor-registryctl
+          target: /usr/local/bin/harbor-registryctl
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/harbor-registryctl
+          target: /opt/docker/sbom/harbor-registryctl
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /etc/registryctl
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Harbor Registry Control image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/harbor-registryctl
+cmd:
+  - -c
+  - /etc/registryctl/config.yml
+ports:
+  - 8080/tcp
+  - 8443/tcp

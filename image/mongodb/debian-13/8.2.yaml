@@ -1,0 +1,141 @@
+# syntax=dhi.io/build:2-debian13
+
+name: MongoDB 8.2.x
+image: dhi.io/mongodb
+variant: runtime
+tags:
+  - "8"
+  - "8.2"
+  - 8.2.6
+  - 8-debian13
+  - 8.2-debian13
+  - 8.2.6-debian13
+platforms:
+  - linux/amd64
+dates:
+  release: "2025-09-17"
+  end-of-life: "2026-03-30"
+vars:
+  GO_DIGEST: sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  GO_VERSION: 1.25.9
+  MONGO_TOOLS_COMMIT_SHA: 19a5dc3144213d3ccead91eda1b45245b95e5428
+  MONGO_TOOLS_VERSION: 100.16.0
+  MONGODB_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  MONGOSH_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  MONGOSH_VERSION: 2.8.2
+  SEMVER_MAJOR_MINOR_VERSION: "8.2"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.2.6
+  VERSION: 8.2.6
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates
+    - coreutils
+    - libcurl4t64
+    - numactl
+  builds:
+    - name: mongodb-server
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - gpg
+          - gpg-agent
+          - gzip
+          - libc-bin
+          - procps
+          - tar
+          - tzdata
+        files:
+          - url: https://pgp.mongodb.com/server-8.0.asc
+            path: ${source.dir}/keys/mongodb-server.asc
+            uid: 0
+            gid: 0
+          - url: https://fastdl.mongodb.org/linux/mongodb-linux-${MONGODB_ARCH}-debian12-8.2.6.tgz
+            path: ${source.dir}/mongodb-server-and-mongos.tgz
+            uid: 0
+            gid: 0
+          - url: https://fastdl.mongodb.org/linux/mongodb-linux-${MONGODB_ARCH}-debian12-8.2.6.tgz.sig
+            path: ${source.dir}/mongodb-server-and-mongos.tgz.sig
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify server GPG
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/mongodb-server-and-mongos.tgz
+            keys: ${source.dir}/keys/mongodb-server.asc
+            signature: ${source.dir}/mongodb-server-and-mongos.tgz.sig
+        - name: install mongodb server
+          runs: |
+            set -eux -o pipefail
+
+            echo "Installing mongodb-server (mongod only)..."
+            tar -xzf "${source.dir}/mongodb-server-and-mongos.tgz" -C "${source.dir}"
+
+            # Install only mongod for the base server
+            mkdir -p "${target.dir}/usr/bin"
+            cp "${source.dir}/mongodb-linux-${MONGODB_ARCH}-debian12-8.2.6/bin/mongod" "${target.dir}/usr/bin/mongod"
+        - name: setup directories
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/var/log/mongodb"
+            mkdir -p "${target.dir}/data/db"
+            mkdir -p "${target.dir}/data/configdb"
+      outputs:
+        - source: ${target.dir}/usr/bin/mongod
+          target: /usr/bin/mongod
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/log/mongodb
+          target: /var/log/mongodb
+          uid: 999
+          gid: 999
+          mode: "0755"
+        - source: ${target.dir}/data/db
+          target: /data/db
+          uid: 999
+          gid: 999
+          mode: "0755"
+        - source: ${target.dir}/data/configdb
+          target: /data/configdb
+          uid: 999
+          gid: 999
+          mode: "0755"
+accounts:
+  run-as: mongodb
+  users:
+    - name: mongodb
+      uid: 999
+      gid: 999
+  groups:
+    - name: mongodb
+      gid: 999
+      members:
+        - mongodb
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /data
+environment:
+  HOME: /data
+annotations:
+  org.opencontainers.image.description: A minimal MongoDB image
+  org.opencontainers.image.licenses: SSPL-1.0
+entrypoint:
+  - mongod
+ports:
+  - 27017/tcp

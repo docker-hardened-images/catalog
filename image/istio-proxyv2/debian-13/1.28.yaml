@@ -1,0 +1,510 @@
+# syntax=dhi.io/build:2-debian13
+
+name: istio-proxyv2 1.x
+image: dhi.io/istio-proxyv2
+variant: runtime
+tags:
+  - "1.28"
+  - 1.28.6
+  - 1.28-debian13
+  - 1.28.6-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-05"
+  end-of-life: "2026-07-31"
+vars:
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 7.7.1
+  COMMIT_SHA: db606cedf03cac76d91a05a4a5628fa47bd537f3
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  ISTIO_PROXY_SHA: 83e1e71eef864c54324fc507b0364bd5879f2d24
+  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572
+  SEMVER_MAJOR_MINOR_VERSION: "1.28"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.28.6
+  VERSION: 1.28.6
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates
+    - curl
+    - iproute2
+    - iptables
+  builds:
+    - name: istio-proxyv2
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      environment:
+        PATH: /opt/python/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - build-essential
+          - clang
+          - coreutils
+          - curl
+          - grep
+          - gzip
+          - jq
+          - libc++-dev
+          - libssl-dev
+          - libtool
+          - lld
+          - pkg-config
+          - sed
+        files:
+          - url: git+https://github.com/istio/istio.git#1.28.6
+            checksum: db606cedf03cac76d91a05a4a5628fa47bd537f3
+            path: /go/src/istio.io/istio
+            spdx:
+              name: istio
+              version: 1.28.6
+              packages:
+                - name: istio
+                  purl: pkg:golang/istio.io/istio@1.28.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/istio/proxy.git#1.28.6
+            checksum: 83e1e71eef864c54324fc507b0364bd5879f2d24
+            path: ${source.dir}/istio-proxy
+            spdx:
+              name: istio-proxy
+              version: 1.28.6
+              packages:
+                - name: istio-proxy
+                  purl: pkg:golang/github.com/istio/proxy@1.28.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
+        artifacts:
+          - name: dhi.io/python:3.12.13-debian13@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572
+            includes:
+              - opt/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: validate-proxy-sha
+          runs: |
+            set -eux -o pipefail
+
+            # Extract proxy SHA from istio.deps and validate against tracking
+            proxy_sha=$(jq -r '.[] | select(.name == "PROXY_REPO_SHA") | .lastStableSHA' "/go/src/istio.io/istio/istio.deps")
+
+            if [ "$proxy_sha" != '83e1e71eef864c54324fc507b0364bd5879f2d24' ]; then
+              echo "ERROR: ISTIO_PROXY_SHA mismatch: 83e1e71eef864c54324fc507b0364bd5879f2d24 (def) / $proxy_sha (istio.deps)" >&2
+              exit 1
+            fi
+        - name: update go dependencies (1.28 only)
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+              - github.com/containernetworking/plugins@v1.9.0
+            dir: /go/src/istio.io/istio
+            download: true
+        - name: patch-afero-bazel-deps
+          work-dir: ${source.dir}/istio-proxy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Envoy's generated Go BUILD files miss golang.org/x/text deps on
+            # arm64. Override both repos with local copies that declare the
+            # needed packages explicitly so Bazel gets a deterministic graph.
+            rm -rf /src/x-text-fixed
+            mkdir -p /src/x-text-fixed
+            curl -fsSL https://github.com/golang/text/archive/refs/tags/v0.21.0.tar.gz \
+              | tar -xz -C /src/x-text-fixed --strip-components=1
+            : > /src/x-text-fixed/WORKSPACE
+
+            mkdir -p /src/x-text-fixed/transform
+            cat > /src/x-text-fixed/transform/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = ["transform.go"],
+                importpath = "golang.org/x/text/transform",
+                visibility = ["//visibility:public"],
+            )
+            EOF
+
+            mkdir -p /src/x-text-fixed/runes
+            cat > /src/x-text-fixed/runes/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = [
+                    "cond.go",
+                    "runes.go",
+                ],
+                importpath = "golang.org/x/text/runes",
+                visibility = ["//visibility:public"],
+                deps = ["//transform:go_default_library"],
+            )
+            EOF
+
+            mkdir -p /src/x-text-fixed/unicode/norm
+            cat > /src/x-text-fixed/unicode/norm/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = [
+                    "composition.go",
+                    "forminfo.go",
+                    "input.go",
+                    "iter.go",
+                    "normalize.go",
+                    "readwriter.go",
+                    "tables10.0.0.go",
+                    "tables11.0.0.go",
+                    "tables12.0.0.go",
+                    "tables13.0.0.go",
+                    "tables15.0.0.go",
+                    "tables9.0.0.go",
+                    "transform.go",
+                    "trie.go",
+                ],
+                importpath = "golang.org/x/text/unicode/norm",
+                visibility = ["//visibility:public"],
+                deps = ["//transform:go_default_library"],
+            )
+            EOF
+
+            rm -rf /src/protoc-gen-star-fixed
+            mkdir -p /src/protoc-gen-star-fixed
+            curl -fsSL https://github.com/lyft/protoc-gen-star/archive/496ad1ac90a4.tar.gz \
+              | tar -xz -C /src/protoc-gen-star-fixed --strip-components=1
+            : > /src/protoc-gen-star-fixed/WORKSPACE
+
+            cat > /src/protoc-gen-star-fixed/lang/go/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go",
+                srcs = [
+                    "camel.go",
+                    "context.go",
+                    "docs.go",
+                    "gofmt.go",
+                    "name.go",
+                    "package.go",
+                    "parameters.go",
+                    "type_name.go",
+                ],
+                importpath = "github.com/lyft/protoc-gen-star/v2/lang/go",
+                visibility = ["//visibility:public"],
+                deps = [
+                    "//:protoc-gen-star",
+                    "@org_golang_x_tools//imports:go_default_library",
+                ],
+            )
+            EOF
+
+            cat > /src/protoc-gen-star-fixed/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "protoc-gen-star",
+                srcs = [
+                    "artifact.go",
+                    "ast.go",
+                    "build_context.go",
+                    "comment.go",
+                    "debug.go",
+                    "docs.go",
+                    "entity.go",
+                    "enum.go",
+                    "enum_value.go",
+                    "extension.go",
+                    "field.go",
+                    "field_type.go",
+                    "field_type_elem.go",
+                    "file.go",
+                    "generator.go",
+                    "init_option.go",
+                    "message.go",
+                    "method.go",
+                    "module.go",
+                    "name.go",
+                    "node.go",
+                    "oneof.go",
+                    "package.go",
+                    "parameters.go",
+                    "persister.go",
+                    "post_process.go",
+                    "proto.go",
+                    "service.go",
+                    "source_code_info.go",
+                    "wkt.go",
+                    "workflow.go",
+                ],
+                importpath = "github.com/lyft/protoc-gen-star/v2",
+                visibility = ["//visibility:public"],
+                deps = [
+                    "@com_github_spf13_afero//:go_default_library",
+                    "@org_golang_google_protobuf//proto:go_default_library",
+                    "@org_golang_google_protobuf//runtime/protoimpl:go_default_library",
+                    "@org_golang_google_protobuf//types/descriptorpb:go_default_library",
+                    "@org_golang_google_protobuf//types/pluginpb:go_default_library",
+                ],
+            )
+            EOF
+
+            rm -rf /src/afero-fixed
+            mkdir -p /src/afero-fixed
+            curl -fsSL https://github.com/spf13/afero/archive/refs/tags/v1.10.0.tar.gz \
+              | tar -xz -C /src/afero-fixed --strip-components=1
+            : > /src/afero-fixed/WORKSPACE
+
+            cat > /src/afero-fixed/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = [
+                    "afero.go",
+                    "basepath.go",
+                    "cacheOnReadFs.go",
+                    "const_bsds.go",
+                    "const_win_unix.go",
+                    "copyOnWriteFs.go",
+                    "httpFs.go",
+                    "iofs.go",
+                    "ioutil.go",
+                    "lstater.go",
+                    "match.go",
+                    "memmap.go",
+                    "os.go",
+                    "path.go",
+                    "readonlyfs.go",
+                    "regexpfs.go",
+                    "symlink.go",
+                    "unionFile.go",
+                    "util.go",
+                ],
+                importpath = "github.com/spf13/afero",
+                visibility = ["//visibility:public"],
+                deps = [
+                    "//internal/common:go_default_library",
+                    "//mem:go_default_library",
+                    "@org_golang_x_text//runes:go_default_library",
+                    "@org_golang_x_text//transform:go_default_library",
+                    "@org_golang_x_text//unicode/norm:go_default_library",
+                ],
+            )
+            EOF
+
+            mkdir -p /src/afero-fixed/internal/common
+            cat > /src/afero-fixed/internal/common/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = ["adapters.go"],
+                importpath = "github.com/spf13/afero/internal/common",
+                visibility = ["//visibility:public"],
+            )
+            EOF
+
+            mkdir -p /src/afero-fixed/mem
+            cat > /src/afero-fixed/mem/BUILD.bazel << 'EOF'
+            load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+            go_library(
+                name = "go_default_library",
+                srcs = [
+                    "dir.go",
+                    "dirmap.go",
+                    "file.go",
+                ],
+                importpath = "github.com/spf13/afero/mem",
+                visibility = ["//visibility:public"],
+                deps = ["//internal/common:go_default_library"],
+            )
+            EOF
+        - name: build-istio-proxy
+          work-dir: ${source.dir}/istio-proxy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Envoy's LLVM toolchain expects the legacy libtinfo5 ABI. Debian 13
+            # only ships libtinfo6, so extract the actual libtinfo5 package from
+            # Debian bookworm instead of relying on an incompatible symlink.
+            case "${target.arch}" in
+              amd64) libtinfo_dir=x86_64-linux-gnu ;;
+              arm64) libtinfo_dir=aarch64-linux-gnu ;;
+              *)
+                echo "unsupported arch for libtinfo5: ${target.arch}" >&2
+                exit 1
+                ;;
+            esac
+            libtinfo_pkg_url="http://deb.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.4-4_${target.arch}.deb"
+            rm -rf /tmp/libtinfo5 /tmp/libtinfo5.deb
+            mkdir -p /tmp/libtinfo5 "/lib/${libtinfo_dir}"
+            curl -fsSL "$libtinfo_pkg_url" -o /tmp/libtinfo5.deb
+            dpkg-deb -x /tmp/libtinfo5.deb /tmp/libtinfo5
+            cp -a /tmp/libtinfo5/lib/"${libtinfo_dir}"/libtinfo.so.5* "/lib/${libtinfo_dir}/"
+
+            # Configure FIPS BoringSSL if requested
+            BORINGSSL_FLAGS=()
+            if [ "${target.fips}" = "true" ]; then
+              BORINGSSL_FLAGS+=(--define=boringssl=fips)
+              # FIPS build triggers bazelrc configs that restrict PATH; symlink python to /usr/bin
+              ln -sf /opt/python/bin/python3 /usr/bin/python3
+            fi
+
+            # Configure architecture-specific build flags
+            PLATFORM_FLAGS=()
+            test '${target.arch}' = 'arm64' && PLATFORM_FLAGS+=(--cpu=aarch64)
+
+            # Configure environment variables for foreign_cc rules (QAT/CryptoMB)
+            # Set PATH to revert https://github.com/istio/proxy/blob/37d07e7e40154d03c919c79a5a46ac93483ab364/.bazelrc#L20
+            /opt/bazel/bin/bazel --batch build \
+              --curses=no \
+              --keep_going=false --verbose_failures --output_filter='.*' \
+              --jobs=auto \
+              --action_env=PKG_CONFIG_PATH=/usr/lib/pkgconfig \
+              --action_env=ACLOCAL_PATH=/usr/share/aclocal \
+              --action_env=AUTOCONF=/usr/bin/autoconf \
+              --action_env=AUTOMAKE=/usr/bin/automake \
+              --action_env=ACLOCAL=/usr/bin/aclocal \
+              --action_env=LIBTOOLIZE=/usr/bin/libtoolize \
+              --action_env=M4=/usr/bin/m4 \
+              --action_env=PERL=/usr/bin/perl \
+              --action_env=PATH="$PATH" \
+              --override_repository=org_golang_x_text=/src/x-text-fixed \
+              --override_repository=com_github_spf13_afero=/src/afero-fixed \
+              --override_repository=com_github_lyft_protoc_gen_star_v2=/src/protoc-gen-star-fixed \
+              --copt=-Wno-nullability-completeness \
+              --config=release \
+              "${BORINGSSL_FLAGS[@]}" \
+              "${PLATFORM_FLAGS[@]}" \
+              //:envoy
+        - name: envoy bazel sbom
+          work-dir: ${source.dir}/istio-proxy
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/envoy
+            export ENVOY_BAZEL_FLAGS="
+              --override_repository=org_golang_x_text=/src/x-text-fixed
+              --override_repository=com_github_spf13_afero=/src/afero-fixed
+              --override_repository=com_github_lyft_protoc_gen_star_v2=/src/protoc-gen-star-fixed
+            "
+            python ${source.dir}/bin/envoy-bazel-to-spdx.py istio-proxyv2-envoy 1.28.6 > /opt/docker/sbom/envoy/.spdx.envoy.json
+        - name: build-pilot-agent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            GOLDFLAGS="-X istio.io/istio/pkg/version.buildVersion=1.28.6
+                       -X istio.io/istio/pkg/version.buildGitRevision=db606cedf03cac76d91a05a4a5628fa47bd537f3
+                       -X istio.io/istio/pkg/version.buildStatus=Clean
+                       -X istio.io/istio/pkg/version.buildTag=1.28.6
+                       -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
+                       -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
+                       -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)"
+
+            CGO_ENABLED=0 go build -C "/go/src/istio.io/istio" \
+              -ldflags "$GOLDFLAGS" \
+              -tags "agent,disable_pgv,grpcnotrace,retrynotrace" \
+              -buildvcs=false \
+              -o "${target.dir}/usr/local/bin/pilot-agent" \
+              ./pilot/cmd/pilot-agent
+        - name: install-artifacts
+          work-dir: ${source.dir}/istio-proxy
+          runs: |
+            set -eux -o pipefail
+
+            install bazel-bin/envoy '${target.dir}/usr/local/bin/envoy'
+
+            install -d '${target.dir}/var/lib/istio/envoy'
+            install -m 0644 '/go/src/istio.io/istio/tools/packaging/common/envoy_bootstrap.json' \
+              '${target.dir}/var/lib/istio/envoy/envoy_bootstrap_tmpl.json'
+      paths:
+        - type: file
+          path: ${source.dir}/bin/envoy-bazel-to-spdx.py
+          uid: 0
+          gid: 0
+          source: image/istio-proxyv2/bin/envoy-bazel-to-spdx.py
+      outputs:
+        - source: ${target.dir}/usr/local/bin/
+          target: /usr/local/bin/
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/lib/istio/envoy/envoy_bootstrap_tmpl.json
+          target: /var/lib/istio/envoy/envoy_bootstrap_tmpl.json
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/istio
+          target: /opt/docker/sbom/istio
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/istio-proxy
+          target: /opt/docker/sbom/istio-proxy
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/envoy
+          target: /opt/docker/sbom/envoy
+          uid: 0
+          gid: 0
+accounts:
+  run-as: "1337"
+  users:
+    - name: istio-proxy
+      uid: 1337
+      gid: 1337
+  groups:
+    - name: istio-proxy
+      gid: 1337
+      members:
+        - istio-proxy
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  ISTIO_META_ISTIO_PROXY_SHA: 83e1e71eef864c54324fc507b0364bd5879f2d24
+paths:
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: iptables-nft
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: ip6tables-nft
+  - type: symlink
+    path: /usr/bin/nc
+    uid: 0
+    gid: 0
+    source: nc.openbsd
+annotations:
+  org.opencontainers.image.description: A minimal Istio proxy image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/pilot-agent

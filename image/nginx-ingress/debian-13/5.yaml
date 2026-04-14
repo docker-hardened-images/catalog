@@ -1,0 +1,267 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Nginx Ingress 5.x
+image: dhi.io/nginx-ingress
+variant: runtime
+tags:
+  - "5"
+  - "5.4"
+  - 5.4.1
+  - 5-debian13
+  - 5.4-debian13
+  - 5.4.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-04-16"
+vars:
+  COMMIT_SHA: 10b86a55601fda37765e2164d3af35df4ed453bd
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  NGINX_AGENT_COMMIT_SHA: 4a95e5301c7d06a6b7c75971868bd508b724dfab
+  NGINX_AGENT_VERSION: 3.8.0
+  NGINX_REFERENCE: dhi/nginx:1.29.8-debian13@sha256:d457a278247531873df03b7fdaabd96de0b530624f8e72c73d41e6b81c4487dd
+  NGINX_VERSION: 1.29.8
+  SEMVER_MAJOR_MINOR_VERSION: "5.4"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.4.1
+  VERSION: 5.4.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/nginx-otel-keyring.gpg] http://packages.nginx.org/nginx/mainline/debian trixie nginx
+  keyring:
+    - https://nginx.org/keys/nginx_signing.key
+  packages:
+    - ca-certificates
+    - dash
+    - nginx-module-njs
+    - nginx-module-otel
+  builds:
+    - name: setcaps nginx and nginx debug
+      contents:
+        packages:
+          - bash
+          - base-files
+          - coreutils
+          - libcap2-bin
+        artifacts:
+          - name: dhi.io/nginx:1.29.8-debian13@sha256:d457a278247531873df03b7fdaabd96de0b530624f8e72c73d41e6b81c4487dd
+            includes:
+              - usr/sbin/nginx
+              - usr/sbin/nginx-debug
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap 'cap_net_bind_service=+eip' /usr/sbin/nginx 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
+            setcap -v 'cap_net_bind_service=+eip' /usr/sbin/nginx 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
+      outputs:
+        - source: /usr/sbin/nginx
+          target: /usr/sbin/nginx
+          uid: 0
+          gid: 0
+        - source: /usr/sbin/nginx-debug
+          target: /usr/sbin/nginx-debug
+          uid: 0
+          gid: 0
+    - name: build nginx-agent
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/nginx/agent
+      contents:
+        files:
+          - url: git+https://github.com/nginx/agent.git#v3.8.0
+            checksum: 4a95e5301c7d06a6b7c75971868bd508b724dfab
+            path: /go/src/github.com/nginx/agent
+            spdx:
+              name: nginx-ingress
+              version: 3.8.0
+              packages:
+                - name: nginx-agent
+                  purl: pkg:golang/nginx/agent@3.8.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/antchfx/xpath@v1.3.6
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build go
+          uses: go/build@v1
+          with:
+            extra-args: -pgo=default.pgo
+            ldflags:
+              - -X main.version=3.8.0
+              - -X main.commit=4a95e5301c7d06a6b7c75971868bd508b724dfab
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/nginx-agent
+            packages: ./cmd/agent
+        - name: setup config
+          runs: |
+            set -eux -o pipefail
+
+            cp -a /go/src/github.com/nginx/agent/nginx-agent.conf "${target.dir}/nginx-agent.conf"
+      outputs:
+        - source: ${target.dir}/nginx-agent
+          target: /usr/bin/nginx-agent
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/nginx-agent.conf
+          target: /etc/nginx-agent/nginx-agent.conf
+          uid: 0
+          gid: 0
+          mode: "0640"
+    - name: nginx-ingress
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/nginx/kubernetes-ingress
+      contents:
+        packages:
+          - git
+          - libcap2-bin
+        files:
+          - url: git+https://github.com/nginx/kubernetes-ingress.git#v5.4.1
+            checksum: 10b86a55601fda37765e2164d3af35df4ed453bd
+            path: /go/src/github.com/nginx/kubernetes-ingress
+            spdx:
+              name: nginx-ingress
+              version: 5.4.1
+              packages:
+                - name: nginx-ingress
+                  purl: pkg:golang/nginx/nginx-ingress@5.4.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build go
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/nginx-ingress
+            packages: ./cmd/nginx-ingress
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap 'cap_net_bind_service=+ep' "${target.dir}/nginx-ingress"
+            setcap -v 'cap_net_bind_service=+ep' "${target.dir}/nginx-ingress"
+        - name: setup dirs and configs
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/nginx/njs"
+            cp -a internal/configs/njs/* "${target.dir}/etc/nginx/njs"
+
+            mkdir -p "${target.dir}/configs"
+            cp -a internal/configs/version1/nginx.ingress.tmpl \
+              internal/configs/version1/nginx.tmpl \
+              internal/configs/version2/nginx.virtualserver.tmpl \
+              internal/configs/version2/nginx.transportserver.tmpl \
+              "${target.dir}/configs"
+      outputs:
+        - source: ${target.dir}/nginx-ingress
+          target: /nginx-ingress
+          uid: 101
+          gid: 0
+        - source: ${target.dir}/etc/nginx/njs
+          target: /etc/nginx/njs
+          uid: 101
+          gid: 0
+        - source: ${target.dir}/configs/*
+          target: /
+          uid: 101
+          gid: 0
+  artifacts:
+    - name: dhi.io/nginx:1.29.8-debian13@sha256:d457a278247531873df03b7fdaabd96de0b530624f8e72c73d41e6b81c4487dd
+      excludes:
+        - etc/group
+        - etc/passwd
+        - etc/shadow
+        - usr/sbin/nginx
+        - usr/sbin/nginx-debug
+      uid: 101
+      gid: 0
+accounts:
+  run-as: "101"
+  users:
+    - name: "101"
+      uid: 101
+      gid: 0
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  BUILD_OS: debian
+paths:
+  - type: directory
+    path: /etc/nginx-agent
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/lib/nginx-agent
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/log/nginx-agent
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /etc/nginx/secrets
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/lib/nginx/stream-config.d
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /etc/nginx
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/cache/nginx
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/lib/nginx
+    uid: 101
+    gid: 0
+  - type: directory
+    path: /var/log/nginx
+    uid: 101
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal Nginx Ingress image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /nginx-ingress
+ports:
+  - "80"
+  - "443"

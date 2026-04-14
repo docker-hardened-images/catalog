@@ -1,0 +1,138 @@
+# syntax=dhi.io/build:2-debian13
+
+name: OpenTelemetry Go Autoinstrumentation 0.23.x
+image: dhi.io/opentelemetry-autoinstrumentation-go
+variant: runtime
+tags:
+  - "0"
+  - "0.23"
+  - 0.23.0
+  - 0-debian13
+  - 0.23-debian13
+  - 0.23.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-11"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 461e5d7f13ddf0159663e7b07296d95d434eae8c
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "0.23"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.23.0
+  VERSION: 0.23.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: opentelemetry-autoinstrumentation-go
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      contents:
+        packages:
+          - clang
+          - llvm
+        files:
+          - url: git+https://github.com/open-telemetry/opentelemetry-go-instrumentation.git#v0.23.0
+            checksum: 461e5d7f13ddf0159663e7b07296d95d434eae8c
+            path: /go/src/go.opentelemetry.io/auto
+            spdx:
+              name: opentelemetry-autoinstrumentation-go
+              version: 0.23.0
+              packages:
+                - name: opentelemetry-autoinstrumentation-go
+                  purl: pkg:golang/go.opentelemetry.io/auto@0.23.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/go.opentelemetry.io/auto
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - golang.org/x/net@v0.45.0
+              - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - name: generate
+          work-dir: /go/src/go.opentelemetry.io/auto
+          environment:
+            BPF2GO_CFLAGS: -I/go/src/go.opentelemetry.io/auto/internal/include/libbpf -I/go/src/go.opentelemetry.io/auto/internal/include
+          runs: |
+            set -eux -o pipefail
+
+            go generate ./...
+        - name: test
+          work-dir: /go/src/go.opentelemetry.io/auto
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 GODEBUG=fips140=on go test -v ./... -skip "TestLoadProbes|TestGetCPUCountFromProc|TestGetLockdownMode"
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/go.opentelemetry.io/auto/cli
+          with:
+            output: ${target.dir}/otel-go-instrumentation
+      outputs:
+        - source: ${target.dir}/otel-go-instrumentation
+          target: /otel-go-instrumentation
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/opentelemetry-autoinstrumentation-go
+          target: /opt/docker/sbom/opentelemetry-autoinstrumentation-go
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal OpenTelemetry Go Autoinstrumentation image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /otel-go-instrumentation

@@ -1,0 +1,175 @@
+# syntax=dhi.io/build:2-debian13
+
+name: CDI Upload Proxy 1.x (dev)
+image: dhi.io/cdi-uploadproxy
+variant: dev
+tags:
+  - 1-dev
+  - 1.65-dev
+  - 1.65.0-dev
+  - 1-debian13-dev
+  - 1.65-debian13-dev
+  - 1.65.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2018-06-14"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: d97a33c2f063258d14c6df27d297e84e3f48b779
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "1.65"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.65.0
+  VERSION: 1.65.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: cdi-uploadproxy
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/kubevirt.io/containerized-data-importer
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.65.0
+            checksum: d97a33c2f063258d14c6df27d297e84e3f48b779
+            path: /go/src/kubevirt.io/containerized-data-importer
+            spdx:
+              name: cdi-uploadproxy
+              version: 1.65.0
+              packages:
+                - name: cdi-uploadproxy
+                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.65.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch vulnerable Go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          environment:
+            GOWORK: "off"
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v3@v3.0.5
+            download: true
+        - name: sync vendor directory
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
+            if [ -f go.work ]; then
+              go work vendor
+            else
+              go mod vendor
+            fi
+        - name: test
+          environment:
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./pkg/uploadproxy/...
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.65.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=d97a33c2f063258d14c6df27d297e84e3f48b779
+            output: ${target.dir}/usr/local/bin/cdi-uploadproxy
+            packages: ./cmd/cdi-uploadproxy
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cdi-uploadproxy
+          target: /usr/local/bin/cdi-uploadproxy
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cdi-uploadproxy
+          target: /opt/docker/sbom/cdi-uploadproxy
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/cdi-uploadproxy
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /home/cdi-uploadproxy
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal CDI Upload Proxy image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/cdi-uploadproxy
+  - -alsologtostderr
+ports:
+  - 8443/tcp

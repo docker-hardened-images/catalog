@@ -1,0 +1,91 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-npm
+variant: runtime
+tags:
+  - 11.12.1-alpine3.23
+  - 11.12.1-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  _REL: "0"
+  _VERSION: 11.11.0
+  COMMIT_SHA: 6e6685692e442b96154e0ba05aeb5e784685ee44
+  PACKAGE_NAME: community/npm
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "11.12"
+  SEMVER_MAJOR_VERSION: "11"
+  SEMVER_VERSION: 11.12.1
+  VERSION: 11.12.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: abuild
+      work-dir: ${source.dir}/aports/community/npm
+      contents:
+        packages:
+          - nodejs
+        files:
+          - url: git+https://github.com/alpinelinux/aports.git#6e6685692e442b96154e0ba05aeb5e784685ee44
+            path: ${source.dir}/aports
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/npm/-/npm-11.12.1.tgz
+            path: /var/cache/distfiles/npm-11.12.1.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz
+            checksum: sha256:515b5ab666558ed9a117483a310892aede54a68dd78f2d8db6604513e578571c
+            path: ${source.dir}/aports/community/npm/picomatch-4.0.4.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.5.tgz
+            checksum: sha256:e919c0ac902f05c2b3bbd31fd71af6c8ddfd74fadc85321231184d39ca990f31
+            path: ${source.dir}/aports/community/npm/brace-expansion-5.0.5.tgz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: abuild/setup@v1
+        - runs: |
+            set -eux -o pipefail
+
+            # Remove the distro patch, we disable update checking via env var
+            sed -i 's,dont-check-for-last-version.patch,,' APKBUILD
+
+            # Add _vendor_replace function to APKBUILD
+            cat >> APKBUILD << 'EOF'
+
+            _vendor_replace() {
+                local pkg="$1" ver="$2" dir="$3"
+                rm -rf "$dir"/"$pkg"
+                tar -xzf "${source.dir}/aports/community/npm"/"$pkg"-"$ver".tgz -C "$dir"
+                mv "$dir"/package "$dir"/"$pkg"
+            }
+            EOF
+
+            # Replace default_prepare with _vendor_replace for brace-expansion and picomatch
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace brace-expansion 5.0.5 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace picomatch 4.0.4 node_modules/tinyglobby/node_modules,' APKBUILD
+        - uses: abuild/bump@v1
+          with:
+            set: 1
+            version: 11.12.1
+        - uses: abuild/build@v1
+          with:
+            command: checksum
+        - uses: abuild/build@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

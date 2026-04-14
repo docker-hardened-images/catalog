@@ -1,0 +1,132 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kured 1.21.x
+image: dhi.io/kured
+variant: runtime
+tags:
+  - "1"
+  - "1.21"
+  - 1.21.0
+  - 1-debian13
+  - 1.21-debian13
+  - 1.21.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-22"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 779a3328671312eaef105190467a542c5863e91a
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "1.21"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.21.0
+  VERSION: 1.21.0
+contents:
+  packages:
+    - '!base-files'
+    - ca-certificates
+    - tzdata
+    - util-linux
+  builds:
+    - name: kured
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/kubereboot/kured
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - binutils-gold
+        files:
+          - url: git+https://github.com/kubereboot/kured.git#1.21.0
+            checksum: 779a3328671312eaef105190467a542c5863e91a
+            path: /go/src/github.com/kubereboot/kured
+            spdx:
+              name: kured
+              version: 1.21.0
+              packages:
+                - name: kured
+                  purl: pkg:golang/github.com/kubereboot@1.21.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/net@v0.45.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Skip kind tests as they require kind binary and cluster setup
+            go test $(go list ./... | grep -v '/tests/kind')
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s -w
+              - -X main.version=1.21.0
+            output: ${target.dir}/usr/bin/kured
+            packages: ./cmd/kured
+      outputs:
+        - source: ${target.dir}/usr/bin/kured
+          target: /usr/bin/kured
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kured
+          target: /opt/docker/sbom/kured
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Kubernetes Reboot Daemon image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/kured

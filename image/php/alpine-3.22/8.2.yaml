@@ -1,0 +1,268 @@
+# syntax=dhi.io/build:2-alpine3.22
+
+name: PHP 8.2.x
+image: dhi.io/php
+variant: runtime
+tags:
+  - 8.2-alpine3.22
+  - 8.2.30-alpine3.22
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-12-08"
+  end-of-life: "2026-12-31"
+vars:
+  CFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+  CHECKSUM: bc90523e17af4db46157e75d0c9ef0b9d0030b0514e62c26ba7b513b8c4eb015
+  CPPFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+  LDFLAGS: -Wl,-O1 -pie
+  PHP_PREFIX: /opt/php-8.2
+  PHP_SYSCONFDIR: /opt/php-8.2/etc
+  SEMVER_MAJOR_MINOR_VERSION: "8.2"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.2.30
+  VERSION: 8.2.30
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.22/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.22/community
+  packages:
+    - alpine-baselayout-data
+    - argon2-libs
+    - busybox
+    - ca-certificates-bundle
+    - icu-data-full
+    - icu-libs
+    - libcrypto3
+    - libcurl
+    - libsodium
+    - libssl3
+    - libxml2
+    - oniguruma
+    - pcre2
+    - readline
+    - sqlite-libs
+    - zlib
+  builds:
+    - name: php
+      shell: bash
+      environment:
+        CFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+        CPPFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+        LDFLAGS: -Wl,-O1 -pie
+        PHP_BUILD_PROVIDER: https://github.com/docker-hardened-images/definitions
+        PHP_UNAME: Linux - Docker Hardened Images
+      contents:
+        repositories:
+          - https://dl-cdn.alpinelinux.org/alpine/v3.22/main
+          - https://dl-cdn.alpinelinux.org/alpine/v3.22/community
+        packages:
+          - argon2-dev
+          - autoconf
+          - bash
+          - curl-dev
+          - file
+          - g++
+          - gcc
+          - gnu-libiconv-dev
+          - icu-dev
+          - libc-dev
+          - libsodium-dev
+          - libxml2-dev
+          - linux-headers
+          - make
+          - musl-utils
+          - oniguruma-dev
+          - openssl-dev
+          - patch
+          - pcre2-dev
+          - pkgconf
+          - re2c
+          - readline-dev
+          - sqlite-dev
+          - xz
+          - zlib-dev
+        files:
+          - url: https://www.php.net/distributions/php-8.2.30.tar.xz.asc
+            path: ${source.dir}/php-8.2.30.tar.xz.asc
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.2.30.tar.xz
+            checksum: sha256:bc90523e17af4db46157e75d0c9ef0b9d0030b0514e62c26ba7b513b8c4eb015
+            path: ${source.dir}/php-8.2.30.tar.xz
+            spdx:
+              name: php
+              version: 8.2.30
+              packages:
+                - name: php
+                  purl: pkg:dhi/php@8.2.30
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php-8.2.30.tar.xz
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/php-8.2.30.tar.xz
+            keys: ${source.dir}/keyring.asc
+            signature: ${source.dir}/php-8.2.30.tar.xz.asc
+        - name: extract source
+          runs: |
+            set -eux -o pipefail
+
+            tar xvf 'php-8.2.30.tar.xz'
+        - name: build and install
+          work-dir: ${source.dir}/php-8.2.30
+          runs: |
+            set -eux -o pipefail
+
+            fpm_opts=()
+            if [ '${target.flavor}' = fpm ]; then
+              fpm_opts=(--disable-cli --enable-fpm --with-fpm-user=nonroot --with-fpm-group=nonroot)
+            fi
+
+            phpdbg_opts=(--disable-phpdbg)
+            pear_opts=()
+            if [ '${target.dev}' = true ]; then
+              phpdbg_opts=(--enable-phpdbg --enable-phpdbg-readline)
+              pear_opts=(--with-pear)
+            fi
+
+            ./configure \
+              --enable-option-checking=fatal \
+              --prefix='/opt/php-8.2' \
+              --sysconfdir='/opt/php-8.2/etc' \
+              --with-config-file-path='/opt/php-8.2/etc/php' \
+              --with-config-file-scan-dir='/opt/php-8.2/etc/php/conf.d' \
+              --disable-static \
+              --disable-cgi \
+              --enable-filter \
+              --enable-tokenizer \
+              --enable-ctype \
+              --enable-fileinfo \
+              --enable-mbstring --enable-mbregex \
+              --enable-intl \
+              --enable-mysqlnd \
+              --enable-session \
+              --enable-xml --enable-simplexml --enable-dom \
+              --enable-pdo \
+              --with-sqlite3 \
+              --with-pdo-sqlite \
+              --with-password-argon2 \
+              --with-sodium \
+              --with-openssl \
+              --with-external-pcre=/usr --with-pcre-jit \
+              --with-iconv \
+              --with-libxml \
+              --with-curl \
+              --with-readline \
+              --with-zlib \
+              "${fpm_opts[@]}" \
+              "${phpdbg_opts[@]}" \
+              "${pear_opts[@]}"
+
+            make -j"$(nproc)"
+
+            make install INSTALL_ROOT='${target.dir}'
+        - name: install php.ini
+          runs: |
+            set -eux -o pipefail
+
+            install -d '${target.dir}/opt/php-8.2/etc/php/conf.d'
+            install '${source.dir}/php-8.2.30/php.ini-production' \
+              '${target.dir}/opt/php-8.2/etc/php/php.ini'
+
+            # On dev images, include example php.ini files.
+            if [ '${target.dev}' = true ]; then
+              install -t '${target.dir}/opt/php-8.2/etc/php' \
+                '${source.dir}/php-8.2.30/'php.ini-*
+            fi
+        - name: remove unused scripts
+          runs: |
+            set -eux -o pipefail
+
+            rm '${target.dir}/opt/php-8.2/bin/'{phpize,php-config}
+            rm -rf '${target.dir}/opt/php-8.2/lib/php/build'
+        - uses: strip@v1
+          with:
+            dir: ${target.dir}/opt/php-8.2
+      paths:
+        - type: file
+          path: ${source.dir}/keyring.asc
+          uid: 0
+          gid: 0
+          source: image/php/key/php8.2.keyring.asc
+      outputs:
+        - source: ${target.dir}/opt/php-8.2/bin
+          target: /opt/php-8.2/bin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/php-8.2/lib
+          target: /opt/php-8.2/lib
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/php-8.2/etc
+          target: /opt/php-8.2/etc
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/php
+          target: /opt/docker/sbom/php
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.22"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.22
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PATH: /opt/php-8.2/bin:/opt/php-8.2/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PHP_INI_DIR: /usr/local/etc/php
+  PHP_PREFIX: /opt/php-8.2
+  PHP_VERSION: 8.2.30
+paths:
+  - type: symlink
+    path: /opt/php
+    uid: 0
+    gid: 0
+    source: /opt/php-8.2
+  - type: directory
+    path: /usr/local/etc
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/etc/php
+    uid: 0
+    gid: 0
+    source: /opt/php-8.2/etc/php
+  - type: directory
+    path: /var/www/html
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /opt/php-8.2/etc/php/conf.d/opcache.ini
+    content: |
+      # https://wiki.php.net/rfc/make_opcache_required
+      zend_extension=opcache
+    uid: 0
+    gid: 0
+    mode: "0644"
+annotations:
+  org.opencontainers.image.description: A minimal PHP image
+  org.opencontainers.image.licenses: PHP-3.01
+entrypoint:
+  - /opt/php-8.2/bin/php

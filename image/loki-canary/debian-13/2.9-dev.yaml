@@ -1,0 +1,205 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Loki Canary 2.9.x (dev)
+image: dhi.io/loki-canary
+variant: dev
+tags:
+  - 2-dev
+  - 2.9-dev
+  - 2.9.17-dev
+  - 2-debian13-dev
+  - 2.9-debian13-dev
+  - 2.9.17-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-09-06"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.17
+  VERSION: 2.9.17
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: loki-canary
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/grafana/loki
+      contents:
+        packages:
+          - make
+          - bash
+          - sed
+          - hostname
+        files:
+          - url: git+https://github.com/grafana/loki.git#v2.9.17
+            checksum: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki-canary
+              version: 2.9.17
+              packages:
+                - name: loki-canary
+                  purl: pkg:golang/github.com/grafana/loki@2.9.17
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go get golang.org/x/crypto@v0.45.0
+            go get github.com/buger/jsonparser@v1.1.2   # GHSA-6g7g-w4f8-9c9x
+            go get google.golang.org/grpc@v1.79.3       # CVE-2026-33186
+            go get go.opentelemetry.io/otel/sdk@v1.40.0 # CVE-2026-24051
+            go get google.golang.org/api@v0.272.0
+
+            go mod tidy
+            go mod vendor
+        - name: patch vendored grpcutil/health_check_list.go
+          runs: |
+            set -eux -o pipefail
+
+            cat >> vendor/github.com/grafana/dskit/grpcutil/health_check_list.go << 'EOF'
+            package grpcutil
+            import (
+              "context"
+              "github.com/gogo/status"
+              "google.golang.org/grpc/codes"
+              "google.golang.org/grpc/health/grpc_health_v1"
+            )
+            func (h *HealthCheck) List(_ context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
+              return nil, status.Error(codes.Unimplemented, "Listing is not supported")
+            }
+            EOF
+        - name: update go dependencies and vendor (2.9 only)
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: remove godoc
+          runs: |
+            set -eux -o pipefail
+
+            # Fixes golang.org/x/tools/godoc@v0.1.0-deprecated: is explicitly
+            # required in go.mod, but not marked as explicit in vendor/modules.txt
+            go get golang.org/x/tools/godoc@none
+        - name: patch Makefile for no VCS stamping in 2.9
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/buildvcs-2.9.patch
+        - name: install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make loki-canary
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            cp cmd/loki-canary/loki-canary "${target.dir}/usr/local/bin/loki-canary"
+      paths:
+        - type: file
+          path: ${source.dir}/patch/buildvcs-2.9.patch
+          uid: 0
+          gid: 0
+          source: image/loki-canary/patch/buildvcs-2.9.patch
+        - type: file
+          path: ${source.dir}/patch/buildvcs-3.5.patch
+          uid: 0
+          gid: 0
+          source: image/loki-canary/patch/buildvcs-3.5.patch
+        - type: file
+          path: ${source.dir}/patch/buildvcs-3.6.patch
+          uid: 0
+          gid: 0
+          source: image/loki-canary/patch/buildvcs-3.6.patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/loki-canary
+          target: /usr/local/bin/loki-canary
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/loki-canary
+          target: /opt/docker/sbom/loki-canary
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Loki Canary image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/local/bin/loki-canary

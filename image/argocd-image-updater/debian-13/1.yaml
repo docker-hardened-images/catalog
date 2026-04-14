@@ -1,0 +1,169 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Argo CD Image Updater 1.x
+image: dhi.io/argocd-image-updater
+variant: runtime
+tags:
+  - "1"
+  - "1.1"
+  - 1.1.1
+  - 1-debian13
+  - 1.1-debian13
+  - 1.1.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-15"
+vars:
+  AWSCLI_REFERENCE: dhi/awscli:2.34.29-debian13@sha256:a2443c6df39eba1ed3493f4ececa9c2ffbca14160302ad1a5cac436bf96c0fa7
+  AWSCLI_VERSION: 2.34.29
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 781d9f375560b2be7205c1dcf24307b758d66955
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "1.1"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.1.1
+  VERSION: 1.1.1
+contents:
+  packages:
+    - '!base-files'
+    - ca-certificates
+    - git
+    - gpg
+    - gpg-agent
+    - libcurl4t64
+    - openssh-client
+    - tini
+  builds:
+    - name: argocd-image-updater
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/argoproj-labs/argocd-image-updater
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - binutils
+          - binutils-gold
+        files:
+          - url: git+https://github.com/argoproj-labs/argocd-image-updater.git#v1.1.1
+            checksum: 781d9f375560b2be7205c1dcf24307b758d66955
+            path: /go/src/github.com/argoproj-labs/argocd-image-updater
+            spdx:
+              name: argocd-image-updater
+              version: 1.1.1
+              packages:
+                - name: argocd-image-updater
+                  purl: pkg:golang/github.com/argoproj-labs/argocd-image-updater@1.1.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-git/go-git/v5@v5.17.1
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Tests are using short keys which are not allowed in FIPS mode
+              export GODEBUG=fips140=on
+            fi
+            # Run unit tests, skip e2e tests and packages that require external access
+            go test $(go list ./... | egrep -v '(test/|mocks/|ext/|e2e/)') -short -count=1 -v
+        - name: build argocd-image-updater
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -extldflags "-static"
+              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.version=1.1.1
+              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.gitCommit=781d9f375560b2be7205c1dcf24307b758d66955
+              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.buildDate=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/local/bin/argocd-image-updater
+            packages: ./cmd
+      outputs:
+        - source: ${target.dir}/usr/local/bin/argocd-image-updater
+          target: /usr/local/bin/argocd-image-updater
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/argocd-image-updater
+          target: /opt/docker/sbom/argocd-image-updater
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/awscli:2.34.29-debian13@sha256:a2443c6df39eba1ed3493f4ececa9c2ffbca14160302ad1a5cac436bf96c0fa7
+      includes:
+        - opt/aws-cli
+        - opt/docker/sbom/awscli
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "1000"
+  users:
+    - name: argocd
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: argocd
+      gid: 1000
+      members:
+        - argocd
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  AWS_CLI_VERSION: 2.34.29
+  PATH: /opt/aws-cli/bin:/usr/sbin:/sbin:/usr/bin:/bin
+paths:
+  - type: directory
+    path: /app/config
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: symlink
+    path: /manager
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/argocd-image-updater
+annotations:
+  org.opencontainers.image.description: A minimal Argo CD Image Updater image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /manager
+ports:
+  - 8081/tcp

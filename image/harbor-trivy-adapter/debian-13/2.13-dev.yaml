@@ -1,0 +1,156 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Harbor Trivy Adapter 2.13.x (dev)
+image: dhi.io/harbor-trivy-adapter
+variant: dev
+tags:
+  - 2.13-dev
+  - 2.13.5-dev
+  - 2.13-debian13-dev
+  - 2.13.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: ffae54219c89f7f486f17694681232dd70787db1
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SCANNER_TRIVY_ADAPTER_COMMIT_SHA: d2f5ee1a63099f432cdcf4b36542a59524f420a4
+  SCANNER_TRIVY_ADAPTER_SEMVER: 0.35.1
+  SCANNER_TRIVY_ADAPTER_VERSION: v0.35.1
+  SEMVER_MAJOR_MINOR_VERSION: "2.13"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.13.5
+  TRIVY_REFERENCE: dhi/trivy:0.69.3-debian13@sha256:15fac0ed78db3d4bd19875017aaaa8d899f8d21cf002728283d65f9406eb70a5
+  VERSION: 2.13.5
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: scanner-trivy
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      work-dir: /go/src/github.com/goharbor/harbor-scanner-trivy
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/goharbor/harbor-scanner-trivy.git#v0.35.1
+            checksum: d2f5ee1a63099f432cdcf4b36542a59524f420a4
+            path: /go/src/github.com/goharbor/harbor-scanner-trivy
+            spdx:
+              name: harbor-scanner-trivy
+              version: 0.35.1
+              packages:
+                - name: harbor-scanner-trivy
+                  purl: pkg:docker/dhi/harbor-trivy-adapter@2.13.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/net@v0.51.0
+              - github.com/redis/go-redis/v9@v9.6.3
+              - github.com/docker/docker@v28.0.0+incompatible
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.version=0.35.1
+              - -X main.commit=d2f5ee1a63099f432cdcf4b36542a59524f420a4
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/local/bin/scanner-trivy
+            packages: ./cmd/scanner-trivy
+      outputs:
+        - source: ${target.dir}/usr/local/bin/scanner-trivy
+          target: /usr/local/bin/scanner-trivy
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/harbor-scanner-trivy
+          target: /opt/docker/sbom/harbor-scanner-trivy
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/trivy:0.69.3-debian13@sha256:15fac0ed78db3d4bd19875017aaaa8d899f8d21cf002728283d65f9406eb70a5
+      includes:
+        - opt/docker/sbom/trivy
+        - usr/local/bin/trivy
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /home/scanner/.cache
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Harbor Trivy Adapter image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/scanner-trivy
+ports:
+  - 8080/tcp

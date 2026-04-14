@@ -1,0 +1,160 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Git MCP Server 2026.x
+image: dhi.io/git-mcp
+variant: runtime
+tags:
+  - "2026"
+  - "2026.1"
+  - latest
+  - 2026.1.26
+  - 2026-debian13
+  - 2026.1-debian13
+  - 2026.1.26-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: a1e5a9a9b186f00462a8a2448ee041728ce052d5
+  PYTHON_DEV_REFERENCE: dhi/python:3.14.4-debian13-sfw-dev@sha256:33ff24a80e645ca608887d61686ac578db19ce4545ed25a0c5a885fb1c543176
+  PYTHON_REFERENCE: dhi/python:3.14.4-debian13@sha256:16115a2626bfdb873847b12d70180dff4bd5edf7fc1f54e60ca33668c773b547
+  SEMVER_MAJOR_MINOR_VERSION: "2026.1"
+  SEMVER_MAJOR_VERSION: "2026"
+  SEMVER_VERSION: 2026.1.26
+  UV_VERSION: 0.11.6
+  VERSION: 2026.1.26
+contents:
+  packages:
+    - base-files
+    - git
+  builds:
+    - name: git-mcp
+      uses: dhi.io/python:3.14.4-debian13-sfw-dev@sha256:33ff24a80e645ca608887d61686ac578db19ce4545ed25a0c5a885fb1c543176
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      contents:
+        packages:
+          - gzip
+          - tar
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.11.6/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/modelcontextprotocol/servers.git#2026.1.26
+            checksum: a1e5a9a9b186f00462a8a2448ee041728ce052d5
+            path: ${source.dir}/servers
+            spdx:
+              name: git-mcp
+              version: 2026.1.26
+              packages:
+                - name: git-mcp
+                  purl: pkg:dhi/git-mcp@2026.1.26
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: https://patch-diff.githubusercontent.com/raw/modelcontextprotocol/servers/pull/3545.patch
+            path: ${source.dir}/3545.patch
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: patch
+          uses: patch@v1
+          work-dir: ${source.dir}/servers
+          with:
+            options: -p1
+            patch: ${source.dir}/3545.patch
+        - name: move to /app
+          runs: |
+            set -eux -o pipefail
+
+            cp -r "${source.dir}/servers/src/git" /app
+        - name: align pyproject version with monorepo tag
+          work-dir: /app
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/^version = ".*"/version = "2026.1.26"/' pyproject.toml
+            grep -E '^version = ' pyproject.toml
+        - name: build python package
+          work-dir: /app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm .python-version
+
+            sfw uv lock --upgrade
+            sfw uv sync --locked --no-install-project --no-dev --no-editable
+            sfw uv sync --locked --no-dev --no-editable
+      outputs:
+        - source: /app/.venv
+          target: /app/.venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/git-mcp
+          target: /opt/docker/sbom/git-mcp
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.14.4-debian13@sha256:16115a2626bfdb873847b12d70180dff4bd5edf7fc1f54e60ca33668c773b547
+      excludes:
+        - etc/group
+        - etc/passwd
+        - etc/shadow
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: file
+    path: /home/nonroot/.gitconfig
+    content: |
+      [safe]
+          directory = *
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+  - type: file
+    path: /root/.gitconfig
+    content: |
+      [safe]
+          directory = *
+    uid: 0
+    gid: 0
+    mode: "0644"
+annotations:
+  org.opencontainers.image.description: Git MCP Server
+  org.opencontainers.image.licenses: MIT
+labels:
+  io.modelcontextprotocol.server.name: io.github.modelcontextprotocol/server-git
+entrypoint:
+  - mcp-server-git

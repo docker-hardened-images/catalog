@@ -1,0 +1,169 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Piraeus Operator 2.x (dev)
+image: dhi.io/piraeus-operator
+variant: dev
+tags:
+  - 2-dev
+  - 2.10-dev
+  - 2.10.5-dev
+  - 2-debian13-dev
+  - 2.10-debian13-dev
+  - 2.10.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 22c84566f3c5373a9406952727499328c8741681
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "2.10"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.10.5
+  VERSION: 2.10.5
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: piraeus-operator
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      contents:
+        files:
+          - url: git+https://github.com/piraeusdatastore/piraeus-operator.git#v2.10.5
+            checksum: 22c84566f3c5373a9406952727499328c8741681
+            path: /go/src/github.com/piraeusdatastore/piraeus-operator
+            spdx:
+              name: piraeus-operator
+              version: 2.10.5
+              packages:
+                - name: piraeus-operator
+                  purl: pkg:golang/github.com/piraeusdatastore/piraeus-operator/v2@2.10.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Skip test packages that require kubebuilder tools (etcd, kube-apiserver)
+            # which are not available in the build environment. These tests require
+            # a full Kubernetes test environment and are typically run in CI/CD pipelines.
+            CGO_ENABLED=0 go test $(go list ./... | grep -v '/internal/controller' | grep -v '/internal/webhook' | grep -v '/pkg/k8sgc')
+        - name: build-manager
+          uses: go/build@v1
+          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
+          with:
+            ldflags:
+              - -X github.com/piraeusdatastore/piraeus-operator/v2/pkg/vars.Version=2.10.5
+            output: ${target.dir}/usr/local/bin/manager
+            packages: ./cmd
+        - name: build-gencert
+          uses: go/build@v1
+          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
+          with:
+            ldflags:
+              - -X github.com/piraeusdatastore/piraeus-operator/v2/pkg/vars.Version=2.10.5
+            output: ${target.dir}/usr/local/bin/gencert
+            packages: ./cmd/gencert
+      outputs:
+        - source: ${target.dir}/usr/local/bin/manager
+          target: /usr/local/bin/manager
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/gencert
+          target: /usr/local/bin/gencert
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/piraeus-operator
+          target: /opt/docker/sbom/piraeus-operator
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /manager
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/manager
+annotations:
+  org.opencontainers.image.description: Kubernetes operator that manages LINSTOR clusters
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /manager

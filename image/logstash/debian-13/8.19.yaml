@@ -1,0 +1,383 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Logstash 8.19.x
+image: dhi.io/logstash
+variant: runtime
+tags:
+  - "8"
+  - "8.19"
+  - 8.19.14
+  - 8-debian13
+  - 8.19-debian13
+  - 8.19.14-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-14"
+  end-of-life: "2027-07-15"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: cf9cf67b8b3b7e995ff076679609a1bb8aa0efa5
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk21-debian13-dev@sha256:ce4c572a925831ab6b11634a14acc53f17bb36bbb568bf8a456909b162eb2425
+  GRADLE_VERSION: 8.14.4
+  JAVA_MAJOR_VERSION: "21"
+  JDK_REFERENCE: dhi/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
+  JDK_VERSION: 21.0.10.7
+  LOGSTASH_PATH: /usr/share/logstash
+  LOGSTASH_SOURCE: "1"
+  OSS: "true"
+  SEMVER_MAJOR_MINOR_VERSION: "8.19"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.19.14
+  VERSION: 8.19.14
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - coreutils
+    - sed
+  builds:
+    - name: env2yaml java for 8.19+
+      uses: dhi.io/gradle:8.14.4-jdk21-debian13-dev@sha256:ce4c572a925831ab6b11634a14acc53f17bb36bbb568bf8a456909b162eb2425
+      contents:
+        packages:
+          - bash
+          - coreutils
+        files:
+          - url: git+https://github.com/elastic/logstash.git#cf9cf67b8b3b7e995ff076679609a1bb8aa0efa5
+            checksum: cf9cf67b8b3b7e995ff076679609a1bb8aa0efa5
+            path: ${source.dir}/logstash
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build env2yaml java
+          work-dir: ${source.dir}/logstash/docker/data/logstash/env2yaml
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            gradle build
+      outputs:
+        - source: ${source.dir}/logstash/docker/data/logstash/env2yaml
+          target: /usr/share/logstash/env2yaml
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${source.dir}/logstash/docker/data/logstash/env2yaml/env2yaml
+          target: /usr/local/bin/env2yaml
+          uid: 0
+          gid: 0
+          mode: "0755"
+    - name: build logstash
+      uses: dhi.io/gradle:8.14.4-jdk21-debian13-dev@sha256:ce4c572a925831ab6b11634a14acc53f17bb36bbb568bf8a456909b162eb2425
+      contents:
+        packages:
+          - coreutils
+          - curl
+          - findutils
+          - grep
+          - gzip
+          - libc6-dev
+          - make
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/elastic/logstash.git#v8.19.14
+            checksum: cf9cf67b8b3b7e995ff076679609a1bb8aa0efa5
+            path: ${source.dir}/logstash
+            spdx:
+              name: logstash
+              version: 8.19.14
+              packages:
+                - name: logstash
+                  purl: pkg:dhi/logstash@8.19.14
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.10.1/lz4-java-1.10.1.jar
+            path: ${source.dir}/patch/deps/lz4-java-1.10.1.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.18.6/jackson-core-2.18.6.jar
+            path: ${source.dir}/patch/deps/jackson-core-2.18.6.jar
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/jruby-openssl-0.15.5-java.gem
+            path: ${source.dir}/patch/deps/jruby-openssl-0.15.5-java.gem
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch deps
+          uses: git/patch@v1
+          work-dir: ${source.dir}/logstash
+          with:
+            patch: ${source.dir}/patch/deps-8.19.patch
+        - name: install default gems
+          work-dir: ${source.dir}/logstash
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            gradle installDefaultGems
+        - name: install assemble tar distro
+          work-dir: ${source.dir}/logstash
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            gradle assembleTarDistribution
+        - name: unpack
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            tar -zxf "build/logstash-8.19.14-SNAPSHOT.tar.gz" -C /usr/share
+
+            mkdir -p "${target.dir}/usr/share/logstash"
+
+            # Remove bundled JDK - we use DHI Java JDK instead
+            rm -rf "/usr/share/logstash-8.19.14"-SNAPSHOT/jdk
+
+            cp -r "/usr/share/logstash-8.19.14"-SNAPSHOT/* "${target.dir}/usr/share/logstash"
+        - name: replace vulnerable jackson-core jars
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-72hv-8253-57qq - Replace all vulnerable jackson-core JARs with fixed version 2.18.6
+            # We replace the JAR contents in-place to preserve the directory structure that
+            # gems like jrjackson expect (they have hardcoded paths in their Ruby loader files)
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+            jackson_fixed="${source.dir}/patch/deps/jackson-core-2.18.6.jar"
+
+            # Find and replace all jackson-core JARs in the gems directory in-place
+            # This handles all versions (jrjackson, kafka, azure, geoip, etc.)
+            find "$base" -path "*/jackson-core/*/jackson-core-*.jar" -type f | while read -r old_jar; do
+              echo "Replacing $old_jar with fixed version"
+              cp "$jackson_fixed" "$old_jar"
+            done
+
+            # Also replace jackson-core in logstash-core/lib/jars if it exists (8.19+)
+            core_jar=$(find "${target.dir}/usr/share/logstash/logstash-core/lib/jars" -name "jackson-core-*.jar" -type f 2> /dev/null | head -1)
+            if [ -n "$core_jar" ] && [ -f "$core_jar" ]; then
+              echo "Replacing $core_jar with fixed version"
+              cp "$jackson_fixed" "$core_jar"
+            fi
+        - name: patch shaded jackson-core in elastic_integration jar
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # The logstash-filter-elastic_integration JAR is a shaded/uber JAR that contains
+            # jackson-core classes embedded directly inside it. We need to replace these.
+            # GHSA-72hv-8253-57qq
+
+            JAR_CMD="/opt/java/openjdk/21/bin/jar"
+            jackson_fixed="${source.dir}/patch/deps/jackson-core-2.18.6.jar"
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+
+            # Find the elastic_integration shaded JAR (version varies by logstash version)
+            ei_jar=$(find "$base" -path "*/logstash-filter-elastic_integration-*/vendor/jar-dependencies/co/elastic/logstash-filter-elastic_integration/*/logstash-filter-elastic_integration-*.jar" -type f | head -1)
+
+            if [ -z "$ei_jar" ]; then
+              echo "WARNING: No elastic_integration JAR found, skipping"
+              exit 0
+            fi
+
+            echo "Patching shaded JAR: $ei_jar"
+            work_dir="/tmp/ei_jar_patch"
+
+            mkdir -p "$work_dir"
+            cd "$work_dir"
+
+            # Extract the shaded JAR
+            "$JAR_CMD" xf "$ei_jar"
+
+            # Remove the old embedded jackson-core classes at root level
+            rm -rf com/fasterxml/jackson/core
+
+            # Extract the fixed jackson-core classes into the same location
+            "$JAR_CMD" xf "$jackson_fixed" 'com/fasterxml/jackson/core'
+
+            # Also update the pom metadata to reflect the new version
+            "$JAR_CMD" xf "$jackson_fixed" 'META-INF/maven/com.fasterxml.jackson.core/jackson-core'
+
+            # Replace the nested JAR in IMPL-JARS/x-content with fixed version
+            # Update both the directory name AND LISTING.TXT to avoid any reference to vulnerable version
+            if [ -d "IMPL-JARS/x-content" ]; then
+              # Find the old jackson-core directory name (e.g., jackson-core-2.17.2.jar)
+              old_jackson_name=$(find IMPL-JARS/x-content -maxdepth 1 -type d -name "jackson-core-*.jar" -printf "%f\n" | head -1)
+
+              if [ -z "$old_jackson_name" ]; then
+                echo "WARNING: No existing jackson-core JAR found in IMPL-JARS/x-content, skipping"
+              else
+                echo "Replacing $old_jackson_name with jackson-core-2.18.6.jar"
+
+                # Remove old version directory completely
+                rm -rf "IMPL-JARS/x-content/$old_jackson_name"
+
+                # Create new version directory with fixed version name
+                mkdir -p "IMPL-JARS/x-content/jackson-core-2.18.6.jar"
+                cd "IMPL-JARS/x-content/jackson-core-2.18.6.jar"
+
+                # Extract fixed JAR contents
+                "$JAR_CMD" xf "$jackson_fixed"
+
+                cd "$work_dir"
+
+                # Update LISTING.TXT to reflect the new JAR name
+                if [ -f "IMPL-JARS/x-content/LISTING.TXT" ]; then
+                  sed -i "s|$old_jackson_name|jackson-core-2.18.6.jar|g" IMPL-JARS/x-content/LISTING.TXT
+                  echo "Updated LISTING.TXT: $old_jackson_name -> jackson-core-2.18.6.jar"
+                else
+                  echo "WARNING: LISTING.TXT not found in IMPL-JARS/x-content"
+                fi
+              fi
+            fi
+
+            # Repack the JAR (preserving manifest and other metadata)
+            rm "$ei_jar"
+            "$JAR_CMD" cf "$ei_jar" .
+
+            # Cleanup
+            cd /
+            rm -rf "$work_dir"
+
+            # Verify the fix was applied
+            "$JAR_CMD" tf "$ei_jar" | grep -q "com/fasterxml/jackson/core/JsonFactory.class"
+        - name: fix jruby-openssl version
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # CVE-2025-46551 - Install jruby-openssl 0.15.5, replacing the vulnerable JRuby default gem.
+            # The lockfile already pins 0.15.5 but bundler install is skipped during the logstash build,
+            # so we install it manually here.
+            gem_file="${source.dir}/patch/deps/jruby-openssl-0.15.5-java.gem"
+            bundle_dir="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0"
+            jruby_bin="${target.dir}/usr/share/logstash/vendor/jruby/bin"
+            default_spec_dir="${target.dir}/usr/share/logstash/vendor/jruby/lib/ruby/gems/shared/specifications/default"
+
+            PATH="$jruby_bin:$PATH" gem install "$gem_file" --local --install-dir "$bundle_dir" --no-document
+
+            # Replace the JRuby stdlib jopenssl.jar (trivy reads version from this JAR directly)
+            jruby_stdlib="${target.dir}/usr/share/logstash/vendor/jruby/lib/ruby/stdlib"
+            cp "$bundle_dir/gems/jruby-openssl-0.15.5-java/lib/jopenssl.jar" "$jruby_stdlib/jopenssl.jar"
+
+            # Remove the vulnerable default gemspec so the scanner only sees the fixed version
+            find "$default_spec_dir" -name "jruby-openssl-*.gemspec" -delete
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: image/logstash/patch
+      outputs:
+        - source: ${target.dir}/usr/share/logstash
+          target: /usr/share/logstash
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/logstash
+          target: /opt/docker/sbom/logstash
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/logstash/docker/data/logstash/bin/docker-entrypoint
+          target: /usr/local/bin/docker-entrypoint
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${source.dir}/logstash/docker/data/logstash/config/pipelines.yml
+          target: /usr/share/logstash/config/pipelines.yml
+          uid: 1000
+          gid: 0
+          mode: "0644"
+        - source: ${source.dir}/logstash/docker/data/logstash/config/log4j2.properties
+          target: /usr/share/logstash/config/log4j2.properties
+          uid: 1000
+          gid: 0
+          mode: "0644"
+        - source: ${source.dir}/logstash/docker/data/logstash/config/log4j2.file.properties
+          target: /usr/share/logstash/config/log4j2.file.properties
+          uid: 1000
+          gid: 0
+          mode: "0644"
+        - source: ${source.dir}/logstash/docker/data/logstash/config/logstash-oss.yml
+          target: /usr/share/logstash/config/logstash.yml
+          uid: 1000
+          gid: 0
+          mode: "0644"
+        - source: ${source.dir}/logstash/docker/data/logstash/pipeline/default.conf
+          target: /usr/share/logstash/pipeline/logstash.conf
+          uid: 1000
+          gid: 0
+          mode: "0644"
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: logstash
+  users:
+    - name: logstash
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: logstash
+      gid: 1000
+      members:
+        - logstash
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/share/logstash
+environment:
+  ELASTIC_CONTAINER: "true"
+  PATH: /usr/share/logstash/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /usr/share/logstash
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /usr/share/logstash/data
+    uid: 1000
+    gid: 0
+    mode: "2755"
+  - type: directory
+    path: /usr/share/logstash/logs
+    uid: 1000
+    gid: 0
+    mode: "2755"
+  - type: symlink
+    path: /opt/logstash
+    uid: 0
+    gid: 0
+    source: /usr/share/logstash
+  - type: symlink
+    path: /usr/share/logstash/jdk
+    uid: 0
+    gid: 0
+    source: /opt/java/openjdk/21
+annotations:
+  org.opencontainers.image.description: A minimal logstash image
+  org.opencontainers.image.licenses: Elastic-License-2.0
+entrypoint:
+  - /usr/local/bin/docker-entrypoint
+ports:
+  - 9600/tcp
+  - 5044/tcp

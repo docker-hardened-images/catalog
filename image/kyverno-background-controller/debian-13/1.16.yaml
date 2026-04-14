@@ -1,0 +1,153 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kyverno Background Controller 1.x
+image: dhi.io/kyverno-background-controller
+variant: runtime
+tags:
+  - "1.16"
+  - 1.16.3
+  - 1.16-debian13
+  - 1.16.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-10"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 188151e6b60b192aabcbc24943c3159e5cfab5da
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "1.16"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.16.3
+  VERSION: 1.16.3
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: kyverno-background-controller
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      work-dir: /go/src/github.com/kyverno/kyverno
+      contents:
+        files:
+          - url: git+https://github.com/kyverno/kyverno.git#v1.16.3
+            checksum: 188151e6b60b192aabcbc24943c3159e5cfab5da
+            path: /go/src/github.com/kyverno/kyverno
+            spdx:
+              name: kyverno-background-controller
+              version: 1.16.3
+              packages:
+                - name: kyverno-background-controller
+                  purl: pkg:golang/github.com/kyverno/kyverno@1.16.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/cloudflare/circl@v1.6.3
+              - golang.org/x/crypto@v0.47.0
+              - github.com/docker/cli@v29.2.0
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+            replaces:
+              - github.com/sigstore/timestamp-authority=github.com/docker-hardened-images/sigstore-timestamp-authority@v1.2.10-0.20251207163215-621a8cc1532f
+            tidy: true
+        - name: patch-go125
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/sigstore/fulcio@v1.8.5
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Some unit tests will actually try to use X25519 which is not allowed in FIPS mode
+              export GODEBUG=fips140=on
+            fi
+
+            # Pass 1: Sigstore / TUF–heavy packages (reduce ~/.sigstore contention)
+            CGO_ENABLED=0 go test -count=1 -p=1 -parallel=1 -v \
+              ./pkg/cosign ./pkg/imageverification/imageverifiers/cosign
+
+            # Pass 2: policy engine (timing / cache–sensitive under load)
+            CGO_ENABLED=0 go test -count=1 -p=1 -parallel=1 -v ./pkg/engine
+
+            # Pass 3: cmd + remaining pkg/... (no duplicate runs)
+            # Exclude cleanup/deleting controllers: TestReconcile_ClampPastNextExecution is flaky near minute boundaries
+            CGO_ENABLED=0 go test -count=1 -v \
+              ./cmd/background-controller/... \
+              $(go list ./pkg/... | grep -v -E \
+                '/pkg/cosign$|/pkg/imageverification/imageverifiers/cosign$|/pkg/engine$|/pkg/controllers/cleanup$|/pkg/controllers/deleting$')
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.16.3
+            output: ${target.dir}/usr/local/bin/kyverno-background-controller
+            packages: ./cmd/background-controller
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kyverno-background-controller
+          target: /usr/local/bin/kyverno-background-controller
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kyverno-background-controller
+          target: /opt/docker/sbom/kyverno-background-controller
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Kyverno Background Controller image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/kyverno-background-controller
+ports:
+  - 9443/tcp
+  - 443/tcp

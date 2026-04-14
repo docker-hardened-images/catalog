@@ -1,0 +1,248 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Keycloak 26.x (dev)
+image: dhi.io/keycloak
+variant: dev
+tags:
+  - 26-dev
+  - 26.5-dev
+  - 26.5.7-dev
+  - 26-debian13-dev
+  - 26.5-debian13-dev
+  - 26.5.7-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-30"
+vars:
+  COMMIT_SHA: 97c2dad98597b17efae79006be47a51c6f5a72e9
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "26.5"
+  DEBIAN_EPOCH_MAJOR_VERSION: "26"
+  DEBIAN_EPOCH_VERSION: 26.5.7
+  JRE_REFERENCE: dhi/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+  JRE_VERSION: 21.0.10.7
+  MAVEN_REFERENCE: dhi/maven:3.9.14-jdk21-debian13-dev@sha256:9c885f816cf835044e4a2961112d4edc1ac88fb2133a4d156a18d0a401d333b1
+  MAVEN_VERSION: 3.9.14
+  NODE_BUILD_REFERENCE: dhi/node:24.14.1-debian13-dev@sha256:a9b1f5135d4bd2358dc124655803bc6e7e1ecebb6c3fd375174efdf8d3df4bfc
+  NODE_BUILD_VERSION: 24.14.1
+  NODE_REFERENCE: sha256:f4224680e72e4235283a924b299ae04eea7b722dc732cd2353a80ea274538c9c
+  NODE_VERSION: 24.11.1
+  VERSION: 26.5.7
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: keycloak
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:9c885f816cf835044e4a2961112d4edc1ac88fb2133a4d156a18d0a401d333b1
+      contents:
+        packages:
+          - coreutils
+          - findutils
+          - sed
+          - bash
+          - tar
+          - gzip
+        files:
+          - url: git+https://github.com/keycloak/keycloak.git#26.5.7
+            checksum: 97c2dad98597b17efae79006be47a51c6f5a72e9
+            path: ${source.dir}/keycloak
+            spdx:
+              name: keycloak
+              version: 26.5.7
+              packages:
+                - name: keycloak
+                  purl: pkg:dhi/keycloak@26.5.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:24.14.1-debian13-dev@sha256:a9b1f5135d4bd2358dc124655803bc6e7e1ecebb6c3fd375174efdf8d3df4bfc
+            includes:
+              - opt/**
+              - usr/local/bin
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: mvn/patch@v1
+          with:
+            dependencies: /src/patch/mvn-deps.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/keycloak
+            properties: /src/patch/mvn-properties.json
+        - name: build ui
+          work-dir: ${source.dir}/keycloak/js
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat >> pnpm-workspace.yaml << EOF
+
+            overrides:
+              "jquery@3.4.1": "3.5.0"  # CVE-2020-11023, CVE-2020-11022, CVE-2020-23064
+              "mdast-util-to-hast@13.2.0": "13.2.1"    # CVE-2025-66400
+              "@remix-run/router": "1.23.2" # CVE-2026-22029
+              "lodash-es": "4.18.0" # CVE-2026-4800, CVE-2026-2950
+              "lodash": "4.18.0" # CVE-2026-4800, CVE-2026-2950
+              "simple-git": "3.32.3" # CVE-2026-28292
+              "yaml": "2.8.3" # CVE-2026-33532
+            EOF
+
+            pnpm i --prefer-offline --ignore-scripts
+
+            pnpm build
+        - name: build
+          work-dir: ${source.dir}/keycloak
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn install -Dskip.pnpm -DskipTests -DskipExamples -DskipTestsuite -DskipProtoLock=true -Pdistribution
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/keycloak"
+            tar -xzf "${source.dir}/keycloak/quarkus/dist/target/keycloak-26.5.7.tar.gz" -C "${target.dir}/opt/keycloak" --strip-components=1
+
+            "${target.dir}/opt/keycloak/bin/kc.sh" build
+
+            chown -R 65532:65532 "${target.dir}/opt/keycloak"
+        - name: prepare for sbom
+          work-dir: ${source.dir}/keycloak/js
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm $(find . -type d -name 'node_modules') -rf
+
+            export PATH="/opt/nodejs/node-v24.14.1/bin:$PATH"
+
+            pnpm config --global set node-linker hoisted
+            pnpm install -prod --prefer-offline --frozen-lockfile --ignore-scripts
+        - name: sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: keycloak-ui
+            source: ${source.dir}/keycloak/js/node_modules
+      paths:
+        - type: file
+          path: /src/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: image/keycloak/patch/mvn-properties.json
+        - type: file
+          path: /src/patch/mvn-deps.json
+          uid: 0
+          gid: 0
+          source: image/keycloak/patch/mvn-deps.json
+      outputs:
+        - source: ${target.dir}/opt/keycloak
+          target: /opt/keycloak
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/keycloak
+          target: /opt/docker/sbom/keycloak
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/keycloak-ui
+          target: /opt/docker/sbom/keycloak-ui
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+      includes:
+        - opt/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  KC_RUN_IN_CONTAINER: "true"
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+paths:
+  - type: directory
+    path: /opt/keycloak/data/tmp
+    uid: 65532
+    gid: 65532
+    mode: "0744"
+annotations:
+  org.opencontainers.image.description: A minimal Keycloak image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /opt/keycloak/bin/kc.sh
+cmd:
+  - start
+  - --optimized
+ports:
+  - 8080/tcp
+  - 8443/tcp
+  - 9000/tcp

@@ -1,0 +1,229 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico CNI 3.31.x
+image: dhi.io/calico-cni
+variant: runtime
+tags:
+  - "3"
+  - "3.31"
+  - 3.31.4
+  - v3.31.4
+  - 3-debian13
+  - 3.31-debian13
+  - 3.31.4-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-22"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  CNI_PLUGINS_COMMIT_SHA: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+  CNI_PLUGINS_VERSION: v1.9.1
+  COMMIT_SHA: 6d8c39b0ef01cdf92960e08f704c7198ffe42eac
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "3.31"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.31.4
+  VERSION: 3.31.4
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: calico-cni
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      contents:
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.31.4
+            checksum: 6d8c39b0ef01cdf92960e08f704c7198ffe42eac
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico-cni
+              version: 3.31.4
+              packages:
+                - name: calico
+                  purl: pkg:golang/github.com/projectcalico/calico@v3.31.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (3.30)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            deps:
+              - github.com/containernetworking/plugins@v1.9.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test calico cni
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          runs: |
+            set -eux -o pipefail
+
+            # Run tests excluding packages that require external environment setup
+            # - pkg/install requires CERTS_PATH env variable
+            # - tests/ requires Kubernetes environment
+            CGO_ENABLED=0 go test \
+              $(go list ./... | grep -v -E '(pkg/install|tests)')
+        - name: build calico install binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X 'main.VERSION=v3.31.4'
+            output: ${target.dir}/opt/cni/bin/install
+            packages: ./cmd/install
+        - name: build calico cni binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X 'main.VERSION=v3.31.4'
+              - -X 'github.com/projectcalico/calico/pkg/buildinfo.Version=v3.31.4'
+            output: ${target.dir}/opt/cni/bin/calico
+            packages: ./cmd/calico
+      outputs:
+        - source: ${target.dir}/opt/cni/bin/install
+          target: /opt/cni/bin/install
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/cni/bin/calico
+          target: /opt/cni/bin/calico
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/calico-cni
+          target: /opt/docker/sbom/calico-cni
+          uid: 0
+          gid: 0
+    - name: containernetworking-plugins
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      contents:
+        files:
+          - url: git+https://github.com/containernetworking/plugins.git#v1.9.1
+            checksum: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+            path: /go/src/github.com/containernetworking/plugins
+            spdx:
+              name: containernetworking-plugins
+              version: v1.9.1
+              packages:
+                - name: containernetworking-plugins
+                  purl: pkg:golang/github.com/containernetworking/plugins@v1.9.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: download cni plugins dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: build ipam host-local plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/host-local
+            packages: ./plugins/ipam/host-local
+        - name: build main loopback plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/loopback
+            packages: ./plugins/main/loopback
+        - name: build meta portmap plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/portmap
+            packages: ./plugins/meta/portmap
+        - name: build meta tuning plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/tuning
+            packages: ./plugins/meta/tuning
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cni/bin/host-local
+          target: /opt/cni/bin/host-local
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/loopback
+          target: /opt/cni/bin/loopback
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/portmap
+          target: /opt/cni/bin/portmap
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/tuning
+          target: /opt/cni/bin/tuning
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/containernetworking-plugins
+          target: /opt/docker/sbom/containernetworking-plugins
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /opt/cni/bin/calico-ipam
+    uid: 0
+    gid: 0
+    source: /opt/cni/bin/calico
+annotations:
+  org.opencontainers.image.description: A minimal Calico CNI plugin for Kubernetes networking and network policy
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /opt/cni/bin/install

@@ -1,0 +1,250 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Fluentd 1.19.x (dev)
+image: dhi.io/fluentd
+variant: dev
+tags:
+  - 1-dev
+  - 1.19-dev
+  - 1.19.2-dev
+  - 1-debian13-dev
+  - 1.19-debian13-dev
+  - 1.19.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BINUTILS_DIGEST: sha256:5333b3178ad52e503d8c44eb5a4073a039842ebc3403f6b6c6658a11c0b200e7
+  BINUTILS_VERSION: "2.46"
+  EXPAT_DIGEST: sha256:6bb36827ea9fdd0cb5064de572070fc0c82a1443054c91c60a63a80da0552897
+  EXPAT_VERSION: 2.7.5
+  GEM_HOME: /usr/local/bundle
+  JEMALLOC_VERSION: 5.3.0
+  RUBY_DEV_DIGEST: sha256:6a831f2fd64bc9059b06ebcc15744b3c2864c9b0f699e6a15b8a9915408ed7c0
+  RUBY_DEV_VERSION: 3.4.9
+  RUBY_DIGEST: sha256:592924af2938d054b1eb121aa1f7721b2ff7e74c993603d481f79ee51acaa6bd
+  RUBY_VERSION: 3.4.9
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.2
+  VERSION: 1.19.2
+contents:
+  packages:
+    - '!binutils'
+    - '!binutils-aarch64-linux-gnu'
+    - '!binutils-common'
+    - '!binutils-x86-64-linux-gnu'
+    - '!gawk'
+    - '!libbinutils'
+    - '!libctf-nobfd0'
+    - '!libctf0'
+    - '!libelogind0'
+    - '!libexpat1'
+    - '!libgprofng0'
+    - '!libsframe1'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - build-essential
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - git
+    - grep
+    - libc-bin
+    - libcrypt1
+    - libstdc++6
+    - libyaml-0-2
+    - libyaml-dev
+    - make
+    - mawk
+    - perl-base
+    - sed
+    - tini
+    - tzdata
+    - util-linux
+  builds:
+    - name: jemalloc
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - coreutils
+          - grep
+          - libc-bin
+          - sed
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.0
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            # Don't use MADV_FREE to reduce memory usage and improve stability
+            # https://github.com/fluent/fluentd-docker-image/pull/350
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+      outputs:
+        - source: ${target.dir}/opt/jemalloc/lib
+          target: /usr/lib/libjemalloc
+          uid: 0
+          gid: 0
+    - name: fluent
+      uses: dhi.io/ruby:3.4.9-debian13-dev@sha256:6a831f2fd64bc9059b06ebcc15744b3c2864c9b0f699e6a15b8a9915408ed7c0
+      privileged: true
+      environment:
+        BUNDLE_APP_CONFIG: ${BUNDLE_APP_CONFIG}
+        BUNDLE_SILENCE_ROOT_WARNING: ${BUNDLE_SILENCE_ROOT_WARNING}
+        GEM_HOME: /usr/local/bundle
+        LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}
+      contents:
+        packages:
+          - bash
+      pipeline:
+        - name: install fluentd gem
+          runs: |
+            set -eux -o pipefail
+
+            gem install oj
+            gem install json
+            gem install rexml
+            gem install async
+            gem install async-http
+            gem install fluentd -v 1.19.2 --no-doc
+        - name: test-dev
+          runs: |
+            set -eux -o pipefail
+
+            fluent-binlog-reader --version
+            fluent-ca-generate --version
+            fluent-cat --version
+            fluent-ctl --version
+            fluent-debug --help # --version does not exist
+            fluent-gem --version
+            fluent-plugin-config-format --version
+            fluent-plugin-generate --version
+
+            if gem list -i cap > /dev/null 2>&1; then
+              fluent-cap-ctl --version
+            fi
+      outputs:
+        - source: /usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /usr/local/bundle
+          target: /usr/local/bundle
+          uid: 0
+          gid: 0
+        - source: /usr/local/include
+          target: /usr/local/include
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/pkg-binutils:2.46-debian13@sha256:5333b3178ad52e503d8c44eb5a4073a039842ebc3403f6b6c6658a11c0b200e7
+      uid: 0
+      gid: 0
+    - name: dhi.io/pkg-expat:2.7.5-debian13@sha256:6bb36827ea9fdd0cb5064de572070fc0c82a1443054c91c60a63a80da0552897
+      includes:
+        - usr/**
+        - var/lib/dpkg/status.d
+      uid: 0
+      gid: 0
+    - name: dhi.io/ruby:3.4.9-debian13@sha256:592924af2938d054b1eb121aa1f7721b2ff7e74c993603d481f79ee51acaa6bd
+      includes:
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  BUNDLE_APP_CONFIG: /usr/local/bundle
+  BUNDLE_SILENCE_ROOT_WARNING: "true"
+  DEBIAN_FRONTEND: noninteractive
+  GEM_HOME: /usr/local/bundle
+  PATH: /usr/local/bundle/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /etc/fluent
+    uid: 0
+    gid: 0
+  - type: directory
+    path: /etc/fluent/plugins
+    uid: 0
+    gid: 0
+  - type: directory
+    path: /var/log/fluent
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/fluentd/bin/docker-entrypoint.sh
+  - type: file
+    path: /etc/fluent/fluent.conf
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/fluentd/config/fluent.conf
+annotations:
+  org.opencontainers.image.description: A minimal Fluentd image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/docker-entrypoint.sh
+cmd:
+  - fluentd
+ports:
+  - 24224/tcp
+  - 5140/tcp

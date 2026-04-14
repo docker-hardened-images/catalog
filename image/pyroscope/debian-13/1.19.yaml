@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Pyroscope 1.19.x
+image: dhi.io/pyroscope
+variant: runtime
+tags:
+  - "1.19"
+  - 1.19.3
+  - 1.19-debian13
+  - 1.19.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-13"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: a87f0e07037f4a81d76f5267a51e9b147135099a
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.3
+  VERSION: 1.19.3
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: pyroscope-go
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      contents:
+        files:
+          - url: git+https://github.com/grafana/pyroscope.git#v1.19.3
+            checksum: a87f0e07037f4a81d76f5267a51e9b147135099a
+            path: /go/src/github.com/grafana/pyroscope
+            spdx:
+              name: pyroscope
+              version: 1.19.3
+              packages:
+                - name: pyroscope
+                  purl: pkg:golang/github.com/grafana/pyroscope@1.19.3
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.15 or 1.16 or 1.18 or 1.19 or 1.20 only)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/grafana/pyroscope
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -v -count=1 ./... ./lidia/...
+        - name: build pyroscope
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            output: ${target.dir}/usr/local/bin/pyroscope
+            packages: ./cmd/pyroscope
+        - name: build profilecli
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            output: ${target.dir}/usr/local/bin/profilecli
+            packages: ./cmd/profilecli
+      outputs:
+        - source: ${target.dir}/usr/local/bin/pyroscope
+          target: /usr/bin/pyroscope
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/profilecli
+          target: /usr/bin/profilecli
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/grafana/pyroscope/cmd/pyroscope/pyroscope.yaml
+          target: /etc/pyroscope/config.yaml
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/pyroscope
+          target: /opt/docker/sbom/pyroscope
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: pyroscope
+  users:
+    - name: pyroscope
+      uid: 10001
+      gid: 10001
+  groups:
+    - name: pyroscope
+      gid: 10001
+      members:
+        - pyroscope
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /data
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+  - type: directory
+    path: /data-compactor
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Grafana Pyroscope image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/bin/pyroscope
+cmd:
+  - -config.file=/etc/pyroscope/config.yaml
+ports:
+  - 4040/tcp

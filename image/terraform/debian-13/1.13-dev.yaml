@@ -1,0 +1,179 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Terraform 1.13.x (dev)
+image: dhi.io/terraform
+variant: dev
+tags:
+  - 1.13-dev
+  - 1.13.5-dev
+  - 1.13-debian13-dev
+  - 1.13.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-20"
+vars:
+  COMMIT_SHA: 328813676aec7a4e2a491484f91b5e0b67847b6c
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "1.13"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.13.5
+  VERSION: 1.13.5
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - git
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: terraform
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/hashicorp/terraform
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/hashicorp/terraform.git#v1.13.5
+            checksum: 328813676aec7a4e2a491484f91b5e0b67847b6c
+            path: /go/src/github.com/hashicorp/terraform
+            spdx:
+              name: terraform
+              version: 1.13.5
+              packages:
+                - name: terraform
+                  purl: pkg:golang/github.com/hashicorp/terraform@v1.13.5
+                  license: BUSL-1.1
+            uid: 65532
+            gid: 65532
+      pipeline:
+        - name: update go dependencies (1.13 only)
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+              - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+              - github.com/cloudflare/circl@v1.6.3
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+            tidy: true
+        - runs: |
+            set -eux -o pipefail
+
+            # Module cache is root-owned after go/bump; test and build run as nonroot.
+            mkdir -p /go/pkg/mod/cache/download
+            chown -R nonroot:nonroot /go/pkg/mod
+        - name: run tests
+          run-as: nonroot
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # v1.13.x: TestTelemetryInTests panics in go-cmp on OTel attribute.Set unexported fields (module skew in upstream go.mod).
+            if [ "1.13" = "1.13" ]; then
+              go test ./... -skip '^TestTelemetryInTests$'
+            else
+              go test ./...
+            fi
+        - name: build
+          uses: go/build@v1
+          run-as: nonroot
+          with:
+            ldflags:
+              - -X github.com/hashicorp/terraform/version.dev=no
+            output: ./terraform
+      accounts:
+        root: true
+        run-as: root
+        users:
+          - name: nonroot
+            uid: 65532
+            gid: 65532
+        groups:
+          - name: nonroot
+            gid: 65532
+            members:
+              - nonroot
+      outputs:
+        - source: /go/src/github.com/hashicorp/terraform/terraform
+          target: /usr/local/bin/terraform
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/terraform
+          target: /opt/docker/sbom/terraform
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+annotations:
+  org.opencontainers.image.description: A minimal Terraform image
+  org.opencontainers.image.licenses: BUSL-1.1
+entrypoint:
+  - /usr/local/bin/terraform

@@ -1,0 +1,156 @@
+# syntax=dhi.io/build:2-debian13
+
+name: MetalLB Speaker 0.x
+image: dhi.io/metallb-speaker
+variant: runtime
+tags:
+  - "0"
+  - "0.15"
+  - 0.15.3
+  - 0-debian13
+  - 0.15-debian13
+  - 0.15.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 85bfb4f0e0d35090c514e1e5e1a21a8bbd253518
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  SEMVER_MAJOR_MINOR_VERSION: "0.15"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.15.3
+  VERSION: 0.15.3
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: metallb speaker
+      uses: dhi.io/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+      contents:
+        files:
+          - url: git+https://github.com/metallb/metallb.git#v0.15.3
+            checksum: 85bfb4f0e0d35090c514e1e5e1a21a8bbd253518
+            path: /go/src/github.com/metallb/metallb
+            spdx:
+              name: metallb-speaker
+              version: 0.15.3
+              packages:
+                - name: metallb-speaker
+                  purl: pkg:docker/dhi/metallb-speaker@0.15.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: download metallb dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/metallb/metallb/speaker
+          with:
+            deps:
+              - golang.org/x/net@v0.45.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/metallb/metallb/speaker
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build metallb speaker
+          uses: go/build@v1
+          work-dir: /go/src/github.com/metallb/metallb/speaker
+          with:
+            ldflags:
+              - -X go.universe.tf/metallb/internal/version.gitCommit=85bfb4f0e0d35090c514e1e5e1a21a8bbd253518
+              - -X go.universe.tf/metallb/internal/version.gitBranch=0.15.3
+            output: ${target.dir}/usr/bin/speaker
+        - name: build cp-tool
+          uses: go/build@v1
+          work-dir: /go/src/github.com/metallb/metallb
+          with:
+            ldflags:
+              - -X go.universe.tf/metallb/internal/version.gitCommit=85bfb4f0e0d35090c514e1e5e1a21a8bbd253518
+              - -X go.universe.tf/metallb/internal/version.gitBranch=0.15.3
+            output: ${target.dir}/cp-tool
+            packages: ./frr-tools/cp-tool/cp-tool.go
+        - name: build frr-metrics
+          uses: go/build@v1
+          work-dir: /go/src/github.com/metallb/metallb
+          with:
+            ldflags:
+              - -X go.universe.tf/metallb/internal/version.gitCommit=85bfb4f0e0d35090c514e1e5e1a21a8bbd253518
+              - -X go.universe.tf/metallb/internal/version.gitBranch=0.15.3
+            output: ${target.dir}/frr-metrics
+            packages: ./frr-tools/metrics/exporter.go
+        - name: copy frr-reloader script
+          runs: |
+            set -eux -o pipefail
+
+            cp /go/src/github.com/metallb/metallb/frr-tools/reloader/frr-reloader.sh "${target.dir}/frr-reloader.sh"
+            chmod +x "${target.dir}/frr-reloader.sh"
+      outputs:
+        - source: ${target.dir}/usr/bin/speaker
+          target: /usr/bin/speaker
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/cp-tool
+          target: /cp-tool
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/frr-metrics
+          target: /frr-metrics
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/frr-reloader.sh
+          target: /frr-reloader.sh
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/metallb-speaker
+          target: /opt/docker/sbom/metallb-speaker
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal MetalLB Speaker image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/speaker

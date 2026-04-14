@@ -1,0 +1,200 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Ceph CSI 3.15.x
+image: dhi.io/cephcsi
+variant: runtime
+tags:
+  - "3.15"
+  - 3.15.1
+  - 3.15-debian13
+  - 3.15.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-25"
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+  CEPH_REFERENCE: dhi/ceph:19.3.0-debian13@sha256:a3802057be47719865b13fa4be4ad1be6736bb814de47b8962c7b4e4788c7327
+  COMMIT_SHA: f8b8b1416793ceaf6e01592b77f438e8b4c3b6b8
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "3.15"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.15.1
+  VERSION: 3.15.1
+contents:
+  packages:
+    - '!base-files'
+    - e2fsprogs
+    - kmod
+    - libnl-genl-3-200
+    - mount
+    - nfs-common
+    - util-linux
+    - xfsprogs
+  builds:
+    - name: cephcsi
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/github.com/ceph/ceph-csi
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - gcc
+          - libcephfs-dev
+          - librados-dev
+          - librbd-dev
+          - make
+          - pkg-config
+        files:
+          - url: git+https://github.com/ceph/ceph-csi.git#v3.15.1
+            checksum: f8b8b1416793ceaf6e01592b77f438e8b4c3b6b8
+            path: /go/src/github.com/ceph/ceph-csi
+            spdx:
+              name: ceph-csi
+              version: 3.15.1
+              packages:
+                - name: ceph-csi
+                  purl: pkg:golang/github.com/ceph/ceph-csi@3.15.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch 3.15-only Go CVEs
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            # ceph-csi 3.15 vendors its module graph tightly enough that go/bump
+            # trips over selinux's new filepath-securejoin dependency before the
+            # follow-up vendor sync can run. Keep the 3.15-only CVE fixes together
+            # under explicit go get/tidy/vendor, following the same pattern used in
+            # other complex Go images.
+            go get golang.org/x/crypto@v0.46.0               # CVE-2025-47913, CVE-2025-47914, CVE-2025-58181
+            go get github.com/opencontainers/selinux@v1.13.0 # CVE-2025-52881
+            go get google.golang.org/grpc@v1.79.3            # CVE-2026-33186
+            go mod tidy
+            go mod vendor
+        - name: Update go dependencies (3.15 only)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+            download: true
+        - name: run targeted go tests
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          environment:
+            GOFLAGS: -mod=vendor -buildvcs=false
+          runs: |
+            set -eux -o pipefail
+
+            # Match upstream's current Makefile, which keeps ceph_preview enabled
+            # because ceph-csi still builds/tests against go-ceph preview APIs.
+            go test -tags=ceph_preview ./cmd/...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X github.com/ceph/ceph-csi/internal/util.GitCommit=f8b8b1416793ceaf6e01592b77f438e8b4c3b6b8
+              - -X github.com/ceph/ceph-csi/internal/util.DriverVersion=3.15.1
+            output: ${target.dir}/usr/local/bin/cephcsi
+            packages: ./cmd
+            tags: ceph_preview
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cephcsi
+          target: /usr/local/bin/cephcsi
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/ceph-csi
+          target: /opt/docker/sbom/cephcsi
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/ceph:19.3.0-debian13@sha256:a3802057be47719865b13fa4be4ad1be6736bb814de47b8962c7b4e4788c7327
+      includes:
+        - opt/python
+        - opt/python-*/**
+        - usr/bin/bash
+        - usr/bin/sh
+        - usr/lib/*-linux-gnu/lib*.so*
+        - usr/local/bin/ceph
+        - usr/local/bin/ceph-fuse
+        - usr/local/bin/ceph.real
+        - usr/local/bin/rbd
+        - usr/local/bin/rbd-nbd
+        - usr/local/lib/ceph/**
+        - usr/local/lib/libceph*.so*
+        - usr/local/lib/librados*.so*
+        - usr/local/lib/librbd*.so*
+        - usr/local/lib/python*/site-packages/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:03c0bb735cf243aac5adbb9da6f1ffea6f157a17531573b8c5f8e1329a3cc724
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /etc/ceph
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /etc/mtab
+    uid: 0
+    gid: 0
+    source: /proc/mounts
+  - type: symlink
+    path: /usr/sbin/mount.ceph
+    uid: 0
+    gid: 0
+    source: /usr/bin/mount
+annotations:
+  org.opencontainers.image.description: A minimal Ceph CSI image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/cephcsi

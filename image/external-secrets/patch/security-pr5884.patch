@@ -1,0 +1,319 @@
+diff --git a/providers/v1/akeyless/akeyless.go b/providers/v1/akeyless/akeyless.go
+index 1f794baf9..82143f68e 100644
+--- a/providers/v1/akeyless/akeyless.go
++++ b/providers/v1/akeyless/akeyless.go
+@@ -432,7 +432,9 @@ func (a *Akeyless) SecretExists(ctx context.Context, ref esv1.PushSecretRemoteRe
+ 	var secretMap map[string]any
+ 	err = json.Unmarshal(secret, &secretMap)
+ 	if err != nil {
+-		return false, err
++		// Do not return the raw error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return false, errors.New("failed to unmarshal secret: invalid JSON format")
+ 	}
+ 	_, ok := secretMap[ref.GetProperty()]
+ 	return ok, nil
+@@ -468,7 +470,9 @@ func (a *Akeyless) PushSecret(ctx context.Context, secret *corev1.Secret, psd es
+ 		err = json.Unmarshal(secretRemote, &data)
+ 	}
+ 	if err != nil {
+-		return err
++		// Do not return the raw error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return errors.New("failed to unmarshal remote secret: invalid JSON format")
+ 	}
+ 	if psd.GetProperty() == "" {
+ 		for k, v := range secret.Data {
+@@ -517,7 +521,9 @@ func (a *Akeyless) DeleteSecret(ctx context.Context, psr esv1.PushSecretRemoteRe
+ 	var secretMap map[string]any
+ 	err = json.Unmarshal(secret, &secretMap)
+ 	if err != nil {
+-		return err
++		// Do not return the raw error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return errors.New("failed to unmarshal secret for deletion: invalid JSON format")
+ 	}
+ 	delete(secretMap, psr.GetProperty())
+ 	if len(secretMap) == 0 {
+diff --git a/providers/v1/akeyless/akeyless_test.go b/providers/v1/akeyless/akeyless_test.go
+index 2168b986d..3c0718345 100644
+--- a/providers/v1/akeyless/akeyless_test.go
++++ b/providers/v1/akeyless/akeyless_test.go
+@@ -315,7 +315,7 @@ func TestSecretExists(t *testing.T) {
+ 		makeValidAkeylessTestCase(
+ 			"fail unmarshal",
+ 		).SetExpectVal(false).
+-			SetExpectErr("invalid character 'd' looking for beginning of value").
++			SetExpectErr("failed to unmarshal secret: invalid JSON format").
+ 			SetExpectInput(&testingfake.PushSecretData{Property: "prop"}).
+ 			SetMockClient(fakeakeyless.New().SetGetSecretFn(func(_ string, _ int32) (string, error) { return "daenerys", nil })),
+ 		makeValidAkeylessTestCase("no property").SetExpectVal(false).SetExpectInput(&testingfake.PushSecretData{Property: "prop"}).
+@@ -343,7 +343,7 @@ func TestPushSecret(t *testing.T) {
+ 	testCases := []*akeylessTestCase{
+ 		nilProviderTestCase(),
+ 		failGetTestCase(),
+-		makeValidAkeylessTestCase("fail unmarshal").SetExpectErr("invalid character 'm' looking for beginning of value").
++		makeValidAkeylessTestCase("fail unmarshal").SetExpectErr("failed to unmarshal remote secret: invalid JSON format").
+ 			SetMockClient(fakeakeyless.New().SetGetSecretFn(func(_ string, _ int32) (string, error) { return "morgoth", nil })),
+ 		makeValidAkeylessTestCase("create new secret").SetExpectInput(&corev1.Secret{Data: map[string][]byte{"test": []byte("test")}}).
+ 			SetMockClient(fakeakeyless.New().SetGetSecretFn(func(_ string, _ int32) (string, error) { return "", ErrItemNotExists }).
+diff --git a/providers/v1/kubernetes/client.go b/providers/v1/kubernetes/client.go
+index 316c85cdc..5f988ee01 100644
+--- a/providers/v1/kubernetes/client.go
++++ b/providers/v1/kubernetes/client.go
+@@ -308,7 +308,9 @@ func getMapFromValues(property, jsonStr string) (map[string][]byte, error) {
+ 		}
+ 		err = json.Unmarshal(decoded, &tmpMap)
+ 		if err != nil {
+-			return nil, err
++			// Do not return the raw error as json.Unmarshal errors may contain
++			// sensitive secret data in the error message
++			return nil, errors.New("failed to unmarshal secret: invalid JSON format")
+ 		}
+ 		for k, v := range tmpMap {
+ 			b, err := esutils.JSONMarshal(v)
+diff --git a/providers/v1/kubernetes/client_test.go b/providers/v1/kubernetes/client_test.go
+index 2d1ff3cf8..7d59d9275 100644
+--- a/providers/v1/kubernetes/client_test.go
++++ b/providers/v1/kubernetes/client_test.go
+@@ -352,12 +352,12 @@ func TestGetSecretMap(t *testing.T) {
+ 		Namespace    string
+ 	}
+ 	tests := []struct {
+-		name   string
+-		fields fields
+-		ref    esv1.ExternalSecretDataRemoteRef
+-
+-		want    map[string][]byte
+-		wantErr bool
++		name       string
++		fields     fields
++		ref        esv1.ExternalSecretDataRemoteRef
++		want       map[string][]byte
++		wantErr    bool
++		wantErrMsg string
+ 	}{
+ 		{
+ 			name: "successful case metadata without property",
+@@ -427,6 +427,31 @@ func TestGetSecretMap(t *testing.T) {
+ 			},
+ 			wantErr: true,
+ 		},
++		{
++			// Security regression test: ensure json.Unmarshal errors don't leak secret data
++			name: "invalid JSON in property does not leak secret data in error message",
++			fields: fields{
++				Client: &fakeClient{
++					t: t,
++					secretMap: map[string]*v1.Secret{
++						"mysec": {
++							Data: map[string][]byte{
++								// Base64 encoded invalid JSON containing sensitive data
++								// "secret-api-key-8019210420527506405" base64 encoded
++								"nested": []byte("c2VjcmV0LWFwaS1rZXktODAxOTIxMDQyMDUyNzUwNjQwNQ=="),
++							},
++						},
++					},
++				},
++				Namespace: "default",
++			},
++			ref: esv1.ExternalSecretDataRemoteRef{
++				Key:      "mysec",
++				Property: "nested",
++			},
++			wantErr:    true,
++			wantErrMsg: "failed to unmarshal secret: invalid JSON format",
++		},
+ 	}
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+@@ -440,6 +465,16 @@ func TestGetSecretMap(t *testing.T) {
+ 				t.Errorf("ProviderKubernetes.GetSecretMap() error = %v, wantErr %v", err, tt.wantErr)
+ 				return
+ 			}
++			if tt.wantErrMsg != "" && err != nil {
++				if !strings.Contains(err.Error(), tt.wantErrMsg) {
++					t.Errorf("ProviderKubernetes.GetSecretMap() error = %v, wantErrMsg %v", err, tt.wantErrMsg)
++				}
++				// Security regression: ensure error doesn't contain sensitive data
++				sensitiveData := "secret-api-key-8019210420527506405"
++				if strings.Contains(err.Error(), sensitiveData) {
++					t.Errorf("SECURITY REGRESSION: Error message contains secret data! error = %v", err)
++				}
++			}
+ 			if !reflect.DeepEqual(got, tt.want) {
+ 				t.Errorf("ProviderKubernetes.GetSecretMap() = %v, want %v", got, tt.want)
+ 			}
+diff --git a/providers/v1/scaleway/client.go b/providers/v1/scaleway/client.go
+index bfd7aa3a0..8dea28e9a 100644
+--- a/providers/v1/scaleway/client.go
++++ b/providers/v1/scaleway/client.go
+@@ -296,7 +296,9 @@ func (c *client) GetSecretMap(ctx context.Context, ref esv1.ExternalSecretDataRe
+ 
+ 	err = json.Unmarshal(rawData, &structuredData)
+ 	if err != nil {
+-		return nil, err
++		// Do not return the raw error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return nil, errors.New("failed to unmarshal secret: invalid JSON format")
+ 	}
+ 
+ 	values := make(map[string][]byte)
+diff --git a/providers/v1/secretserver/client.go b/providers/v1/secretserver/client.go
+index 4eb7affa3..c46babf5d 100644
+--- a/providers/v1/secretserver/client.go
++++ b/providers/v1/secretserver/client.go
+@@ -128,7 +128,9 @@ func (c *client) GetSecretMap(ctx context.Context, ref esv1.ExternalSecretDataRe
+ 
+ 	err = json.Unmarshal([]byte(secret.Fields[0].ItemValue), &secretData)
+ 	if err != nil {
+-		return nil, err
++		// Do not return the raw error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return nil, errors.New("failed to unmarshal secret: invalid JSON format")
+ 	}
+ 
+ 	data := make(map[string][]byte)
+diff --git a/providers/v1/vault/client_push.go b/providers/v1/vault/client_push.go
+index 4afe42505..954ed675d 100644
+--- a/providers/v1/vault/client_push.go
++++ b/providers/v1/vault/client_push.go
+@@ -91,7 +91,9 @@ func (c *client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
+ 			var incomingSecretMap map[string]any
+ 			err = json.Unmarshal(value, &incomingSecretMap)
+ 			if err != nil {
+-				return fmt.Errorf("error unmarshalling incoming secret value: %w", err)
++				// Do not wrap the original error with %w as json.Unmarshal errors
++				// may contain sensitive secret data in the error message
++				return errors.New("error unmarshalling incoming secret value: invalid JSON format")
+ 			}
+ 			// Compare maps instead of raw bytes to handle JSON field ordering and formatting
+ 			if maps.Equal(vaultSecret, incomingSecretMap) {
+@@ -117,7 +119,9 @@ func (c *client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
+ 	} else {
+ 		err = json.Unmarshal(value, &secretVal)
+ 		if err != nil {
+-			return fmt.Errorf("error unmarshalling vault secret: %w", err)
++			// Do not wrap the original error with %w as json.Unmarshal errors
++			// may contain sensitive secret data in the error message
++			return errors.New("error unmarshalling vault secret: invalid JSON format")
+ 		}
+ 	}
+ 	secretToPush := secretVal
+diff --git a/providers/v1/vault/client_push_test.go b/providers/v1/vault/client_push_test.go
+index c9eb7b956..4578d6eb7 100644
+--- a/providers/v1/vault/client_push_test.go
++++ b/providers/v1/vault/client_push_test.go
+@@ -784,6 +784,71 @@ func TestPushSecret(t *testing.T) {
+ 				err: nil,
+ 			},
+ 		},
++		// Security regression tests: ensure json.Unmarshal errors don't leak secret data
++		"InvalidJSONDoesNotLeakSecretDataKV1": {
++			reason: "json.Unmarshal error should not leak secret data in error message",
++			value:  []byte(`not-valid-json-contains-secret-8019210420527506405`),
++			args: args{
++				store: makeValidSecretStoreWithVersion(esv1.VaultKVStoreV1).Spec.Provider.Vault,
++				vLogical: &fake.Logical{
++					ReadWithDataWithContextFn: fake.NewReadWithContextFn(nil, nil),
++				},
++			},
++			want: want{
++				err: errors.New("error unmarshalling vault secret: invalid JSON format"),
++			},
++		},
++		"InvalidJSONDoesNotLeakSecretDataKV2": {
++			reason: "json.Unmarshal error should not leak secret data in error message",
++			value:  []byte(`not-valid-json-contains-secret-8019210420527506405`),
++			args: args{
++				store: makeValidSecretStoreWithVersion(esv1.VaultKVStoreV2).Spec.Provider.Vault,
++				vLogical: &fake.Logical{
++					ReadWithDataWithContextFn: fake.NewReadWithContextFn(nil, nil),
++				},
++			},
++			want: want{
++				err: errors.New("error unmarshalling vault secret: invalid JSON format"),
++			},
++		},
++		"InvalidJSONCompareDoesNotLeakSecretDataKV1": {
++			reason: "json.Unmarshal error during comparison should not leak secret data",
++			value:  []byte(`invalid-json-with-api-key-12345`),
++			args: args{
++				store: makeValidSecretStoreWithVersion(esv1.VaultKVStoreV1).Spec.Provider.Vault,
++				vLogical: &fake.Logical{
++					ReadWithDataWithContextFn: fake.NewReadWithContextFn(map[string]any{
++						fakeKey: fakeValue,
++						"custom_metadata": map[string]any{
++							managedBy: managedByESO,
++						},
++					}, nil),
++				},
++			},
++			want: want{
++				err: errors.New("error unmarshalling incoming secret value: invalid JSON format"),
++			},
++		},
++		"InvalidJSONCompareDoesNotLeakSecretDataKV2": {
++			reason: "json.Unmarshal error during comparison should not leak secret data",
++			value:  []byte(`invalid-json-with-api-key-12345`),
++			args: args{
++				store: makeValidSecretStoreWithVersion(esv1.VaultKVStoreV2).Spec.Provider.Vault,
++				vLogical: &fake.Logical{
++					ReadWithDataWithContextFn: fake.NewReadWithContextFn(map[string]any{
++						"data": map[string]any{
++							fakeKey: fakeValue,
++						},
++						"custom_metadata": map[string]any{
++							managedBy: managedByESO,
++						},
++					}, nil),
++				},
++			},
++			want: want{
++				err: errors.New("error unmarshalling incoming secret value: invalid JSON format"),
++			},
++		},
+ 	}
+ 
+ 	for name, tc := range tests {
+@@ -817,6 +882,14 @@ func TestPushSecret(t *testing.T) {
+ 					t.Errorf("\nTesting SetSecret:\nName: %v\nReason: %v\nWant error: %v\nGot error got nil", name, tc.reason, tc.want.err)
+ 				}
+ 			}
++
++			// Security regression: ensure error messages don't leak secret data
++			if err != nil && tc.value != nil {
++				secretData := string(tc.value)
++				if strings.Contains(err.Error(), secretData) {
++					t.Errorf("\nSECURITY REGRESSION: Error message contains secret data!\nName: %v\nSecret data: %v\nError: %v", name, secretData, err)
++				}
++			}
+ 		})
+ 	}
+ }
+diff --git a/providers/v1/volcengine/client.go b/providers/v1/volcengine/client.go
+index 8d4efe34f..637fe093a 100644
+--- a/providers/v1/volcengine/client.go
++++ b/providers/v1/volcengine/client.go
+@@ -83,7 +83,9 @@ func (c *Client) GetSecretMap(ctx context.Context, ref esapi.ExternalSecretDataR
+ 
+ 	var rawSecretMap map[string]json.RawMessage
+ 	if err := json.Unmarshal(value, &rawSecretMap); err != nil {
+-		return nil, fmt.Errorf("failed to unmarshal secret: %w", err)
++		// Do not wrap the original error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return nil, errors.New("failed to unmarshal secret: invalid JSON format")
+ 	}
+ 
+ 	secretMap := make(map[string][]byte, len(rawSecretMap))
+@@ -138,7 +140,9 @@ func (c *Client) getSecretValue(ctx context.Context, ref esapi.ExternalSecretDat
+ func extractProperty(secret []byte, property string) ([]byte, error) {
+ 	var secretMap map[string]json.RawMessage
+ 	if err := json.Unmarshal(secret, &secretMap); err != nil {
+-		return nil, fmt.Errorf("failed to unmarshal secret: %w", err)
++		// Do not wrap the original error as json.Unmarshal errors may contain
++		// sensitive secret data in the error message
++		return nil, errors.New("failed to unmarshal secret: invalid JSON format")
+ 	}
+ 
+ 	value, ok := secretMap[property]

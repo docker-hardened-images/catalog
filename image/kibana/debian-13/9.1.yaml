@@ -1,0 +1,268 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kibana 9.1.x
+image: dhi.io/kibana
+variant: runtime
+tags:
+  - "9.1"
+  - 9.1.10
+  - 9.1-debian13
+  - 9.1.10-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-23"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  COMMIT_SHA: 3c5e7066866006c39ba40861ab0c05b6406ed357
+  GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  NODE_DIGEST: sha256:d9b9517c1a3f5725510bcbac00936b4f4c1eadc96fa8c4116b4f2e2ddb348fee
+  NODE_MAJOR_VERSION: "22"
+  NODE_VERSION: 22.22.2
+  SEMVER_MAJOR_MINOR_VERSION: "9.1"
+  SEMVER_MAJOR_VERSION: "9"
+  SEMVER_VERSION: 9.1.10
+  VERSION: 9.1.10
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - coreutils
+    - findutils
+    - grep
+    - libstdc++6
+    - tini
+  builds:
+    - name: kibana
+      uses: dhi.io/node:22.22.2-debian13-dev@sha256:d9b9517c1a3f5725510bcbac00936b4f4c1eadc96fa8c4116b4f2e2ddb348fee
+      contents:
+        packages:
+          - bash
+          - gzip
+          - jq
+        files:
+          - url: git+https://github.com/elastic/kibana.git#v9.1.10
+            checksum: 3c5e7066866006c39ba40861ab0c05b6406ed357
+            path: ${source.dir}/kibana
+            spdx:
+              name: kibana
+              version: 9.1.10
+              packages:
+                - name: kibana
+                  purl: pkg:dhi/kibana@9.1.10
+                  license: Apache-2.0
+            uid: 65532
+            gid: 65532
+      pipeline:
+        - name: update node engine
+          work-dir: ${source.dir}/kibana
+          runs: |
+            set -eux -o pipefail
+
+            ls -la package.json
+
+            # Upstream pins a patch version of Node, which may not receive security-related updates,
+            # so update this requirement to the current version of Node.
+
+            # First, check the major version of Node against the build version;
+            # this prevents unintentional major version bumps
+            REQUIRED_VERSION=$(sed -nr "s/\"node\": \"([0-9]+)\.[0-9]+\.[0-9]+\".*/\1/p" package.json | tr -d " ")
+            if [ "$REQUIRED_VERSION" != "22" ]; then
+              echo "Error: upstream requirement for Node v$REQUIRED_VERSION not met by build v22."
+              echo "Error: if version change is intentional, update this version verification logic."
+              exit 1
+            fi
+
+            # Then, update the "engines.node" requirement to reference the current Node build version;
+            # otherwise the upstream version check logic will fail
+            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"22.22.2\"/g" package.json
+        - name: bump yarn deps (9.1)
+          uses: yarn/bump@v1
+          run-as: "65532"
+          privileged: true
+          with:
+            patches: ${source.dir}/patches/yarn-patches_9.1.json
+            skip-yarn-add: true
+            yarn-root: ${source.dir}/kibana
+        - name: update direct dependencies (9.1)
+          work-dir: ${source.dir}/kibana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # yarn/bump@v1 sets **/ resolutions but skips yarn add to avoid verification failure.
+            # Manually update direct dependencies and yarn.lock to respect the resolutions.
+            yarn add '@langchain/core@^0.3.80' 'langchain@^0.3.37' '@langchain/community@^0.3.58' --exact
+            yarn add 'tar@^7.5.10' --exact                       # CVE-2026-23745, CVE-2026-23950, CVE-2026-24842, CVE-2026-26960, GHSA-qffp-2rhf-9h96
+            yarn add 'undici@^6.23.0' --exact                    # CVE-2026-2229, CVE-2026-1528, CVE-2026-1526, CVE-2026-1525, CVE-2026-1527
+            yarn add '@modelcontextprotocol/sdk@^1.25.2' --exact # CVE-2026-0621
+            yarn add 'langsmith@^0.4.6' --exact                  # CVE-2026-25528
+            yarn add 'minimatch@^3.1.3' --exact                  # CVE-2026-26996, CVE-2026-27904, CVE-2026-27903
+            yarn add 'handlebars@4.7.9' --exact                  # CVE-2026-33937, CVE-2026-33938, CVE-2026-33939, CVE-2026-33940, CVE-2026-33941, GHSA-7rx3-28cr-v5wh, CVE-2026-33916, GHSA-442j-39wm-28r2
+            yarn add 'node-forge@1.4.0' --exact                  # CVE-2026-33891, CVE-2026-33894, CVE-2026-33895, CVE-2026-33896
+            yarn add 'lodash@4.18.1' --exact                     # CVE-2026-4800, CVE-2025-13465, CVE-2026-2950
+            yarn add 'yaml@2.8.3' --exact                        # CVE-2026-33532
+            yarn add 'yauzl@3.2.1' --exact                       # CVE-2026-31988
+        - name: git patch elasticsearch
+          uses: git/patch@v1
+          with:
+            dir: ${source.dir}/kibana
+            patch: ${source.dir}/patches/expr-eval_9.1.patch
+        - name: build kibana
+          work-dir: ${source.dir}/kibana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            echo "startup --batch" > .bazelrc.user
+
+            mkdir -p ~/.moon/plugins/toolchains
+            # Work around intermittent Moon CI rename failures while installing
+            # toolchain plugins from ~/.moon/temp into the global store.
+            export MOON_TOOLCHAIN_FORCE_GLOBALS=1
+
+            yarn kbn bootstrap
+
+            # Symlink the build system's Node to the `.node_binaries` directory, since
+            # Kibana bundles Node alongside its application code. The build system will
+            # grab a license and `bin` files from Node to bundle in the final app dir.
+            # Note: There's a hardcoded dependency on `linux-x64` directory in the build tooling
+            # when it gathers package info to create NOTICE.txt, so create that directory always,
+            # regardless of arch.
+            mkdir -p "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-x64"
+            ln -s "/opt/nodejs/node-v22.22.2" "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-x64/extract"
+            if [ ${NODE_ARCH} != "x64" ]; then
+              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-${NODE_ARCH}"
+              ln -s "/opt/nodejs/node-v22.22.2" "${source.dir}/kibana/.node_binaries/22.22.2/glibc-217/linux-${NODE_ARCH}/extract"
+            fi
+
+            # 1. Invoke the build script directly (instead of using "yarn build"), since the option to
+            # build the application for all platforms is hard-coded in "yarn build".
+            # 2. The initializing logic of Kibana's internal tooling will check the required Node version,
+            # download a version of Node, and verify the checksums of the downloaded binaries. These steps
+            # are not needed for our build environment, since Node is already present. This behavior is
+            # disabled with `--skip-initialize`. Other builds that aren't needed for this image are disabled
+            # with the other `--skip` options.
+            node --no-experimental-require-module -- \
+              scripts/build --skip-os-packages --skip-initialize \
+              --skip-docker-cloud-fips --skip-docker-contexts --skip-docker-ubi \
+              --skip-docker-wolfi --skip-docker-cloud --skip-docker-cloud-fips \
+              --skip-docker-serverless --skip-docker-fips
+
+            mkdir -p "${target.dir}/opt/kibana/kibana-9.1.10"
+
+            cp -r "${source.dir}/kibana/build/default/kibana-9.1.10-SNAPSHOT-linux-${GO_ARCH}"/* "${target.dir}/opt/kibana/kibana-9.1.10"
+
+            cd "${target.dir}/opt/kibana/kibana-9.1.10"
+            rm -rf data
+      paths:
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.1.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.1.json
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.2.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.2.json
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.3.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.3.json
+        - type: file
+          path: ${source.dir}/patches/expr-eval_9.1.patch
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/expr-eval_9.1.patch
+      accounts:
+        run-as: node
+        users:
+          - name: node
+            uid: 65532
+            gid: 65532
+      outputs:
+        - source: ${target.dir}/opt/kibana/kibana-9.1.10
+          target: /opt/kibana/kibana-9.1.10
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kibana
+          target: /opt/docker/sbom/kibana
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  ELASTIC_CONTAINER: "true"
+  KIBANA_VERSION: 9.1.10
+  PATH: /opt/kibana/kibana-9.1.10/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /usr/share
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/share/kibana
+    uid: 0
+    gid: 0
+    source: /opt/kibana/kibana-9.1.10
+  - type: directory
+    path: /opt/kibana/kibana-9.1.10/data
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/kibana-docker
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/kibana/bin/kibana-docker
+  - type: file
+    path: /opt/kibana/kibana-9.1.10/config/kibana.yml
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+    source: image/kibana/config/kibana.yml
+  - type: symlink
+    path: /usr/local/bin/tini
+    uid: 0
+    gid: 0
+    source: /usr/bin/tini
+annotations:
+  org.opencontainers.image.description: A minimal Kibana image
+  org.opencontainers.image.licenses: Elastic-License-2.0
+entrypoint:
+  - /usr/local/bin/tini
+  - --
+cmd:
+  - /usr/local/bin/kibana-docker
+ports:
+  - 5601/tcp

@@ -1,0 +1,193 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Harbor Portal 2.12.x
+image: dhi.io/harbor-portal
+variant: runtime
+tags:
+  - "2.12"
+  - 2.12.4
+  - 2.12-debian13
+  - 2.12.4-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-11-05"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 6b4981d4dd46a20481be5a3a7cdf435bc20f4dcb
+  GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
+  NGINX_REFERENCE: dhi/nginx:1.29.8-debian13@sha256:d457a278247531873df03b7fdaabd96de0b530624f8e72c73d41e6b81c4487dd
+  NODE_REFERENCE: dhi/node:24.14.1-debian13-dev@sha256:fb98a60ace2f3348dbae632fb385c3a3a247f32ebe394b3bf5a9e8d704dbecb5
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.4
+  VERSION: 2.12.4
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: harbor-portal
+      uses: dhi.io/node:24.14.1-debian13-dev@sha256:fb98a60ace2f3348dbae632fb385c3a3a247f32ebe394b3bf5a9e8d704dbecb5
+      contents:
+        packages:
+          - build-essential
+          - bash
+          - coreutils
+          - python3-setuptools
+          - yq
+        files:
+          - url: git+https://github.com/goharbor/harbor.git#v2.12.4
+            checksum: 6b4981d4dd46a20481be5a3a7cdf435bc20f4dcb
+            path: ${source.dir}/goharbor/harbor
+            spdx:
+              name: harbor-portal
+              version: 2.12.4
+              packages:
+                - name: harbor-portal
+                  purl: pkg:github/goharbor/harbor@2.12.4#src/portal
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: copy swagger file
+          work-dir: ${source.dir}/goharbor/harbor
+          runs: |
+            set -eux -o pipefail
+
+            cp api/v2.0/swagger.yaml src/portal/swagger.yaml
+        - name: npm install
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install --unsafe-perm
+            npm run postinstall
+
+            npm run generate-build-timestamp
+        - name: build node portal
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          runs: |
+            set -eux -o pipefail
+
+            node --max_old_space_size=2048 'node_modules/@angular/cli/bin/ng' build --configuration production
+        - name: build node swagger
+          work-dir: ${source.dir}/goharbor/harbor/src/portal/app-swagger-ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install
+            npm run build
+        - name: build swagger
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          runs: |
+            set -eux -o pipefail
+
+            yq . swagger.yaml > dist/swagger.json
+        - name: reinstall dependencies for sbom
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          runs: |
+            set -eux -o pipefail
+
+            # Clean and reinstall only production dependencies for accurate SBOM
+            rm -rf node_modules
+            npm install --omit=dev --ignore-scripts
+        - name: harbor-portal-sbom
+          uses: sbom@v1
+          with:
+            prefix: harbor-portal
+            source: ${source.dir}/goharbor/harbor/src/portal
+      outputs:
+        - source: ${source.dir}/goharbor/harbor/src/portal/dist
+          target: /usr/share/nginx/html
+          uid: 65532
+          gid: 65532
+          mode: "0755"
+        - source: ${source.dir}/goharbor/harbor/src/portal/app-swagger-ui/dist
+          target: /usr/share/nginx/html
+          uid: 65532
+          gid: 65532
+          mode: "0755"
+  artifacts:
+    - name: dhi.io/nginx:1.29.8-debian13@sha256:d457a278247531873df03b7fdaabd96de0b530624f8e72c73d41e6b81c4487dd
+      includes:
+        - '**'
+      excludes:
+        - usr/share/nginx/html/**
+        - var/lib/dpkg/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nginx
+  users:
+    - name: nginx
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nginx
+      gid: 65532
+      members:
+        - nginx
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /run
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /etc/nginx/nginx.conf
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+    source: image/harbor-portal/config/default.conf
+  - type: directory
+    path: /tmp
+    uid: 65532
+    gid: 65532
+    mode: "1777"
+  - type: directory
+    path: /cache/nginx
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Harbor Portal web interface image.
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - nginx
+  - -g
+  - daemon off;
+ports:
+  - 8080/tcp

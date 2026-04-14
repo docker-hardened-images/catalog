@@ -1,0 +1,178 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Virt Operator 1.6.x (dev)
+image: dhi.io/virt-operator
+variant: dev
+tags:
+  - 1.6-dev
+  - 1.6.4-dev
+  - 1.6-debian13-dev
+  - 1.6.4-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-11"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: ac5324e8f6e7cda1cfe92542df3ceb0cd0d8e68f
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.4
+  VERSION: 1.6.4
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: virt-operator
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      work-dir: /go/src/kubevirt.io/kubevirt
+      caches:
+        - path: /go/pkg/mod
+        - path: /root/.cache/go-build
+      contents:
+        files:
+          - url: git+https://github.com/kubevirt/kubevirt.git#v1.6.4
+            checksum: ac5324e8f6e7cda1cfe92542df3ceb0cd0d8e68f
+            path: /go/src/kubevirt.io/kubevirt
+            spdx:
+              name: virt-operator
+              version: 1.6.4
+              packages:
+                - name: virt-operator
+                  purl: pkg:golang/kubevirt.io/kubevirt@1.6.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch no-op
+          uses: go/bump@v1
+          environment:
+            GOWORK: "off"
+          with:
+            deps: []
+            download: false
+        - name: manual patch vulnerable Go dependencies
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/crypto@v0.47.0               # CVE-2025-47913, CVE-2025-22869
+            go get github.com/opencontainers/selinux@v1.13.0 # CVE-2025-52881
+            go get golang.org/x/oauth2@v0.27.0               # CVE-2025-22868
+            go get golang.org/x/net@v0.45.0                  # CVE-2025-58190, CVE-2025-47911
+            go get google.golang.org/grpc@v1.79.3            # CVE-2026-33186 (CRITICAL)
+
+            if [ "1.6.4" = "1.8.1" ]; then
+              go get github.com/opencontainers/runc@v1.2.8 # CVE-2025-52881, CVE-2025-52565, CVE-2025-31133
+            fi
+
+            go mod tidy
+            # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
+            if [ -f go.work ]; then
+              go work vendor
+            else
+              go mod vendor
+            fi
+        - name: test
+          work-dir: /go/src/kubevirt.io/kubevirt/cmd/virt-operator
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/kubevirt.io/kubevirt/cmd/virt-operator
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.6.4
+              - -X kubevirt.io/client-go/version.gitCommit=ac5324e8f6e7cda1cfe92542df3ceb0cd0d8e68f
+            output: ${target.dir}/usr/local/bin/virt-operator
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: image/virt-operator/patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/virt-operator
+          target: /usr/local/bin/virt-operator
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/virt-operator
+          target: /opt/docker/sbom/virt-operator
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Virt Operator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/virt-operator

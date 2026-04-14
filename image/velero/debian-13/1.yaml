@@ -1,0 +1,203 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Velero 1.x
+image: dhi.io/velero
+variant: runtime
+tags:
+  - "1"
+  - "1.18"
+  - 1.18.0
+  - 1-debian13
+  - 1.18-debian13
+  - 1.18.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 6adcf06b5b0e6fb93998d3e101e2cbdc134fa3c3
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+  RESTIC_COMMIT_SHA: 7d0aa7f2e30546fba7c8f1c0bae4d6704e3d8423
+  RESTIC_VERSION: 0.18.1
+  SEMVER_MAJOR_MINOR_VERSION: "1.18"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.18.0
+  VERSION: 1.18.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: restic
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      contents:
+        files:
+          - url: git+https://github.com/restic/restic.git#v0.18.1
+            checksum: 7d0aa7f2e30546fba7c8f1c0bae4d6704e3d8423
+            path: /go/src/github.com/restic/restic
+            spdx:
+              name: restic
+              version: 0.18.1
+              packages:
+                - name: restic
+                  purl: pkg:dhi/restic@0.18.1
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/restic/restic
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - golang.org/x/crypto@v0.45.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/restic/restic
+          with:
+            ldflags:
+              - -X main.Version=0.18.1
+            output: ${target.dir}/usr/local/bin/restic
+            packages: ./cmd/restic
+            tags:
+              - disable_grpc_modules
+      outputs:
+        - source: ${target.dir}/usr/local/bin/restic
+          target: /usr/local/bin/restic
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/restic
+          target: /opt/docker/sbom/restic
+          uid: 0
+          gid: 0
+    - name: velero
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:f23dec55948a320ec1663d6d40d7fd052fcf7b2ecb43c3ecdf1900843403d301
+      contents:
+        files:
+          - url: git+https://github.com/vmware-tanzu/velero.git#v1.18.0
+            checksum: 6adcf06b5b0e6fb93998d3e101e2cbdc134fa3c3
+            path: /go/src/github.com/vmware-tanzu/velero
+            spdx:
+              name: velero
+              version: 1.18.0
+              packages:
+                - name: velero
+                  purl: pkg:dhi/velero@1.18.0
+                  license: Apache-2.0
+                - name: velero-restore-helper
+                  purl: pkg:dhi/velero-restore-helper@1.18.0
+                  license: Apache-2.0
+                - name: velero-helper
+                  purl: pkg:dhi/velero-helper@1.18.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/vmware-tanzu/velero
+          with:
+            deps:
+              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+              - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            GOLDFLAGS="-X github.com/vmware-tanzu/velero/pkg/buildinfo.Version=1.18.0
+                       -X github.com/vmware-tanzu/velero/pkg/buildinfo.GitSHA=6adcf06b5b0e6fb93998d3e101e2cbdc134fa3c3"
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            for bin in velero velero-restore-helper velero-helper; do
+              CGO_ENABLED=0 go build -C /go/src/github.com/vmware-tanzu/velero \
+                -ldflags="$GOLDFLAGS" \
+                -o "${target.dir}/usr/local/bin/$bin" \
+                ./cmd/$bin
+            done
+      outputs:
+        - source: ${target.dir}/usr/local/bin/velero
+          target: /usr/local/bin/velero
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/velero-restore-helper
+          target: /usr/local/bin/velero-restore-helper
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/velero-helper
+          target: /usr/local/bin/velero-helper
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/velero
+          target: /opt/docker/sbom/velero
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: cnb
+  users:
+    - name: cnb
+      uid: 1001
+      gid: 1000
+  groups:
+    - name: cnb
+      gid: 1000
+      members:
+        - cnb
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /velero
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/velero
+  - type: symlink
+    path: /velero-restore-helper
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/velero-restore-helper
+  - type: symlink
+    path: /velero-helper
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/velero-helper
+annotations:
+  org.opencontainers.image.description: A minimal Velero image
+  org.opencontainers.image.licenses: Apache-2.0

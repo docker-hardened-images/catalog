@@ -1,0 +1,247 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Uptime Kuma 1.x (dev)
+image: dhi.io/uptime-kuma
+variant: dev
+tags:
+  - 1-dev
+  - 1.23-dev
+  - 1.23.17-dev
+  - 1-debian13-dev
+  - 1.23-debian13-dev
+  - 1.23.17-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 40ec7158534a28e6f8b431a628c53133c327c539
+  NODE_BUILD_REFERENCE: dhi/node:24.14.1-debian13-dev@sha256:fb98a60ace2f3348dbae632fb385c3a3a247f32ebe394b3bf5a9e8d704dbecb5
+  NODE_BUILD_VERSION: 24.14.1
+  NODE_RUNTIME_REFERENCE: dhi/node:24.14.1-debian13@sha256:59de022a711c1e7bab2941994fe13e09577291d6d66989f32b33a8f904174977
+  NODE_RUNTIME_VERSION: 24.14.1
+  SEMVER_MAJOR_MINOR_VERSION: "1.23"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.23.17
+  VERSION: 1.23.17
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - iputils-ping
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: uptime-kuma
+      uses: dhi.io/node:24.14.1-debian13-dev@sha256:fb98a60ace2f3348dbae632fb385c3a3a247f32ebe394b3bf5a9e8d704dbecb5
+      contents:
+        packages:
+          - jq
+          - gzip
+        files:
+          - url: git+https://github.com/louislam/uptime-kuma.git#1.23.17
+            checksum: 40ec7158534a28e6f8b431a628c53133c327c539
+            path: ${source.dir}/uptime-kuma
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bump.json
+            npm-root: ${source.dir}/uptime-kuma
+        - name: regenerate package-lock after bump
+          work-dir: ${source.dir}/uptime-kuma
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Force a clean install to ensure overrides are applied
+            rm -rf node_modules
+            npm install
+        - name: patch undici in package-lock
+          work-dir: ${source.dir}/uptime-kuma
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            keys_to_remove='[
+              "node_modules/@actions/http-client/node_modules/undici",
+              "node_modules/@testcontainers/hivemq/node_modules/undici",
+              "node_modules/@testcontainers/mariadb/node_modules/undici",
+              "node_modules/@testcontainers/mssqlserver/node_modules/undici",
+              "node_modules/@testcontainers/rabbitmq/node_modules/undici",
+              "node_modules/testcontainers/node_modules/undici"
+            ]'
+
+            if ! jq -e '.packages | type == "object"' package-lock.json > /dev/null 2>&1; then
+              echo "[ERROR] package-lock.json does not contain a top-level .packages object"
+              exit 1
+            fi
+
+            found=$(jq -r --argjson keys "${keys_to_remove}" '. as $pl | [ $keys[] | select($pl.packages[.] != null) ] | length' package-lock.json)
+            if [ "$found" -lt 1 ]; then
+              echo "[ERROR] No expected undici lockfile keys found; refusing to patch."
+              jq -r '.packages | keys[] | select(test("undici"))' package-lock.json | head -50 || true
+              exit 1
+            fi
+
+            jq --argjson keys "${keys_to_remove}" '. as $pl | reduce ($keys[]) as $k ($pl ; del(.packages[$k]))' package-lock.json > package-lock.json.tmp
+            mv package-lock.json.tmp package-lock.json
+
+            rm -rf node_modules
+            npm install
+
+            if jq -e '.packages | to_entries[] | select(.value.name=="undici" and .value.version=="5.29.0")' package-lock.json > /dev/null; then
+              echo "[ERROR] undici@5.29.0 still present in package-lock.json after patch"
+              exit 1
+            fi
+        - name: install and build
+          work-dir: ${source.dir}/uptime-kuma
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # npm install already ran in the previous step, so skip npm ci here
+            if [ "1" = "1" ]; then
+              npm test # ensure our version bumps have not broken anything
+            else
+              npm run test-backend || true # Run backend tests only (skip E2E tests which require Playwright/browser dependencies)
+            fi
+            npm run build
+            # Prune dev dependencies while preserving the node_modules with overridden tar versions
+            npm prune --omit=dev
+        - name: copy app files
+          work-dir: ${source.dir}/uptime-kuma
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/src"
+
+            # Copy over app and dependencies, plus extra files referenced during runtime
+            # (`package.json`, `util.js`), ignoring tests/, public/, config/, docker/,
+            # and src/ directories
+            cp -r package.json dist db extra server node_modules "${target.dir}"
+            cp src/util.js "${target.dir}/src/util.js"
+        - name: prepare frontend workspace
+          work-dir: ${source.dir}/uptime-kuma
+          runs: |
+            set -eux -o pipefail
+
+            # Generate a workspace and `package.json` for the frontend by filtering
+            # out dev dependencies from existing package
+            mkdir frontend
+            jq --slurp '
+              .[0] as $pkg |
+              .[1] as $excl |
+              $pkg.devDependencies |
+              to_entries |
+              map(
+                select(
+                  [.key] | inside($excl) | not
+                )
+              ) |
+              from_entries |
+              {
+                name: "frontend",
+                version: "1.23.17",
+                dependencies: .
+              }' package.json ./hack/exclude-dev-dependencies.json > ./frontend/package.json
+            cp package.json package.json.original
+            jq '. | .workspaces = ["frontend"]' package.json.original > package.json
+        - name: generate frontend sbom
+          work-dir: ${source.dir}/uptime-kuma
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install --workspace=frontend --package-lock-only
+
+            mkdir "${target.dir}/sbom"
+            npm sbom --workspace=frontend --package-lock-only --sbom-format=spdx > "${target.dir}/sbom/.spdx.dhi-uptime-kuma-frontend.json"
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: image/uptime-kuma/patch
+        - type: file
+          path: ${source.dir}/uptime-kuma/hack/exclude-dev-dependencies.json
+          uid: 0
+          gid: 0
+          source: image/uptime-kuma/patch/exclude-dev-dependencies.json
+      outputs:
+        - source: ${target.dir}
+          target: /app
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/
+          target: /opt/docker/sbom/
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/sbom/
+          target: /opt/docker/sbom/dhi-uptime-kuma-frontend
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/node:24.14.1-debian13@sha256:59de022a711c1e7bab2941994fe13e09577291d6d66989f32b33a8f904174977
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: node
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: node
+      gid: 1000
+      members:
+        - node
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /app
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /app/data
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Uptime Kuma image
+  org.opencontainers.image.licenses: MIT
+cmd:
+  - node
+  - /app/server/server.js
+ports:
+  - 3001/tcp
