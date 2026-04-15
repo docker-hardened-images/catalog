@@ -367,7 +367,7 @@ The following steps outline the general migration process.
 1. **Find hardened images for your app.**
 
    A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
-   Envoy images are available in versions 1.32.x, 1.33.x, 1.34.x, and 1.35.x.
+   Envoy images are available in versions 1.32.x, 1.33.x, 1.35.x, and 1.35.x.
 
 1. **Update the base image in your Dockerfile.**
 
