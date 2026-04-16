@@ -1,0 +1,278 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Rook Ceph 1.19.x
+image: dhi.io/rook-ceph
+variant: runtime
+tags:
+  - "1"
+  - "1.19"
+  - 1.19.3
+  - 1-debian13
+  - 1.19-debian13
+  - 1.19.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-20"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  CEPH_REFERENCE: dhi/ceph:20.3.0-debian13@sha256:f819d15ace0be6bd71b6062d88d3e67bbcd17f068559fc238cccc20965a54752
+  COMMIT_SHA: 4b80a90cb8a0e4d71279cc10562463dd1670a82c
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:864e29b832256ea526c820872bd1a2be7b48b45c019501f432b2326e044c6d41
+  S5CMD_COMMIT_SHA: 991c9fbc16709341b4bac04513232a1445941f63
+  S5CMD_VERSION: 2.3.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.3
+  VERSION: 1.19.3
+contents:
+  packages:
+    - '!base-files'
+    - iproute2
+  builds:
+    - name: rook
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:864e29b832256ea526c820872bd1a2be7b48b45c019501f432b2326e044c6d41
+      work-dir: /go/src/github.com/rook/rook
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+        files:
+          - url: git+https://github.com/rook/rook.git#v1.19.3
+            checksum: 4b80a90cb8a0e4d71279cc10562463dd1670a82c
+            path: /go/src/github.com/rook/rook
+            spdx:
+              name: rook
+              version: 1.19.3
+              packages:
+                - name: rook
+                  purl: pkg:golang/github.com/rook/rook@1.19.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+            download: true
+        - name: run targeted go tests
+          work-dir: /go/src/github.com/rook/rook
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GOFLAGS: -buildvcs=false
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go test ./cmd/rook/...
+        - name: build rook
+          uses: go/build@v1
+          work-dir: /go/src/github.com/rook/rook
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            ldflags:
+              - -X github.com/rook/rook/pkg/version.Version=1.19.3
+            output: ${target.dir}/usr/local/bin/rook
+            packages: ./cmd/rook
+        - name: stage rook helper assets
+          work-dir: /go/src/github.com/rook/rook
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 images/ceph/toolbox.sh "${target.dir}/usr/local/bin/toolbox.sh"
+            install -D -m 0755 images/ceph/set-ceph-debug-level "${target.dir}/usr/local/bin/set-ceph-debug-level"
+
+            mkdir -p "${target.dir}/etc/ceph-monitoring"
+            cp -a deploy/examples/monitoring/. "${target.dir}/etc/ceph-monitoring/"
+
+            mkdir -p "${target.dir}/etc/rook-external/test-data"
+            cp -a deploy/examples/create-external-cluster-resources.* "${target.dir}/etc/rook-external/"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/rook
+          target: /usr/local/bin/rook
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/toolbox.sh
+          target: /usr/local/bin/toolbox.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/set-ceph-debug-level
+          target: /usr/local/bin/set-ceph-debug-level
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/etc/ceph-monitoring
+          target: /etc/ceph-monitoring
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/rook-external
+          target: /etc/rook-external
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/rook
+          target: /opt/docker/sbom/rook
+          uid: 0
+          gid: 0
+    - name: s5cmd
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:864e29b832256ea526c820872bd1a2be7b48b45c019501f432b2326e044c6d41
+      work-dir: /go/src/github.com/peak/s5cmd
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+          - git
+        files:
+          - url: git+https://github.com/peak/s5cmd.git#v2.3.0
+            checksum: 991c9fbc16709341b4bac04513232a1445941f63
+            path: /go/src/github.com/peak/s5cmd
+            spdx:
+              name: s5cmd
+              version: 2.3.0
+              packages:
+                - name: s5cmd
+                  purl: pkg:golang/github.com/peak/s5cmd/v2@2.3.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build s5cmd
+          uses: go/build@v1
+          work-dir: /go/src/github.com/peak/s5cmd
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/local/bin/s5cmd
+      outputs:
+        - source: ${target.dir}/usr/local/bin/s5cmd
+          target: /usr/local/bin/s5cmd
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/s5cmd
+          target: /opt/docker/sbom/s5cmd
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/ceph:20.3.0-debian13@sha256:f819d15ace0be6bd71b6062d88d3e67bbcd17f068559fc238cccc20965a54752
+      includes:
+        - etc/ld.so.conf.d/ceph.conf
+        - etc/logrotate.d/ceph
+        - opt/**
+        - run/ceph
+        - run/ceph/**
+        - usr/**
+        - var/lib/ceph
+        - var/lib/ceph/**
+        - var/log/ceph
+        - var/log/ceph/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: rook
+  users:
+    - name: ceph
+      uid: 167
+      gid: 167
+    - name: rook
+      uid: 2016
+      gid: 2016
+  groups:
+    - name: ceph
+      gid: 167
+      members:
+        - ceph
+    - name: rook
+      gid: 2016
+      members:
+        - rook
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  LD_LIBRARY_PATH: /usr/local/lib
+  PATH: /opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONPATH: /usr/local/lib/python3.13/site-packages
+paths:
+  - type: directory
+    path: /etc/ceph
+    uid: 167
+    gid: 167
+    mode: "0755"
+  - type: directory
+    path: /etc/ceph-monitoring
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/rook-external
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/rook-external/test-data
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /run/ceph
+    uid: 167
+    gid: 167
+    mode: "0755"
+  - type: directory
+    path: /var/lib/ceph
+    uid: 167
+    gid: 167
+    mode: "0755"
+  - type: directory
+    path: /var/log/ceph
+    uid: 167
+    gid: 167
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Rook Ceph image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/rook
