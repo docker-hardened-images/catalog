@@ -1,0 +1,253 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cilium Envoy 1.17.x
+image: dhi.io/cilium-envoy
+variant: runtime
+tags:
+  - "1.17"
+  - 1.17.13
+  - 1.17-debian13
+  - 1.17.13-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-02-04"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 7.7.1
+  CILIUM_COMMIT_SHA: b0547c9f09de0088acdd34f6e1e1aeb992d23837
+  CILIUM_ENVOY_COMMIT_SHA: 8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de
+  CILIUM_ENVOY_VERSION: 1.35.9
+  CLANG_VERSION: "18"
+  GO_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:864e29b832256ea526c820872bd1a2be7b48b45c019501f432b2326e044c6d41
+  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572
+  SEMVER_MAJOR_MINOR_VERSION: "1.17"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.17.13
+  VERSION: 1.17.13
+contents:
+  packages:
+    - '!base-files'
+    - ca-certificates
+    - libatomic1
+  builds:
+    - name: cilium-envoy
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:864e29b832256ea526c820872bd1a2be7b48b45c019501f432b2326e044c6d41
+      environment:
+        PATH: /opt/bazel/bin:/opt/python/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /bazel-disk-cache
+        - path: /bazel-repo-cache
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - build-essential
+          - ca-certificates
+          - clang
+          - clang-18
+          - clang-format-18
+          - clang-tidy-18
+          - clang-tools-18
+          - clangd-18
+          - cmake
+          - coreutils
+          - curl
+          - gzip
+          - libatomic1
+          - libc++-18-dev
+          - libc++abi-18-dev
+          - libtool
+          - lld-18
+          - lldb-18
+          - llvm-18-dev
+          - ninja-build
+          - patch
+          - patchelf
+        files:
+          - url: git+https://github.com/cilium/proxy.git#8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de
+            path: /go/src/github.com/cilium/proxy
+            spdx:
+              name: cilium-envoy
+              version: 1.35.9
+              packages:
+                - name: proxy
+                  purl: pkg:golang/github.com/cilium/proxy@8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
+        artifacts:
+          - name: dhi.io/python:3.12.13-debian13@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572
+            includes:
+              - opt/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cilium/proxy
+          caches:
+            - path: /go/pkg/mod
+          with:
+            deps: []
+            download: true
+        - name: setup
+          work-dir: /go/src/github.com/cilium/proxy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            echo 8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de > SOURCE_VERSION
+        - name: build-proxylib
+          work-dir: /go/src/github.com/cilium/proxy/proxylib
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make test all
+
+            # Copy instead of moving so that tests find the artifact.
+            install -D libcilium.so ${target.dir}/usr/lib/libcilium.so
+        - name: build-proxy
+          work-dir: /go/src/github.com/cilium/proxy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            BAZEL_BUILD_OPTS=(
+              --curses=no
+              --keep_going=false
+              --verbose_failures
+              --sandbox_debug
+              --jobs=auto
+              --disk_cache=/bazel-disk-cache
+              --repository_cache=/bazel-repo-cache
+              --experimental_guard_against_concurrent_changes
+              --experimental_disk_cache_gc_max_size=5G
+              --experimental_disk_cache_gc_max_age=30d
+            )
+
+            # # Configure FIPS BoringSSL if requested.
+            # if [ "${target.fips}" = "true" ]; then
+            #   BAZEL_BUILD_OPTS+=(--define=boringssl=fips)
+            #   # FIPS build triggers bazelrc configs that restrict PATH; symlink python to /usr/bin
+            #   ln -sf /opt/python/bin/python3 /usr/bin/python3
+            # fi
+
+            DESTDIR=${target.dir}/ BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS[@]}" PKG_BUILD=1 V=1 \
+              make install
+        - name: envoy bazel sbom
+          work-dir: /go/src/github.com/cilium/proxy
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/envoy
+            python ${source.dir}/bin/envoy-bazel-to-spdx.py cilium-envoy 1.35.9 > /opt/docker/sbom/envoy/.spdx.envoy.json
+        - name: test-proxy
+          work-dir: /go/src/github.com/cilium/proxy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            BAZEL_BUILD_OPTS=(
+              --curses=no
+              --keep_going=false
+              --verbose_failures
+              --sandbox_debug
+              --jobs=auto
+              --disk_cache=/bazel-disk-cache
+              --repository_cache=/bazel-repo-cache
+              --experimental_guard_against_concurrent_changes
+              --experimental_disk_cache_gc_max_size=5G
+              --experimental_disk_cache_gc_max_age=30d
+            )
+
+            # Tier A (unit) + tier B (tcp integration): see envoy-tests-tier-ab.mk
+            BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS[@]}" PKG_BUILD=1 V=1 \
+              make -f Makefile -f "${source.dir}/debian-13/envoy-tests-tier-ab.mk" envoy-tests-ci
+      paths:
+        - type: file
+          path: ${source.dir}/debian-13/envoy-tests-tier-ab.mk
+          uid: 0
+          gid: 0
+          source: image/cilium-envoy/debian-13/envoy-tests-tier-ab.mk
+        - type: file
+          path: ${source.dir}/bin/envoy-bazel-to-spdx.py
+          uid: 0
+          gid: 0
+          source: image/cilium-envoy/bin/envoy-bazel-to-spdx.py
+      outputs:
+        - source: ${target.dir}/usr/bin/cilium-envoy
+          target: /usr/bin/cilium-envoy
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/cilium-envoy-starter
+          target: /usr/bin/cilium-envoy-starter
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/lib/libcilium.so
+          target: /usr/lib/libcilium.so
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cilium-envoy
+          target: /opt/docker/sbom/cilium-envoy
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/envoy
+          target: /opt/docker/sbom/envoy
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Cilium Envoy image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/cilium-envoy
