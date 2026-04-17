@@ -5,23 +5,24 @@ image: dhi.io/alertmanager
 variant: dev
 tags:
   - 0-dev
-  - 0.31-dev
-  - 0.31.1-dev
+  - 0.32-dev
+  - 0.32.0-dev
   - 0-debian13-dev
-  - 0.31-debian13-dev
-  - 0.31.1-debian13-dev
+  - 0.32-debian13-dev
+  - 0.32.0-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
-  COMMIT_SHA: 7a639ba087d6e877038cabfdaa645230f79001b8
+  COMMIT_SHA: 685a2a1c6bb01b2c17bc1bfae995cb3416c1115e
   GOLANG_REFERENCE: dhi/golang:1.25.9-debian13-dev@sha256:2714b77de923fab1c1567b41a53a8647c7f4f511cae36ad030b6de2e9037759c
-  SEMVER_MAJOR_MINOR_VERSION: "0.31"
+  NODE_REFERENCE: dhi/pkg-node:24.14.1-debian13@sha256:1b731780521d67e5895f492b6e0cf412e0411358c1f02ba7dded2b230300990b
+  SEMVER_MAJOR_MINOR_VERSION: "0.32"
   SEMVER_MAJOR_VERSION: "0"
-  SEMVER_VERSION: 0.31.1
-  VERSION: 0.31.1
+  SEMVER_VERSION: 0.32.0
+  VERSION: 0.32.0
 contents:
   packages:
     - '!base-files'
@@ -47,33 +48,57 @@ contents:
       caches:
         - path: /go/pkg/mod
       contents:
+        packages:
+          - nix-bin
         files:
-          - url: git+https://github.com/prometheus/alertmanager.git#v0.31.1
-            checksum: 7a639ba087d6e877038cabfdaa645230f79001b8
+          - url: git+https://github.com/prometheus/alertmanager.git#v0.32.0
+            checksum: 685a2a1c6bb01b2c17bc1bfae995cb3416c1115e
             path: /go/src/github.com/prometheus/alertmanager
             spdx:
               name: alertmanager
-              version: 0.31.1
+              version: 0.32.0
               packages:
                 - name: alertmanager
-                  purl: pkg:golang/github.com/prometheus/alertmanager@0.31.1
+                  purl: pkg:golang/github.com/prometheus/alertmanager@0.32.0
                   license: Apache-2.0
             uid: 0
             gid: 0
+        artifacts:
+          - name: dhi.io/pkg-node:24.14.1-debian13@sha256:1b731780521d67e5895f492b6e0cf412e0411358c1f02ba7dded2b230300990b
+            includes:
+              - opt/nodejs
+              - opt/npm
+              - usr/local/bin/node
+              - usr/local/bin/npm
+            uid: 0
+            gid: 0
       pipeline:
-        - name: fix semconv schema URL for otel SDK v1.40.0
-          uses: git/patch@v1
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          with:
-            patch: /go/src/patch/fix-semconv-schema-url.patch
         - name: update go dependencies
           uses: go/bump@v1
           work-dir: /go/src/github.com/prometheus/alertmanager
           with:
-            deps:
-              - go.opentelemetry.io/otel/sdk@v1.40.0
-              - google.golang.org/grpc@v1.79.3
+            deps: []
             download: true
+        - name: build ui
+          work-dir: /go/src/github.com/prometheus/alertmanager/ui/app
+          privileged: true
+          caches:
+            - path: /nix/store
+          runs: |
+            set -eux -o pipefail
+
+            # Install JS deps first so node_modules/.bin exists. Skip elm's postinstall:
+            # it tries to download a linux-arm64 binary that upstream never released.
+            npm ci --ignore-scripts
+
+            # Build under a nix-shell that provides a native linux-arm64 elm compiler
+            # (nixpkgs has one, upstream elm/compiler does not). --run executes the
+            # commands non-interactively inside the shell; --pure keeps host PATH out.
+            nix-shell -I nixpkgs=channel:nixpkgs-unstable -p elmPackages.elm --run '
+              set -eux -o pipefail
+              ln -sf "$(command -v elm)" node_modules/.bin/elm
+              npm run build
+            '
         - name: run tests (without acceptance tests)
           work-dir: /go/src/github.com/prometheus/alertmanager
           privileged: true
@@ -92,8 +117,8 @@ contents:
             ldflags:
               - -s
               - -w
-              - -X github.com/prometheus/common/version.Version=0.31.1
-              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.Version=0.32.0
+              - -X github.com/prometheus/common/version.Revision=685a2a1c6bb01b2c17bc1bfae995cb3416c1115e
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
             output: ${target.dir}/usr/local/bin/alertmanager
@@ -105,8 +130,8 @@ contents:
             ldflags:
               - -s
               - -w
-              - -X github.com/prometheus/common/version.Version=0.31.1
-              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.Version=0.32.0
+              - -X github.com/prometheus/common/version.Revision=685a2a1c6bb01b2c17bc1bfae995cb3416c1115e
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
             output: ${target.dir}/usr/local/bin/amtool
@@ -130,12 +155,6 @@ contents:
             set -eux -o pipefail
 
             cp -r /go/src/github.com/prometheus/alertmanager/examples/ha/alertmanager.yml ${target.dir}/alertmanager.yml
-      paths:
-        - type: file
-          path: /go/src/patch/fix-semconv-schema-url.patch
-          uid: 0
-          gid: 0
-          source: image/alertmanager/patch/fix-semconv-schema-url.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/alertmanager
           target: /usr/local/bin/alertmanager
