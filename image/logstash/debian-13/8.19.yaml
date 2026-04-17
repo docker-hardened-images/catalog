@@ -107,6 +107,10 @@ contents:
             path: ${source.dir}/patch/deps/jackson-core-2.18.6.jar
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.25.4/log4j-1.2-api-2.25.4.jar
+            path: ${source.dir}/patch/deps/log4j-1.2-api-2.25.4.jar
+            uid: 0
+            gid: 0
           - url: https://rubygems.org/downloads/jruby-openssl-0.15.5-java.gem
             path: ${source.dir}/patch/deps/jruby-openssl-0.15.5-java.gem
             uid: 0
@@ -250,6 +254,55 @@ contents:
 
             # Verify the fix was applied
             "$JAR_CMD" tf "$ei_jar" | grep -q "com/fasterxml/jackson/core/JsonFactory.class"
+        - name: patch shaded log4j-1.2-api in elastic_integration jar
+          work-dir: ${source.dir}/logstash
+          runs: |
+            set -eux -o pipefail
+
+            # CVE-2026-34479 - The logstash-filter-elastic_integration shaded JAR embeds
+            # log4j-1.2-api 2.19.0 classes from the bundled Elasticsearch distribution.
+            # Replace them with the fixed version 2.25.4.
+
+            JAR_CMD="/opt/java/openjdk/21/bin/jar"
+            log4j_fixed="${source.dir}/patch/deps/log4j-1.2-api-2.25.4.jar"
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+
+            ei_jar=$(find "$base" -path "*/logstash-filter-elastic_integration-*/vendor/jar-dependencies/co/elastic/logstash-filter-elastic_integration/*/logstash-filter-elastic_integration-*.jar" -type f | head -1)
+
+            if [ -z "$ei_jar" ]; then
+              echo "WARNING: No elastic_integration JAR found, skipping"
+              exit 0
+            fi
+
+            echo "Patching log4j-1.2-api in shaded JAR: $ei_jar"
+            work_dir="/tmp/ei_jar_log4j_patch"
+
+            mkdir -p "$work_dir"
+            cd "$work_dir"
+
+            # Extract the shaded JAR
+            "$JAR_CMD" xf "$ei_jar"
+
+            # Remove the old embedded log4j-1.2-api classes
+            rm -rf org/apache/log4j
+
+            # Extract the fixed log4j-1.2-api classes into the same location
+            "$JAR_CMD" xf "$log4j_fixed" 'org/apache/log4j'
+
+            # Update the pom metadata to reflect the new version
+            rm -rf META-INF/maven/org.apache.logging.log4j/log4j-1.2-api
+            "$JAR_CMD" xf "$log4j_fixed" 'META-INF/maven/org.apache.logging.log4j/log4j-1.2-api'
+
+            # Repack the JAR
+            rm "$ei_jar"
+            "$JAR_CMD" cf "$ei_jar" .
+
+            # Cleanup
+            cd /
+            rm -rf "$work_dir"
+
+            # Verify the fix was applied
+            "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/log4j/Category.class"
         - name: fix jruby-openssl version
           work-dir: ${source.dir}/logstash
           runs: |
