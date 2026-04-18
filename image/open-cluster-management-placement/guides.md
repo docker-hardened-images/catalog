@@ -16,6 +16,7 @@ This Docker Hardened open-cluster-management-placement image includes:
 
 - The `placement` binary built from the official Open Cluster Management releases
 - The entrypoint is the placement binary at `/usr/local/bin/placement`
+- The default command is `controller`, so `docker run` with no arguments starts the Placement Scheduling Controller
 - Configuration via command-line flags
 
 ### Run the Placement controller
@@ -25,18 +26,28 @@ Management hub installed. It cannot be run standalone outside of a Kubernetes en
 
 ### Deploy to a Kubernetes cluster
 
-The Placement controller is deployed by the OCM cluster-manager operator. To swap in the Docker Hardened Image on an
-existing OCM installation, patch the operator-managed deployment. The deployment name, container name, and namespace
-below are the defaults for a standard (non-hosted) install:
+The Placement controller is deployed by the OCM cluster-manager operator. Upstream's Deployment template passes the
+binary path as `args[0]` (`["/placement", "controller", ...]`). The hardened image has
+`ENTRYPOINT=/usr/local/bin/placement`, so that leading `/placement` arg becomes a subcommand and the container fails
+with `unknown command "/placement"`. Swap the image and drop just that first arg — hosted mode and any other flags the
+operator threads through (`--kubeconfig=...`, feature gates, etc.) are preserved:
 
 ```bash
 # Replace <tag> with the image variant you want to run
-kubectl set image deployment/cluster-manager-placement-controller \
-  placement-controller=dhi.io/open-cluster-management-placement:<tag> \
-  -n open-cluster-management-hub
+kubectl patch deployment/cluster-manager-placement-controller \
+  -n open-cluster-management-hub \
+  --type=json \
+  -p='[
+    {"op":"replace","path":"/spec/template/spec/containers/0/image","value":"dhi.io/open-cluster-management-placement:<tag>"},
+    {"op":"remove","path":"/spec/template/spec/containers/0/args/0"}
+  ]'
 ```
 
-If you renamed the ClusterManager CR or use Hosted mode, adjust the deployment name and namespace accordingly.
+The cluster-manager operator reconciles this Deployment and may revert the patch. For a lasting swap, update the
+`placementImagePullSpec` on the `ClusterManager` CR and override the operator's Deployment template, or manage the
+Placement Deployment outside the operator.
+
+If you renamed the ClusterManager CR, adjust the deployment name and namespace accordingly.
 
 ### Verify the deployment
 
