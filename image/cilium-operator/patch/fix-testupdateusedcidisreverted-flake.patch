@@ -1,0 +1,57 @@
+From 43a190fa6ba5a26414f176c12fdba8b4f9c3718c Mon Sep 17 00:00:00 2001
+From: Marco Iorio <marco.iorio@isovalent.com>
+Date: Wed, 17 Sep 2025 12:47:42 +0000
+Subject: [PATCH] test/operator: fix TestUpdateUsedCIDIsReverted flakiness
+
+Backported as a test-only patch for the DHI `cilium-operator` 1.18 FIPS
+builds.
+
+Upstream source:
+- cilium/cilium commit 43a190fa6ba5a26414f176c12fdba8b4f9c3718c
+
+Patch generation notes:
+- fetched `operator/pkg/ciliumidentity/controller_test.go` from upstream
+  `v1.18.9` and `main`
+- confirmed `v1.18.9` already contains the earlier upstream fix from
+  `8869f777a727482c57b78a0b7a57b86b32174508`
+- reduced the newer upstream follow-up to the single hunk needed for the
+  1.18.9 source layout used by this definition
+
+Why this is needed here:
+- definitions PR #37857 still fails on the `linux/arm64` `1.18-fips`
+  build in `TestUpdateUsedCIDIsReverted` even after rerunning the job
+- upstream later tightened this test to keep the label comparison inside
+  `EventuallyWithT`, avoiding a remaining race in the background
+  reconciliation path
+
+This patch does not change the shipped binary.
+---
+ operator/pkg/ciliumidentity/controller_test.go | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/operator/pkg/ciliumidentity/controller_test.go b/operator/pkg/ciliumidentity/controller_test.go
+index 9a31025..c4f6a6a 100644
+--- a/operator/pkg/ciliumidentity/controller_test.go
++++ b/operator/pkg/ciliumidentity/controller_test.go
+@@ -419,17 +419,13 @@ func TestUpdateUsedCIDIsReverted(t *testing.T) {
+ 
+ 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+ 		cids := store.List()
+-		assert.Len(ct, cids, 1)
+-		if len(cids) != 1 {
++		if !assert.Len(ct, cids, 1) {
+ 			return
+ 		}
+ 		cid = cids[0]
+ 
+-		if !cmp.Equal(cid.SecurityLabels, cid1.SecurityLabels) {
+-			t.Fatalf("expected labels %v, got %v", cid.SecurityLabels, cid1.SecurityLabels)
+-		}
++		assert.Equal(ct, cid1.SecurityLabels, cid.SecurityLabels)
+ 	}, WaitUntilTimeout, 100*time.Millisecond)
+-
+ }
+ 
+ func TestDeleteUsedCIDIsRecreated(t *testing.T) {
+-- 
+2.51.0
