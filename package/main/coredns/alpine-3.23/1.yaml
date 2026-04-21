@@ -1,0 +1,100 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-coredns
+variant: runtime
+tags:
+  - 1.14.2-alpine3.23
+  - 1.14.2-r6-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: dd1df4f5db93767a44e37638df44969503b320d2
+  GOLANG_VERSION: 1.26.2-r3
+  PACKAGE_NAME: coredns
+  REL: "6"
+  SEMVER_MAJOR_MINOR_VERSION: "1.14"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.14.2
+  VERSION: 1.14.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: coredns
+      work-dir: /go/src/github.com/coredns/coredns
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.2-r3
+          - golang-1.26-oci-config=1.26.2-r3
+          - libcap-utils
+        files:
+          - url: git+https://github.com/coredns/coredns.git#v1.14.2
+            checksum: dd1df4f5db93767a44e37638df44969503b320d2
+            path: /go/src/github.com/coredns/coredns
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/coredns/coredns/coremain.CoreVersion=1.14.2
+              - -X github.com/coredns/coredns/coremain.GitCommit=dd1df4f5db93767a44e37638df44969503b320d2
+            output: ${target.dir}/usr/bin/coredns
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/coredns/coredns/coremain.CoreVersion=1.14.2
+              - -X github.com/coredns/coredns/coremain.GitCommit=dd1df4f5db93767a44e37638df44969503b320d2
+            output: ${target.dir}/usr/bin/coredns-dev
+            packages: .
+            strip: false
+        - name: set capabilities
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_net_bind_service=p "${target.dir}/usr/bin/coredns"
+        - uses: dhi/build-pkg:0
+          with:
+            description: DNS and Service Discovery
+            files:
+              - usr/bin/coredns
+            license: Apache-2.0
+            name: coredns
+            rel: 6
+            subpackages:
+              - files:
+                  - path: usr/bin/coredns
+                    source: usr/bin/coredns-dev
+                name: coredns-dev
+            url: https://github.com/coredns/coredns
+            version: 1.14.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

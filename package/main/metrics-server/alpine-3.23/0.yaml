@@ -1,0 +1,97 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-metrics-server
+variant: runtime
+tags:
+  - 0.8.1-alpine3.23
+  - 0.8.1-r6-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 9ce65a47f9262e19e482c259ace815f01135a898
+  GOLANG_VERSION: 1.26.2-r3
+  PACKAGE_NAME: metrics-server
+  REL: "6"
+  SEMVER_MAJOR_MINOR_VERSION: "0.8"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.8.1
+  VERSION: 0.8.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: metrics-server
+      work-dir: /go/src/sigs.k8s.io/metrics-server
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.2-r3
+          - golang-1.26-oci-config=1.26.2-r3
+        files:
+          - url: git+https://github.com/kubernetes-sigs/metrics-server.git#v0.8.1
+            checksum: 9ce65a47f9262e19e482c259ace815f01135a898
+            path: /go/src/sigs.k8s.io/metrics-server
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/client-go/pkg/version.gitVersion=0.8.1
+              - -X k8s.io/client-go/pkg/version.gitCommit=9ce65a47f9262e19e482c259ace815f01135a898
+              - -X k8s.io/client-go/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/metrics-server
+            packages: ./cmd/metrics-server
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/client-go/pkg/version.gitVersion=0.8.1
+              - -X k8s.io/client-go/pkg/version.gitCommit=9ce65a47f9262e19e482c259ace815f01135a898
+              - -X k8s.io/client-go/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/metrics-server-dev
+            packages: ./cmd/metrics-server
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes metrics server
+            files:
+              - usr/bin/metrics-server
+            license: Apache-2.0
+            name: metrics-server
+            rel: 6
+            subpackages:
+              - files:
+                  - path: usr/bin/metrics-server
+                    source: usr/bin/metrics-server-dev
+                name: metrics-server-dev
+            url: https://github.com/kubernetes-sigs/metrics-server
+            version: 0.8.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

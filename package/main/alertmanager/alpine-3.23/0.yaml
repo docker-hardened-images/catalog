@@ -1,0 +1,143 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-alertmanager
+variant: runtime
+tags:
+  - 0.31.1-alpine3.23
+  - 0.31.1-r6-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7a639ba087d6e877038cabfdaa645230f79001b8
+  GOLANG_VERSION: 1.26.2-r3
+  PACKAGE_NAME: alertmanager
+  REL: "6"
+  SEMVER_MAJOR_MINOR_VERSION: "0.31"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.31.1
+  VERSION: 0.31.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: alertmanager
+      work-dir: /go/src/github.com/prometheus/alertmanager
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.2-r3
+          - golang-1.26-oci-config=1.26.2-r3
+        files:
+          - url: git+https://github.com/prometheus/alertmanager.git#v0.31.1
+            checksum: 7a639ba087d6e877038cabfdaa645230f79001b8
+            path: /go/src/github.com/prometheus/alertmanager
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: fix semconv schema URL for otel SDK v1.40.0
+          uses: git/patch@v1
+          work-dir: /go/src/github.com/prometheus/alertmanager
+          with:
+            patch: /go/src/patch/fix-semconv-schema-url.patch
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - google.golang.org/grpc@v1.79.3
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build alertmanager
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/prometheus/common/version.Version=0.31.1
+              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.BuildUser=dhi
+              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/bin/alertmanager
+            packages: ./cmd/alertmanager
+        - name: build amtool
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/prometheus/common/version.Version=0.31.1
+              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.BuildUser=dhi
+              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/bin/amtool
+            packages: ./cmd/amtool
+        - name: build alertmanager dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/prometheus/common/version.Version=0.31.1
+              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.BuildUser=dhi
+              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/bin/alertmanager-dev
+            packages: ./cmd/alertmanager
+            strip: false
+        - name: build amtool dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/prometheus/common/version.Version=0.31.1
+              - -X github.com/prometheus/common/version.Revision=7a639ba087d6e877038cabfdaa645230f79001b8
+              - -X github.com/prometheus/common/version.BuildUser=dhi
+              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
+            output: ${target.dir}/usr/bin/amtool-dev
+            packages: ./cmd/amtool
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Prometheus Alertmanager
+            files:
+              - usr/bin/alertmanager
+              - usr/bin/amtool
+            license: Apache-2.0
+            name: alertmanager
+            rel: 6
+            subpackages:
+              - files:
+                  - path: usr/bin/alertmanager
+                    source: usr/bin/alertmanager-dev
+                  - path: usr/bin/amtool
+                    source: usr/bin/amtool-dev
+                name: alertmanager-dev
+            url: https://github.com/prometheus/alertmanager
+            version: 0.31.1
+      paths:
+        - type: file
+          path: /go/src/patch/fix-semconv-schema-url.patch
+          uid: 0
+          gid: 0
+          source: package/main/alertmanager/patch/fix-semconv-schema-url.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,109 @@
+# syntax=dhi.io/build:1-alpine3.23-dev
+
+image: dhi.io/pkg-syft
+variant: runtime
+tags:
+  - 1.42.4-alpine3.23
+  - 1.42.4-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: f6189175279981a79d8d8c15669c570f15a00568
+  GOLANG_VERSION: 1.26.2-r3
+  PACKAGE_NAME: syft
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.42"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.42.4
+  VERSION: 1.42.4
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: syft
+      work-dir: /go/src/github.com/anchore/syft
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.2-r3
+          - golang-1.26-oci-config=1.26.2-r3
+        files:
+          - url: git+https://github.com/anchore/syft.git#v1.42.4
+            checksum: f6189175279981a79d8d8c15669c570f15a00568
+            path: /go/src/github.com/anchore/syft
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch disable update check
+          uses: git/patch@v1
+          with:
+            patch: disable-update-check.patch
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.40.0
+              - github.com/cloudflare/circl@v1.6.3
+              - google.golang.org/grpc@v1.79.3
+        - uses: go/hermetic@v1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=1.42.4
+              - -X main.gitDescription=1.42.4
+              - -X main.gitCommit=f6189175279981a79d8d8c15669c570f15a00568
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/syft
+            packages: ./cmd/syft
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=1.42.4
+              - -X main.gitDescription=1.42.4
+              - -X main.gitCommit=f6189175279981a79d8d8c15669c570f15a00568
+              - -X main.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/syft-dev
+            packages: ./cmd/syft
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Generate a Software Bill of Materials (SBOM) from container images and filesystems
+            files:
+              - usr/bin/syft
+            license: Apache-2.0
+            name: syft
+            rel: 1
+            subpackages:
+              - description: Generate a Software Bill of Materials (SBOM) from container images and filesystems (dev)
+                files:
+                  - path: usr/bin/syft
+                    source: usr/bin/syft-dev
+                name: syft-dev
+            url: https://github.com/anchore/syft
+            version: 1.42.4
+      paths:
+        - type: file
+          path: /go/src/github.com/anchore/syft/disable-update-check.patch
+          uid: 0
+          gid: 0
+          source: package/main/syft/patch/disable-update-check.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
