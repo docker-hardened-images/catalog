@@ -1,0 +1,76 @@
+diff --git i/core/trino-main/pom.xml w/core/trino-main/pom.xml
+index 7887921e14b..acc343d219c 100644
+--- i/core/trino-main/pom.xml
++++ w/core/trino-main/pom.xml
+@@ -20,6 +20,11 @@
+
+     <dependencies>
+
++        <dependency>
++            <groupId>org.bouncycastle</groupId>
++            <artifactId>bc-fips</artifactId>
++        </dependency>
++
+         <dependency>
+             <groupId>com.clearspring.analytics</groupId>
+             <artifactId>stream</artifactId>
+diff --git i/core/trino-main/src/main/java/io/trino/server/InternalAuthenticationManager.java w/core/trino-main/src/main/java/io/trino/server/InternalAuthenticationManager.java
+index fc14c22b38d..6bd6d0f3daf 100644
+--- i/core/trino-main/src/main/java/io/trino/server/InternalAuthenticationManager.java
++++ w/core/trino-main/src/main/java/io/trino/server/InternalAuthenticationManager.java
+@@ -28,9 +28,10 @@ import io.trino.spi.security.Identity;
+ import jakarta.ws.rs.container.ContainerRequestContext;
+ import jakarta.ws.rs.core.Response;
+
+-import javax.crypto.KDF;
+ import javax.crypto.SecretKey;
+-import javax.crypto.spec.HKDFParameterSpec;
++import javax.crypto.spec.SecretKeySpec;
++import org.bouncycastle.crypto.KDFCalculator;
++import org.bouncycastle.crypto.fips.FipsKDF;
+
+ import java.security.spec.AlgorithmParameterSpec;
+ import java.time.Instant;
+@@ -196,14 +197,21 @@ public class InternalAuthenticationManager
+     private static SecretKey expandKey(String sharedSecret)
+     {
+         try {
+-            KDF hkdf = KDF.getInstance("HKDF-SHA256");
++            byte[] key = FipsKDF.HKDF_KEY_BUILDER
++                .withPrf(FipsKDF.AgreementKDFPRF.SHA256_HMAC)
++                .build(sharedSecret.getBytes(UTF_8)).getKey();
+
+-            AlgorithmParameterSpec params =
+-                    HKDFParameterSpec.ofExtract()
+-                            .addIKM(sharedSecret.getBytes(UTF_8))
+-                            .thenExpand("internal-communication".getBytes(UTF_8), 32);
++            KDFCalculator calc = new FipsKDF.AgreementOperatorFactory()
++                .createKDFCalculator(FipsKDF.HKDF
++                    .withPRF(FipsKDF.AgreementKDFPRF.SHA256_HMAC)
++                    .using(key)
++                    .withIV("internal-communication".getBytes(UTF_8))
++                );
+
+-            return hkdf.deriveKey("HmacSHA256", params);
++            byte[] out = new byte[32];
++            calc.generateBytes(out);
++
++            return new SecretKeySpec(out, "HmacSHA256");
+         }
+         catch (Exception e) {
+             throw new RuntimeException("Could not expand internal communication shared key using HKDF-SHA256", e);
+diff --git i/pom.xml w/pom.xml
+index 7cc8b464e8e..11b9b966388 100644
+--- i/pom.xml
++++ w/pom.xml
+@@ -2193,8 +2193,8 @@
+
+             <dependency>
+                 <groupId>org.bouncycastle</groupId>
+-                <artifactId>bcprov-jdk18on</artifactId>
+-                <version>1.83</version>
++                <artifactId>bc-fips</artifactId>
++                <version>2.1.2</version>
+             </dependency>
+
+             <dependency>
