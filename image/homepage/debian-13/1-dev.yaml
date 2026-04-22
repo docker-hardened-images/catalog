@@ -1,0 +1,186 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Homepage 1.x (dev)
+image: dhi.io/homepage
+variant: dev
+tags:
+  - 1-dev
+  - 1.12-dev
+  - 1.12.3-dev
+  - 1-debian13-dev
+  - 1.12-debian13-dev
+  - 1.12.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-01"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: d6e7e7e7908fdfc24e6aead500660d1787a78890
+  GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:a3308555520131306868f68c8a4da3b546f4c47ae4a4b4e6ae5e6781b76716d6
+  NODE_BUILD_REFERENCE: dhi/node:24.15.0-debian13-dev@sha256:4727367593c34b7167d055c20e113683fffbcf4efa5e3ef778c6a99adefbc59e
+  NODE_RUNTIME_REFERENCE: dhi/node:24.15.0-debian13@sha256:17913c5f5b504babe8505560eae2dd59e043290bc2e8674b00745d1d0588efe0
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.3
+  VERSION: 1.12.3
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: homepage
+      uses: dhi.io/node:24.15.0-debian13-dev@sha256:4727367593c34b7167d055c20e113683fffbcf4efa5e3ef778c6a99adefbc59e
+      work-dir: ${source.dir}/homepage
+      caches:
+        - path: /root/.local/share/pnpm
+        - path: /root/.cache
+      contents:
+        files:
+          - url: git+https://github.com/gethomepage/homepage.git#v1.12.3
+            checksum: d6e7e7e7908fdfc24e6aead500660d1787a78890
+            path: ${source.dir}/homepage
+            spdx:
+              name: homepage
+              version: 1.12.3
+              packages:
+                - name: homepage
+                  purl: pkg:dhi/homepage@1.12.3
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/su-exec/gosu/g' docker-entrypoint.sh
+        - name: bump pnpm dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm pkg set pnpm.overrides.fast-xml-parser=5.5.7   # CVE-2026-25896, CVE-2026-33036, CVE-2026-26278, CVE-2026-25128, CVE-2026-33349, CVE-2026-27942
+            npm pkg set pnpm.overrides.protobufjs=7.5.5        # CVE-2026-41242
+            npm pkg set pnpm.overrides.next=16.2.3             # GHSA-q4gf-8mx6-v5v3
+            npm pkg set pnpm.overrides.tar-fs=2.1.4            # CVE-2025-59343
+            npm pkg set pnpm.overrides.follow-redirects=1.16.0 # GHSA-r4q5-vmmm-2653
+            npm pkg set pnpm.overrides.tmp=0.2.4               # CVE-2025-54798
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --no-frozen-lockfile --prefer-offline \
+              && NEXT_TELEMETRY_DISABLED=1 \
+                NEXT_PUBLIC_BUILDTIME=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ') \
+                NEXT_PUBLIC_VERSION=1.12.3 \
+                NEXT_PUBLIC_REVISION=d6e7e7e7908fdfc24e6aead500660d1787a78890 \
+                pnpm run build
+
+            mkdir ${target.dir}/app
+            cp -r ./.next/standalone/. ${target.dir}/app
+            cp -r ./.next/static/. ${target.dir}/app/.next/static
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 65532
+          gid: 65532
+        - source: ${source.dir}/homepage/docker-entrypoint.sh
+          target: /usr/local/bin/docker-entrypoint.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/homepage
+          target: /opt/docker/sbom/homepage
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/node:24.15.0-debian13@sha256:17913c5f5b504babe8505560eae2dd59e043290bc2e8674b00745d1d0588efe0
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/pkg-gosu:1.19-debian13@sha256:a3308555520131306868f68c8a4da3b546f4c47ae4a4b4e6ae5e6781b76716d6
+      includes:
+        - opt/docker/sbom/gosu
+        - usr/local/sbin/gosu
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  HOSTNAME: '::'
+  NODE_ENV: production
+  PORT: "3000"
+annotations:
+  org.opencontainers.image.description: A minimal Homepage image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - docker-entrypoint.sh
+cmd:
+  - node
+  - server.js
+ports:
+  - 3000/tcp
