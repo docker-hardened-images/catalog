@@ -1,0 +1,308 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Piraeus CSI NFS Server 1.10.x (dev)
+image: dhi.io/piraeus-csi-nfs-server
+variant: dev
+tags:
+  - 1-dev
+  - 1.10-dev
+  - 1.10.6-dev
+  - 1-debian13-dev
+  - 1.10-debian13-dev
+  - 1.10.6-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-10"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 798a555d7d0a2eae2c4dbe1001bbc1fdb13dfb37
+  DRBD_REACTOR_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:e6ca1eadd8e3ee659c1792775bb99420fe90d9d98bb49f4b3a701e633ff644ef" : "sha256:ecf54b712867de1125d7ebba2354f3ce934a1047a63220263f00466a009f8a22" }'
+  DRBD_REACTOR_VERSION: 1.11.0-1
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:39947402d8e52fcaeb8f8a3b00f4377414464fb89437c7ba67358cf4c5caaac9
+  SEMVER_MAJOR_MINOR_VERSION: "1.10"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.10.6
+  VERSION: 1.10.6
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - e2fsprogs
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - nfs-ganesha
+    - nfs-ganesha-vfs
+    - perl-base
+    - procps
+    - psmisc
+    - sed
+    - systemd
+    - util-linux
+    - xfsprogs
+  builds:
+    - name: piraeus-csi-nfs-server
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:39947402d8e52fcaeb8f8a3b00f4377414464fb89437c7ba67358cf4c5caaac9
+      work-dir: /go/src/github.com/piraeusdatastore/linstor-csi
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/piraeusdatastore/linstor-csi.git#v1.10.6
+            checksum: 798a555d7d0a2eae2c4dbe1001bbc1fdb13dfb37
+            path: /go/src/github.com/piraeusdatastore/linstor-csi
+            spdx:
+              name: piraeus-csi-nfs-server
+              version: 1.10.6
+              packages:
+                - name: piraeus-csi-nfs-server
+                  purl: pkg:golang/github.com/piraeusdatastore/linstor-csi@1.10.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://packages.linbit.com/public/dists/trixie/misc/pool/drbd-reactor_1.11.0-1_${target.arch}.deb
+            checksum: ${DRBD_REACTOR_CHECKSUM}
+            path: /tmp/drbd-reactor.deb
+            spdx:
+              name: drbd-reactor
+              version: 1.11.0-1
+              packages:
+                - name: drbd-reactor
+                  purl: pkg:deb/debian/drbd-reactor@1.11.0-1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract drbd-reactor
+          runs: |
+            set -eux -o pipefail
+
+            dpkg-deb -x /tmp/drbd-reactor.deb /tmp/drbd-reactor
+            mkdir -p ${target.dir}/usr/sbin ${target.dir}/usr/lib/systemd/system ${target.dir}/etc
+            cp /tmp/drbd-reactor/usr/sbin/drbd-reactor ${target.dir}/usr/sbin/
+            cp /tmp/drbd-reactor/lib/systemd/system/drbd-reactor.service ${target.dir}/usr/lib/systemd/system/
+            cp -r /tmp/drbd-reactor/etc/drbd-reactor.d ${target.dir}/etc/
+        - name: install upstream systemd unit files
+          runs: |
+            set -eux -o pipefail
+
+            src=nfs/service
+            units=${target.dir}/usr/lib/systemd/system
+
+            mkdir -p "$units" "$units/drbd@.service.d" "$units/drbd-demote-or-escalate@.service.d"
+            mkdir -p ${target.dir}/etc/nfs-helper ${target.dir}/etc/systemd
+
+            cp "$src/nfs-ganesha@.service" \
+              "$src/growfs@.service" "$src/growfs@.timer" \
+              "$src/mount-export@.service" "$src/mount-recovery@.service" \
+              "$src/chmod@.service" \
+              "$src/prepare-device-links@.service" \
+              "$src/advertise-nfs-endpoint@.service" "$src/clean-nfs-endpoint@.service" \
+              "$src/start-stop-reactor.service" \
+              "$units/"
+
+            cp "$src/drbd@.service.override.conf" \
+              "$units/drbd@.service.d/container.conf"
+            cp "$src/drbd-demote-or-escalate@.service.override.conf" \
+              "$units/drbd-demote-or-escalate@.service.d/container.conf"
+
+            cp "$src/default-config.tmpl" ${target.dir}/etc/nfs-helper/default-config.tmpl
+            cp "$src/journald.conf" ${target.dir}/etc/systemd/journald.conf
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test ./cmd/nfs-helper/... ./pkg/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/piraeusdatastore/linstor-csi/pkg/driver.Version=1.10.6
+            output: ${target.dir}/usr/bin/nfs-helper
+            packages: ./cmd/nfs-helper
+      outputs:
+        - source: ${target.dir}/usr/bin/nfs-helper
+          target: /usr/bin/nfs-helper
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/sbin/drbd-reactor
+          target: /usr/sbin/drbd-reactor
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/lib/systemd/system
+          target: /usr/lib/systemd/system
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/drbd-reactor.d
+          target: /etc/drbd-reactor.d
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/nfs-helper
+          target: /etc/nfs-helper
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/systemd/journald.conf
+          target: /etc/systemd/journald.conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/piraeus-csi-nfs-server
+          target: /opt/docker/sbom/piraeus-csi-nfs-server
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+stop-signal: SIGRTMIN+3
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  SYSTEMD_GETTY_AUTO: "no"
+  container: oci
+paths:
+  - type: symlink
+    path: /usr/bin/piraeus-csi-nfs-server
+    uid: 0
+    gid: 0
+    source: /usr/bin/nfs-helper
+  - type: emptyfile
+    path: /etc/machine-id
+    uid: 0
+    gid: 0
+  - type: directory
+    path: /etc/systemd/system/multi-user.target.wants
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /etc/systemd/system/multi-user.target.wants/start-stop-reactor.service
+    uid: 0
+    gid: 0
+    source: /usr/lib/systemd/system/start-stop-reactor.service
+  - type: delete
+    path: /etc/systemd/system/multi-user.target.wants/drbd-reactor.service
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /etc/systemd/system/systemd-tmpfiles-setup.service
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: symlink
+    path: /etc/systemd/system/systemd-tmpfiles-clean.timer
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: symlink
+    path: /etc/systemd/system/systemd-binfmt.service
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: symlink
+    path: /etc/systemd/system/getty.target
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: symlink
+    path: /etc/systemd/system/systemd-logind.service
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: symlink
+    path: /etc/systemd/system/systemd-modules-load.service
+    uid: 0
+    gid: 0
+    source: /dev/null
+  - type: delete
+    path: /etc/systemd/system/multi-user.target.wants/nfs-client.target
+    uid: 0
+    gid: 0
+  - type: delete
+    path: /etc/systemd/system/multi-user.target.wants/nfs-ganesha.service
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal Piraeus CSI NFS Server image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /usr/lib/systemd/systemd
