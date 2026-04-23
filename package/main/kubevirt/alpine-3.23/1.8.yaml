@@ -1,0 +1,328 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kubevirt
+variant: runtime
+tags:
+  - 1.8.2-alpine3.23
+  - 1.8.2-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-18"
+vars:
+  COMMIT_SHA: 3203e9d1ce77af32f6a9ce72b9f954830666f72c
+  GOLANG_VERSION: 1.26.2-r3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.8"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.8.2
+  VERSION: 1.8.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubevirt
+      work-dir: /go/src/kubevirt.io/kubevirt
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates
+          - golang-1.26=1.26.2-r3
+          - golang-1.26-oci-config=1.26.2-r3
+          - libnbd-dev
+          - linux-headers
+          - pkgconf
+          - libvirt-dev
+        files:
+          - url: git+https://github.com/kubevirt/kubevirt.git#v1.8.2
+            checksum: 3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            path: /go/src/kubevirt.io/kubevirt
+            spdx:
+              name: kubevirt
+              version: 1.8.2
+              packages:
+                - name: kubevirt
+                  purl: pkg:golang/kubevirt.io/kubevirt@1.8.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump vulnerable Go dependencies (1.8 only)
+          uses: go/bump@v2
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          with:
+            deps:
+              - golang.org/x/crypto@v0.47.0
+              - google.golang.org/grpc@v1.79.3
+              - github.com/opencontainers/runc@v1.2.8
+            download: true
+        - name: patch runc cgroup devices API compat
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/runc-cgroup-devices-api-compat.patch
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG=fips140=on
+              export GOFIPS140=v1.0.0
+            fi
+
+            CGO_ENABLED=0 go test -vet=off ./cmd/virt-api/... ./pkg/virt-api/...
+            CGO_ENABLED=0 go test -vet=off ./cmd/virt-controller/... ./pkg/virt-controller/...
+            (cd cmd/virt-operator && CGO_ENABLED=0 go test ./...)
+            CGO_ENABLED=0 go test ./cmd/virt-exportproxy/...
+            CGO_ENABLED=0 go test ./cmd/virt-exportserver/...
+            CGO_ENABLED=1 go test -vet=off ./cmd/virt-handler/... ./pkg/virt-handler/...
+            CGO_ENABLED=0 go build -o _out/cmd/fake-qemu-process/fake-qemu-process ./cmd/fake-qemu-process/
+            CGO_ENABLED=1 go test -vet=off ./cmd/virt-launcher/... ./pkg/virt-launcher/...
+        - name: build virt-api
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-api
+            packages: ./cmd/virt-api
+        - name: build virt-api dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-api-dev
+            packages: ./cmd/virt-api
+            strip: false
+        - name: build virt-controller
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-controller
+            packages: ./cmd/virt-controller
+        - name: build virt-controller dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-controller-dev
+            packages: ./cmd/virt-controller
+            strip: false
+        - name: build virt-operator
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-operator
+            packages: ./cmd/virt-operator
+        - name: build virt-operator dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-operator-dev
+            packages: ./cmd/virt-operator
+            strip: false
+        - name: build virt-exportproxy
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-exportproxy
+            packages: ./cmd/virt-exportproxy
+        - name: build virt-exportproxy dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-exportproxy-dev
+            packages: ./cmd/virt-exportproxy
+            strip: false
+        - name: build virt-exportserver
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-exportserver
+            packages: ./cmd/virt-exportserver
+        - name: build virt-exportserver dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-exportserver-dev
+            packages: ./cmd/virt-exportserver
+            strip: false
+        - name: build virt-handler
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-handler
+            packages: ./cmd/virt-handler
+        - name: build virt-handler dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-handler-dev
+            packages: ./cmd/virt-handler
+            strip: false
+        - name: build virt-launcher
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-launcher
+            packages: ./cmd/virt-launcher
+        - name: build virt-launcher dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/bin/virt-launcher-dev
+            packages: ./cmd/virt-launcher
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: KubeVirt control plane and node binaries
+            files:
+              - usr/bin/virt-api
+            license: Apache-2.0
+            name: kubevirt
+            priority: optional
+            rel: 0
+            section: admin
+            subpackages:
+              - files:
+                  - path: usr/bin/virt-controller
+                name: virt-controller
+              - files:
+                  - path: usr/bin/virt-operator
+                name: virt-operator
+              - files:
+                  - path: usr/bin/virt-exportproxy
+                name: virt-exportproxy
+              - files:
+                  - path: usr/bin/virt-exportserver
+                name: virt-exportserver
+              - files:
+                  - path: usr/bin/virt-handler
+                name: virt-handler
+              - files:
+                  - path: usr/bin/virt-launcher
+                name: virt-launcher
+              - files:
+                  - path: usr/bin/virt-api
+                    source: usr/bin/virt-api-dev
+                name: kubevirt-dev
+              - files:
+                  - path: usr/bin/virt-controller
+                    source: usr/bin/virt-controller-dev
+                name: virt-controller-dev
+              - files:
+                  - path: usr/bin/virt-operator
+                    source: usr/bin/virt-operator-dev
+                name: virt-operator-dev
+              - files:
+                  - path: usr/bin/virt-exportproxy
+                    source: usr/bin/virt-exportproxy-dev
+                name: virt-exportproxy-dev
+              - files:
+                  - path: usr/bin/virt-exportserver
+                    source: usr/bin/virt-exportserver-dev
+                name: virt-exportserver-dev
+              - files:
+                  - path: usr/bin/virt-handler
+                    source: usr/bin/virt-handler-dev
+                name: virt-handler-dev
+              - files:
+                  - path: usr/bin/virt-launcher
+                    source: usr/bin/virt-launcher-dev
+                name: virt-launcher-dev
+            url: https://github.com/kubevirt/kubevirt
+            version: 1.8.2
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/kubevirt/patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
