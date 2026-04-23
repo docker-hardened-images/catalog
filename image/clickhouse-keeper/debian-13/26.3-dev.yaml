@@ -1,0 +1,222 @@
+# syntax=dhi.io/build:2-debian13
+
+name: ClickHouse Keeper 26.3.x-lts (dev)
+image: dhi.io/clickhouse-keeper
+variant: dev
+tags:
+  - 26-dev
+  - 26.3-dev
+  - 26.3.9-dev
+  - 26-debian13-dev
+  - 26.3-debian13-dev
+  - 26.3.9-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-14"
+vars:
+  CLANG_VERSION: "21"
+  COMMIT_SHA: 0d82c1998e3b4d54e110dd8a77a64d247c4bff4a
+  DEBIAN_REFERENCE: dhi/debian-base:trixie-debian13@sha256:75eec9a1a76a02ddf88761684efd9a72de6a5ec2c5d1abd002c03a475d5d23b7
+  SEMVER_MAJOR_MINOR_VERSION: "26.3"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.3.9
+  TAG_SUFFIX: lts
+  VERSION: 26.3.9.8
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - locales
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: clickhouse-keeper
+      work-dir: ${source.dir}/clickhouse
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/apt.llvm.org.gpg] http://apt.llvm.org/trixie/ llvm-toolchain-trixie-21 main
+        keyring:
+          - https://apt.llvm.org/llvm-snapshot.gpg.key
+        packages:
+          - bash
+          - build-essential
+          - clang-21
+          - cmake
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - gzip
+          - lld-21
+          - locales
+          - nasm
+          - ninja-build
+          - python3
+          - sed
+        files:
+          - url: git+https://github.com/ClickHouse/ClickHouse.git#v26.3.9.8-lts
+            checksum: 0d82c1998e3b4d54e110dd8a77a64d247c4bff4a
+            path: ${source.dir}/clickhouse
+            spdx:
+              name: clickhouse-keeper
+              version: 26.3.9.8
+              packages:
+                - name: clickhouse-keeper
+                  purl: pkg:dhi/clickhouse-keeper@v26.3.9.8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: init submodules
+          runs: |
+            set -eux -o pipefail
+
+            git submodule update --init --recursive --jobs $(nproc)
+        - name: configure
+          runs: |
+            set -eux -o pipefail
+
+            cmake -S . -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER=clang-21 \
+              -DCMAKE_CXX_COMPILER=clang++-21 \
+              -DLINKER_NAME=ld.lld-21 \
+              -DCOMPILER_CACHE=disabled \
+              -DENABLE_RUST=0 \
+              -DENABLE_HDFS=0 \
+              -DNO_ARMV81_OR_HIGHER=1 \
+              -DSPLIT_DEBUG_SYMBOLS=1 \
+              -DBUILD_STANDALONE_KEEPER=1 \
+              -DENABLE_CLICKHOUSE_KEEPER=1
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            cmake --build build --target clickhouse-keeper --parallel
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D build/programs/clickhouse-keeper "${target.dir}/usr/local/bin/clickhouse-keeper"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/clickhouse-keeper
+          target: /usr/local/bin/clickhouse-keeper
+          uid: 0
+          gid: 0
+          mode: "0755"
+    - name: locale
+      uses: dhi.io/debian-base:trixie-debian13@sha256:75eec9a1a76a02ddf88761684efd9a72de6a5ec2c5d1abd002c03a475d5d23b7
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/lib/clickhouse-keeper
+environment:
+  CLICKHOUSE_VERSION: 26.3.9.8
+  DEBIAN_FRONTEND: noninteractive
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  TZ: UTC
+paths:
+  - type: directory
+    path: /var/lib/clickhouse-keeper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/clickhouse-keeper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/clickhouse-keeper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/lib/clickhouse-keeper
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /var/log/clickhouse-keeper
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/clickhouse-keeper
+    uid: 0
+    gid: 0
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal ClickHouse Keeper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/clickhouse-keeper
+  - keeper
+ports:
+  - 2181/tcp
+  - 9181/tcp
+  - 10181/tcp
+  - 44444/tcp
