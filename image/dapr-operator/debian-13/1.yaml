@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Dapr Operator 1.x
+image: dhi.io/dapr-operator
+variant: runtime
+tags:
+  - "1"
+  - "1.17"
+  - 1.17.4
+  - 1-debian13
+  - 1.17-debian13
+  - 1.17.4-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-02"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 55aa0988eb6a91fe0a84a1674becce9456d334d6
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:39947402d8e52fcaeb8f8a3b00f4377414464fb89437c7ba67358cf4c5caaac9
+  SEMVER_MAJOR_MINOR_VERSION: "1.17"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.17.4
+  VERSION: 1.17.4
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: dapr-operator
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:39947402d8e52fcaeb8f8a3b00f4377414464fb89437c7ba67358cf4c5caaac9
+      work-dir: /go/src/github.com/dapr/dapr
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/dapr/dapr.git#v1.17.4
+            checksum: 55aa0988eb6a91fe0a84a1674becce9456d334d6
+            path: /go/src/github.com/dapr/dapr
+            spdx:
+              name: dapr-operator
+              version: 1.17.4
+              packages:
+                - name: dapr-operator
+                  purl: pkg:golang/github.com/dapr/dapr@1.17.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/dapr/dapr
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/dapr/dapr
+          runs: |
+            set -eux -o pipefail
+
+            # Build system injects OTEL_EXPORTER_OTLP_TRACES_* vars which take priority
+            # over OTEL_EXPORTER_OTLP_* and break unit tests that set the latter
+            unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || true
+            unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL || true
+
+            # Build containers have no outbound network or non-loopback interfaces;
+            # provide a fallback so GetHostAddress() doesn't fail
+            export DAPR_HOST_IP="${DAPR_HOST_IP:-127.0.0.1}"
+
+            if [ "${target.fips}" = "true" ]; then
+              # Tests use non-FIPS algorithms (X25519, SHA-1, GCM with arbitrary IVs);
+              # use lenient mode to match the runtime image's GODEBUG=fips140=on setting
+              export GODEBUG=fips140=on
+            fi
+
+            # CGO_ENABLED=0: build container has no linker (binutils not installed)
+            # -tags unit: required to compile unit test helpers (WithAppChannel, mock, diag utils etc.)
+            # Exclude tests/: those are integration/e2e tests, not unit tests
+            CGO_ENABLED=0 go test -tags unit \
+              $(go list -tags unit ./... | grep -v 'github.com/dapr/dapr/tests/')
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/dapr/dapr/cmd/operator
+          with:
+            ldflags:
+              - -X github.com/dapr/dapr/pkg/buildinfo.gitcommit=55aa0988eb6a91fe0a84a1674becce9456d334d6
+              - -X github.com/dapr/dapr/pkg/buildinfo.gitversion=1.17.4
+              - -X github.com/dapr/dapr/pkg/buildinfo.version=1.17.4
+            output: ${target.dir}/usr/local/bin/dapr-operator
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dapr-operator
+          target: /usr/local/bin/dapr-operator
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/dapr-operator
+          target: /opt/docker/sbom/dapr-operator
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /operator
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/dapr-operator
+annotations:
+  org.opencontainers.image.description: A minimal Dapr Operator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /operator
