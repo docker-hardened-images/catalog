@@ -21,15 +21,26 @@ This Docker Hardened mlflow image includes:
 ## Start a mlflow image
 
 Below are common ways to run the mlflow server from the hardened image. The mlflow server exposes the tracking UI and
-API (default port 5000). In examples below, replace `<tag>` with the image tag.
+API (default port 5000).
+
+## Entrypoint behavior
+
+This image uses `mlflow` as its runtime entrypoint. Pass mlflow subcommands directly in `docker run` and Docker Compose
+examples:
+
+- Use `server`, not `mlflow server`
+- Use `models build-docker`, not `mlflow models build-docker`
 
 ### Basic usage
 
 ```bash
 $ docker run -d --name mlflow-server -p 5000:5000 \
-  -e MLFLOW_SERVER_HOST=0.0.0.0 \
-  -e MLFLOW_SERVER_PORT=5000 \
-  dhi.io/mlflow:<tag> server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns --host 0.0.0.0 --port 5000
+  dhi.io/mlflow:3 \
+  server \
+  --backend-store-uri sqlite:///mlflow.db \
+  --default-artifact-root file:///opt/mlflow/data/mlruns \
+  --host 0.0.0.0 \
+  --port 5000
 ```
 
 This starts a simple single-node tracking server with a local SQLite backend and local artifact folder (suitable for
@@ -38,10 +49,9 @@ development and evaluation only).
 ### With Docker Compose (recommended for production-like setups)
 
 ```yaml
-version: '3.8'
 services:
   postgres:
-    image: dhi.io/postgres:<tag>
+    image: dhi.io/postgres:18
     environment:
       POSTGRES_USER: mlflow
       POSTGRES_PASSWORD: mlflow
@@ -50,30 +60,37 @@ services:
       - mlflow-db:/var/lib/postgresql/data
 
   minio:
-    image: dhi.io/minio:<tag>
+    image: dhi.io/minio:0
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data
+    command:
+      - server
+      - /data
     ports:
       - "9000:9000"
     volumes:
       - mlflow-minio:/data
 
   mlflow:
-    image: dhi.io/mlflow:<tag>
+    image: dhi.io/mlflow:3
     container_name: mlflow-server
     ports:
       - "5000:5000"
     environment:
-      - MLFLOW_SERVER_HOST=0.0.0.0
-      - MLFLOW_SERVER_PORT=5000
-      - BACKEND_STORE_URI=postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflowdb
-      - ARTIFACT_ROOT=s3://mlflow-artifacts
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
-    command: mlflow server --backend-store-uri ${BACKEND_STORE_URI} --default-artifact-root ${ARTIFACT_ROOT} --host 0.0.0.0 --port ${MLFLOW_SERVER_PORT}
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    command:
+      - server
+      - --backend-store-uri
+      - postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflowdb
+      - --default-artifact-root
+      - s3://mlflow-artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
     depends_on:
       - postgres
       - minio
@@ -84,35 +101,6 @@ volumes:
 
 ```
 
-### Environment variables
-
-Key environment variables commonly used to configure mlflow server and clients:
-
-| Variable                   | Description                                                                                                                                    | Default                              | Required                             |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------ |
-| `MLFLOW_SERVER_HOST`       | Host interface mlflow server listens on inside the container                                                                                   | `127.0.0.1` (overridden in examples) | No                                   |
-| `MLFLOW_SERVER_PORT`       | Port for the mlflow server inside the container                                                                                                | `5000`                               | No                                   |
-| `BACKEND_STORE_URI`        | SQLAlchemy-compatible URI for the backend store (metadata DB). Examples: `sqlite:///mlflow.db`, `postgresql+psycopg2://user:pass@host:5432/db` | `sqlite:///mlflow.db`                | Yes for production                   |
-| `ARTIFACT_ROOT`            | Location where artifacts are stored. Can be a local path (file://), S3 (s3://bucket), GCS, or other supported stores                           | `./mlruns`                           | Yes for production                   |
-| `MLFLOW_S3_ENDPOINT_URL`   | Custom S3-compatible endpoint (e.g., MinIO)                                                                                                    | -                                    | No (when using S3-compatible stores) |
-| `AWS_ACCESS_KEY_ID`        | Access key for S3-compatible artifact stores                                                                                                   | -                                    | No (when using S3-compatible stores) |
-| `AWS_SECRET_ACCESS_KEY`    | Secret key for S3-compatible artifact stores                                                                                                   | -                                    | No (when using S3-compatible stores) |
-| `MLFLOW_TRACKING_USERNAME` | Optional basic auth username if reverse proxy or auth middleware is used                                                                       | -                                    | No                                   |
-| `MLFLOW_TRACKING_PASSWORD` | Optional basic auth password if reverse proxy or auth middleware is used                                                                       | -                                    | No                                   |
-
-Example run with environment variables:
-
-```bash
-$ docker run -d --name mlflow-server -p 5000:5000 \
-  -e BACKEND_STORE_URI=postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflowdb \
-  -e ARTIFACT_ROOT=s3://mlflow-artifacts \
-  -e AWS_ACCESS_KEY_ID=minioadmin \
-  -e AWS_SECRET_ACCESS_KEY=minioadmin \
-  -e MLFLOW_S3_ENDPOINT_URL=http://minio:9000 \
-  dhi.io/mlflow:<tag> \
-  mlflow server --backend-store-uri ${BACKEND_STORE_URI} --default-artifact-root ${ARTIFACT_ROOT} --host 0.0.0.0 --port 5000
-```
-
 ## Common mlflow use cases
 
 - Basic single-node tracking server (development): SQLite backend and local artifact root. Not suitable for production.
@@ -120,28 +108,14 @@ $ docker run -d --name mlflow-server -p 5000:5000 \
 - Production tracking server: Postgres (or other SQL DB) as backend store and S3/MinIO as artifact store. Run behind a
   reverse proxy (nginx) for TLS and authentication.
 
-- Model packaging and serving: Use `mlflow models build-docker` or `mlflow models serve` to containerize and serve
-  models. These commands are available in the image's mlflow CLI.
-
-### Example: Packaging and serving a model
-
-1. Package a model saved in `models/` as a Docker image:
-
-```bash
-$ docker run --rm -v $(pwd):/app dhi.io/mlflow:<tag> mlflow models build-docker -m /app/models/1 -n mymodel:latest
-```
-
-2. Serve the built model image:
-
-```bash
-$ docker run -d --name mymodel -p 8080:8080 mymodel:latest
-```
+- Model packaging and serving: The `models` subcommands are available in the image. For detailed workflows and model
+  deployment patterns, refer to the upstream MLflow documentation at [mlflow.org](https://mlflow.org/docs/latest/).
 
 ## Non-hardened images vs. Docker Hardened Images
 
-For mlflow there are no functional differences in CLI commands. The hardened mlflow image focuses on security (minimal
-runtime, nonroot user, reduced packages). Use the hardened image in production environments for improved supply chain
-security.
+The hardened mlflow image focuses on security (minimal runtime, nonroot user, reduced packages). The main migration
+difference is that the runtime image uses `mlflow` as its entrypoint, so container commands must pass mlflow subcommands
+directly.
 
 ## Image variants
 

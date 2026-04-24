@@ -13,6 +13,8 @@ tags:
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2026-06-10"
 vars:
   COMMIT_SHA: 09179c65741c4d40df2e934950e32f526a2c0e9e
   NODE_DIGEST: sha256:25c58bd46f6755d04193092b9220c4bf53b06674e5b60973f10dbac2322410c1
@@ -30,15 +32,21 @@ contents:
     - '!mawk'
     - '!original-awk'
     - base-files
+    - libpq5
   builds:
     - name: mlflow
       uses: dhi.io/python:3.12.13-debian13@sha256:4fb692a98c25d26a18cd2a77f22bd19db8dd2f9ba3b8850136c3c7831b233f6b
-      privileged: true
+      caches:
+        - path: /root/.cache/pip
+        - path: /root/.yarn
       contents:
         packages:
           - bash
+          - build-essential
           - coreutils
           - findutils
+          - libpq-dev
+          - pkg-config
           - sed
         files:
           - url: git+https://github.com/mlflow/mlflow.git#v3.11.1
@@ -65,19 +73,24 @@ contents:
       pipeline:
         - name: build ui
           work-dir: ${source.dir}/mlflow/mlflow/server/js
+          privileged: true
           runs: |
             set -eux -o pipefail
 
+            export YARN_CACHE_FOLDER=/root/.yarn
             yarn install
             yarn build
         - name: install
           work-dir: ${source.dir}/mlflow
+          privileged: true
           runs: |
             set -eux -o pipefail
 
             python3 -m venv ${target.dir}/opt/mlflow
 
             ${target.dir}/opt/mlflow/bin/python3 -m pip install .
+            # Pin to a version for reproducibility/security. OK to bump in the future
+            ${target.dir}/opt/mlflow/bin/python3 -m pip install --no-binary=psycopg2 --no-cache-dir "psycopg2==2.9.12"
 
             # Remediate CVEs by upgrading packages
             ${target.dir}/opt/mlflow/bin/python3 -m pip install --upgrade "urllib3==2.6.3"       # CVE-2026-21441
