@@ -1,0 +1,56 @@
+# Docker Hardened Images — CPython security backport
+# Summary: Add boundary check to asyncio.AbstractEventLoop.sock_recvfrom_into()
+# Upstream issue: https://github.com/python/cpython/issues/148808
+# Upstream PR: https://github.com/python/cpython/pull/148809
+# Upstream commit: https://github.com/python/cpython/commit/1274766d3c29007ab77245a72abbf8dce2a9db4d
+# Backport PR (3.14): https://github.com/python/cpython/pull/148837
+# Backport commit (3.14): https://github.com/python/cpython/commit/27522b7d6e6588f03e61099dd858cd5a9314e2f2
+#
+# Unified diff adapted to the Python maintenance tarball for this pkg-python
+# build; hunks may differ slightly from upstream `main`.
+diff --git a/Lib/test/test_asyncio/test_sock_lowlevel.py b/Lib/test/test_asyncio/test_sock_lowlevel.py
+--- a/Lib/test/test_asyncio/test_sock_lowlevel.py
++++ b/Lib/test/test_asyncio/test_sock_lowlevel.py
+@@ -427,6 +427,27 @@ class ProactorSocketTests(BaseSockTestsMixin, unittest.TestCase):
+             self.loop.run_until_complete(
+                 self._basetest_datagram_recvfrom_into(server_address))
+ 
++    async def _basetest_datagram_recvfrom_into_wrong_size(self, server_address):
++        # Call sock_sendto() with a size larger than the buffer
++        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
++            sock.setblocking(False)
++
++            buf = bytearray(5000)
++            data = b'\x01' * 4096
++            wrong_size = len(buf) + 1
++            await self.loop.sock_sendto(sock, data, server_address)
++            with self.assertRaises(ValueError):
++                await self.loop.sock_recvfrom_into(
++                    sock, buf, wrong_size)
++
++            size, addr = await self.loop.sock_recvfrom_into(sock, buf)
++            self.assertEqual(buf[:size], data)
++
++    def test_recvfrom_into_wrong_size(self):
++        with test_utils.run_udp_echo_server() as server_address:
++            self.loop.run_until_complete(
++                self._basetest_datagram_recvfrom_into_wrong_size(server_address))
++
+     async def _basetest_datagram_sendto_blocking(self, server_address):
+         # Sad path, sock.sendto() raises BlockingIOError
+         # This involves patching sock.sendto() to raise BlockingIOError but
+diff --git a/Modules/overlapped.c b/Modules/overlapped.c
+--- a/Modules/overlapped.c
++++ b/Modules/overlapped.c
+@@ -1910,6 +1910,11 @@ _overlapped_Overlapped_WSARecvFromInto_impl(OverlappedObject *self,
+     }
+ #endif
+ 
++    if (bufobj->len < (Py_ssize_t)size) {
++        PyErr_SetString(PyExc_ValueError, "nbytes is greater than the length of the buffer");
++        return NULL;
++    }
++
+     wsabuf.buf = bufobj->buf;
+     wsabuf.len = size;
+ 
