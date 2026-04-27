@@ -1,0 +1,226 @@
+# syntax=dhi.io/build:2-debian13
+
+name: JupyterHub K8s Hub 4.3.x (dev)
+image: dhi.io/jupyterhub-k8s-hub
+variant: dev
+tags:
+  - 4-dev
+  - 4.3-dev
+  - 4.3.3-dev
+  - 4-debian13-dev
+  - 4.3-debian13-dev
+  - 4.3.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-26"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 95cc39e77a7fd43923c64d6b2a01f5566ea826d5
+  JUPYTERHUB_VERSION: 5.4.4
+  PYTHON_BUILD_REFERENCE: dhi/python:3.14.4-debian13-dev@sha256:1f6554d34550a8f3a62a36aab197d266111798018af18bcc852128a970f2cc5b
+  PYTHON_REFERENCE: dhi/python:3.14.4-debian13@sha256:e9075a8ed1e69e7573dab493947ca58bdea64409603544cd65f2d37619131165
+  SEMVER_MAJOR_MINOR_VERSION: "4.3"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.3.3
+  VERSION: 4.3.3
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libcurl4t64
+    - libffi8
+    - libpq5
+    - mawk
+    - perl-base
+    - sed
+    - sqlite3
+    - tini
+    - tzdata
+    - util-linux
+  builds:
+    - name: jupyterhub-k8s-hub
+      uses: dhi.io/python:3.14.4-debian13-dev@sha256:1f6554d34550a8f3a62a36aab197d266111798018af18bcc852128a970f2cc5b
+      work-dir: ${source.dir}/zero-to-jupyterhub-k8s/images/hub
+      environment:
+        PATH: /opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - build-essential
+          - libcurl4-openssl-dev
+          - libssl-dev
+          - libffi-dev
+          - zlib1g-dev
+          - libpq-dev
+          - ca-certificates
+          - bash
+          - coreutils
+          - git
+        files:
+          - url: git+https://github.com/jupyterhub/zero-to-jupyterhub-k8s.git#4.3.3
+            checksum: 95cc39e77a7fd43923c64d6b2a01f5566ea826d5
+            path: ${source.dir}/zero-to-jupyterhub-k8s
+            spdx:
+              name: zero-to-jupyterhub-k8s
+              version: 4.3.3
+              packages:
+                - name: zero-to-jupyterhub-k8s
+                  purl: pkg:github/jupyterhub/zero-to-jupyterhub-k8s@4.3.3
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            mkdir -p /opt/jupyterhub
+            python3 -m venv "$VENV"
+        - name: install hub requirements
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            # Match upstream wheel build: build pycurl against system libcurl
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              --no-binary pycurl \
+              -r requirements.txt
+        - name: upgrade python deps for cve fixes
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            # aiohttp: CVE-2026-22815 CVE-2026-34513 CVE-2026-34514 CVE-2026-34515 CVE-2026-34516
+            #   CVE-2026-34517 CVE-2026-34518 CVE-2026-34519 CVE-2026-34520 CVE-2026-34525
+            # cryptography: CVE-2026-39892
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              'aiohttp>=3.13.4' \
+              'cryptography>=46.0.7'
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: jupyterhub-k8s-hub-python
+            source: /opt/jupyterhub/.venv
+      outputs:
+        - source: /opt/jupyterhub
+          target: /opt/jupyterhub
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.14.4-debian13@sha256:e9075a8ed1e69e7573dab493947ca58bdea64409603544cd65f2d37619131165
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /srv/jupyterhub
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JUPYTERHUB_VERSION: 5.4.4
+  PATH: /opt/jupyterhub/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /srv/jupyterhub
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /usr/local/etc/jupyterhub
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/etc/jupyterhub/jupyterhub_config.py
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+    source: image/jupyterhub-k8s-hub/files/jupyterhub_config.py
+annotations:
+  org.opencontainers.image.description: A minimal jupyterhub-k8s-hub image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - jupyterhub
+  - --config
+  - /usr/local/etc/jupyterhub/jupyterhub_config.py
+ports:
+  - 8081/tcp
