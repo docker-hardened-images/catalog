@@ -17,6 +17,6 @@ existing Docker workflows.
 
 ## Trademarks
 
-AWS® and related marks are registered trademarks of Amazon Web Services. All rights in the mark are reserved to Amazaon
+AWS® and related marks are registered trademarks of Amazon Web Services. All rights in the mark are reserved to Amazon
 Web Services. Any use by Docker is for referential purposes only and does not indicate sponsorship, endorsement, or
 affiliation.
