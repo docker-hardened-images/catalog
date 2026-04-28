@@ -70,7 +70,7 @@ wget https://raw.githubusercontent.com/temporalio/helm-charts/temporal-<chart ve
 2. Install the helm chart with those updated values.
 
 ```console
-helm install my-temporal oci://dhi.io/temporal-chart --version <version> \
+helm install my-temporal oci://dhi.io/temporalio-chart --version <version> \
   --set "imagePullSecrets[0].name=helm-pull-secret" \
   -f postgresql.values.yaml
 ```
@@ -89,7 +89,7 @@ wget https://raw.githubusercontent.com/temporalio/helm-charts/temporal-<chart ve
 2. Install the helm chart with those updated values.
 
 ```console
-helm install my-temporal oci://dhi.io/temporal-chart --version <version> \
+helm install my-temporal oci://dhi.io/temporalio-chart --version <version> \
   --set "imagePullSecrets[0].name=helm-pull-secret" \
   -f values.elasticsearch.yaml
 ```
