@@ -1,0 +1,246 @@
+# syntax=dhi.io/build:2-debian13
+
+name: k8ssandra-medusa 0.28.x (dev)
+image: dhi.io/k8ssandra-medusa
+variant: dev
+tags:
+  - 0-dev
+  - 0.28-dev
+  - 0.28.0-dev
+  - 0-debian13-dev
+  - 0.28-debian13-dev
+  - 0.28.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-17"
+vars:
+  COMMIT_SHA: 4747f5394d0c0cbf38a62f9c1c4c54b469e89fb5
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+  GRPC_HEALTH_PROBE_COMMIT_SHA: 583eff8d2bdd7595077be83dbfcf2cb08c6a0ebf
+  GRPC_HEALTH_PROBE_VERSION: 0.4.48
+  PYTHON_BUILD_REFERENCE: dhi/python:3.12.13-debian13-dev@sha256:fc897e9ffb932ee9d5e3465f9403f27d52cdb0b66a62e08816f1f20603cbe919
+  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:606c8d924a058885509c1684a39277f8d463c66de7ef46be50c88044681d96e6
+  SEMVER_MAJOR_MINOR_VERSION: "0.28"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.28.0
+  VERSION: 0.28.0
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - gawk
+    - grep
+    - jq
+    - libc-bin
+    - mawk
+    - perl-base
+    - python3
+    - sed
+    - util-linux
+    - wget
+  builds:
+    - name: grpc health probe
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+      work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/grpc-ecosystem/grpc-health-probe.git#v0.4.48
+            checksum: 583eff8d2bdd7595077be83dbfcf2cb08c6a0ebf
+            path: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+            spdx:
+              name: grpc-health-probe
+              version: 0.4.48
+              packages:
+                - name: grpc-health-probe
+                  purl: pkg:golang/github.com/grpc-ecosystem/grpc-health-probe@0.4.48
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          environment:
+            GODEBUG: fips140=on
+          with:
+            deps: []
+            download: true
+        - name: test
+          environment:
+            GODEBUG: fips140=on
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
+        - name: compile
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s
+              - -w
+              - -X main.versionTag=0.4.48
+            output: ${target.dir}/usr/bin/grpc_health_probe
+            packages: ./main.go
+      outputs:
+        - source: ${target.dir}/usr/bin/grpc_health_probe
+          target: /usr/bin/grpc_health_probe
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/grpc-health-probe
+          target: /opt/docker/sbom/grpc-health-probe
+          uid: 0
+          gid: 0
+    - name: k8ssandra-medusa
+      uses: dhi.io/python:3.12.13-debian13-dev@sha256:fc897e9ffb932ee9d5e3465f9403f27d52cdb0b66a62e08816f1f20603cbe919
+      work-dir: /build/cassandra-medusa
+      caches:
+        - path: /root/.cache/pip
+        - path: /root/.cache/pypoetry
+      contents:
+        packages:
+          - python3
+          - python3-dev
+          - python3-pip
+          - python3-venv
+          - build-essential
+          - ca-certificates
+          - git
+          - curl
+          - jq
+          - wget
+        files:
+          - url: git+https://github.com/thelastpickle/cassandra-medusa.git#v0.28.0
+            checksum: 4747f5394d0c0cbf38a62f9c1c4c54b469e89fb5
+            path: /build/cassandra-medusa
+            spdx:
+              name: k8ssandra-medusa
+              version: 0.28.0
+              packages:
+                - name: k8ssandra-medusa
+                  purl: pkg:pypi/cassandra-medusa@0.28.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch setuptools pin
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/^setuptools = "78\.1\.1"$/setuptools = "81.0.0"/' pyproject.toml
+            grep -E '^setuptools = ' pyproject.toml
+        - name: install poetry and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Install poetry
+            python3 -m pip install -U pip
+            pip3 install --ignore-installed poetry==1.8.5
+
+            # Set poetry to create venv in project
+            export POETRY_VIRTUALENVS_IN_PROJECT=true
+
+            # Regenerate lock file
+            poetry lock --no-update
+
+            # Build and install medusa
+            poetry install
+
+            # Copy installed files to target
+            mkdir -p ${target.dir}/home/cassandra
+            cp -r .venv ${target.dir}/home/cassandra/.venv
+            cp pyproject.toml ${target.dir}/home/cassandra/pyproject.toml
+            cp -r medusa ${target.dir}/home/cassandra/medusa
+
+            # Copy scripts
+            mkdir -p ${target.dir}/home/cassandra/bin
+            cp k8s/docker-entrypoint.sh ${target.dir}/home/cassandra/
+            cp k8s/medusa.sh ${target.dir}/home/cassandra/bin/medusa
+
+            python3 - << 'PY'
+            from pathlib import Path
+
+            entrypoint = Path("${target.dir}/home/cassandra/docker-entrypoint.sh")
+            text = entrypoint.read_text()
+            text = text.replace(
+                "poetry run python -m medusa.service.grpc.restore",
+                "/home/cassandra/.venv/bin/python -m medusa.service.grpc.restore",
+            )
+            text = text.replace(
+                "exec poetry run python -m medusa.service.grpc.server server.py &",
+                "/home/cassandra/.venv/bin/python -m medusa.service.grpc.server server.py &",
+            )
+            entrypoint.write_text(text)
+            PY
+
+            chmod +x ${target.dir}/home/cassandra/docker-entrypoint.sh
+            chmod +x ${target.dir}/home/cassandra/bin/medusa
+      outputs:
+        - source: ${target.dir}/home/cassandra
+          target: /home/cassandra
+          uid: 999
+          gid: 999
+        - source: /opt/docker/sbom/k8ssandra-medusa
+          target: /opt/docker/sbom/k8ssandra-medusa
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.12.13-debian13@sha256:606c8d924a058885509c1684a39277f8d463c66de7ef46be50c88044681d96e6
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: cassandra
+      uid: 999
+      gid: 999
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: cassandra
+      gid: 999
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/cassandra
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  DEBUG_SLEEP: "0"
+  DEBUG_VERSION: "1"
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONPATH: /home/cassandra
+paths:
+  - type: directory
+    path: /home/cassandra
+    uid: 999
+    gid: 999
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal K8ssandra Medusa image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /home/cassandra/docker-entrypoint.sh
