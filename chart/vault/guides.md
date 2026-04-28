@@ -5,6 +5,14 @@
 - Kubernetes 1.29+
 - Helm 3.6+
 
+## Vault images this chart expects
+
+> **IMPORTANT** The chart is wired to the **`-helm`** image line by default (`server.image` and the injector
+> `agentImage` use the helm flavor for your distro). That image includes additional tools so the upstream templates
+> (shell snippets, entrypoint script paths) work. **If you override `server.image`:** use the same **`-helm`** tag you
+> would get from the defaults (for example `dhi.io/vault:1-helm`), not the minimal **runtime** tag (`dhi.io/vault:1`
+> only).
+
 ### Installation steps
 
 All examples in this guide use the public chart and images. If you've mirrored the repository for your own use (for

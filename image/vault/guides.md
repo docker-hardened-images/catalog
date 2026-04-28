@@ -1,6 +1,6 @@
 ## Prerequisites
 
-All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
 
 For example:
@@ -25,7 +25,7 @@ The examples below show common ways to run Vault using the hardened image.
 The `--cap-add=IPC_LOCK` flag in Docker grants the container the Linux `CAP_IPC_LOCK` capability, which allows processes
 inside the container to use the mlock system call. This is important for security-sensitive applications like HashiCorp
 Vault, which use `mlock` to lock memory and prevent secrets from being written to disk via swap. By default, Docker
-containers do not have this capability, so `mlock` will fail unless it’s explicitly added. Using `--cap-add=IPC_LOCK`
+containers do not have this capability, so `mlock` will fail unless it's explicitly added. Using `--cap-add=IPC_LOCK`
 enables secure memory locking without requiring full root privileges or the use of the `--privileged` flag, making it a
 safer and more targeted way to allow necessary system capabilities. This is especially important in production
 environments where security and compliance matter.
@@ -188,6 +188,11 @@ their tag.
 - FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
   variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
   cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+> **Helm chart users:** keep the chart defaults or override `server.image` to the **`-helm`** tag for your distro. Do
+> not point `server.image` at the bare runtime tag unless you know the chart's command line matches a shell-less image.
+> More context is in the
+> [Vault Helm chart guide](https://hub.docker.com/hardened-images/catalog/dhi/vault-chart/guides).
 
 To view the image variants and get more information about them, select the Tags tab for this repository, and then select
 a tag.
