@@ -78,6 +78,24 @@ helm install my-temporal oci://dhi.io/temporal-chart --version <version> \
 Replace `<version>` accordingly. If the chart is in your own registry or repository, replace `dhi.io` with your own
 registry and namespace. Replace `helm-pull-secret` with the name of the image pull secret you created earlier.
 
+To install with Elasticsearch as the visibility datastore instead:
+
+1. Fetch the Elasticsearch example values file and update the values according to your Elasticsearch deployment.
+
+```bash
+wget https://raw.githubusercontent.com/temporalio/helm-charts/temporal-<chart version>/charts/temporal/values/values.elasticsearch.yaml
+```
+
+2. Install the helm chart with those updated values.
+
+```console
+helm install my-temporal oci://dhi.io/temporal-chart --version <version> \
+  --set "imagePullSecrets[0].name=helm-pull-secret" \
+  -f values.elasticsearch.yaml
+```
+
+Replace `<version>`, `dhi.io`, and `helm-pull-secret` as described above.
+
 #### Step 4: Verify the installation
 
 The deployment's pod should show up and running almost immediately:
