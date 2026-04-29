@@ -1,0 +1,146 @@
+# syntax=dhi.io/build:2-debian13
+
+name: unleash 7.x
+image: dhi.io/unleash
+variant: runtime
+tags:
+  - "7"
+  - "7.6"
+  - 7.6.3
+  - 7-debian13
+  - 7.6-debian13
+  - 7.6.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-06-11"
+vars:
+  COMMIT_SHA: a67d282c77bb719db6bd5bef006fdd564a9c1add
+  NODE_BUILD_REFERENCE: dhi/node:22.22.2-debian13-dev@sha256:d9b9517c1a3f5725510bcbac00936b4f4c1eadc96fa8c4116b4f2e2ddb348fee
+  NODE_RUNTIME_REFERENCE: dhi/node:22.22.2-debian13@sha256:57fa91f5008c39f134459b4431f9659441ce81c7557a79a8fc374c96e2ec29fa
+  SEMVER_MAJOR_MINOR_VERSION: "7.6"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.6.3
+  VERSION: 7.6.3
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: unleash
+      uses: dhi.io/node:22.22.2-debian13-dev@sha256:d9b9517c1a3f5725510bcbac00936b4f4c1eadc96fa8c4116b4f2e2ddb348fee
+      work-dir: ${source.dir}/unleash
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        files:
+          - url: git+https://github.com/Unleash/unleash.git#v7.6.3
+            checksum: a67d282c77bb719db6bd5bef006fdd564a9c1add
+            path: ${source.dir}/unleash
+            spdx:
+              name: unleash
+              version: 7.6.3
+              packages:
+                - name: unleash
+                  purl: pkg:npm/unleash-server@7.6.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            yarn install --immutable
+            yarn prepare:backend
+            yarn local:package
+            yarn build:frontend:if-needed
+        - name: reorganize build
+          runs: |
+            set -eux -o pipefail
+
+            # Move frontend build into the build output directory
+            mkdir -p build/frontend
+            mv frontend/build build/frontend/build
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-frontend
+            source: ${source.dir}/unleash/frontend/node_modules
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+
+            # Clean node_modules fully before production install
+            # to ensure dev dependencies are completely removed
+            rm -rf node_modules frontend/node_modules
+            yarn workspaces focus -A --production
+        - name: copy app files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/unleash"
+
+            cp -r build/dist "${target.dir}/opt/unleash/"
+            cp -r build/frontend "${target.dir}/opt/unleash/"
+            cp build/package.json "${target.dir}/opt/unleash/"
+            cp -r node_modules "${target.dir}/opt/unleash/"
+      outputs:
+        - source: ${target.dir}/opt/unleash
+          target: /opt/unleash
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/unleash
+          target: /opt/docker/sbom/unleash
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/unleash-frontend
+          target: /opt/docker/sbom/unleash-frontend
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/node:22.22.2-debian13@sha256:57fa91f5008c39f134459b4431f9659441ce81c7557a79a8fc374c96e2ec29fa
+      excludes:
+        - etc
+        - var/run
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/unleash
+environment:
+  NODE_ENV: production
+  TZ: UTC
+annotations:
+  org.opencontainers.image.description: A minimal Unleash image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - node
+cmd:
+  - /opt/unleash/dist/server.js
+ports:
+  - 4242/tcp
