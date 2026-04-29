@@ -1,0 +1,166 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Harbor Core 2.15.x
+image: dhi.io/harbor-core
+variant: runtime
+tags:
+  - "2"
+  - "2.15"
+  - 2.15.0
+  - 2-debian13
+  - 2.15-debian13
+  - 2.15.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-20"
+vars:
+  COMMIT_SHA: e2b5ce92728f86c4b02f6a9a667741c1e5b62678
+  GO_SWAGGER_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:c668a4a1f96f65fdc166fef3f89adebe15b82f34e9cdeb71bc771436f6b94b07" : "sha256:d21f57d56f3f6dcae0e801b0c47067549343b35a5234e76bfc608cae411598aa" }'
+  GO_SWAGGER_VERSION: v0.33.1
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+  SEMVER_MAJOR_MINOR_VERSION: "2.15"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.15.0
+  VERSION: 2.15.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: harbor-core
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+      work-dir: /go/src/github.com/goharbor/harbor
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - build-essential
+          - wget
+          - binutils
+        files:
+          - url: git+https://github.com/goharbor/harbor.git#v2.15.0
+            checksum: e2b5ce92728f86c4b02f6a9a667741c1e5b62678
+            path: /go/src/github.com/goharbor/harbor
+            spdx:
+              name: harbor-core
+              version: 2.15.0
+              packages:
+                - name: harbor-core
+                  purl: pkg:golang/github.com/goharbor/harbor@2.15.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/go-swagger/go-swagger/releases/download/v0.33.1/swagger_linux_${target.arch}
+            checksum: ${GO_SWAGGER_CHECKSUM}
+            path: /usr/local/bin/swagger
+            spdx:
+              name: go-swagger
+              version: v0.33.1
+              packages:
+                - name: go-swagger
+                  purl: pkg:golang/github.com/go-swagger/go-swagger@v0.33.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+            mode: "755"
+      pipeline:
+        - name: generate-swagger
+          runs: |
+            set -eux -o pipefail
+
+            /usr/local/bin/swagger generate server \
+              --template-dir=tools/swagger/templates \
+              --exclude-main \
+              --additional-initialism=CVE \
+              --additional-initialism=GC \
+              --additional-initialism=OIDC \
+              -f api/v2.0/swagger.yaml \
+              -A harbor \
+              --target src/server/v2.0
+        - name: patch vulnerable go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/goharbor/harbor/src
+          with:
+            deps:
+              - github.com/gorilla/csrf@v1.7.3
+              - helm.sh/helm/v3@v3.20.2
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/goharbor/harbor/src
+          runs: |
+            set -eux -o pipefail
+
+            # The dhi/golang-fips-dev builder image defaults to fips140=only,
+            # which panics on Harbor's incidental SHA-1 use (e.g. password
+            # hashing helpers). Match the runtime image's lenient FIPS mode
+            # for the test step so coverage works on every variant.
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Hermetic Core unit slice after go/bump. Wider upstream test
+            # packages (core/middlewares, core/utils, server/*) reach for a
+            # database, registry, or LDAP and are exercised by the integration
+            # suite under image/harbor-core/tests instead.
+            go test ./core ./core/auth ./core/session \
+              -run '^(TestUpdateInitPasswordWithMgr_|TestDefault|TestErrAuth|TestCodec)$' \
+              -count=1
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/goharbor/harbor/src/core
+          with:
+            ldflags:
+              - -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=2.15.0
+              - -X github.com/goharbor/harbor/src/pkg/version.GitCommit=e2b5ce92728f86c4b02f6a9a667741c1e5b62678
+            output: ${target.dir}/usr/local/bin/harbor-core
+        - name: copy-static-assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/harbor
+            cp -r src/core/views icons make/migrations ${target.dir}/harbor/
+      outputs:
+        - source: ${target.dir}/usr/local/bin/harbor-core
+          target: /usr/local/bin/harbor-core
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/harbor/
+          target: /harbor/
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/harbor-core
+          target: /opt/docker/sbom/harbor-core
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /harbor/
+annotations:
+  org.opencontainers.image.description: A minimal Harbor Core image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/harbor-core
+ports:
+  - 8080/tcp
