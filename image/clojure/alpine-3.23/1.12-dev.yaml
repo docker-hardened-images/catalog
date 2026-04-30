@@ -1,0 +1,332 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: Clojure 1.12.x (dev)
+image: dhi.io/clojure
+variant: dev
+tags:
+  - 1-alpine3.23-dev
+  - 1.12-alpine3.23-dev
+  - 1.12.4-alpine3.23-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-10"
+vars:
+  COMMIT_SHA: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+  JRE_REFERENCE: dhi/eclipse-temurin:21.0.11.10-alpine3.23@sha256:b1feddd0a6be8e8eca367b87205430c9546fc2d725ae7c4424c889ef1b984b2b
+  JRE_VERSION: 21.0.11.10
+  LEIN_COMMIT_SHA: 40227328d4a9c8945362d6d626d19c2449175df6
+  LEIN_VERSION: 2.12.0
+  MAVEN_REFERENCE: dhi/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.4
+  TOOLS_DEPS_COMMIT_SHA: 3c5481585d11e063bf1fdeca7ea01980010e5b0a
+  TOOLS_DEPS_LIB_COMMIT_SHA: cac743d92f26cb44475fc0c2543730ad32a33bd5
+  TOOLS_DEPS_LIB_VERSION: 0.29.1598
+  TOOLS_DEPS_VERSION: 1.12.4.1618
+  VERSION: 1.12.4
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  packages:
+    - alpine-baselayout-data
+    - apk-tools
+    - bash
+    - coreutils
+    - git
+    - make
+    - ncurses-terminfo-base
+    - rlwrap
+  builds:
+    - name: clojure-core
+      uses: dhi.io/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+      work-dir: ${source.dir}/clojure
+      contents:
+        packages:
+          - bash
+        files:
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
+            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+            path: ${source.dir}/clojure
+            spdx:
+              name: clojure
+              version: 1.12.4
+              packages:
+                - name: clojure
+                  purl: pkg:dhi/clojure@1.12.4
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: strip Sonatype Central publishing plugin from Clojure pom
+          runs: |
+            set -eux -o pipefail
+
+            # Upstream registers central-publishing-maven-plugin as a build extension.
+            # Resolving it fails in the image builder; we only install locally.
+            if grep -Fq 'central-publishing-maven-plugin' pom.xml; then
+              sed -i '/<!-- deploy artifacts to central -->/,/<\/plugin>/d' pom.xml
+            fi
+        - name: build clojure core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -Plocal clean install -DskipTests
+      outputs:
+        - source: ${source.dir}/clojure/target/clojure-1.12.4.jar
+          target: /usr/local/lib/clojure/clojure-1.12.4.jar
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/clojure
+          target: /opt/docker/sbom/clojure
+          uid: 0
+          gid: 0
+    - name: tools-deps
+      uses: dhi.io/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+      work-dir: ${source.dir}/tools.deps
+      contents:
+        packages:
+          - bash
+        files:
+          - url: git+https://github.com/clojure/tools.deps.git#v0.29.1598
+            checksum: cac743d92f26cb44475fc0c2543730ad32a33bd5
+            path: ${source.dir}/tools.deps
+            spdx:
+              name: tools.deps
+              version: 0.29.1598
+              packages:
+                - name: tools.deps
+                  purl: pkg:dhi/tools.deps@0.29.1598
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/clojure/brew-install.git#1.12.4.1618
+            checksum: 3c5481585d11e063bf1fdeca7ea01980010e5b0a
+            path: ${source.dir}/brew-install
+            spdx:
+              name: clojure-tools
+              version: 1.12.4.1618
+              packages:
+                - name: clojure-tools
+                  purl: pkg:dhi/clojure-tools@1.12.4.1618
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch tools.deps
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps.json
+            mvn-root: ${source.dir}/tools.deps
+        - name: pin plexus-utils direct (CVE-2025-67030)
+          work-dir: ${source.dir}/tools.deps
+          runs: |
+            set -eux -o pipefail
+
+            # Force plexus-utils 3.6.1 as a direct <dependency> so it wins over
+            # the 3.3.1 pulled in transitively via maven-core 3.8.8. Stays on the
+            # 3.x line because 4.x removed the org.codehaus.plexus.util.xml.pull
+            # API that maven/aether still imports.
+            sed -i '/<\/dependencies>/i \    <dependency>\n      <groupId>org.codehaus.plexus<\/groupId>\n      <artifactId>plexus-utils<\/artifactId>\n      <version>3.6.1<\/version>\n    <\/dependency>' pom.xml
+        - name: patch cli scripts
+          runs: |
+            set -eux -o pipefail
+
+            SCRIPTS="${source.dir}/brew-install/src/main/resources/clojure/install"
+            mkdir -p "${target.dir}/usr/local/bin"
+            sed -e "s|PREFIX|/usr/local/lib/clojure|g" -e "s|\${project.version}|1.12.4.1618|g" "${SCRIPTS}/clojure" > "${target.dir}/usr/local/bin/clojure"
+            sed "s|BINDIR|/usr/local/bin|g" "${SCRIPTS}/clj" > "${target.dir}/usr/local/bin/clj"
+            chmod +x "${target.dir}/usr/local/bin/clojure" "${target.dir}/usr/local/bin/clj"
+            # Point tools classpath at individual JARs (we don't ship the clojure-tools uber JAR)
+            sed -i 's|^tools_cp=.*|tools_cp="$install_dir/tools.deps-0.29.1598.jar:$install_dir/deps/*"|' "${target.dir}/usr/local/bin/clojure"
+        - name: build tools.deps
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -DskipTests
+            mvn dependency:copy-dependencies -DoutputDirectory=${target.dir}/usr/local/lib/clojure/deps
+
+            # Build libexec/exec.jar so `clj -T:build` and `clj -X` can locate clojure.run.exec
+            mkdir -p "${target.dir}/usr/local/lib/clojure/libexec"
+            jar cf "${target.dir}/usr/local/lib/clojure/libexec/exec.jar" -C "${source.dir}/brew-install/src/main/clojure" .
+      paths:
+        - type: file
+          path: /src/patch/mvn-deps.json
+          uid: 0
+          gid: 0
+          source: image/clojure/patch/mvn-deps-tools-deps.json
+      outputs:
+        - source: ${source.dir}/tools.deps/target/tools.deps-0.29.1598.jar
+          target: /usr/local/lib/clojure/tools.deps-0.29.1598.jar
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/lib/clojure/deps
+          target: /usr/local/lib/clojure/deps
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/lib/clojure/libexec
+          target: /usr/local/lib/clojure/libexec
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/brew-install/src/main/resources/clojure/install/deps.edn
+          target: /usr/local/lib/clojure/deps.edn
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/brew-install/src/main/resources/clojure/install/example-deps.edn
+          target: /usr/local/lib/clojure/example-deps.edn
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/brew-install/src/main/resources/clojure/install/tools.edn
+          target: /usr/local/lib/clojure/tools.edn
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/brew-install/doc/clojure.1
+          target: /usr/local/share/man/man1/clojure.1
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/tools.deps
+          target: /opt/docker/sbom/tools.deps
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/clojure-tools
+          target: /opt/docker/sbom/clojure-tools
+          uid: 0
+          gid: 0
+    - name: leiningen
+      uses: dhi.io/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+      contents:
+        packages:
+          - bash
+        files:
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
+            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+            path: ${source.dir}/clojure
+            spdx:
+              name: clojure
+              version: 1.12.4
+              packages:
+                - name: clojure
+                  purl: pkg:dhi/clojure@1.12.4
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/technomancy/leiningen.git#2.12.0
+            checksum: 40227328d4a9c8945362d6d626d19c2449175df6
+            path: ${source.dir}/leiningen
+            spdx:
+              name: leiningen
+              version: 2.12.0
+              packages:
+                - name: leiningen
+                  purl: pkg:dhi/leiningen@2.12.0
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: strip Sonatype Central publishing plugin from Clojure pom
+          work-dir: ${source.dir}/clojure
+          runs: |
+            set -eux -o pipefail
+
+            if grep -Fq 'central-publishing-maven-plugin' pom.xml; then
+              sed -i '/<!-- deploy artifacts to central -->/,/<\/plugin>/d' pom.xml
+            fi
+        - name: build clojure core
+          work-dir: ${source.dir}/clojure
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -Plocal clean install -DskipTests
+        - name: patch leiningen pom
+          work-dir: ${source.dir}/leiningen/leiningen-core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            POM="pom.xml"
+            # Add commons-io dependency
+            sed -i '/<\/dependencies>/i \    <dependency>\n      <groupId>commons-io<\/groupId>\n      <artifactId>commons-io<\/artifactId>\n      <version>2.17.0<\/version>\n    <\/dependency>' "$POM"
+            # Add commons-lang3 dependency
+            sed -i '/<\/dependencies>/i \    <dependency>\n      <groupId>org.apache.commons<\/groupId>\n      <artifactId>commons-lang3<\/artifactId>\n      <version>3.18.0<\/version>\n    <\/dependency>' "$POM"
+            # Pin plexus-utils to CVE-2025-67030 backport version (3.6.1, last 3.x; 4.x drops required XmlPull API)
+            sed -i '/<\/dependencies>/i \    <dependency>\n      <groupId>org.codehaus.plexus<\/groupId>\n      <artifactId>plexus-utils<\/artifactId>\n      <version>3.6.1<\/version>\n    <\/dependency>' "$POM"
+        - name: patch project.clj
+          uses: git/patch@v1
+          work-dir: ${source.dir}/leiningen
+          with:
+            patch: ${source.dir}/patch/project.clj.patch
+        - name: build leiningen
+          work-dir: ${source.dir}/leiningen/leiningen-core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -DskipTests
+            mvn dependency:build-classpath -Dmdep.outputFile=.lein-bootstrap
+
+            cd ..
+            bin/lein uberjar
+      paths:
+        - type: file
+          path: ${source.dir}/patch/project.clj.patch
+          uid: 0
+          gid: 0
+          source: image/clojure/patch/project.clj.patch
+      outputs:
+        - source: ${source.dir}/leiningen/bin/lein-pkg
+          target: /usr/local/bin/lein
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${source.dir}/leiningen/target/leiningen-2.12.0-standalone.jar
+          target: /usr/share/java/leiningen-2.12.0-standalone.jar
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/leiningen
+          target: /opt/docker/sbom/leiningen
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.11.10-alpine3.23@sha256:b1feddd0a6be8e8eca367b87205430c9546fc2d725ae7c4424c889ef1b984b2b
+      includes:
+        - opt/**
+        - usr/bin/java
+        - usr/lib/jvm/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Clojure image
+  org.opencontainers.image.licenses: EPL-1.0
+cmd:
+  - clj
+  - --version

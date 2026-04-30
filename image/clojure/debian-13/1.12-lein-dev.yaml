@@ -1,0 +1,251 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Clojure 1.12.x (lein, dev)
+image: dhi.io/clojure
+variant: dev
+flavor: lein
+tags:
+  - 1-lein-dev
+  - 1.12-lein-dev
+  - 1.12.4-lein-dev
+  - 1-debian13-lein-dev
+  - 1.12-debian13-lein-dev
+  - 1.12.4-debian13-lein-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+  JRE_REFERENCE: dhi/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+  JRE_VERSION: 21.0.10.7
+  LEIN_COMMIT_SHA: 40227328d4a9c8945362d6d626d19c2449175df6
+  LEIN_VERSION: 2.12.0
+  MAVEN_REFERENCE: dhi/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.4
+  VERSION: 1.12.4
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - git
+    - grep
+    - libc-bin
+    - make
+    - mawk
+    - ncurses-base
+    - perl-base
+    - rlwrap
+    - sed
+    - util-linux
+  builds:
+    - name: clojure-core
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+      work-dir: ${source.dir}/clojure
+      contents:
+        files:
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
+            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+            path: ${source.dir}/clojure
+            spdx:
+              name: clojure
+              version: 1.12.4
+              packages:
+                - name: clojure
+                  purl: pkg:dhi/clojure@1.12.4
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: strip Sonatype Central publishing plugin from Clojure pom
+          runs: |
+            set -eux -o pipefail
+
+            if grep -Fq 'central-publishing-maven-plugin' pom.xml; then
+              sed -i '/<!-- deploy artifacts to central -->/,/<\/plugin>/d' pom.xml
+            fi
+        - name: build clojure core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -Plocal clean install -DskipTests
+      outputs:
+        - source: ${source.dir}/clojure/target/clojure-1.12.4.jar
+          target: /usr/local/lib/clojure/clojure-1.12.4.jar
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/clojure
+          target: /opt/docker/sbom/clojure
+          uid: 0
+          gid: 0
+    - name: leiningen
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+      contents:
+        files:
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
+            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+            path: ${source.dir}/clojure
+            spdx:
+              name: clojure
+              version: 1.12.4
+              packages:
+                - name: clojure
+                  purl: pkg:dhi/clojure@1.12.4
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/technomancy/leiningen.git#2.12.0
+            checksum: 40227328d4a9c8945362d6d626d19c2449175df6
+            path: ${source.dir}/leiningen
+            spdx:
+              name: leiningen
+              version: 2.12.0
+              packages:
+                - name: leiningen
+                  purl: pkg:dhi/leiningen@2.12.0
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: strip Sonatype Central publishing plugin from Clojure pom
+          work-dir: ${source.dir}/clojure
+          runs: |
+            set -eux -o pipefail
+
+            if grep -Fq 'central-publishing-maven-plugin' pom.xml; then
+              sed -i '/<!-- deploy artifacts to central -->/,/<\/plugin>/d' pom.xml
+            fi
+        - name: build clojure core
+          work-dir: ${source.dir}/clojure
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -Plocal clean install -DskipTests
+        - name: patch leiningen
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps.json
+            mvn-root: ${source.dir}/leiningen/leiningen-core
+        - name: patch project.clj
+          uses: git/patch@v1
+          work-dir: ${source.dir}/leiningen
+          with:
+            patch: ${source.dir}/patch/project.clj.patch
+        - name: build leiningen
+          work-dir: ${source.dir}/leiningen/leiningen-core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -DskipTests
+            mvn dependency:build-classpath -Dmdep.outputFile=.lein-bootstrap
+
+            cd ..
+            bin/lein uberjar
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-deps.json
+          uid: 0
+          gid: 0
+          source: image/clojure/patch/mvn-deps-leiningen.json
+        - type: file
+          path: ${source.dir}/patch/project.clj.patch
+          uid: 0
+          gid: 0
+          source: image/clojure/patch/project.clj.patch
+      outputs:
+        - source: ${source.dir}/leiningen/bin/lein-pkg
+          target: /usr/local/bin/lein
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${source.dir}/leiningen/target/leiningen-2.12.0-standalone.jar
+          target: /usr/share/java/leiningen-2.12.0-standalone.jar
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/leiningen
+          target: /opt/docker/sbom/leiningen
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /tmp
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  LEIN_ROOT: "1"
+  LEIN_VERSION: 2.12.0
+annotations:
+  org.opencontainers.image.description: A minimal Clojure image
+  org.opencontainers.image.licenses: EPL-1.0
+cmd:
+  - lein
+  - version
