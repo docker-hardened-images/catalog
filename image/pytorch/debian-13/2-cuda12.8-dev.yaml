@@ -1,19 +1,19 @@
 # syntax=dhi.io/build:2-debian13
 
-name: PyTorch 2.10.x
+name: PyTorch 2.11.x (dev)
 image: dhi.io/pytorch
-variant: runtime
+variant: dev
 tags:
-  - 2.10-cuda12.8-cudnn9
-  - 2.10.0-cuda12.8-cudnn9
-  - 2.10-cuda12.8-cudnn9-debian13
-  - 2.10.0-cuda12.8-cudnn9-debian13
+  - 2.11-cuda12.8-cudnn9-dev
+  - 2.11.0-cuda12.8-cudnn9-dev
+  - 2.11-cuda12.8-cudnn9-debian13-dev
+  - 2.11.0-cuda12.8-cudnn9-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   BINUTILS_REFERENCE: dhi/pkg-binutils:2.46-debian13@sha256:5333b3178ad52e503d8c44eb5a4073a039842ebc3403f6b6c6658a11c0b200e7
-  COMMIT_SHA: 449b1768410104d3ed79d3bcfe4ba1d65c7f22c0
+  COMMIT_SHA: 70d99e998b4955e0049d13a98d77ae1b14db1f45
   CUDA_MAJOR_MINOR_VERSION: "12.8"
   CUDA_MAJOR_VERSION: "12"
   CUDA_MINOR_VERSION: "8"
@@ -29,22 +29,33 @@ vars:
   PYTHON_DEV_REFERENCE: dhi/python:3.11.15-debian13-dev@sha256:8c56aea6d2cf23cf103b51766e7ed0f5471eaaf3afca385c7295d7a3ff63dc68
   PYTHON_REFERENCE: dhi/python:3.11.15-debian13@sha256:c4d0534027e58240b1ff15c582bf40fdc4ce4579eb8fd5e06ff9561ba4e76383
   PYTORCH_CUDA_VERSION: 12.8.1
-  PYTORCH_CUDNN_VERSION: 9.10.2.21
+  PYTORCH_CUDNN_VERSION: 9.19.0.56
   PYTORCH_PYTHON_VERSION: "3.11"
   TAG_CUDA_VERSION: "12.8"
   TAG_CUDNN_VERSION: "9"
-  TAG_TORCH_VERSION: "2.10"
-  TORCHAUDIO_VERSION: 2.10.0
-  TORCHVISION_VERSION: 0.25.0
+  TAG_TORCH_VERSION: "2.11"
+  TORCHAUDIO_VERSION: 2.11.0
+  TORCHVISION_VERSION: 0.26.0
   TRACKED_CUDA_VERSION: "12.8"
-  VERSION: 2.10.0
+  VERSION: 2.11.0
 contents:
   packages:
+    - '!gawk'
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
+    - apt
     - base-files
+    - build-essential
     - ca-certificates
+    - diffutils
+    - dpkg
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
     - zlib1g-dev
   builds:
     - name: pytorch build
@@ -70,8 +81,8 @@ contents:
           - sed
           - libjpeg-dev
         files:
-          - url: git+https://github.com/pytorch/pytorch.git#v2.10.0
-            checksum: 449b1768410104d3ed79d3bcfe4ba1d65c7f22c0
+          - url: git+https://github.com/pytorch/pytorch.git#v2.11.0
+            checksum: 70d99e998b4955e0049d13a98d77ae1b14db1f45
             path: ${source.dir}/pytorch-src
             uid: 0
             gid: 0
@@ -122,7 +133,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            pip install $INDEX_ARGS torch==2.10.0
+            pip install $INDEX_ARGS torch==2.11.0
             python3 -c 'import torch'
         - name: verify pytorch base package and GPU integration
           runs: |
@@ -140,9 +151,9 @@ contents:
             set -eux -o pipefail
 
             pip install $INDEX_ARGS \
-              torch==2.10.0 \
-              torchvision==0.25.0 \
-              torchaudio==2.10.0
+              torch==2.11.0 \
+              torchvision==0.26.0 \
+              torchaudio==2.11.0
 
             python3 -c "import torchvision"
             python3 -c "import torchaudio"
@@ -153,17 +164,27 @@ contents:
           gid: 0
           diff: true
   artifacts:
-    - name: dhi.io/python:3.11.15-debian13@sha256:c4d0534027e58240b1ff15c582bf40fdc4ce4579eb8fd5e06ff9561ba4e76383
+    - name: dhi.io/python:3.11.15-debian13-dev@sha256:8c56aea6d2cf23cf103b51766e7ed0f5471eaaf3afca385c7295d7a3ff63dc68
       includes:
         - opt/**
         - usr/**
       uid: 0
       gid: 0
+    - name: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
+      includes:
+        - NGC-DL-CONTAINER-LICENSE
+        - usr/local/cuda-12.8
+      uid: 0
+      gid: 0
 accounts:
-  run-as: nonroot
+  root: true
+  run-as: root
   users:
     - name: nonroot
       uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
       gid: 65532
   groups:
     - name: nonroot
@@ -181,7 +202,9 @@ os-release:
 work-dir: /workspace
 environment:
   CUDA_VERSION: 12.8.1
+  DEBIAN_FRONTEND: noninteractive
   LD_LIBRARY_PATH: /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+  LIBRARY_PATH: /usr/local/cuda/lib64/stubs
   NVARCH: ${target.arch}
   NVIDIA_CTK_LIBCUDA_DIR: /usr/lib/${target.arch}-linux-gnu
   NVIDIA_DRIVER_CAPABILITIES: compute,utility
@@ -201,9 +224,19 @@ paths:
     uid: 0
     gid: 0
     mode: "0755"
+  - type: symlink
+    path: /usr/local/cuda-12
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-12.8
+  - type: symlink
+    path: /usr/local/cuda
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-12.8
 annotations:
   com.nvidia.volumes.needed: nvidia_driver
   org.opencontainers.image.description: PyTorch - Deep learning framework with GPU acceleration
   org.opencontainers.image.licenses: BSD-3-Clause
 cmd:
-  - python3
+  - /bin/bash
