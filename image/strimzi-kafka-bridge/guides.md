@@ -79,7 +79,7 @@ services:
         exec ./bin/kafka-server-start.sh /tmp/server.properties
 
   kafka-bridge:
-    image: dhi.io/strimzi-kafka-bridge:0.33.1
+    image: dhi.io/strimzi-kafka-bridge:1.0.0
     container_name: kafka-bridge
     networks: [knet]
     depends_on:
@@ -104,7 +104,7 @@ To spin up the example run `docker compose up -d`.
 | Variable                       | Description                                                       | Default        | Required |
 | ------------------------------ | ----------------------------------------------------------------- | -------------- | -------- |
 | `STRIMZI_HOME`                 | Installation directory of the Strimzi Bridge inside the container | `/opt/strimzi` | No       |
-| `STRIMZI_KAFKA_BRIDGE_VERSION` | Version string baked into the image                               | `0.33.1`       | No       |
+| `STRIMZI_KAFKA_BRIDGE_VERSION` | Version string baked into the image                               | `1.0.0`        | No       |
 | `JAVA_HOME`                    | Path to the Java runtime inside the container                     | set by image   | No       |
 
 You can also configure the bridge by mounting a custom application.properties and/or starting the container with

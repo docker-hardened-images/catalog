@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Strimzi Kafka Bridge 1.x
+image: dhi.io/strimzi-kafka-bridge
+variant: runtime
+tags:
+  - "1"
+  - "1.0"
+  - 1.0.0
+  - 1-debian13
+  - 1.0-debian13
+  - 1.0.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 8e14c92fe0138651c602c71032edb84eb84d5734
+  JAVA_REFERENCE: dhi/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+  JAVA_VERSION: 21.0.10.7
+  MAVEN_REFERENCE: dhi/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+  MAVEN_VERSION: 3.9.14
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.0
+  VERSION: 1.0.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - sed
+    - tini
+  builds:
+    - name: strimzi-kafka-bridge
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+      contents:
+        files:
+          - url: git+https://github.com/strimzi/strimzi-kafka-bridge.git#1.0.0
+            checksum: 8e14c92fe0138651c602c71032edb84eb84d5734
+            path: ${source.dir}/strimzi-kafka-bridge
+            spdx:
+              name: strimzi-kafka-bridge
+              version: 1.0.0
+              packages:
+                - name: strimzi-kafka-bridge
+                  purl: pkg:dhi/strimzi-kafka-bridge@1.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.10.1/lz4-java-1.10.1.jar
+            path: ${source.dir}/patch/deps/at.yawk.lz4.lz4-java-1.10.1.jar
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch maven properties
+          uses: mvn/patch@v1
+          with:
+            downgrade: false
+            mvn-root: ${source.dir}/strimzi-kafka-bridge
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: build strimzi kafka bridge
+          work-dir: ${source.dir}/strimzi-kafka-bridge
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # The integration test that are run with mvn verify require Docker in Docker
+            mvn package
+
+            mkdir -p '${target.dir}/opt/strimzi'
+            cp -a 'target/kafka-bridge-1.0.0/kafka-bridge-1.0.0/.' '${target.dir}/opt/strimzi'
+        - name: replace vulnerable lz4 dep
+          runs: |
+            set -eux -o pipefail
+
+            rm -f "${target.dir}/opt/strimzi/libs/"*lz4-java*.jar
+            install -D "${source.dir}/patch/deps/at.yawk.lz4.lz4-java-1.10.1.jar" "${target.dir}/opt/strimzi/libs/org.lz4.lz4-java-1.10.1.jar"
+      paths:
+        - type: file
+          path: /src/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: image/strimzi-kafka-bridge/patch/mvn-properties.json
+        - type: file
+          path: /src/patch/mvn-properties-0.json
+          uid: 0
+          gid: 0
+          source: image/strimzi-kafka-bridge/patch/mvn-properties-0.json
+      outputs:
+        - source: ${target.dir}/opt/strimzi
+          target: /opt/strimzi
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/strimzi-kafka-bridge
+          target: /opt/docker/sbom/strimzi-kafka-bridge
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.10.7-debian13@sha256:5691e83dfdba43d0bf72a09cb793f5ac78563e7e1b76d31544c7b310a797c8aa
+      includes:
+        - opt/**
+        - usr/local/bin
+      uid: 0
+      gid: 0
+accounts:
+  run-as: kafka
+  users:
+    - name: kafka
+      uid: 1001
+      gid: 0
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/strimzi
+environment:
+  JAVA_HOME: ${JAVA_PATH}
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  STRIMZI_HOME: /opt/strimzi
+  STRIMZI_KAFKA_BRIDGE_VERSION: 1.0.0
+annotations:
+  org.opencontainers.image.description: A minimal Strimzi Kafka Bridge image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /opt/strimzi/bin/kafka_bridge_run.sh
