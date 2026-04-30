@@ -72,6 +72,17 @@ spec:
             memory: 100Mi
 ```
 
+## What's included in this metallb-speaker image
+
+- `speaker` — MetalLB speaker daemon that announces LoadBalancer service IPs using Layer 2 ARP or BGP protocols to make
+  them routable on the network.
+- `cp-tool` — File copy utility used in init containers to transfer binaries and scripts to shared volumes in
+  multi-container pod deployments.
+- `frr-metrics` — Prometheus metrics exporter for FRR (Free Range Routing) that exposes BGP session status, routing
+  table information, and FRR daemon health metrics.
+- `frr-reloader.sh` — Bash script that monitors for configuration changes and performs zero-downtime reloads of FRR BGP
+  configuration by validating and applying new configs without disrupting active BGP sessions.
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
@@ -90,6 +101,10 @@ their tag.
   - Run as the root user
   - Include a shell and package manager
   - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
 select a tag.
