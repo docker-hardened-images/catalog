@@ -15,9 +15,9 @@ platforms:
   - linux/arm64
 vars:
   COMMIT_SHA: 3d5a0c70e0fe2eb0864447c882454d33b406ba8a
-  PYTHON_BUILD_REFERENCE: dhi/python:3.13.13-alpine3.22-dev@sha256:3d0457f26c8afc9912952da461bc3a1f2b87ebefba7afe719bb51753f4949df8
+  PYTHON_BUILD_REFERENCE: dhi/python:3.13.13-alpine3.22-dev@sha256:41c9e6648061569cf5f145681a847ec39b31bd5af5f4e5c557b816e116724500
   PYTHON_MAJOR_MINOR_VERSION: "3.13"
-  PYTHON_REFERENCE: dhi/python:3.13.13-alpine3.22@sha256:2c237c186b4576eaff3c4b254bfc192d7c017344381e2ebabc6207aa7beb23eb
+  PYTHON_REFERENCE: dhi/python:3.13.13-alpine3.22@sha256:6c9cceb86dba6503e53f2de3b34ee8ea160d2263298e9622abbcb4089bd061a8
   PYTHON_VERSION: 3.13.13
   SEMVER_MAJOR_MINOR_VERSION: "4.14"
   SEMVER_MAJOR_VERSION: "4"
@@ -34,7 +34,7 @@ contents:
     - unzip
   builds:
     - name: localstack
-      uses: dhi.io/python:3.13.13-alpine3.22-dev@sha256:3d0457f26c8afc9912952da461bc3a1f2b87ebefba7afe719bb51753f4949df8
+      uses: dhi.io/python:3.13.13-alpine3.22-dev@sha256:41c9e6648061569cf5f145681a847ec39b31bd5af5f4e5c557b816e116724500
       contents:
         repositories:
           - https://dl-cdn.alpinelinux.org/alpine/v3.22/main
@@ -67,15 +67,58 @@ contents:
             export VIRTUAL_ENV="${target.dir}/opt/localstack"
             python3 -m venv "$VIRTUAL_ENV"
 
-            # Required to set the version explicitly; also necessary when bumping requirements via sed
-            export SETUPTOOLS_SCM_PRETEND_VERSION="4.14.0"
+            # Align with upstream Dockerfile: pyproject name is localstack-core (setuptools-scm env).
+            export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LOCALSTACK_CORE="4.14.0"
+            "$VIRTUAL_ENV/bin/python3" - << 'PY'
+            from pathlib import Path
+
+            replacements = {
+                "localstack-core/localstack/aws/protocol/parser.py": [
+                    (
+                        "# cbor2: explicitly load from private _decoder module to avoid using the (non-patched) C-version\nfrom cbor2._decoder import loads as cbor2_loads\n",
+                        "# cbor2>=5.9 removed the private _decoder module; fall back to the public loader.\ntry:\n    from cbor2._decoder import loads as cbor2_loads\nexcept ModuleNotFoundError:\n    from cbor2 import loads as cbor2_loads\n",
+                    ),
+                ],
+                "localstack-core/localstack/aws/protocol/serializer.py": [
+                    (
+                        "from cbor2._encoder import dumps as cbor2_dumps\n",
+                        "try:\n    from cbor2._encoder import dumps as cbor2_dumps\nexcept ModuleNotFoundError:\n    from cbor2 import dumps as cbor2_dumps\n",
+                    ),
+                ],
+                "localstack-core/localstack/aws/client.py": [
+                    (
+                        "            # cbor2: explicitly load from private _decoder module to avoid using the (non-patched) C-version\n            from cbor2._decoder import loads\n",
+                        "            # cbor2>=5.9 removed the private _decoder module; fall back to the public loader.\n            try:\n                from cbor2._decoder import loads\n            except ModuleNotFoundError:\n                from cbor2 import loads\n",
+                    ),
+                    (
+                        "    from cbor2._decoder import CBORDecodeValueError, semantic_decoders\n    from cbor2._encoder import CBOREncodeValueError, default_encoders\n    from cbor2._types import CBORTag\n",
+                        "    try:\n        from cbor2._decoder import CBORDecodeValueError, semantic_decoders\n        from cbor2._encoder import CBOREncodeValueError, default_encoders\n        from cbor2._types import CBORTag\n    except ModuleNotFoundError:\n        return\n",
+                    ),
+                ],
+            }
+
+            for relpath, pairs in replacements.items():
+                path = Path(relpath)
+                text = path.read_text()
+                for old, new in pairs:
+                    if old not in text:
+                        raise SystemExit(f"expected block not found in {path}")
+                    text = text.replace(old, new)
+                path.write_text(text)
+            PY
             "$VIRTUAL_ENV/bin/python3" -m pip install -r requirements-runtime.txt
             "$VIRTUAL_ENV/bin/python3" -m pip install -e .[runtime]
-            "$VIRTUAL_ENV/bin/python3" -m plux --workdir . entrypoints
-            "$VIRTUAL_ENV/bin/python3" -m pip install -U .[runtime]
+            # Install the CLI launcher without dependencies: runtime comes from localstack-core.
+            "$VIRTUAL_ENV/bin/python3" -m pip install --no-deps "localstack==4.14.0"
 
-            # Install the standalone CLI package (extracted from localstack-core in v4.14.0)
-            "$VIRTUAL_ENV/bin/python3" -m pip install localstack==4.14.0
+            # aws.spec uses host-mode dirs under localstack-core/.filesystem/... (see Directories.for_host).
+            mkdir -p localstack-core/.filesystem/usr/lib/localstack
+
+            # Generate AWS service catalog cache like upstream final stage.
+            "$VIRTUAL_ENV/bin/python3" -m localstack.aws.spec
+
+            # Container runtime reads static_libs from /usr/lib/localstack -> /opt/localstack (venv root).
+            find localstack-core/.filesystem/usr/lib/localstack -maxdepth 1 -name 'service-catalog-*.dill' -exec cp {} "${VIRTUAL_ENV}/" \;
 
             # Patch CVEs
             "$VIRTUAL_ENV/bin/python3" -m pip install --upgrade 'joserfc>=1.6.3'    # Fix CVE-2026-27932
@@ -107,6 +150,10 @@ contents:
           target: /opt/localstack
           uid: 0
           gid: 0
+        - source: ${source.dir}/localstack/localstack-core
+          target: /src/localstack/localstack-core
+          uid: 0
+          gid: 0
         - source: ${target.dir}/usr/local
           target: /usr/local
           uid: 0
@@ -120,7 +167,7 @@ contents:
           uid: 0
           gid: 0
   artifacts:
-    - name: dhi.io/python:3.13.13-alpine3.22@sha256:2c237c186b4576eaff3c4b254bfc192d7c017344381e2ebabc6207aa7beb23eb
+    - name: dhi.io/python:3.13.13-alpine3.22@sha256:6c9cceb86dba6503e53f2de3b34ee8ea160d2263298e9622abbcb4089bd061a8
       includes:
         - opt/**
         - usr/**
