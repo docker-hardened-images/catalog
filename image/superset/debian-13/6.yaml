@@ -1,0 +1,310 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache Superset 6.x
+image: dhi.io/superset
+variant: runtime
+tags:
+  - "6"
+  - "6.0"
+  - 6.0.0
+  - 6-debian13
+  - 6.0-debian13
+  - 6.0.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-18"
+vars:
+  COMMIT_SHA: 6a1c30e5e7c3e28d0549c9c2ac0ff61607f26a2f
+  NODE_BUILD_REFERENCE: dhi/node:20.20.2-debian13-dev@sha256:93677b7b5628eb98fb8ec7a2d0cb8e358c40af02e3a41ff331f325b8749485e0
+  PYTHON_BUILD_REFERENCE: dhi/python:3.11.15-debian13-dev@sha256:8c56aea6d2cf23cf103b51766e7ed0f5471eaaf3afca385c7295d7a3ff63dc68
+  PYTHON_REFERENCE: dhi/python:3.11.15-debian13@sha256:c4d0534027e58240b1ff15c582bf40fdc4ce4579eb8fd5e06ff9561ba4e76383
+  SEMVER_MAJOR_MINOR_VERSION: "6.0"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.0.0
+  VERSION: 6.0.0
+contents:
+  packages:
+    - ca-certificates
+    - dash
+    - libecpg6
+    - libldap2
+    - libpq5
+    - libsasl2-2
+    - libsasl2-modules-gssapi-mit
+    - tini
+  builds:
+    - name: build ui
+      uses: dhi.io/node:20.20.2-debian13-dev@sha256:93677b7b5628eb98fb8ec7a2d0cb8e358c40af02e3a41ff331f325b8749485e0
+      work-dir: /app/superset-frontend
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gnu-which
+          - make
+          - gcc
+          - g++
+          - python3
+          - zstd
+        files:
+          - url: git+https://github.com/apache/superset.git#6.0.0
+            checksum: 6a1c30e5e7c3e28d0549c9c2ac0ff61607f26a2f
+            path: /app
+            spdx:
+              name: superset-frontend
+              version: 6.0.0
+              packages:
+                - name: superset-frontend
+                  purl: pkg:dhi/superset-frontend@6.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install frontend deps
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci --prefer-offline --no-audit --no-fund
+        - name: build frontend
+          environment:
+            PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+          runs: |
+            set -eux -o pipefail
+
+            npm run build
+        - name: build translations
+          runs: |
+            set -eux -o pipefail
+
+            npm run build-translation
+        - name: ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: superset-frontend
+            source: /app/superset-frontend
+      outputs:
+        - source: /app/superset/static/assets
+          target: /app/superset/static/assets
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/superset-frontend
+          target: /opt/docker/sbom/superset-frontend
+          uid: 0
+          gid: 0
+    - name: install superset
+      uses: dhi.io/python:3.11.15-debian13-dev@sha256:8c56aea6d2cf23cf103b51766e7ed0f5471eaaf3afca385c7295d7a3ff63dc68
+      work-dir: /app
+      caches:
+        - path: /root/.cache/uv
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - build-essential
+          - gcc
+          - g++
+          - pkg-config
+          - default-libmysqlclient-dev
+          - libpq-dev
+          - libecpg-dev
+          - libsasl2-dev
+          - libldap2-dev
+          - libffi-dev
+          - libssl-dev
+          - libxml2-dev
+          - libxmlsec1-dev
+        files:
+          - url: git+https://github.com/apache/superset.git#6.0.0
+            checksum: 6a1c30e5e7c3e28d0549c9c2ac0ff61607f26a2f
+            path: /app
+            spdx:
+              name: superset
+              version: 6.0.0
+              packages:
+                - name: superset
+                  purl: pkg:dhi/superset@6.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install uv and create venv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install --no-cache-dir --upgrade uv
+            uv venv /app/.venv
+            . /app/.venv/bin/activate
+            uv pip install --upgrade pip setuptools wheel
+        - name: install base requirements
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            . /app/.venv/bin/activate
+            uv pip install -r requirements/base.txt
+        - name: install superset package
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            . /app/.venv/bin/activate
+            uv pip install -e .
+
+            # Patch CVEs
+            uv pip install --upgrade 'pyarrow>=17.0.0'      # CVE-2024-52338
+            uv pip install --upgrade 'urllib3>=2.6.3'       # CVE-2026-21441, CVE-2025-66471, CVE-2025-66418
+            uv pip install --upgrade 'pillow>=12.2.0'       # CVE-2026-25990, CVE-2026-40192
+            uv pip install --upgrade 'pyasn1>=0.6.3'        # CVE-2026-30922, CVE-2026-23490
+            uv pip install --upgrade 'pyopenssl>=26.0.0'    # CVE-2026-27459, CVE-2026-27448
+            uv pip install --upgrade 'cryptography>=46.0.6' # CVE-2026-26007, CVE-2026-34073
+            uv pip install --upgrade 'brotli>=1.2.0'        # CVE-2025-6176
+            uv pip install --upgrade 'pyjwt>=2.12.0'        # CVE-2026-32597
+            uv pip install --upgrade 'werkzeug>=3.1.6'      # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221
+            uv pip install --upgrade 'requests>=2.33.0'     # CVE-2026-25645
+            # Cap below 4 — flask-appbuilder 5.0.0 / marshmallow-sqlalchemy 1.4.0
+            # don't support marshmallow 4.x (breaks schema field init).
+            uv pip install --upgrade 'marshmallow>=3.26.2,<4' # CVE-2025-68480
+            uv pip install --upgrade 'pynacl>=1.6.2'          # CVE-2025-69277
+            uv pip install --upgrade 'markdown>=3.8.1'        # CVE-2025-69534
+            uv pip install --upgrade 'mako>=1.3.11'           # GHSA-v92g-xgxw-vvmm
+            uv pip install --upgrade 'python-dotenv>=1.2.2'   # CVE-2026-28684
+            uv pip install --upgrade 'pygments>=2.20.0'       # CVE-2026-4539
+        - name: compile translations
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            . /app/.venv/bin/activate
+            uv pip install Babel
+            pybabel compile -d /app/superset/translations || true
+            rm -f /app/superset/translations/*/*/*.po
+            rm -f /app/superset/translations/*/*/*.json
+        - name: precompile python bytecode
+          runs: |
+            set -eux -o pipefail
+
+            . /app/.venv/bin/activate
+            python -m compileall -q /app/superset /app/.venv/lib
+        - name: posixify run-server.sh shebang
+          runs: |
+            set -eux -o pipefail
+
+            sed -i '1s|.*|#!/bin/sh|' /app/docker/entrypoints/run-server.sh
+      outputs:
+        - source: /app/.venv/
+          target: /app/.venv/
+          uid: 0
+          gid: 0
+        - source: /app/superset/
+          target: /app/superset/
+          uid: 0
+          gid: 0
+        - source: /app/superset-frontend/package.json
+          target: /app/superset-frontend/package.json
+          uid: 0
+          gid: 0
+        - source: /app/docker/
+          target: /app/docker/
+          uid: 0
+          gid: 0
+        - source: /app/pyproject.toml
+          target: /app/pyproject.toml
+          uid: 0
+          gid: 0
+        - source: /app/setup.py
+          target: /app/setup.py
+          uid: 0
+          gid: 0
+        - source: /app/MANIFEST.in
+          target: /app/MANIFEST.in
+          uid: 0
+          gid: 0
+        - source: /app/README.md
+          target: /app/README.md
+          uid: 0
+          gid: 0
+        - source: /app/docker/entrypoints/run-server.sh
+          target: /usr/local/bin/run-server.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/superset
+          target: /opt/docker/sbom/superset
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.11.15-debian13@sha256:c4d0534027e58240b1ff15c582bf40fdc4ce4579eb8fd5e06ff9561ba4e76383
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  FLASK_APP: superset.app:create_app()
+  HOME: /app/superset_home
+  PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONPATH: /app/pythonpath
+  SUPERSET_ENV: production
+  SUPERSET_HOME: /app/superset_home
+  SUPERSET_PORT: "8088"
+paths:
+  - type: symlink
+    path: /usr/bin/run-server.sh
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/run-server.sh
+  - type: directory
+    path: /app/superset_home
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /app/pythonpath
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /app/data
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal Apache Superset image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/run-server.sh
+ports:
+  - 8088/tcp
