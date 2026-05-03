@@ -1,0 +1,152 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Azure Key Vault Controller 1.x (dev)
+image: dhi.io/azure-keyvault-controller
+variant: dev
+tags:
+  - 1-dev
+  - 1.8-dev
+  - 1.8.2-dev
+  - 1-debian13-dev
+  - 1.8-debian13-dev
+  - 1.8.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-15"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 7e3bfe0b9cf052256db68b8cf1ffc3abd6ee83c1
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+  SEMVER_MAJOR_MINOR_VERSION: "1.8"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.8.2
+  VERSION: 1.8.2
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: azure-keyvault-controller
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+      work-dir: /go/src/github.com/SparebankenVest/azure-key-vault-to-kubernetes
+      caches:
+        - path: /go/pkg/mod
+        - path: /root/.cache/go-build
+      contents:
+        files:
+          - url: git+https://github.com/SparebankenVest/azure-key-vault-to-kubernetes.git#controller-1.8.2
+            checksum: 7e3bfe0b9cf052256db68b8cf1ffc3abd6ee83c1
+            path: /go/src/github.com/SparebankenVest/azure-key-vault-to-kubernetes
+            spdx:
+              name: azure-keyvault-controller
+              version: 1.8.2
+              packages:
+                - name: azure-keyvault-controller
+                  purl: pkg:golang/github.com/SparebankenVest/azure-key-vault-to-kubernetes/cmd/azure-keyvault-controller@1.8.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            export CGO_ENABLED=0
+            go test -count=1 -v ./pkg/akv2k8s/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/SparebankenVest/azure-key-vault-to-kubernetes/pkg/akv2k8s.Component=controller
+              - -X github.com/SparebankenVest/azure-key-vault-to-kubernetes/pkg/akv2k8s.GitCommit=7e3bfe0b9cf052256db68b8cf1ffc3abd6ee83c1
+            output: ${target.dir}/usr/local/bin/azure-keyvault-controller
+            packages: ./cmd/azure-keyvault-controller
+            tags: netgo,osusergo
+      outputs:
+        - source: ${target.dir}/usr/local/bin/azure-keyvault-controller
+          target: /usr/local/bin/azure-keyvault-controller
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/azure-keyvault-controller
+          target: /opt/docker/sbom/azure-keyvault-controller
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Azure Key Vault Controller image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/azure-keyvault-controller
