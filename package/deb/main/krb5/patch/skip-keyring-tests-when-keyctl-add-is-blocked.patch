@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: a-dubs <a-dubs@docker.com>
+Date: Mon, 4 May 2026 12:00:00 -0400
+Subject: [PATCH] skip keyring tests when add_key is blocked
+
+Adapt Debian's seccomp-oriented keyring test probe so containerized
+builds that receive EPERM from `keyctl add ... @p` skip keyring tests
+instead of failing the whole build.
+
+Also make the unexpected-output error path stringify stderr bytes
+correctly under Python 3.
+
+--- a/src/util/k5test.py
++++ b/src/util/k5test.py
+@@ -1194,9 +1194,10 @@ class K5Realm(object):
+         try: subprocess.check_output(['keyctl', 'add', 'user', 'some_key', 'data', '@p'], stderr=subprocess.STDOUT)
+         except subprocess.CalledProcessError as e:
+             out = str(e.output, 'utf-8')
+-            if 'Function not implemented' in out and e.returncode == 1:
+-                return False # masked by seccomp
+-            fail('Unexpected output from keyctl: '+e.output)
++            if e.returncode == 1 and ('Function not implemented' in out or
++                                      'Operation not permitted' in out):
++                return False # blocked by seccomp or container confinement
++            fail('Unexpected output from keyctl: ' + out)
+             raise
+         return True
+     
