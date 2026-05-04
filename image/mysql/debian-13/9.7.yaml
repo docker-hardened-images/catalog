@@ -1,52 +1,46 @@
 # syntax=dhi.io/build:2-debian13
 
-name: MySQL 9.6.x (dev)
+name: MySQL 9.7.x
 image: dhi.io/mysql
-variant: dev
+variant: runtime
 tags:
-  - 9.6-dev
-  - 9.6.0-dev
-  - 9.6-debian13-dev
-  - 9.6.0-debian13-dev
+  - "9"
+  - "9.7"
+  - lts
+  - 9.7.0
+  - 9-debian13
+  - 9.7-debian13
+  - lts-debian13
+  - 9.7.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2025-10-21"
+  release: "2026-04-21"
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
-  COMMIT_SHA: 447eb26e094b444a88c532028647e48228c3c04f
-  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "9.6"
-  DEBIAN_EPOCH_MAJOR_VERSION: "9"
-  DEBIAN_EPOCH_VERSION: 9.6.0
-  GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:a3308555520131306868f68c8a4da3b546f4c47ae4a4b4e6ae5e6781b76716d6
-  VERSION: 9.6.0
+  COMMIT_SHA: 845d525d49c8027a4d0cdcc43372c96ba295c857
+  SEMVER_MAJOR_MINOR_VERSION: "9.7"
+  SEMVER_MAJOR_VERSION: "9"
+  SEMVER_VERSION: 9.7.0
+  VERSION: 9.7.0
 contents:
   packages:
-    - '!gawk'
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
-    - apt
     - base-files
     - bash
-    - ca-certificates
     - coreutils
-    - diffutils
-    - dpkg
     - findutils
-    - grep
     - libaio1t64
-    - libc-bin
+    - libcurl4t64
     - libncurses6
     - libnuma1
     - libstdc++6
-    - mawk
-    - perl-base
-    - sed
-    - util-linux
   builds:
     - name: mysql
+      work-dir: ${source.dir}/mysql
       contents:
         packages:
           - bash
@@ -59,9 +53,10 @@ contents:
           - gpg
           - gpg-agent
           - gzip
-          - libaio-dev
           - libabsl-dev
+          - libaio-dev
           - libboost-all-dev
+          - libcurl4-openssl-dev
           - libncurses-dev
           - libssl-dev
           - libtirpc-dev
@@ -73,48 +68,47 @@ contents:
           - xz-utils
           - zlib1g-dev
         files:
-          - url: git+https://github.com/mysql/mysql-server#mysql-9.6.0
-            checksum: 447eb26e094b444a88c532028647e48228c3c04f
+          - url: git+https://github.com/mysql/mysql-server#mysql-9.7.0
+            checksum: 845d525d49c8027a4d0cdcc43372c96ba295c857
             path: ${source.dir}/mysql
             spdx:
               name: mysql
-              version: 9.6.0
+              version: 9.7.0
               packages:
                 - name: mysql
-                  purl: pkg:github/mysql/mysql-server@9.6.0
+                  purl: pkg:github/mysql/mysql-server@9.7.0
                   license: GPL-2.0-only
             uid: 0
             gid: 0
       pipeline:
         - name: build
-          work-dir: ${source.dir}/mysql
           runs: |
             set -eux -o pipefail
 
-            mkdir build && cd build
+            mkdir -p build
 
-            CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=${target.dir}/opt/mysql
-              -DWITH_DEBUG=OFF
-              -DWITH_UNIT_TESTS=OFF
-              -DWITH_ARCHIVE_STORAGE_ENGINE=OFF
-              -DWITH_BLACKHOLE_STORAGE_ENGINE=OFF
-              -DWITH_FEDERATED_STORAGE_ENGINE=OFF
-              -DWITH_EXAMPLE_STORAGE_ENGINE=OFF
-              -DWITH_NDBCLUSTER_STORAGE_ENGINE=OFF
-              -DWITH_ROUTER=OFF
-              -DINSTALL_MYSQLTESTDIR=
-              -DWITH_NDB=OFF"
-
-            # This is not an in later versions of Mysql
-            if [ "9.6" = "8.0" ]; then
-              CMAKE_FLAGS="${CMAKE_FLAGS} -DWITH_BOOST=${source.dir}/boost"
-            fi
-
-            cmake .. $CMAKE_FLAGS
+            pushd build
+            cmake .. \
+              -DCMAKE_INSTALL_PREFIX='${target.dir}/opt/mysql' \
+              -DWITH_DEBUG=OFF \
+              -DWITH_UNIT_TESTS=OFF \
+              -DWITH_ARCHIVE_STORAGE_ENGINE=OFF \
+              -DWITH_BLACKHOLE_STORAGE_ENGINE=OFF \
+              -DWITH_FEDERATED_STORAGE_ENGINE=OFF \
+              -DWITH_EXAMPLE_STORAGE_ENGINE=OFF \
+              -DWITH_NDBCLUSTER_STORAGE_ENGINE=OFF \
+              -DWITH_ROUTER=OFF \
+              -DINSTALL_MYSQLTESTDIR= \
+              -DWITH_NDB=OFF
 
             make -j"$(nproc)"
 
             make install
+            popd
+        - name: strip
+          uses: strip@v1
+          with:
+            dir: ${target.dir}/opt/mysql/bin
       outputs:
         - source: ${target.dir}/opt/mysql
           target: /opt/mysql
@@ -124,22 +118,11 @@ contents:
           target: /opt/docker/sbom/mysql
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/pkg-gosu:1.19-debian13@sha256:a3308555520131306868f68c8a4da3b546f4c47ae4a4b4e6ae5e6781b76716d6
-      includes:
-        - opt/docker/sbom/gosu
-        - usr/local/sbin/gosu
-      uid: 0
-      gid: 0
 accounts:
-  root: true
-  run-as: root
+  run-as: mysql
   users:
     - name: mysql
       uid: 65532
-      gid: 65532
-    - name: _apt
-      uid: 42
       gid: 65532
   groups:
     - name: mysql
@@ -155,7 +138,6 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 environment:
-  DEBIAN_FRONTEND: noninteractive
   MYSQLDATA: /var/lib/mysql
   PATH: /opt/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
