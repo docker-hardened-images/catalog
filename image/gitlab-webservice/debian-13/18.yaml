@@ -1,0 +1,577 @@
+# syntax=dhi.io/build:2-debian13
+
+name: GitLab Webservice 18.11.x
+image: dhi.io/gitlab-webservice
+variant: runtime
+tags:
+  - "18"
+  - "18.11"
+  - 18.11.1
+  - 18-debian13
+  - 18.11-debian13
+  - 18.11.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-16"
+vars:
+  DEVFILE_COMMIT_SHA: ef5ef1c7f4549e49c52c3d724fcf1bfb78c5a0a7
+  DEVFILE_VERSION: 0.5.0
+  FIPS_TAG: ""
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+  SEMVER_MAJOR_MINOR_VERSION: "18.11"
+  SEMVER_MAJOR_VERSION: "18"
+  SEMVER_VERSION: 18.11.1
+  SOURCE_CHECKSUM: sha256:eb2527e44a5156b70189cca968c93a224909fac6ab42d4ceebaf0a3272c1fb5a
+  VERSION: 18.11.1
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - git
+    - gzip
+    - libc-bin
+    - libcrypt1
+    - libcurl4t64
+    - libffi8
+    - libgcc-s1
+    - libgmp10
+    - libicu76
+    - libjemalloc2
+    - libpq5
+    - libreadline8t64
+    - libssl3t64
+    - libstdc++6
+    - libyaml-0-2
+    - perl
+    - tini
+    - tzdata
+    - zlib1g
+  builds:
+    - name: build rails app
+      uses: dhi.io/ruby:3.3-debian13-dev
+      shell: /bin/bash
+      caches:
+        - path: /root/.bundle/cache
+        - path: /root/.npm
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        packages:
+          - clang
+          - cmake
+          - gzip
+          - libclang-dev
+          - libffi-dev
+          - libgit2-1.9
+          - libgit2-dev
+          - libssh2-1-dev
+          - libzstd-dev
+          - zlib1g-dev
+          - libicu-dev
+          - libkrb5-3
+          - libkrb5-dev
+          - libre2-dev
+          - libpq-dev
+          - libxml2-dev
+          - llvm-dev
+          - dpkg-dev
+          - gnu-which
+          - musl-dev
+          - passwd
+          - patch
+          - pkg-config
+          - sudo
+        files:
+          - url: https://gitlab.com/gitlab-org/gitlab-foss/-/archive/v18.11.1/gitlab-foss-v18.11.1.tar.gz
+            checksum: sha256:eb2527e44a5156b70189cca968c93a224909fac6ab42d4ceebaf0a3272c1fb5a
+            path: /tmp/gitlab-source.tar.gz
+            spdx:
+              name: gitlab-ce
+              version: 18.11.1
+              packages:
+                - name: gitlab-ce
+                  purl: pkg:gitlab/gitlab-org/gitlab-foss@v18.11.1
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/rust:1.95-debian13
+            includes:
+              - usr/local/cargo/**
+              - usr/local/rustup/**
+            uid: 0
+            gid: 0
+          - name: dhi.io/node:22-debian13-dev
+            includes:
+              - opt/nodejs/**
+              - opt/yarn/**
+              - usr/local/bin/corepack
+              - usr/local/bin/node
+              - usr/local/bin/npm
+              - usr/local/bin/npx
+              - usr/local/bin/yarn
+              - usr/local/bin/yarnpkg
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract source
+          runs: |
+            set -eux -o pipefail
+
+            # Create git user for the build
+            useradd -m -u 1000 -s /bin/bash git
+
+            mkdir -p /srv/gitlab
+            tar xzf /tmp/gitlab-source.tar.gz --strip-components=1 -C /srv/gitlab
+            rm -f /tmp/gitlab-source.tar.gz
+
+            chown -R git:git /srv/gitlab
+        - name: bump vulnerable gem versions in lockfile
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+
+            # Update lockfile only (no install) — bumps Rails security patch,
+            # addressable, and faraday (CVE-2026-25765, allowed by ~> 2 pin).
+            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday --conservative
+
+            echo "Lockfile updated:"
+            grep -E "activestorage|addressable|^    faraday " Gemfile.lock | head -8
+        - name: install node dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+            yarn install --production --pure-lockfile
+        - name: bundle install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/usr/local/cargo/bin:${PATH}"
+            export RUSTUP_HOME="/usr/local/rustup"
+            export CARGO_HOME="/usr/local/cargo"
+
+            export RUGGED_USE_SYSTEM_LIBRARIES=1
+
+            cd /srv/gitlab
+            bundle config set --local version system
+            bundle config set --local clean 'true'
+            bundle config set --local deployment 'true'
+            bundle config set --local without 'development test mysql aws'
+
+            # Workaround for rugged 1.9.0 version.h bug on Debian 13:
+            # extconf.rb reads LIBGIT2_VER_MAJOR but the vendored header
+            # only defines LIBGIT2_VERSION_MAJOR.
+            # Fix: download, unpack, patch, rebuild .gem, install it.
+            # https://github.com/libgit2/rugged/issues/990
+            PATCH_DIR="/tmp/rugged-patch"
+            mkdir -p "$PATCH_DIR"
+            cd "$PATCH_DIR"
+            gem fetch rugged -v 1.9.0 --source https://rubygems.org
+            gem unpack rugged-1.9.0.gem
+            gem spec rugged-1.9.0.gem --ruby > rugged-1.9.0/rugged.gemspec
+
+            # Patch version.h to add legacy macro names
+            printf '\n#define LIBGIT2_VER_MAJOR 1\n#define LIBGIT2_VER_MINOR 9\n#define LIBGIT2_VER_REVISION 0\n' \
+              >> rugged-1.9.0/vendor/libgit2/include/git2/version.h
+            sed -i '/^GIT_BEGIN_DECL$/d; /^GIT_END_DECL$/d' \
+              rugged-1.9.0/vendor/libgit2/include/git2/version.h
+
+            # Strip dev dependencies from gemspec so gem build succeeds
+            sed -i '/add_development_dependency/d' rugged-1.9.0/rugged.gemspec
+
+            cd rugged-1.9.0
+            gem build rugged.gemspec
+
+            # Also patch the system header for the try_compile version check
+            printf '\n#define LIBGIT2_VER_MAJOR 1\n#define LIBGIT2_VER_MINOR 9\n#define LIBGIT2_VER_REVISION 0\n' \
+              >> /usr/include/git2/version.h
+            sed -i '/^GIT_BEGIN_DECL$/d; /^GIT_END_DECL$/d' \
+              /usr/include/git2/version.h
+
+            # Install patched gem
+            cd /srv/gitlab
+            RUGGED_USE_SYSTEM_LIBRARIES=1 \
+              gem install "$PATCH_DIR/rugged-1.9.0/rugged-1.9.0.gem" \
+              -i vendor/bundle/ruby/3.3.0 --no-document -- --use-system-libraries
+            rm -rf "$PATCH_DIR"
+
+            bundle install --jobs 4 --retry 5
+        - name: bump erb default gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # erb is a Ruby default gem (not in Gemfile) — update system-wide
+            gem install erb -v 4.0.3.1 --no-document
+            gem list erb
+        - name: compile gettext
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+            CI=true RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true \
+              bundle exec rake gettext:compile
+        - name: configure and compile assets
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+
+            # Copy config templates (needed by asset compilation)
+            cp config/gitlab.yml.example config/gitlab.yml
+            cp config/resque.yml.example config/resque.yml
+            cp config/secrets.yml.example config/secrets.yml
+            cp config/database.yml.postgresql config/database.yml
+            # Use the CNG production puma.rb (TCP binding) instead of the
+            # source tree's example (Unix socket binding)
+            cp /puma-src/puma.rb config/puma.rb
+            sed --in-place "/geo:/,/^$/d" config/database.yml
+            sed --in-place "/embedding:/,/^$/d" config/database.yml
+            sed --in-place "/host: localhost/d" config/gitlab.yml
+            sed --in-place "/port: 80/d" config/gitlab.yml
+            sed --in-place "s/# user:.*/user: git/" config/gitlab.yml
+            sed --in-place "s:/home/git/repositories:/var/opt/gitlab/repo:" config/gitlab.yml
+
+            # Set installation type
+            echo 'gitlab-cloud-native-image' > INSTALLATION_TYPE
+
+            # Generate infection scanner data needed by webpack
+            mkdir -p tmp
+            node scripts/frontend/infection_scanner/infection_scanner.mjs || true
+
+            # Compile assets
+            CI=true RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true \
+              bundle exec rake gitlab:assets:compile
+        - name: cleanup
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+
+            # Create data directories
+            mkdir -p /var/opt/gitlab/data /var/opt/gitlab/repo /var/opt/gitlab/config /var/opt/gitlab/.upgrade-status
+            chown -R git:git /var/opt/gitlab
+
+            # Clean up test/dev/tooling files from the Rails source tree
+            rm -rf node_modules/ tmp/ spec/ ee/spec/ storybook/
+            rm -rf qa/ rubocop/ tooling/ .gitlab/ .github/ docker/
+            rm -rf changelogs/ danger/ Dangerfile
+            # Remove npm lock files — node_modules is already deleted and
+            # no npm packages are present at runtime. Leaving these causes
+            # the SBOM scanner to report ~1500 phantom npm dependencies.
+            rm -f package.json yarn.lock
+
+            # Remove uncompressed webpack source maps
+            find public/assets/webpack -name '*.map' -type f -delete 2> /dev/null || true
+
+            # --- Gem cleanup (mirrors CNG shared/build-scripts/cleanup-gems) ---
+            RUBY_DIR="vendor/bundle/ruby"
+
+            # Remove bundler gem cache (.gem files kept for reinstall)
+            rm -rf ${RUBY_DIR}/*/cache
+
+            # Remove gem-level spec/test/tests directories
+            # (use exact paths so we don't hit lib/rack/test/ etc.)
+            rm -rf ${RUBY_DIR}/*/gems/*/spec \
+              ${RUBY_DIR}/*/gems/*/test \
+              ${RUBY_DIR}/*/gems/*/tests
+
+            # Remove bundled C source trees from specific large gems
+            rm -rf ${RUBY_DIR}/*/gems/rugged*/vendor \
+              ${RUBY_DIR}/*/gems/libyajl2*/**/vendor
+
+            # Remove grpc build artifacts (~200MB of headers, C++ source, third-party)
+            rm -rf ${RUBY_DIR}/*/gems/grpc-*/include \
+              ${RUBY_DIR}/*/gems/grpc-*/src/core \
+              ${RUBY_DIR}/*/gems/grpc-*/src/ruby/ext \
+              ${RUBY_DIR}/*/gems/grpc-*/src/ruby/spec \
+              ${RUBY_DIR}/*/gems/grpc-*/third_party
+
+            # Remove build logs
+            rm -rf ${RUBY_DIR}/*/extensions/*/*/*/mkmf.log \
+              ${RUBY_DIR}/*/extensions/*/*/*/gem_make.out
+
+            # Remove C source and object files from extension dirs
+            rm -rf ${RUBY_DIR}/*/gems/*/ext/*.c \
+              ${RUBY_DIR}/*/gems/*/ext/*/*.c \
+              ${RUBY_DIR}/*/gems/*/ext/*.o \
+              ${RUBY_DIR}/*/gems/*/ext/*/*.o
+
+            # Remove gem metadata, docs, and non-code files
+            rm -rf ${RUBY_DIR}/*/gems/*/*.gemspec \
+              ${RUBY_DIR}/*/gems/*/*.md \
+              ${RUBY_DIR}/*/gems/*/*.rdoc \
+              ${RUBY_DIR}/*/gems/*/*.sh \
+              ${RUBY_DIR}/*/gems/*/*.txt \
+              ${RUBY_DIR}/*/gems/*/*LICENSE* \
+              ${RUBY_DIR}/*/gems/*/CHANGES* \
+              ${RUBY_DIR}/*/gems/*/Gemfile \
+              ${RUBY_DIR}/*/gems/*/Guardfile \
+              ${RUBY_DIR}/*/gems/*/README* \
+              ${RUBY_DIR}/*/gems/*/Rakefile \
+              ${RUBY_DIR}/*/gems/*/run_tests.rb \
+              ${RUBY_DIR}/*/gems/*/Documentation \
+              ${RUBY_DIR}/*/gems/*/bench \
+              ${RUBY_DIR}/*/gems/*/contrib \
+              ${RUBY_DIR}/*/gems/*/doc \
+              ${RUBY_DIR}/*/gems/*/doc-api \
+              ${RUBY_DIR}/*/gems/*/examples \
+              ${RUBY_DIR}/*/gems/*/fixtures \
+              ${RUBY_DIR}/*/gems/*/gemfiles \
+              ${RUBY_DIR}/*/gems/*/libtest \
+              ${RUBY_DIR}/*/gems/*/man \
+              ${RUBY_DIR}/*/gems/*/sample_documents \
+              ${RUBY_DIR}/*/gems/*/samples \
+              ${RUBY_DIR}/*/gems/*/sample \
+              ${RUBY_DIR}/*/gems/*/script \
+              ${RUBY_DIR}/*/gems/*/t
+
+            # Remove stale .gem files in the bundle tree
+            find ${RUBY_DIR} -name '*.gem' -type f -delete 2> /dev/null || true
+        - name: generate bootsnap cache
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+            mkdir -p /srv/gitlab/bootsnap
+            ENABLE_BOOTSNAP=1 BOOTSNAP_CACHE_DIR=/srv/gitlab/bootsnap \
+              bundle exec bootsnap precompile --gemfile \
+              --exclude '/srv/gitlab/config/*.yml|/srv/gitlab/public' .
+        - name: prepare outputs
+          runs: |
+            set -eux -o pipefail
+
+            # Ensure git user owns all app files
+            chown -R 1000:1000 /srv/gitlab /var/opt/gitlab
+
+            # Move log dir and create symlink (CNG convention)
+            mv /srv/gitlab/log /var/log/gitlab
+            ln -s /var/log/gitlab /srv/gitlab/log
+            chown -R 1000:1000 /var/log/gitlab
+
+            # Copy erb binary (needed by set-config for ERB template rendering)
+            mkdir -p ${target.dir}/usr/local/bin
+            cp /usr/local/bin/erb ${target.dir}/usr/local/bin/
+
+            # Remove upstream devfile Go binaries before this layer is emitted.
+            # The patched build stage below installs rebuilt binaries in their place.
+            rm -f /srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.0-*-linux/out/devfile-*-linux
+
+            # Copy to outputs
+            mkdir -p ${target.dir}/srv ${target.dir}/var/log ${target.dir}/var/opt
+            cp -a /srv/gitlab ${target.dir}/srv/
+            cp -a /var/log/gitlab ${target.dir}/var/log/
+            cp -a /var/opt/gitlab ${target.dir}/var/opt/
+
+            # Copy scripts
+            mkdir -p ${target.dir}/scripts
+            cp -a /scripts-src/* ${target.dir}/scripts/
+            chmod 0755 ${target.dir}/scripts/*
+
+            # Create gitlab-shell VERSION symlink target
+            mkdir -p ${target.dir}/home/git/gitlab-shell
+            chown -R 1000:1000 ${target.dir}/home/git
+            cp /srv/gitlab/GITLAB_SHELL_VERSION ${target.dir}/home/git/gitlab-shell/VERSION
+      paths:
+        - type: file
+          path: /scripts-src/entrypoint.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/gitlab-webservice/scripts/entrypoint.sh
+        - type: file
+          path: /scripts-src/process-wrapper
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/gitlab-webservice/scripts/process-wrapper
+        - type: file
+          path: /scripts-src/healthcheck
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/gitlab-webservice/scripts/healthcheck
+        - type: file
+          path: /scripts-src/set-config
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/gitlab-webservice/scripts/set-config
+        - type: file
+          path: /puma-src/puma.rb
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: image/gitlab-webservice/scripts/puma.rb
+      outputs:
+        - source: ${target.dir}/usr/local/bin/erb
+          target: /usr/local/bin/erb
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/srv/gitlab
+          target: /srv/gitlab
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/log/gitlab
+          target: /var/log/gitlab
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/opt/gitlab
+          target: /var/opt/gitlab
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/home/git
+          target: /home/git
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/scripts
+          target: /scripts
+          uid: 0
+          gid: 0
+    - name: devfile
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+      work-dir: /go/src/devfile-gem/ext
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://gitlab.com/gitlab-org/ruby/gems/devfile-gem.git#0.5.0
+            checksum: ef5ef1c7f4549e49c52c3d724fcf1bfb78c5a0a7
+            path: /go/src/devfile-gem
+            spdx:
+              name: devfile-gem
+              version: 0.5.0
+              packages:
+                - name: devfile-gem
+                  purl: pkg:golang/gitlab-org/ruby/gems/devfile-gem@0.5.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+              - github.com/containerd/containerd@v1.7.29
+              - github.com/go-git/go-git/v5@v5.18.0
+              - github.com/cloudflare/circl@v1.6.3
+            download: true
+        - name: build and install
+          runs: |
+            set -eux -o pipefail
+
+            export GOTOOLCHAIN=local
+
+            MACHINE_ARCH=$(uname -m)
+            case "$MACHINE_ARCH" in
+              aarch64) GOARCH=arm64 ;;
+              x86_64) GOARCH=amd64 ;;
+              *)
+                echo "Unsupported arch: $MACHINE_ARCH"
+                exit 1
+                ;;
+            esac
+
+            CGO_ENABLED=0 go build -o /tmp/devfile-binary .
+
+            GEM_DIR="${target.dir}/srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.0-${MACHINE_ARCH}-linux/out"
+            mkdir -p "$GEM_DIR"
+            mv /tmp/devfile-binary "$GEM_DIR/devfile-${GOARCH}-linux"
+      outputs:
+        - source: ${target.dir}/srv/gitlab/vendor/bundle/ruby/3.3.0/gems
+          target: /srv/gitlab/vendor/bundle/ruby/3.3.0/gems
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/ruby:3.3-debian13
+      includes:
+        - usr/local/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: git
+  users:
+    - name: git
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: git
+      gid: 1000
+      members:
+        - git
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  BOOTSNAP_CACHE_DIR: /srv/gitlab/bootsnap
+  BUNDLE_DEPLOYMENT: "true"
+  BUNDLE_PATH: /srv/gitlab/vendor/bundle
+  BUNDLE_WITHOUT: development:test:mysql:aws
+  CONFIG_TEMPLATE_DIRECTORY: /srv/gitlab/config
+  EXECJS_RUNTIME: Disabled
+  LANG: C.UTF-8
+  RAILS_ENV: production
+  RUBYOPT: -W:no-experimental
+  UPGRADE_STATUS_DIR: /var/opt/gitlab/.upgrade-status
+paths:
+  - type: directory
+    path: /var/opt/gitlab
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/log/gitlab
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /tmp
+    uid: 1000
+    gid: 1000
+    mode: "1777"
+  - type: directory
+    path: /srv/gitlab/public/uploads
+    uid: 1000
+    gid: 1000
+    mode: "0700"
+  - type: directory
+    path: /srv/gitlab/tmp/sockets
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /srv/gitlab/tmp/pids
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /home/git
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal GitLab Webservice (Puma) image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /scripts/entrypoint.sh
+cmd:
+  - /scripts/process-wrapper
+ports:
+  - 8080/tcp
