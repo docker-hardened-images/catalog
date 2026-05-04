@@ -1,0 +1,167 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Gatekeeper 3.22.x (dev)
+image: dhi.io/gatekeeper
+variant: dev
+tags:
+  - 3-dev
+  - 3.22-dev
+  - 3.22.1-dev
+  - 3-debian13-dev
+  - 3.22-debian13-dev
+  - 3.22.1-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-09"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: f5be0db7118da2dd7c099fc748c3e1a81c0ceda2
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+  SEMVER_MAJOR_MINOR_VERSION: "3.22"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.22.1
+  VERSION: 3.22.1
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: gatekeeper
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/github.com/open-policy-agent/gatekeeper
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/open-policy-agent/gatekeeper.git#v3.22.1
+            checksum: f5be0db7118da2dd7c099fc748c3e1a81c0ceda2
+            path: /go/src/github.com/open-policy-agent/gatekeeper
+            spdx:
+              name: gatekeeper
+              version: 3.22.1
+              packages:
+                - name: gatekeeper
+                  purl: pkg:golang/github.com/open-policy-agent/gatekeeper/v3@3.22.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # FIPS Go toolchain enforces fips140=only at compile time, but
+              # gatekeeper's client-go pulls X25519 which strict FIPS rejects.
+              export GODEBUG=fips140=on
+            fi
+
+            # Scope: pure-Go packages that don't require envtest binaries
+            # (etcd/kube-apiserver). Covers the manager's mutation/target/
+            # webhook surface plus pkg/metrics (which exercises the otel/sdk
+            # and otlpmetric CVE bumps applied above) and cmd/gator/... as a
+            # smoke check that the shared module still compiles end-to-end.
+            go test -short -count=1 \
+              ./apis/... \
+              ./cmd/gator/... \
+              ./pkg/mutation/... \
+              ./pkg/target/... \
+              ./pkg/webhook/... \
+              ./pkg/metrics/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/open-policy-agent/gatekeeper/v3/pkg/version.Version=v3.22.1
+            output: ${target.dir}/usr/local/bin/gatekeeper
+      outputs:
+        - source: ${target.dir}/usr/local/bin/gatekeeper
+          target: /usr/local/bin/gatekeeper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/gatekeeper
+          target: /opt/docker/sbom/gatekeeper
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /manager
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/gatekeeper
+annotations:
+  org.opencontainers.image.description: A minimal Gatekeeper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/gatekeeper
+ports:
+  - 8443/tcp
+  - 9090/tcp
