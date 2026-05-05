@@ -1,0 +1,331 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cassandra Reaper 4.x
+image: dhi.io/cassandra-reaper
+variant: runtime
+tags:
+  - "4"
+  - "4.2"
+  - 4.2.1
+  - 4-debian13
+  - 4.2-debian13
+  - 4.2.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-26"
+vars:
+  COMMIT_SHA: fe92389cd3244903c823a3846d076d855bace3e3
+  JRE_REFERENCE: dhi/eclipse-temurin:11.0.31.11-debian13@sha256:155413327dcc9a274e24822c38b0816f93a2f650ed8ca0655306e98633ea7b5e
+  JRE_VERSION: 11.0.31.11
+  MAVEN_REFERENCE: dhi/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+  MAVEN_VERSION: 3.9.14
+  NODE_REFERENCE: dhi/node:24.15.0-debian13-dev@sha256:04768889c40fa471029691aabe84dc75304c20e105c591984d95e4f4065bbda6
+  NODE_VERSION: 24.15.0
+  SEMVER_MAJOR_MINOR_VERSION: "4.2"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.2.1
+  VERSION: 4.2.1
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+  builds:
+    - name: cassandra-reaper
+      uses: dhi.io/maven:3.9.14-jdk21-debian13-dev@sha256:65f448b4a08a41ada20fd50c68fe771ed60fc55a298361a69aa303f26c42bb84
+      work-dir: ${source.dir}/cassandra-reaper
+      caches:
+        - path: /root/.m2/repository
+        - path: /src/cassandra-reaper/src/ui/node_modules
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/thelastpickle/cassandra-reaper.git#4.2.1
+            checksum: fe92389cd3244903c823a3846d076d855bace3e3
+            path: ${source.dir}/cassandra-reaper
+            spdx:
+              name: cassandra-reaper
+              version: 4.2.1
+              packages:
+                - name: cassandra-reaper
+                  purl: pkg:dhi/cassandra-reaper@4.2.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:24.15.0-debian13-dev@sha256:04768889c40fa471029691aabe84dc75304c20e105c591984d95e4f4065bbda6
+            includes:
+              - opt/**
+              - usr/local/bin/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build ui
+          work-dir: ${source.dir}/cassandra-reaper/src/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Reaper's UI is webpack 4 / Babel 6 / Bower 1.8 / React 16,
+            # built for Node 10–14. Node 18+ disables MD4 (and other
+            # legacy crypto) by default in OpenSSL3, which webpack 4's
+            # asset hashing relies on. The legacy-provider escape hatch
+            # is the documented workaround for webpack 4 on modern Node.
+            export NODE_OPTIONS=--openssl-legacy-provider
+
+            npm install
+            # `npm run navbar` runs build-navbar.sh which expands the
+            # navbar template (version + git SHA + build date) and
+            # writes app/jsx/navbar.jsx. Upstream uses this file as a
+            # build-time artifact; without it webpack fails to resolve
+            # `jsx/navbar`.
+            npm run navbar
+            npm run bower
+            npm run minimize
+        - name: build jar
+          work-dir: ${source.dir}/cassandra-reaper
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Mirror Maven Central through Google Cloud's CDN-fronted
+            # copy. Reaper's pom drags in some very old plugin POMs
+            # (e.g. maven-enforcer-plugin:1.4.1 from 2016) that sit on
+            # cold paths in Maven Central's S3 fleet and routinely
+            # 429 under parallel CI load. The Google mirror has a
+            # different rate-limit profile and serves the same bytes.
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <settings>
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>Google Maven Central Mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
+
+            mvn package -B -pl src/server -am -DskipTests \
+              -Daether.connector.http.retryHandler.count=10 \
+              -Daether.connector.http.retryHandler.requestSentEnabled=true \
+              -Dmaven.javadoc.skip=true \
+              -Dcheckstyle.skip=true \
+              -Dspotbugs.skip=true \
+              -Dspotless.check.skip=true \
+              -Dspotless.apply.skip=true \
+              -Dspotless.skip=true \
+              -Denforcer.skip=true \
+              -Djacoco.skip=true \
+              -Drat.skip=true
+        - name: prepare for sbom
+          work-dir: ${source.dir}/cassandra-reaper/src/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # The full node_modules from `build ui` is mostly webpack 4 /
+            # babel 6 / bower 1.8 dev tooling that never ships in the
+            # runtime image (the webpack-bundled JS lives inside the
+            # shaded JAR, not as separate node modules). Clearing it
+            # and reinstalling with --omit=dev produces a node_modules
+            # tree that matches what the runtime actually uses, so the
+            # UI SBOM and downstream CVE scans only report on packages
+            # reachable from the shipped JS bundles. Mirrors the
+            # kyverno-policy-reporter-ui prepare-for-sbom pattern.
+            #
+            # `node_modules` is a buildkit cache mount (see `caches:`
+            # above) so we can't `rm -rf` it; clearing its contents
+            # in place leaves the mount intact.
+            find node_modules -mindepth 1 -delete
+            npm install --omit=dev --ignore-scripts
+        - name: sbom ui
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: cassandra-reaper-ui
+            source: ${source.dir}/cassandra-reaper/src/ui/node_modules
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 \
+              "${source.dir}/cassandra-reaper/src/server/target/cassandra-reaper-4.2.1.jar" \
+              "${target.dir}/usr/local/share/cassandra-reaper/cassandra-reaper.jar"
+
+            # Config templates from the upstream source tree
+            # (src/packaging/resource/, same files the release tarball
+            # ships under resource/). Three patches per template, each
+            # followed by an assertion so a future upstream rename or
+            # whitespace tweak fails the build instead of silently
+            # producing a wrong runtime config:
+            #   (a) add empty defaults on four Dropwizard env-var
+            #       references (DHI strips empty-string values from
+            #       `environment:`, so unset vars are otherwise
+            #       rejected at startup);
+            #   (b) flip REAPER_AUTH_ENABLED's built-in default from
+            #       true to false so the image boots out-of-the-box
+            #       (Dropwizard rejects auth-enabled with no users);
+            #   (c) inject persistenceStoragePath after `storageType:
+            #       memory` (required by 4.x for the in-memory backend).
+            for f in cassandra-reaper.yaml \
+              cassandra-reaper-memory.yaml \
+              cassandra-reaper-cassandra.yaml; do
+              dst="${target.dir}/etc/cassandra-reaper/$f"
+              install -D -m 0644 \
+                "${source.dir}/cassandra-reaper/src/packaging/resource/$f" \
+                "$dst"
+
+              # Patches (a) and (b) apply to every template — the auth
+              # block is shared across backends.
+              sed -E -i \
+                -e 's/\$\{(REAPER_AUTH_USER|REAPER_AUTH_PASSWORD|REAPER_READ_USER|REAPER_READ_USER_PASSWORD)\}/${\1:-}/g' \
+                -e 's/\$\{REAPER_AUTH_ENABLED:-true\}/\${REAPER_AUTH_ENABLED:-false}/g' \
+                "$dst"
+              grep -q '${REAPER_AUTH_USER:-}' "$dst" \
+                || (
+                  echo "FATAL: REAPER_AUTH_USER patch missed in $f" >&2
+                  exit 1
+                )
+              grep -q '${REAPER_AUTH_ENABLED:-false}' "$dst" \
+                || (
+                  echo "FATAL: REAPER_AUTH_ENABLED default-flip missed in $f" >&2
+                  exit 1
+                )
+
+              # Patch (c) only applies to memory-backed templates.
+              if grep -q '^storageType: memory$' "$dst"; then
+                sed -i \
+                  '/^storageType: memory$/a persistenceStoragePath: /var/lib/cassandra-reaper/storage' \
+                  "$dst"
+                grep -q '^persistenceStoragePath: /var/lib/cassandra-reaper/storage$' "$dst" \
+                  || (
+                    echo "FATAL: persistenceStoragePath inject missed in $f" >&2
+                    exit 1
+                  )
+              fi
+            done
+      outputs:
+        - source: ${target.dir}/usr/local/share/cassandra-reaper/cassandra-reaper.jar
+          target: /usr/local/share/cassandra-reaper/cassandra-reaper.jar
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper-memory.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper-memory.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper-cassandra.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper-cassandra.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/cassandra-reaper
+          target: /opt/docker/sbom/cassandra-reaper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cassandra-reaper-ui
+          target: /opt/docker/sbom/cassandra-reaper-ui
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:11.0.31.11-debian13@sha256:155413327dcc9a274e24822c38b0816f93a2f650ed8ca0655306e98633ea7b5e
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+paths:
+  - type: directory
+    path: /var/lib/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/tmp/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Cassandra Reaper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - java
+  - -jar
+  - /usr/local/share/cassandra-reaper/cassandra-reaper.jar
+cmd:
+  - server
+  - /etc/cassandra-reaper/cassandra-reaper.yaml
+ports:
+  - 8080/tcp
+  - 8081/tcp
