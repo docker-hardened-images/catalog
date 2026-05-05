@@ -4,8 +4,8 @@ name: MySQL Operator 8.4.x
 image: dhi.io/mysql-operator
 variant: runtime
 tags:
-  - 8.4.8-2.1.10
-  - 8.4.8-2.1.10-debian13
+  - 8.4.9-2.1.11
+  - 8.4.9-2.1.11-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -17,7 +17,8 @@ vars:
   ANTLR_VERSION: 4.13.2
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
-  COMMIT_SHA: 1bbaa51818489443c052a2b11c049214ae557122
+  CHART_VERSION: 2.1.11
+  COMMIT_SHA: da256206a7ed5d2dd4082a6bfd6de8a64b3b6c6e
   MYSQL_COMMIT_SHA: f9c88132a87a7d9e740e50bce2621999695bd3fe
   MYSQL_SHELL_COMMIT_SHA: 43fb6f5a02d42634732d5f96982ee09f21796d5e
   MYSQL_VERSION: 8.4.9
@@ -25,8 +26,8 @@ vars:
   PYTHON_REFERENCE: dhi/python:3.13.13-debian13@sha256:dc34b980bd5783aba9efae99de0fd7e2b2738fcd9f86ec4381c055da99a40e3f
   SEMVER_MAJOR_MINOR_VERSION: "8.4"
   SEMVER_MAJOR_VERSION: "8"
-  SEMVER_VERSION: 8.4.8
-  VERSION: 8.4.8-2.1.10
+  SEMVER_VERSION: 8.4.9
+  VERSION: 8.4.9-2.1.11
 contents:
   packages:
     - '!libelogind0'
@@ -58,6 +59,7 @@ contents:
           - libaio-dev
           - libboost-all-dev
           - libc-bin
+          - libcurl4-openssl-dev
           - libncurses-dev
           - libssl-dev
           - libtirpc-dev
@@ -77,15 +79,15 @@ contents:
           - libssh-dev
           - patchelf
         files:
-          - url: git+https://github.com/mysql/mysql-operator#8.4.8-2.1.10
-            checksum: 1bbaa51818489443c052a2b11c049214ae557122
+          - url: git+https://github.com/mysql/mysql-operator#8.4.9-2.1.11
+            checksum: da256206a7ed5d2dd4082a6bfd6de8a64b3b6c6e
             path: ${source.dir}/mysql-operator
             spdx:
               name: mysql-operator
-              version: 8.4.8-2.1.10
+              version: 8.4.9-2.1.11
               packages:
                 - name: mysql-operator
-                  purl: pkg:github/mysql/mysql-operator@8.4.8-2.1.10
+                  purl: pkg:github/mysql/mysql-operator@8.4.9-2.1.11
                   license: UPL-1.0
             uid: 0
             gid: 0
@@ -131,68 +133,60 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            mkdir build && cd build
+            mkdir -p build
 
-            CMAKE_FLAGS="-DWITH_DEBUG=OFF
-              -DWITH_UNIT_TESTS=OFF
-              -DWITH_ARCHIVE_STORAGE_ENGINE=OFF
-              -DWITH_BLACKHOLE_STORAGE_ENGINE=OFF
-              -DWITH_FEDERATED_STORAGE_ENGINE=OFF
-              -DWITH_EXAMPLE_STORAGE_ENGINE=OFF
-              -DWITH_NDBCLUSTER_STORAGE_ENGINE=OFF
-              -DWITH_ROUTER=OFF
-              -DINSTALL_MYSQLTESTDIR=
-              -DWITH_AUTHENTICATION_KERBEROS=ON
-              -DWITH_AUTHENTICATION_LDAP=ON
-              -DWITH_AUTHENTICATION_WEBAUTHN=ON
-              -DWITH_NDB=OFF"
-
-            # This is not in later versions of Mysql
-            if [ "8.4" = "8.0" ]; then
-              CMAKE_FLAGS="${CMAKE_FLAGS}
-                -DWITH_BOOST=${source.dir}/boost
-                -DWITH_PROTOBUF=bundled
-                -Dprotobuf_BUILD_SHARED_LIBS=OFF"
-            fi
-
-            if [ "8.4" = "9.6" ]; then
-              CMAKE_FLAGS="${CMAKE_FLAGS}
-                -DWITH_ROUTER=ON"
-            fi
-
-            cmake .. $CMAKE_FLAGS
+            pushd build
+            cmake .. \
+              -DCMAKE_INSTALL_PREFIX='${target.dir}/opt/mysql' \
+              -DWITH_DEBUG=OFF \
+              -DWITH_UNIT_TESTS=OFF \
+              -DWITH_ARCHIVE_STORAGE_ENGINE=OFF \
+              -DWITH_BLACKHOLE_STORAGE_ENGINE=OFF \
+              -DWITH_FEDERATED_STORAGE_ENGINE=OFF \
+              -DWITH_EXAMPLE_STORAGE_ENGINE=OFF \
+              -DWITH_NDBCLUSTER_STORAGE_ENGINE=OFF \
+              -DWITH_NDB=OFF \
+              -DINSTALL_MYSQLTESTDIR= \
+              -DWITH_AUTHENTICATION_KERBEROS=ON \
+              -DWITH_AUTHENTICATION_LDAP=ON \
+              -DWITH_AUTHENTICATION_WEBAUTHN=ON \
+              -DWITH_ROUTER=ON
 
             make -j"$(nproc)"
+            popd
         - name: build antlr4 runtime
           work-dir: ${source.dir}/antlr4/runtime/Cpp
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir build && mkdir run && cd build
+            mkdir -p build
 
+            pushd build
             cmake ..
             make
 
-            DESTDIR=${target.dir}/antlr4 make install
+            DESTDIR='${target.dir}/antlr4' make install
+            popd
         - name: build mysql shell
           work-dir: ${source.dir}/mysql-shell
           runs: |
             set -eux -o pipefail
 
-            mkdir build && cd build
+            mkdir -p build
 
-            CMAKE_FLAGS="-DMYSQL_SOURCE_DIR=${source.dir}/mysql-server
-              -DMYSQL_BUILD_DIR=${source.dir}/mysql-server/build
-              -DHAVE_PYTHON=1
-              -DBUNDLED_ANTLR_DIR=${target.dir}/antlr4/usr/local
-              -DCMAKE_INSTALL_PREFIX=${target.dir}/mysql-shell"
-
-            cmake .. $CMAKE_FLAGS
+            pushd build
+            cmake .. \
+              -DMYSQL_SOURCE_DIR=${source.dir}/mysql-server \
+              -DMYSQL_BUILD_DIR=${source.dir}/mysql-server/build \
+              -DHAVE_PYTHON=1 \
+              -DBUNDLED_ANTLR_DIR=${target.dir}/antlr4/usr/local \
+              -DCMAKE_INSTALL_PREFIX=${target.dir}/mysql-shell
 
             make -j"$(nproc)"
 
             make install
+            popd
         - name: patch requirements.txt
           work-dir: ${source.dir}/mysql-operator/docker-deps
           runs: |
