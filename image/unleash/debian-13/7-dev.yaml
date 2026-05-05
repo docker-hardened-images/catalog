@@ -80,12 +80,11 @@ contents:
             # Move frontend build into the build output directory
             mkdir -p build/frontend
             mv frontend/build build/frontend/build
-        - name: frontend sbom
-          uses: sbom@v1
+        - name: fix frontend dependency classification
+          uses: git/patch@v1
           with:
-            extra-scanners: javascript-package-cataloger
-            prefix: unleash-frontend
-            source: ${source.dir}/unleash/frontend/node_modules
+            dir: ${source.dir}/unleash
+            patch: ${source.dir}/patches/frontend-deps.patch
         - name: production dependencies
           privileged: true
           runs: |
@@ -96,7 +95,20 @@ contents:
             # Clean node_modules fully before production install
             # to ensure dev dependencies are completely removed
             rm -rf node_modules frontend/node_modules
+
+            # Install root production dependencies
             yarn workspaces focus -A --production
+
+            # frontend/ is an independent package (its own yarn.lock),
+            # not a Yarn workspace member, so it needs a separate install
+            cd frontend
+            yarn workspaces focus --production
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-frontend
+            source: ${source.dir}/unleash/frontend/node_modules
         - name: copy app files
           runs: |
             set -eux -o pipefail
@@ -107,6 +119,12 @@ contents:
             cp -r build/frontend "${target.dir}/opt/unleash/"
             cp build/package.json "${target.dir}/opt/unleash/"
             cp -r node_modules "${target.dir}/opt/unleash/"
+      paths:
+        - type: file
+          path: ${source.dir}/patches/frontend-deps.patch
+          uid: 0
+          gid: 0
+          source: image/unleash/patch/frontend-deps.patch
       outputs:
         - source: ${target.dir}/opt/unleash
           target: /opt/unleash
