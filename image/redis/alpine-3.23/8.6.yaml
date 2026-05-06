@@ -1,0 +1,240 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: Redis 8.6.x
+image: dhi.io/redis
+variant: runtime
+tags:
+  - 8-alpine3.23
+  - 8.6-alpine3.23
+  - 8.6.2-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-11"
+vars:
+  COMMIT_SHA: a176d1225ef66b6bd963231d77d5819909782329
+  HAS_MODULES: "true"
+  REDIS_LICENSE: AGPL-3.0-only
+  SEMVER_MAJOR_MINOR_VERSION: "8.6"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.6.2
+  VERSION: 8.6.2
+contents:
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  packages:
+    - alpine-baselayout-data
+    - ca-certificates
+    - libgcc
+    - libssl3
+    - libstdc++
+    - pcre2
+    - tini
+    - tzdata
+  builds:
+    - name: redis
+      work-dir: ${source.dir}/redis
+      caches:
+        - path: /root/.cargo
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - bash
+          - bsd-compat-headers
+          - build-base
+          - ca-certificates
+          - cargo
+          - clang21
+          - clang21-libclang
+          - clang21-static
+          - cmake
+          - coreutils
+          - curl
+          - git
+          - which
+          - grep
+          - libffi-dev
+          - libgcc
+          - libtool
+          - linux-headers
+          - llvm21-dev
+          - ncurses-dev
+          - openssh
+          - openssl
+          - openssl-dev
+          - pkgconf
+          - py-virtualenv
+          - py3-cryptography
+          - py3-pip
+          - py3-setuptools
+          - py3-virtualenv
+          - python3
+          - python3-dev
+          - rsync
+          - sed
+          - tar
+          - unzip
+          - xsimd
+          - xz
+        files:
+          - url: git+https://github.com/redis/redis.git#8.6.2
+            checksum: a176d1225ef66b6bd963231d77d5819909782329
+            path: ${source.dir}/redis
+            spdx:
+              name: redis
+              version: 8.6.2
+              packages:
+                - name: redis
+                  purl: pkg:github/redis/redis@8.6.2
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install ramp-packer
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # ramp-packer is required by the RedisJSON module build (deps:
+            # addict, toml, jinja2). Alpine ships it via pip; PIP_BREAK_SYSTEM_PACKAGES
+            # is needed because Alpine's python3 enforces PEP 668 by default.
+            PIP_BREAK_SYSTEM_PACKAGES=1 pip install -q addict toml jinja2 ramp-packer
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            # https://github.com/jemalloc/jemalloc/issues/467 — bundled jemalloc
+            # needs explicit page-size flags for cross-builds.
+            if [ ${target.arch} = arm64 ]; then
+              jemallocFlags="--build=aarch64-alpine-linux-musl --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-alpine-linux-musl --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' '${source.dir}/redis/deps/Makefile'
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' '${source.dir}/redis/deps/Makefile'
+            grep -F "cd jemalloc && ./configure $jemallocFlags " '${source.dir}/redis/deps/Makefile'
+        - name: patch redisjson rust flags
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # RediSearch's rust submodule must dynamically link the C runtime;
+            # static linking breaks against musl. Fetch sources first, then patch.
+            export PATH="/usr/lib/llvm21/bin:$PATH"
+            make -C '${source.dir}/redis/modules/redisjson' get_source
+            sed -i 's/^RUST_FLAGS=$/RUST_FLAGS += -C target-feature=-crt-static/' \
+              '${source.dir}/redis/modules/redisjson/src/Makefile'
+            grep -E 'RUST_FLAGS' '${source.dir}/redis/modules/redisjson/src/Makefile'
+        - name: build and install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export BUILD_TLS=yes
+            export RUST_DYN_CRT=1
+            export PATH="/usr/lib/llvm21/bin:$PATH"
+            # exports because HAS_MODULES == "true"
+            export BUILD_WITH_MODULES=yes
+            export DISABLE_WERRORS=yes
+
+            # IGNORE_MISSING_DEPS bypasses RediSearch's readies platform
+            # check, which fails in the DHI hermetic build sandbox (no
+            # /etc/os-release). Upstream Dockerfile builds on stock alpine
+            # where the file exists, so doesn't need this.
+            make all -j"$(nproc)" IGNORE_MISSING_DEPS=1
+            make install V=1 PREFIX=${target.dir}/usr/local IGNORE_MISSING_DEPS=1
+        - name: patch config
+          runs: |
+            set -eux -o pipefail
+
+            echo 'include /etc/redis/conf.d/*.conf' >> '${source.dir}/redis/redis.conf'
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/lib/redis/modules
+          target: /usr/local/lib/redis/modules
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/redis/redis.conf
+          target: /etc/redis/redis.conf
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/redis/redis-full.conf
+          target: /etc/redis/redis-full.conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/redis
+          target: /opt/docker/sbom/redis
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /data
+environment:
+  REDIS_VERSION: 8.6.2
+paths:
+  - type: symlink
+    path: /usr/bin/tini
+    uid: 0
+    gid: 0
+    source: /sbin/tini
+  - type: directory
+    path: /var/lib/redis
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/redis
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /run/redis
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /data
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /etc/redis/conf.d/docker.conf
+    content: |
+      daemonize no
+      bind 0.0.0.0 -::1
+      logfile ""
+    uid: 0
+    gid: 0
+    mode: "0555"
+annotations:
+  org.opencontainers.image.description: A minimal Redis image
+  org.opencontainers.image.licenses: AGPL-3.0-only
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - redis-server
+  - /etc/redis/redis.conf
