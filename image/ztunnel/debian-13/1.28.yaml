@@ -33,6 +33,7 @@ contents:
   builds:
     - name: ztunnel
       uses: dhi.io/rust:1.95.0-debian13-dev@sha256:761109f92317b86745ee74afae850a87cb24dea7f8be5215b12178c4a49b82b1
+      work-dir: ${source.dir}/ztunnel
       environment:
         VERSION: 1.28.6
       contents:
@@ -58,11 +59,9 @@ contents:
       pipeline:
         - name: patch Cargo.lock
           uses: git/patch@v1
-          work-dir: ${source.dir}/ztunnel
           with:
             patch: ${source.dir}/patch/lru-1.28.patch
         - name: patch CVEs
-          work-dir: ${source.dir}/ztunnel
           privileged: true
           runs: |
             set -eux -o pipefail
@@ -80,8 +79,34 @@ contents:
               's/tracing-subscriber = { version = "0\.3[^"]*"/tracing-subscriber = { version = ">=0.3.20, <0.4"/g' \
               Cargo.toml
 
-            # Update all patched dependencies
-            cargo update --ignore-rust-version --recursive pprof tracing-subscriber aws-lc-rs time
+            # CVE-2026-41676/41677/41678/41681/41898/42327 → openssl-rs ≥0.10.79
+            sed -i '/^openssl = /s/version = "0\.10"/version = ">=0.10.79, <0.11"/' Cargo.toml
+
+            # GHSA-82j2-j2ch-gfr8 / GHSA-pwjx-qhcg-rvj4 / GHSA-965h-392x-2mh5 / GHSA-xgp8-3hg3-c2mh
+            sed -i '/rustls-webpki/s/version = "0\.103"/version = ">=0.103.13, <0.104"/' Cargo.toml
+
+            # Update patched transitive deps (hickory 0.25.x cannot move to patched 0.26 without Istio ≥1.30)
+            cargo update --ignore-rust-version --recursive \
+              pprof tracing-subscriber aws-lc-rs time \
+              openssl
+
+            # rustls-webpki: Cargo.lock may list both 0.102.x (boring-rustls-provider) and 0.103.x,
+            # so bare `cargo update rustls-webpki` fails as ambiguous — bump each 0.103 line explicitly.
+            awk '
+            /^name = "rustls-webpki"$/ {
+              getline
+              if ($0 ~ /^version = "0\.103\./) {
+                split($0, parts, "\"")
+                print parts[2]
+              }
+            }' Cargo.lock | sort -u | while read -r __rw_v; do
+              [ -z "${__rw_v}" ] && continue
+              cargo update --ignore-rust-version -p "rustls-webpki@${__rw_v}" --precise 0.103.13 || true
+            done
+
+            # GHSA-cq8v-f236-94qc — disambiguate multiple rand versions (do not pass bare `rand`)
+            cargo update --ignore-rust-version -p rand@0.8.5 --precise 0.8.6 || true
+            cargo update --ignore-rust-version -p rand@0.9.2 --precise 0.9.3 || true
         - name: cargo sbom
           uses: sbom@v1
           with:
@@ -89,7 +114,6 @@ contents:
             prefix: ztunnel-cargo
             source: ${source.dir}/ztunnel
         - name: build
-          work-dir: ${source.dir}/ztunnel
           privileged: true
           runs: |
             set -eux -o pipefail
@@ -157,7 +181,7 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 annotations:
-  org.opencontainers.image.description: The ztunnel component of Istio's ambient mesh
+  org.opencontainers.image.description: Istio Ztunnel - Rust L4 proxy for Istio ambient mesh
   org.opencontainers.image.licenses: Apache-2.0
 entrypoint:
   - ztunnel

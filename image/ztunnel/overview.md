@@ -1,8 +1,8 @@
-## About Ztunnel
+## About Istio Ztunnel
 
-Ztunnel is intended to be a purpose built implementation of the node proxy in ambient mesh. Part of the goals of this
-included keeping a narrow feature set, implementing only the bare minimum requirements for ambient. This ensures the
-project remains simple and high performance.
+Istio Ztunnel is intended to be a purpose built implementation of the node proxy in ambient mesh. Part of the goals of
+this included keeping a narrow feature set, implementing only the bare minimum requirements for ambient. This ensures
+the project remains simple and high performance.
 
 For more details, visit https://istio.io/latest/blog/2022/introducing-ambient-mesh/.
 
