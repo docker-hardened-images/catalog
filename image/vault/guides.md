@@ -14,7 +14,8 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 
 This Docker Hardened Vault image contains the Vault binary and the minimal runtime needed to operate the Vault server
 and CLI tools. It is intended to be used as a runtime image for running Vault or as a base for building custom Vault
-images. Runtime variants run as a nonroot user by default and do not include a shell or package manager.
+images. Runtime variants run as a nonroot user by default and do not include a shell or package manager. The image also
+includes [tini](https://github.com/krallin/tini) so Vault runs as a well-behaved PID 1 child process.
 
 ## Start a Vault image
 

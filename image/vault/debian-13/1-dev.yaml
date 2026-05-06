@@ -48,6 +48,9 @@ contents:
   builds:
     - name: vault
       uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/github.com/hashicorp/vault
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - binutils
@@ -66,37 +69,112 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/hashicorp/vault
+        - name: update go dependencies (1 only)
+          uses: go/bump@v2
           with:
             deps:
+              - golang.org/x/image@v0.5.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
               - github.com/Azure/go-ntlmssp@v0.1.1
               - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
               - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+              - github.com/docker/cli@v29.2.0
+              - github.com/go-git/go-git/v5@v5.18.0
               - github.com/go-jose/go-jose/v3@v3.0.5
               - github.com/go-jose/go-jose/v4@v4.1.4
-              - github.com/jackc/pgx/v5@v5.9.2
-              - go.opentelemetry.io/otel/sdk@v1.43.0
               - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/opencontainers/runc@v1.2.8
+              - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
             download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # Vault's broad -short suite still runs Docker, network, cluster,
+            # and cloud-heavy tests. Run real unit tests from root-module
+            # packages that are stable across the 1.x and 2.x lines, while
+            # avoiding root ./vault, external_tests, physical backends,
+            # database plugins, command tests, nested module roots, and
+            # helper/trace, whose tests conflict with buildkit's active tracer.
+            # Within the selected packages, skip only tests that require host
+            # syslog, root-sensitive filesystem permissions, or Keybase network
+            # access, none of which are feasible in the offline build sandbox.
+            unset VAULT_ADDR VAULT_TOKEN VAULT_DEV_ROOT_TOKEN_ID VAULT_ACC || true
+            GOMAXPROCS=1 CGO_ENABLED=0 go test -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+              -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|Logger_SetupLoggerWithInValidLogPathPermission|PubKeyFilesFlagSetKeybase|FetchKeybasePubkeys)' \
+              ./shamir \
+              ./internal/observability/event \
+              ./internalshared/... \
+              ./vault/diagnose \
+              ./builtin/logical/pki/parsing \
+              ./helper/dhutil \
+              ./helper/fairshare \
+              ./helper/flag-kv \
+              ./helper/flag-slice \
+              ./helper/forwarding \
+              ./helper/hostutil \
+              ./helper/locking \
+              ./helper/logging \
+              ./helper/metricsutil \
+              ./helper/monitor \
+              ./helper/namespace \
+              ./helper/osutil \
+              ./helper/parseip \
+              ./helper/pgpkeys \
+              ./helper/policies \
+              ./helper/random \
+              ./helper/syncmap \
+              ./helper/testhelpers \
+              ./helper/timeutil \
+              ./helper/useragent \
+              ./helper/versions
+
+            if [ "${target.fips}" = "true" ]; then
+              # Keep the broad suite in strict FIPS mode, but run packages
+              # that intentionally exercise legacy crypto paths in lenient
+              # mode so FIPS variants still validate the supported paths.
+              GODEBUG=fips140=on GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+
+              # This transit subtest expects strict-mode rejections for RSA
+              # PSS verification combinations, so skip it in the lenient pass
+              # that keeps the package's other unit coverage available.
+              GODEBUG=fips140=on GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'TestTransit_SignVerify_RSA_PSS' \
+                ./builtin/logical/transit
+            else
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./builtin/logical/transit \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+            fi
         - name: patch CVE-2026-3605
           uses: git/patch@v1
-          work-dir: /go/src/github.com/hashicorp/vault
           with:
             patch: ${source.dir}/patch/CVE-2026-3605-reject-wildcards-in-acl-templates.patch
         - name: patch CVE-2026-4525
           uses: git/patch@v1
-          work-dir: /go/src/github.com/hashicorp/vault
           with:
             patch: ${source.dir}/patch/CVE-2026-4525-strip-vault-token-authz-passthrough.patch
         - name: patch CVE-2026-5052
           uses: git/patch@v1
-          work-dir: /go/src/github.com/hashicorp/vault
           with:
             patch: ${source.dir}/patch/CVE-2026-5052-reject-unsafe-acme-validation-targets.patch
         - name: bootstrap
-          work-dir: /go/src/github.com/hashicorp/vault
           privileged: true
           runs: |
             set -eux -o pipefail
@@ -110,7 +188,6 @@ contents:
             make bootstrap
         - name: build
           uses: go/build@v1
-          work-dir: /go/src/github.com/hashicorp/vault
           with:
             ldflags:
               - -X github.com/hashicorp/vault/version.fullVersion=1.21.4
