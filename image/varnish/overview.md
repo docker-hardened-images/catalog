@@ -8,7 +8,9 @@ Varnish Cache is written in C for maximum performance and uses its own flexible 
 Configuration Language), to define request routing, cache behavior, and response manipulation. It supports HTTP/1.1 and
 ESI (Edge Side Includes), streaming, grace mode, and a rich module ecosystem (VMODs) for extending functionality.
 
-For more details, visit https://github.com/varnishcache/varnish-cache.
+For more details, see https://varnish-cache.org/ and the upstream source repositories — current **9.x** releases are
+published from https://github.com/varnish/varnish, while **8.x** continues to ship from
+https://github.com/varnishcache/varnish-cache.
 
 ## About Docker Hardened Images
 

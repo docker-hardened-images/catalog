@@ -39,7 +39,7 @@ All of the above are installed under `/usr/local/bin/`.
 
 ### Basic usage
 
-Replace `<tag>` with the image variant you want (for example `8.0` or `8.0.0-debian13`).
+Replace `<tag>` with the image variant you want (for example `9.0`, `8.0`, or `9.0.1-debian13`).
 
 ```bash
 docker run -p 8080:8080 -p 8443:8443 dhi.io/varnish:<tag>
