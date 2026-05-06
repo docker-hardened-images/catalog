@@ -27,6 +27,12 @@ Advanced capabilities:
 Docker Hardened Images (DHI) are secure, minimal container images with near-zero CVEs, signed provenance, and complete
 SBOM/VEX metadata. They provide a secure foundation for production workloads.
 
+### Why use Docker Hardened Images?
+
+DHI images are reproducibly built, continuously vulnerability-scanned, and maintained with explicit remediation or VEX
+documentation — giving teams a production-ready alternative to generic base images while staying close to upstream
+behavior.
+
 ## Trademarks
 
 Argo® is a registered trademark of The Linux Foundation. This image is not affiliated with or endorsed by The Linux
