@@ -1,7 +1,7 @@
-## About x509-certificate-exporter
+## About X.509 Certificate Exporter
 
-x509-certificate-exporter is a Prometheus exporter for certificates focusing on expiration monitoring. It is designed to
-monitor Kubernetes clusters from inside but it can also be used as a standalone exporter.
+X.509 Certificate Exporter is a Prometheus exporter for certificates focusing on expiration monitoring. It is designed
+to monitor Kubernetes clusters from inside but it can also be used as a standalone exporter.
 
 For more information consult the upstream documentation at: https://github.com/enix/x509-certificate-exporter
 

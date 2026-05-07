@@ -10,7 +10,7 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-## What's included in this x509-certificate-exporter image
+## About this x509-certificate-exporter image
 
 This Docker Hardened x509-certificate-exporter image includes:
 
@@ -24,6 +24,14 @@ This Docker Hardened x509-certificate-exporter image includes:
 
 This guide provides practical examples for using the x509-certificate-exporter Hardened Image to monitor X.509
 certificate expiration in Kubernetes clusters or standalone environments.
+
+### Source configuration is required in v4
+
+Version 4 requires at least one source to be configured at startup. If you start the container without a config file or
+without one of the source flags such as `--watch-dir`, `--watch-file`, `--watch-kubeconf`, or `--watch-kube-secrets`,
+the exporter exits with `fatal: no sources configured`.
+
+All examples below include a source configuration for that reason.
 
 ### Run a x509-certificate-exporter container
 
@@ -334,45 +342,46 @@ spec:
       path: /metrics
 ```
 
-## Available metrics
+## Common metrics
 
-The exporter provides the following Prometheus metrics:
+The exporter exposes Prometheus metrics for both certificate state and exporter health. Common metrics include:
 
-| Metric                          | Type    | Description                                                 |
-| ------------------------------- | ------- | ----------------------------------------------------------- |
-| `x509_cert_not_before`          | Gauge   | Certificate validity start time (Unix timestamp)            |
-| `x509_cert_not_after`           | Gauge   | Certificate expiration time (Unix timestamp)                |
-| `x509_cert_expired`             | Gauge   | 1 if certificate is expired, 0 otherwise                    |
-| `x509_cert_expires_in_seconds`  | Gauge   | Number of seconds until certificate expires (optional)      |
-| `x509_cert_valid_since_seconds` | Gauge   | Number of seconds since certificate became valid (optional) |
-| `x509_cert_error`               | Gauge   | Certificate parsing/validation error indicator (optional)   |
-| `x509_read_errors`              | Counter | Number of errors reading certificates                       |
-| `x509_exporter_build_info`      | Gauge   | Build information including version and revision            |
+| Metric                         | Type      | Description                                                |
+| ------------------------------ | --------- | ---------------------------------------------------------- |
+| `x509_cert_not_after`          | Gauge     | Certificate expiration time (Unix timestamp)               |
+| `x509_cert_expired`            | Gauge     | 1 if certificate is expired, 0 otherwise                   |
+| `x509_exporter_build_info`     | Gauge     | Build information including version and revision           |
+| `x509_source_up`               | Gauge     | 1 when a configured certificate source has synced          |
+| `x509_source_bundles`          | Gauge     | Number of certificate bundles currently tracked per source |
+| `x509_scrape_duration_seconds` | Histogram | Time spent serving `/metrics` scrapes                      |
 
 ## Command-line options
 
 Common command-line flags:
 
-| Flag                      | Description                                                                | Default |
-| ------------------------- | -------------------------------------------------------------------------- | ------- |
-| `--watch-dir=<path>`      | Watch one or more directory which contains x509 cert files (not recursive) | -       |
-| `--watch-kube-secrets`    | Scrape kubernetes secrets and monitor them                                 | false   |
-| `--listen-address=<addr>` | Address on which to bind and expose metrics                                | `:9793` |
-| `--version`               | Show version information                                                   | -       |
-| `--help`                  | Show help message                                                          | -       |
+| Flag                      | Description                                                 | Default |
+| ------------------------- | ----------------------------------------------------------- | ------- |
+| `--watch-dir=<path>`      | Watch one or more directories that contain x509 cert files  | -       |
+| `--watch-file=<path>`     | Watch one or more individual PEM files                      | -       |
+| `--watch-kubeconf=<path>` | Watch certificates embedded in one or more kubeconfig files | -       |
+| `--watch-kube-secrets`    | Scrape Kubernetes secrets and monitor them                  | false   |
+| `--config=<path>`         | Load YAML configuration from a file                         | -       |
+| `--listen-address=<addr>` | Address on which to bind and expose metrics                 | `:9793` |
+| `--version`               | Show version information                                    | -       |
+| `--help`                  | Show help message                                           | -       |
 
 ## Non-hardened images vs Docker Hardened Images
 
 ### Key differences
 
-| Feature         | Non-hardened Argo CD Image Updater  | Docker Hardened Argo CD Image Updater               |
-| --------------- | ----------------------------------- | --------------------------------------------------- |
-| Security        | Standard base with common utilities | Minimal, hardened base with security patches        |
-| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants                        |
-| Package manager | apt/apk available                   | No package manager in runtime variants              |
-| User            | Runs as root by default             | Runs as nonroot user (UID 1000)                     |
-| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                  |
-| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting |
+| Feature         | Non-hardened x509-certificate-exporter | Docker Hardened x509-certificate-exporter           |
+| --------------- | -------------------------------------- | --------------------------------------------------- |
+| Security        | Standard base with common utilities    | Minimal, hardened base with security patches        |
+| Shell access    | Full shell (bash/sh) available         | No shell in runtime variants                        |
+| Package manager | apt/apk available                      | No package manager in runtime variants              |
+| User            | Runs as root by default                | Runs as nonroot user (UID 1000)                     |
+| Attack surface  | Larger due to additional utilities     | Minimal, only essential components                  |
+| Debugging       | Traditional shell debugging            | Use Docker Debug or Image Mount for troubleshooting |
 
 ### Why no shell or package manager?
 
@@ -397,7 +406,7 @@ that only exists during the debugging session.
 For example, you can use Docker Debug:
 
 ```
-docker debug dhi.io/argocd-image-updater:<tag>
+docker debug dhi.io/x509-certificate-exporter:<tag>
 ```
 
 or mount debugging tools with the Image Mount feature:
@@ -405,7 +414,7 @@ or mount debugging tools with the Image Mount feature:
 ```
 docker run --rm -it --pid container:my-container \
   --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/argocd-image-updater:<tag> /dbg/bin/sh
+  dhi.io/x509-certificate-exporter:<tag> /dbg/bin/sh
 ```
 
 ### Image variants
