@@ -1,0 +1,143 @@
+# syntax=dhi.io/build:2-debian13
+
+name: fluxcd notification controller 1.7.x
+image: dhi.io/fluxcd-notification-controller
+variant: runtime
+tags:
+  - "1.7"
+  - 1.7.5
+  - 1.7-debian13
+  - 1.7.5-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-19"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 89e4c4bfd6b9be807542036c549c2bea7c0ddf8c
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+  SEMVER_MAJOR_MINOR_VERSION: "1.7"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.7.5
+  VERSION: 1.7.5
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: fluxcd-notification-controller
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:086c893153f92793f3a1541793cd4a8e8b23bfd4ccaf70c8f4261f496080fb0e
+      work-dir: /go/src/github.com/fluxcd/notification-controller
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/fluxcd/notification-controller#v1.7.5
+            checksum: 89e4c4bfd6b9be807542036c549c2bea7c0ddf8c
+            path: /go/src/github.com/fluxcd/notification-controller
+            spdx:
+              name: fluxcd-notification-controller
+              version: 1.7.5
+              packages:
+                - name: fluxcd-notification-controller
+                  purl: pkg:golang/github.com/fluxcd/notification-controller@1.7.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/moby/spdystream@v0.5.1
+              - github.com/cloudflare/circl@v1.6.3
+            download: true
+        - name: patch
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel@v1.43.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Exclude packages that cannot run in the build environment:
+            # - internal/controller: requires testenv (live k8s API server via etcd)
+            # - internal/server: Test_handlePayload/CEL_filtering_a_GCR_receiver calls
+            #   oauth2.googleapis.com to verify a GCR ID token; network is unreachable in the
+            #   build environment, causing the handler to return 400 instead of the expected 200
+            #
+            # Skip individual tests within otherwise-passing packages:
+            # - TestNewAzureEventHub/Default_Azure_Credential: attempts to reach 169.254.169.254
+            #   (Azure IMDS) to obtain a managed identity token; unreachable in the build environment
+            CGO_ENABLED=0 go test \
+              -skip 'TestNewAzureEventHub/Default_Azure_Credential' \
+              $(go list ./internal/... | grep -vE '/internal/(controller|server)')
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            output: ${target.dir}/usr/local/bin/notification-controller
+      outputs:
+        - source: ${target.dir}/usr/local/bin/notification-controller
+          target: /usr/local/bin/notification-controller
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/fluxcd-notification-controller
+          target: /opt/docker/sbom/fluxcd-notification-controller
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Flux CD notification-controller image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/notification-controller
