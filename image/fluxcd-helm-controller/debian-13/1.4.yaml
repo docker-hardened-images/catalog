@@ -1,0 +1,131 @@
+# syntax=dhi.io/build:2-debian13
+
+name: fluxcd helm controller 1.4.x
+image: dhi.io/fluxcd-helm-controller
+variant: runtime
+tags:
+  - "1.4"
+  - 1.4.5
+  - 1.4-debian13
+  - 1.4.5-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-27"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 3ebc2f57b7323371bf0d067bfb4e411592124bdf
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+  SEMVER_MAJOR_MINOR_VERSION: "1.4"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.4.5
+  VERSION: 1.4.5
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: fluxcd-helm-controller
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/github.com/fluxcd/helm-controller
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/fluxcd/helm-controller#v1.4.5
+            checksum: 3ebc2f57b7323371bf0d067bfb4e411592124bdf
+            path: /go/src/github.com/fluxcd/helm-controller
+            spdx:
+              name: fluxcd-helm-controller
+              version: 1.4.5
+              packages:
+                - name: fluxcd-helm-controller
+                  purl: pkg:golang/github.com/fluxcd/helm-controller@1.4.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v2
+          with:
+            deps:
+              - helm.sh/helm/v3@v3.20.2
+              - github.com/moby/spdystream@v0.5.1
+            download: true
+        - name: patch
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Exclude packages that require envtest (live k8s API server via etcd):
+            # internal/controller, internal/controller_test, internal/action, internal/reconcile
+            CGO_ENABLED=0 go test $(go list ./internal/... | grep -vE '/internal/(controller|action|reconcile)')
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            output: ${target.dir}/usr/local/bin/helm-controller
+      outputs:
+        - source: ${target.dir}/usr/local/bin/helm-controller
+          target: /usr/local/bin/helm-controller
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/fluxcd-helm-controller
+          target: /opt/docker/sbom/fluxcd-helm-controller
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Flux CD helm-controller image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/helm-controller
