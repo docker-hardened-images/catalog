@@ -67,19 +67,34 @@ contents:
             fi
 
             go get golang.org/x/crypto@v0.45.0
-            go get github.com/buger/jsonparser@v1.1.2   # GHSA-6g7g-w4f8-9c9x
-            go get google.golang.org/grpc@v1.79.3       # CVE-2026-33186
-            go get go.opentelemetry.io/otel/sdk@v1.40.0 # CVE-2026-24051
+            go get github.com/buger/jsonparser@v1.1.2 # GHSA-6g7g-w4f8-9c9x
+            go get google.golang.org/grpc@v1.79.3     # CVE-2026-33186
             go get google.golang.org/api@v0.272.0
 
             go mod tidy
             go mod vendor
+        - name: remove godoc
+          work-dir: ${source.dir}/loki
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Fixes golang.org/x/tools/godoc@v0.1.0-deprecated: is explicitly
+            # required in go.mod, but not marked as explicit in vendor/modules.txt.
+            # The following go/bump@v2 step re-syncs vendor after this edit.
+            go get golang.org/x/tools/godoc@none
         - name: update go dependencies and vendor (2.9 only)
-          uses: go/bump@v1
+          uses: go/bump@v2
+          work-dir: ${source.dir}/loki
           with:
             deps:
+              - go.opentelemetry.io/otel@v1.41.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
               - go.opentelemetry.io/otel/sdk@v1.43.0
-            dir: ${source.dir}/loki
             download: true
         - name: sync vendor directory (2.9 only)
           work-dir: ${source.dir}/loki
@@ -106,14 +121,6 @@ contents:
               return nil, status.Error(codes.Unimplemented, "Listing is not supported")
             }
             EOF
-        - name: remove godoc
-          work-dir: ${source.dir}/loki
-          runs: |
-            set -eux -o pipefail
-
-            #Fixes golang.org/x/tools/godoc@v0.1.0-deprecated: is explicitly required in go.mod, but not marked as explicit in vendor/modules.txt
-            #by removing what it seems a non runtime dependency
-            go get golang.org/x/tools/godoc@none
         - name: build
           uses: go/build@v1
           work-dir: ${source.dir}/loki
