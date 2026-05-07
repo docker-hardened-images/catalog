@@ -67,6 +67,40 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: update go dependencies and vendor (3.6 and 3.7)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            deps:
+              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+              - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+              - github.com/buger/jsonparser@v1.1.2
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - name: bump prometheus with upstream testify replace (3.7 only)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # The FIPS builder defaults to fips140=only, but Go module downloads use TLS curves
+            # that require lenient mode during this networked dependency update.
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go get github.com/prometheus/prometheus@v0.311.3
+            go mod edit -replace=github.com/go-openapi/testify/v2=github.com/go-openapi/testify/v2@v2.0.2
+            go mod tidy
+            go mod vendor
+        - name: patch Makefile for no VCS stamping in 3.7
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/buildvcs-3.7.patch
         - name: install
           privileged: true
           runs: |
@@ -83,15 +117,15 @@ contents:
           gid: 0
           source: image/loki-canary/patch/buildvcs-2.9.patch
         - type: file
-          path: ${source.dir}/patch/buildvcs-3.5.patch
-          uid: 0
-          gid: 0
-          source: image/loki-canary/patch/buildvcs-3.5.patch
-        - type: file
           path: ${source.dir}/patch/buildvcs-3.6.patch
           uid: 0
           gid: 0
           source: image/loki-canary/patch/buildvcs-3.6.patch
+        - type: file
+          path: ${source.dir}/patch/buildvcs-3.7.patch
+          uid: 0
+          gid: 0
+          source: image/loki-canary/patch/buildvcs-3.7.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/loki-canary
           target: /usr/local/bin/loki-canary
