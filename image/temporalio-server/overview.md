@@ -1,4 +1,4 @@
-## Temporal Server
+## About Temporal Server
 
 Temporal is a durable execution platform that enables developers to build scalable applications without sacrificing
 productivity or reliability. The Temporal server executes units of application logic called Workflows in a resilient
@@ -38,6 +38,17 @@ foundation for containerized workloads by incorporating security best practices 
 These images are published with zero-known CVEs, include signed provenance, and come with a complete Software Bill of
 Materials (SBOM) and VEX metadata. They're designed to secure your software supply chain while fitting seamlessly into
 existing Docker workflows.
+
+## About Docker Hardened Images
+
+Docker Hardened Images are built to meet the highest security and compliance standards. They provide a trusted
+foundation for containerized workloads by incorporating security best practices from the start.
+
+### Why use Docker Hardened Images?
+
+These images are published with near-zero known CVEs, include signed provenance, and come with a complete Software Bill
+of Materials (SBOM) and VEX metadata. They're designed to secure your software supply chain while fitting seamlessly
+into existing Docker workflows.
 
 ## Trademarks
 

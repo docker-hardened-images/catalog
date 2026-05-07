@@ -22,7 +22,7 @@ $ docker pull dhi.io/temporalio-server:<tag>
 The admin tools image is designed to work alongside the Temporal server and can be used for management tasks.
 
 To test locally use a `docker-compose.yml` file like the following, based on the temporal.io examples:
-https://github.com/temporalio/docker-compose
+https://github.com/temporalio/docker-compose. This example is for versions up to 1.29.
 
 ```yaml
 services:

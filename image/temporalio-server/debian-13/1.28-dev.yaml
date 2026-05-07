@@ -1,0 +1,406 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Temporal Server 1.28.x (dev)
+image: dhi.io/temporalio-server
+variant: dev
+tags:
+  - 1.28-dev
+  - 1.28.4-dev
+  - 1.28-debian13-dev
+  - 1.28.4-debian13-dev
+  - 1.28.4-cli-1.7.0-dev
+  - 1.28.4-cli-1.7.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  CLI_COMMIT_SHA: 62fa8939b953445ccfcca9c896b7296279b6cd7a
+  CLI_VERSION: 1.7.0
+  COMMIT_SHA: 246f0667ac40a863186237f0f10bce13ce84efc5
+  DOCKERIZE_COMMIT_SHA: 90dbb4fc2ef9098acd41e8c3ca98d2f730c741d6
+  DOCKERIZE_VERSION: 0.9.5
+  GOLANG_REFERENCE: dhi/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+  SEMVER_MAJOR_MINOR_VERSION: "1.28"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.28.4
+  VERSION: 1.28.4
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] https://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - netcat-openbsd
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: build-base-dockerize
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/github.com/jwilder/dockerize
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/jwilder/dockerize.git#v0.9.5
+            checksum: 90dbb4fc2ef9098acd41e8c3ca98d2f730c741d6
+            path: /go/src/github.com/jwilder/dockerize
+            spdx:
+              name: dockerize
+              version: 0.9.5
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/jwilder/dockerize@0.9.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/jwilder/dockerize
+          with:
+            deps:
+              - golang.org/x/crypto@v0.45.0
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.buildVersion=0.9.5
+            output: ${target.dir}/usr/local/bin/dockerize
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dockerize
+          target: /usr/local/bin/dockerize
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/dockerize
+          target: /opt/docker/sbom/dockerize
+          uid: 0
+          gid: 0
+    - name: build-temporal-server-binaries
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/go.temporal.io/server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.28.4
+            checksum: 246f0667ac40a863186237f0f10bce13ce84efc5
+            path: /go/src/go.temporal.io/server
+            spdx:
+              name: temporalio-server
+              version: 1.28.4
+              packages:
+                - name: temporal-server
+                  purl: pkg:golang/go.temporal.io/server@1.28.4
+                  license: MIT
+                - name: tdbg
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/tdbg@1.28.4
+                  license: MIT
+                - name: temporal-cassandra-tool
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/cassandra@1.28.4
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies (1.28 or 1.29 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+            download: true
+        - name: build server
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-server
+            packages: ./cmd/server
+        - name: build tdbg
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/tdbg
+            packages: ./cmd/tools/tdbg
+        - name: build temporal-cassandra-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-cassandra-tool
+            packages: ./cmd/tools/cassandra
+        - name: test temporal server binaries
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/local/bin/temporal-server --help
+            ${target.dir}/usr/local/bin/tdbg --help
+            ${target.dir}/usr/local/bin/temporal-cassandra-tool --help
+
+            echo "Running core temporal unit tests..."
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/log/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/config/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/util/...
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporalio-server
+          target: /opt/docker/sbom/temporalio-server
+          uid: 0
+          gid: 0
+    - name: build-temporal-sql-tool
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/go.temporal.io/server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.28.4
+            checksum: 246f0667ac40a863186237f0f10bce13ce84efc5
+            path: /go/src/go.temporal.io/server
+            spdx:
+              name: temporal-sql-tool
+              version: 1.28.4
+              packages:
+                - name: temporal-sql-tool
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/sql@1.28.4
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies (1.28 or 1.29 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+            download: true
+        - name: patch uses of crypto/md5
+          uses: git/patch@v1
+          work-dir: /go/src/go.temporal.io/server
+          with:
+            patch: ${source.dir}/patch/no-md5.patch
+        - name: build temporal-sql-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-sql-tool
+            packages: ./cmd/tools/sql
+        - name: test temporal server binaries
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/local/bin/temporal-sql-tool --help
+      paths:
+        - type: directory
+          path: /src/patch
+          uid: 0
+          gid: 0
+          source: image/temporalio-server/patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporal-sql-tool
+          target: /opt/docker/sbom/temporal-sql-tool
+          uid: 0
+          gid: 0
+    - name: build-cli
+      uses: dhi.io/golang:1.26.2-debian13-dev@sha256:b50864310796206ff91b76f04e0cd4f13c29b7721d7571336bfc75a116c40693
+      work-dir: /go/src/github.com/temporalio/cli
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/temporalio/cli.git#v1.7.0
+            checksum: 62fa8939b953445ccfcca9c896b7296279b6cd7a
+            path: /go/src/github.com/temporalio/cli
+            spdx:
+              name: temporal-cli
+              version: 1.7.0
+              packages:
+                - name: temporal-cli
+                  purl: pkg:dhi/temporal-cli@1.7.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/gomarkdown/markdown@v0.0.0-20260411013819-759bbc3e3207
+              - github.com/jackc/pgx/v5@v5.9.2
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+            download: true
+        - name: build temporal CLI binary
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal
+            packages: ./cmd/temporal
+        - name: test temporal CLI binary
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/local/bin/temporal --help
+      outputs:
+        - source: ${target.dir}/usr/local/bin/temporal
+          target: /usr/local/bin/temporal
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporal-cli
+          target: /opt/docker/sbom/temporal-cli
+          uid: 0
+          gid: 0
+    - name: build-configs
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - sed
+          - gawk
+          - diffutils
+          - grep
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.28.4
+            checksum: 246f0667ac40a863186237f0f10bce13ce84efc5
+            path: ${source.dir}/temporal
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/temporalio/docker-builds.git#main
+            path: ${source.dir}/docker-builds
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage configs and scripts
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}"
+
+            mkdir -p "${target.dir}/etc/temporal/config/dynamicconfig"
+            mkdir -p "${target.dir}/etc/temporal/schema"
+
+            # Copy configuration files and scripts
+            cp temporal/config/dynamicconfig/docker.yaml "${target.dir}/etc/temporal/config/dynamicconfig/docker.yaml"
+            cp temporal/docker/config_template.yaml "${target.dir}/etc/temporal/config/config_template.yaml"
+            cp -r temporal/schema "${target.dir}/etc/temporal/"
+
+            # Create modified entrypoint script that uses /etc/hosts instead of getent
+            cp docker-builds/docker/entrypoint.sh "${source.dir}/entrypoint.sh"
+
+            # Replace getent commands with /etc/hosts parsing to avoid the getent dependency.
+            sed -i 's/getent hosts "\$(hostname)"/cat \/etc\/hosts | grep -v ^# | grep "\$HOSTNAME"/g' "${source.dir}/entrypoint.sh"
+
+            # Sanity check: Verify exactly 8 diff lines (2 getent replacements)
+            diff_count=$(diff docker-builds/docker/entrypoint.sh "${source.dir}/entrypoint.sh" | wc -l || true)
+            if [ "$diff_count" -ne 8 ]; then
+              echo "ERROR: Expected exactly 8 diff lines (2 getent replacements), got $diff_count"
+              echo "This suggests the upstream entrypoint.sh has changed significantly."
+              echo "Diff output:"
+              diff docker-builds/docker/entrypoint.sh "${source.dir}/entrypoint.sh" || true
+              exit 1
+            fi
+
+            # Verify the modified script contains our expected /etc/hosts logic
+            if ! grep -q "cat /etc/hosts | grep -v \^#" "${source.dir}/entrypoint.sh"; then
+              echo "ERROR: Modified entrypoint script does not contain expected /etc/hosts logic"
+              exit 1
+            fi
+
+            # Copy the modified entrypoint script, and the other scripts that didn't require modification.
+            cp "${source.dir}/entrypoint.sh" "${target.dir}/etc/temporal/entrypoint.sh"
+            cp docker-builds/docker/start-temporal.sh "${target.dir}/etc/temporal/start-temporal.sh"
+            cp docker-builds/docker/auto-setup.sh "${target.dir}/etc/temporal/auto-setup.sh"
+
+            chmod +x "${target.dir}/etc/temporal/"*.sh
+      outputs:
+        - source: ${target.dir}/etc/temporal
+          target: /etc/temporal
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: temporal
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: temporal
+      gid: 1000
+      members:
+        - temporal
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /etc/temporal
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  TEMPORAL_HOME: /etc/temporal
+paths:
+  - type: symlink
+    path: /usr/bin/nc
+    uid: 0
+    gid: 0
+    source: /usr/bin/nc.openbsd
+  - type: directory
+    path: /etc/temporal/config
+    uid: 1000
+    gid: 1000
+    mode: "0777"
+annotations:
+  org.opencontainers.image.description: Temporal Server - Workflow as Code to build and operate resilient applications
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /etc/temporal/entrypoint.sh
+ports:
+  - 6933/tcp
+  - 6934/tcp
+  - 6935/tcp
+  - 6939/tcp
+  - 7233/tcp
+  - 7234/tcp
+  - 7235/tcp
+  - 7239/tcp
