@@ -24,15 +24,14 @@ dates:
   release: "2025-04-22"
 vars:
   COMMIT_SHA: e5968b88e45f2af9d1047a51188355af7cbe79f4
-  NODE_DIGEST: sha256:25c58bd46f6755d04193092b9220c4bf53b06674e5b60973f10dbac2322410c1
+  NODE_REFERENCE: dhi/pkg-node:22.22.2-debian13@sha256:25c58bd46f6755d04193092b9220c4bf53b06674e5b60973f10dbac2322410c1
   NODE_VERSION: 22.22.2
-  PYTHON_BUILD_DIGEST: sha256:c96d691f22c82f3dfc7f78c7935331a127d5f44e273265a1e03912f819eb640e
+  PYTHON_BUILD_REFERENCE: dhi/python:3.13.13-debian13-dev@sha256:c96d691f22c82f3dfc7f78c7935331a127d5f44e273265a1e03912f819eb640e
   PYTHON_BUILD_VERSION: 3.13.13
-  PYTHON_DIGEST: sha256:4369c0807870672a38a820b6ab2e24a0d80c13e88f7b303e3404c1fffca63977
-  PYTHON_FIPS_TAG: ""
   PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  PYTHON_REFERENCE: dhi/python:3.13.13-debian13@sha256:4369c0807870672a38a820b6ab2e24a0d80c13e88f7b303e3404c1fffca63977
   PYTHON_VERSION: 3.13.13
-  RUST_DIGEST: sha256:9ad552bf137d3b8536146f2dd376b576dd9f5d5357331cf245fcadbd55dee6d2
+  RUST_REFERENCE: dhi/rust:1.95.0-debian13@sha256:9ad552bf137d3b8536146f2dd376b576dd9f5d5357331cf245fcadbd55dee6d2
   RUST_VERSION: 1.95.0
   SEMVER_MAJOR_MINOR_VERSION: "3.2"
   SEMVER_MAJOR_VERSION: "3"
@@ -60,6 +59,10 @@ contents:
       environment:
         UV_NO_MANAGED_PYTHON: "true"
         UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/pip
+        - path: /root/.npm
+        - path: /root/.cache/uv
       contents:
         packages:
           - bash
@@ -93,6 +96,26 @@ contents:
             gid: 0
           - url: https://raw.githubusercontent.com/apache/airflow/constraints-3.2.1/constraints-3.13.txt
             path: ${source.dir}/airflow/constraints.txt
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.25.4/log4j-core-2.25.4.jar
+            checksum: sha256:10fee2c0485d54fa44ee75d314f6295508f7b932281873db61a91b88073200e6
+            path: ${source.dir}/log4j/log4j-core-2.25.4.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.25.4/log4j-api-2.25.4.jar
+            checksum: sha256:c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d
+            path: ${source.dir}/log4j/log4j-api-2.25.4.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.25.4/log4j-slf4j-impl-2.25.4.jar
+            checksum: sha256:7ac68a0afcc83d54f48d116d79370a43f0a2a6b71b5c1d6dda943bb6a95ddbaa
+            path: ${source.dir}/log4j/log4j-slf4j-impl-2.25.4.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.25.4/log4j-1.2-api-2.25.4.jar
+            checksum: sha256:7b1a61507950ea67b3d6b11437ee37fad9db06f855c92c25c08aee074c757395
+            path: ${source.dir}/log4j/log4j-1.2-api-2.25.4.jar
             uid: 0
             gid: 0
         artifacts:
@@ -157,6 +180,8 @@ contents:
             echo "lxml==6.1.0" >> ./overrides.txt
 
             sed -i 's/Authlib==1\.6\.9/Authlib==1.6.11/' ./constraints.txt # GHSA-jj8c-mmj3-mmgv
+
+            sed -i 's/GitPython==3\.1\.46/GitPython==3.1.47/' ./constraints.txt # CVE-2026-42215, CVE-2026-42284
         - name: build
           work-dir: ${source.dir}/airflow
           privileged: true
@@ -242,6 +267,20 @@ contents:
             # ray bundles its own aiohttp internally; patch it to fix multiple CVEs
             # (CVE-2026-22815, CVE-2026-34513–CVE-2026-34520, CVE-2026-34525).
             uv pip install -U --target ${target.dir}/opt/airflow/lib/python3.13/site-packages/ray/_private/runtime_env/agent/thirdparty_files 'aiohttp>=3.13.4'
+        - name: patch log4j jars bundled in compat image
+          runs: |
+            set -eux -o pipefail
+
+            # Snowflake and other wheels vendor log4j 2.25.3; bump to 2.25.4 for CVE-2026-34477, CVE-2026-34478, CVE-2026-34480.
+            # Jars are pre-fetched via contents.files (with sha256 checksums) so this step is non-privileged.
+            site="${target.dir}/opt/airflow/lib/python3.13/site-packages"
+            for artifact in log4j-core log4j-api log4j-slf4j-impl log4j-1.2-api; do
+              while IFS= read -r -d '' oldjar; do
+                dir=$(dirname "$oldjar")
+                cp "${source.dir}/log4j/${artifact}-2.25.4.jar" "${dir}/${artifact}-2.25.4.jar"
+                rm -f "$oldjar"
+              done < <(find "$site" -type f -name "${artifact}-2.25.3.jar" -print0 2> /dev/null || true)
+            done
         - name: create default config
           runs: |
             set -eux -o pipefail
@@ -267,7 +306,7 @@ contents:
             cd '${source.dir}/airflow/airflow-core/src/airflow/ui'
 
             npm pkg set pnpm.overrides.prismjs=1.30.0
-            npm pkg set pnpm.overrides.axios=1.15.0
+            npm pkg set pnpm.overrides.axios=1.15.2
             npm pkg set pnpm.overrides.mdast-util-to-hast=13.2.1
             npm pkg set pnpm.overrides."@remix-run/router"=1.23.2
             npm pkg set pnpm.overrides.react-router-dom=6.30.2
@@ -297,7 +336,7 @@ contents:
 
             export PATH=/opt/nodejs/node-v22.22.2/bin:$PATH
 
-            npm pkg set pnpm.overrides.axios=1.15.0
+            npm pkg set pnpm.overrides.axios=1.15.2
             npm pkg set pnpm.overrides."@remix-run/router"=1.23.2
             npm pkg set pnpm.overrides.react-router-dom=6.30.2
             npm pkg set pnpm.overrides.yaml=2.8.3

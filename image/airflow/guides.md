@@ -10,7 +10,7 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-### What's included in this Airflow image
+### About this image
 
 This Docker Hardened Airflow image provides Apache Airflow in three variants:
 
@@ -175,6 +175,10 @@ their tag.
   - Run as the nonroot user
   - Improve compatibility with upstream helm charts
   - Include optional tools that are critical for certain use-cases
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
 select a tag.
