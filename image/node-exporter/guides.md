@@ -10,18 +10,15 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-## What's included in this node-exporter Hardened image
+## Image-specific usage notes
 
 node_exporter is a Prometheus exporter that exposes a wide range of hardware- and OS-level metrics for \*NIX systems.
 It's typically deployed as a DaemonSet in Kubernetes (one pod per node) or as a host-level process or container on
 bare-metal Linux servers, and scraped by Prometheus on port 9100.
 
-This Docker Hardened node-exporter image includes:
-
-- `node_exporter` (the Prometheus exporter binary, set as the image entrypoint)
-
-The image is configured entirely via command-line flags. No environment variables or configuration files are required.
-TCP port 9100 is exposed by default for metrics scraping.
+This Docker Hardened image ships the production `node_exporter` binary as the container entrypoint. The image is
+configured entirely via command-line flags — no environment variables or configuration files are required. TCP port 9100
+is exposed by default for metrics scraping.
 
 For the following examples, replace `<tag>` with the image variant you want to run. To confirm the correct namespace and
 repository name of the mirrored repository, select **View in repository**.
@@ -243,7 +240,7 @@ $ docker run --rm -it --pid container:node-exporter \
 For operational visibility without attaching a debugger, the `/metrics` endpoint itself exposes Go runtime metrics
 (`go_*`), process metrics (`process_*`), and node-exporter's own scrape metrics (`node_scrape_collector_*`).
 
-# Image variants
+## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use.
 
