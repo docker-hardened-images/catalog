@@ -1,0 +1,145 @@
+## How to use this image
+
+All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
+your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
+
+For example:
+
+- Public image: `dhi.io/<repository>:<tag>`
+- Mirrored image: `<your-namespace>/dhi-<repository>:<tag>`
+
+For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
+
+### About Source Controller
+
+The source-controller is a Flux CD component that acquires and serves artifacts from external sources including Git
+repositories, Helm repositories, OCI registries, and S3-compatible buckets. Other Flux controllers (such as
+kustomize-controller and helm-controller) depend on source-controller to obtain the manifests and charts they reconcile.
+
+### Deploying with Flux CD
+
+The source-controller is typically deployed as part of the Flux CD toolkit. To use the Docker Hardened Image, update
+your Flux installation to reference the DHI image instead of the upstream image.
+
+```bash
+docker run --rm dhi.io/fluxcd-source-controller:<tag> --help
+```
+
+### Deployment requirements
+
+The source-controller runs as a Kubernetes controller and requires:
+
+- Access to the Kubernetes API server
+- RBAC permissions to manage GitRepository, HelmRepository, HelmChart, OCIRepository, and Bucket resources
+- Network access to external Git hosts, Helm repositories, OCI registries, and object storage endpoints
+- A writable local storage path for caching fetched artifacts (default `/data`)
+
+When deployed, the controller watches for source resources and serves fetched artifacts via an embedded HTTP server to
+other Flux controllers.
+
+### Version and Flux compatibility
+
+The image version corresponds to the source-controller component version:
+
+| Image tag | Flux version |
+| --------- | ------------ |
+| `1.8.x`   | Flux 2.8.x   |
+| `1.7.x`   | Flux 2.7.x   |
+| `1.6.x`   | Flux 2.6.x   |
+
+### Common configuration options
+
+The controller supports various command-line flags:
+
+- `--log-level`: Set logging verbosity (debug, info, warn, error)
+- `--log-encoding`: Log format (json, console)
+- `--enable-leader-election`: Enable leader election for HA deployments
+- `--metrics-addr`: Address for exposing Prometheus metrics
+- `--health-addr`: Address for health check endpoints
+- `--storage-path`: Local path for storing fetched artifacts
+- `--storage-addr`: Address for the artifact HTTP server
+
+## Image variants
+
+Docker Hardened Images come in different variants depending on their intended use.
+
+- Runtime variants are designed to run your application in production. These images are intended to be used either
+  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+
+  - Run as the nonroot user
+  - Do not include a shell or a package manager
+  - Contain only the minimal set of libraries needed to run the app
+
+- Build-time variants typically include `dev` in the variant name and are intended for use in the first stage of a
+  multi-stage Dockerfile. These images typically:
+
+  - Run as the root user
+  - Include a shell and package manager
+  - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+## Migrate to a Docker Hardened Image
+
+To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
+base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
+following table of migration notes:
+
+| Item               | Migration note                                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base image         | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                                                 |
+| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a dev tag.                                                                                                 |
+| Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                                |
+| Multi-stage build  | Utilize images with a dev tag for build stages and non-dev images for runtime. For binary executables, use a static image for runtime.                                                                                    |
+| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                        |
+| Ports              | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. |
+| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                               |
+| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                               |
+
+The following steps outline the general migration process.
+
+1. **Find hardened images for your app.**
+
+   A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
+
+1. **Update the base image in your Dockerfile.**
+
+   Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
+   framework images, this is typically going to be an image tagged as dev because it has the tools needed to install
+   packages and dependencies.
+
+1. **For multi-stage Dockerfiles, update the runtime image in your Dockerfile.**
+
+   If you're using a multi-stage build, update the runtime stage to use a non-dev hardened image. This ensures your
+   production containers run with minimal attack surface.
+
+## Troubleshooting migration
+
+The following are common issues that you may encounter during migration.
+
+### General debugging
+
+The hardened images intended for runtime don't contain a shell nor any tools for debugging. The recommended method for
+debugging applications built with Docker Hardened Images is to use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to these containers. Docker Debug provides
+a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer that only exists
+during the debugging session.
+
+### Permissions
+
+By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
+accessible to the nonroot user. You may need to copy files to different directories or change permissions so your
+application running as the nonroot user can access them.
+
+### No shell
+
+By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
+commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
+with no shell.
+
+### Entry point
+
+Docker Hardened Images may have different entry points than images such as Docker Official Images. Use `docker inspect`
+to inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.
