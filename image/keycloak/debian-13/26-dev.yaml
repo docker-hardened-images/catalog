@@ -81,6 +81,7 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - uses: maven/mirror@v1
         - name: patch
           uses: mvn/patch@v1
           with:
@@ -94,19 +95,29 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            cat >> pnpm-workspace.yaml << EOF
+            # Upstream js/package.json already declares pnpm.overrides. In pnpm 10,
+            # those take precedence over pnpm-workspace.yaml overrides, so adding
+            # ours to pnpm-workspace.yaml has no effect for keys upstream pins
+            # (and even for unrelated keys, the package.json overrides win).
+            # Merge our CVE overrides directly into js/package.json#pnpm.overrides.
+            node -e '
+              const fs = require("fs");
+              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              p.pnpm = p.pnpm || {};
+              p.pnpm.overrides = Object.assign({}, p.pnpm.overrides, {
+                "jquery": "3.5.0",
+                "mdast-util-to-hast": "13.2.1",
+                "@remix-run/router": "1.23.2",
+                "lodash": "4.18.0",
+                "lodash-es": "4.18.0",
+                "simple-git": "3.36.0",
+                "uuid": "13.0.1",
+                "yaml": "2.8.3"
+              });
+              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            '
 
-            overrides:
-              "jquery@3.4.1": "3.5.0"  # CVE-2020-11023, CVE-2020-11022, CVE-2020-23064
-              "mdast-util-to-hast@13.2.0": "13.2.1"    # CVE-2025-66400
-              "@remix-run/router": "1.23.2" # CVE-2026-22029
-              "lodash-es": "4.18.0" # CVE-2026-4800, CVE-2026-2950
-              "lodash": "4.18.0" # CVE-2026-4800, CVE-2026-2950
-              "simple-git": "3.32.3" # CVE-2026-28292
-              "yaml": "2.8.3" # CVE-2026-33532
-            EOF
-
-            pnpm i --prefer-offline --ignore-scripts
+            pnpm install --prefer-offline --ignore-scripts --no-frozen-lockfile
 
             # OpenAPI client generation (admin-client postinstall; skipped with
             # --ignore-scripts). Required before keycloak-admin-client builds.
@@ -118,6 +129,11 @@ contents:
         - name: build
           work-dir: ${source.dir}/keycloak
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+            - id: maven_password
+              env: MAVEN_PASSWORD
           runs: |
             set -eux -o pipefail
 
@@ -138,7 +154,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            rm $(find . -type d -name 'node_modules') -rf
+            find . -depth -type d -name node_modules -exec rm -rf {} +
 
             export PATH="/opt/nodejs/node-v24.15.0/bin:$PATH"
 
