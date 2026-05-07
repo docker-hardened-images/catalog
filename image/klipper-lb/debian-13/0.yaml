@@ -1,0 +1,150 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Klipper Service Load Balancer 0.x
+image: dhi.io/klipper-lb
+variant: runtime
+tags:
+  - "0"
+  - "0.4"
+  - 0.4.16
+  - 0-debian13
+  - 0.4-debian13
+  - 0.4.16-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-14"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 4441a8708b9c1283c9c2200e4effb98ecf737259
+  SEMVER_MAJOR_MINOR_VERSION: "0.4"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.4.16
+  VERSION: 0.4.16
+contents:
+  packages:
+    - '!base-files'
+    - bash
+    - coreutils
+    - grep
+    - iptables
+    - kmod
+    - nftables
+  builds:
+    - name: klipper-lb
+      work-dir: ${source.dir}/klipper-lb
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - nftables
+          - iptables
+          - libcap2-bin
+          - sed
+        files:
+          - url: git+https://github.com/k3s-io/klipper-lb#v0.4.16
+            checksum: 4441a8708b9c1283c9c2200e4effb98ecf737259
+            path: ${source.dir}/klipper-lb
+            spdx:
+              name: klipper-lb
+              version: 0.4.16
+              packages:
+                - name: ${source.dir}/klipper-lb
+                  purl: pkg:dhi/klipper-lb@0.4.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_net_admin,cap_net_raw+ep /usr/sbin/xtables-nft-multi
+            setcap cap_net_admin,cap_net_raw+ep /usr/sbin/xtables-legacy-multi
+        - name: patch and install entry script
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's|BIN_DIR="/usr/sbin"|BIN_DIR="${BIN_DIR:-/usr/sbin}"|' ${source.dir}/klipper-lb/entry
+            sed -i 's|/pause|/opt/klipper-lb/pause|g' ${source.dir}/klipper-lb/entry
+            sed -i 's|ln -sf xtables-nft-multi|ln -sf /usr/sbin/xtables-nft-multi|' ${source.dir}/klipper-lb/entry
+            sed -i 's|ln -sf xtables-legacy-multi|ln -sf /usr/sbin/xtables-legacy-multi|' ${source.dir}/klipper-lb/entry
+
+            install -Dm755 ${source.dir}/klipper-lb/entry ${target.dir}/usr/bin/entry
+
+            touch ${target.dir}/xtables.lock
+      outputs:
+        - source: ${target.dir}/usr/bin/entry
+          target: /usr/bin/entry
+          uid: 0
+          gid: 0
+        - source: /usr/sbin/xtables-nft-multi
+          target: /usr/sbin/xtables-nft-multi
+          uid: 0
+          gid: 0
+        - source: /usr/sbin/xtables-legacy-multi
+          target: /usr/sbin/xtables-legacy-multi
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/xtables.lock
+          target: /run/xtables.lock
+          uid: 65532
+          gid: 65532
+        - source: /opt/docker/sbom/klipper-lb
+          target: /opt/docker/sbom/klipper-lb
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  BIN_DIR: /opt/klipper-lb/bin
+  PATH: /opt/klipper-lb/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /opt/klipper-lb/bin
+    uid: 65532
+    gid: 65532
+annotations:
+  org.opencontainers.image.description: A minimal Klipper Service Load Balancer image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - entry
