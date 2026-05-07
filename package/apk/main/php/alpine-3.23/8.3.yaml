@@ -1,0 +1,255 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-php
+variant: runtime
+tags:
+  - 8.3.30-apk-alpine3.23
+  - 8.3.30-r0-apk-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CHECKSUM: 67f084d36852daab6809561a7c8023d130ca07fc6af8fb040684dd1414934d48
+  OPCACHE_BUILTIN: "false"
+  PACKAGE_NAME: php-8.3
+  PHP_SYSCONFDIR_REL: etc/php-8.3
+  PRIORITY: "83"
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "8.3"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.3.30
+  VERSION: 8.3.30
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: php
+      work-dir: ${source.dir}/php-8.3.30
+      shell: bash
+      environment:
+        CFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+        CPPFLAGS: -fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+        LDFLAGS: -Wl,-O1 -pie
+        PHP_BUILD_PROVIDER: https://github.com/docker-hardened-images/definitions
+        PHP_UNAME: Linux - Docker Hardened Images
+      contents:
+        packages:
+          - argon2-dev
+          - autoconf
+          - bash
+          - bison
+          - curl-dev
+          - file
+          - g++
+          - gcc
+          - gnu-libiconv-dev
+          - icu-dev
+          - libc-dev
+          - libsodium-dev
+          - libxml2-dev
+          - linux-headers
+          - make
+          - musl-utils
+          - oniguruma-dev
+          - openssl-dev
+          - patch
+          - pcre2-dev
+          - pkgconf
+          - re2c
+          - readline-dev
+          - sqlite-dev
+          - xz
+          - zlib-dev
+        files:
+          - url: https://www.php.net/distributions/php-8.3.30.tar.xz.asc
+            path: ${source.dir}/php-8.3.30.tar.xz.asc
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.3.30.tar.xz
+            checksum: sha256:67f084d36852daab6809561a7c8023d130ca07fc6af8fb040684dd1414934d48
+            path: ${source.dir}/php-8.3.30.tar.xz
+            spdx:
+              name: php
+              version: 8.3.30
+              packages:
+                - name: php
+                  purl: pkg:dhi/php@8.3.30
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php-8.3.30.tar.xz
+          uses: gpg/verify@v1
+          work-dir: ${source.dir}
+          with:
+            file: ${source.dir}/php-8.3.30.tar.xz
+            keys: ${source.dir}/keyring.asc
+            signature: ${source.dir}/php-8.3.30.tar.xz.asc
+        - name: extract source
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            tar xf 'php-8.3.30.tar.xz'
+        - name: configure
+          runs: |
+            set -eux -o pipefail
+
+            ./configure \
+              --enable-option-checking=fatal \
+              --prefix=/usr \
+              --sysconfdir='/etc/php-8.3' \
+              --datadir='/usr/share/php-8.3' \
+              --localstatedir=/var \
+              --mandir=/usr/share/man \
+              --with-config-file-path='/etc/php-8.3' \
+              --with-config-file-scan-dir='/etc/php-8.3/conf.d' \
+              --program-suffix='-8.3' \
+              --disable-static \
+              --disable-cgi \
+              --enable-filter \
+              --enable-tokenizer \
+              --enable-ctype \
+              --enable-fileinfo \
+              --enable-mbstring --enable-mbregex \
+              --enable-intl \
+              --enable-mysqlnd \
+              --enable-session \
+              --enable-xml --enable-simplexml --enable-dom \
+              --enable-pdo \
+              --with-sqlite3 \
+              --with-pdo-sqlite \
+              --with-password-argon2 \
+              --with-sodium \
+              --with-openssl \
+              --with-external-pcre=/usr --with-pcre-jit \
+              --with-iconv \
+              --with-libxml \
+              --with-curl \
+              --with-readline \
+              --with-zlib \
+              --enable-fpm --with-fpm-user=nonroot --with-fpm-group=nonroot \
+              --enable-phpdbg --enable-phpdbg-readline
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            make -j"$(nproc)"
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            make install INSTALL_ROOT='${target.dir}'
+
+            # Older PHP releases don't apply --program-suffix to php-fpm, but
+            # current ones do. Rename only if the unsuffixed binary exists.
+            if [ -f '${target.dir}/usr/sbin/php-fpm' ]; then
+              mv '${target.dir}/usr/sbin/php-fpm' \
+                '${target.dir}/usr/sbin/php-fpm-8.3'
+            fi
+
+            # Install php.ini-production as the active php.ini and ship the
+            # samples for ops to reference.
+            install -d '${target.dir}/etc/php-8.3/conf.d'
+            install -m 0644 'php.ini-production' \
+              '${target.dir}/etc/php-8.3/php.ini'
+            install -m 0644 -t '${target.dir}/etc/php-8.3' \
+              php.ini-development php.ini-production
+
+            # OPcache lives in the main package; ship the ini fragment that
+            # loads it for versions where it's a separate .so (8.5+ has it
+            # built-in and OPCACHE_BUILTIN=true skips this).
+            if [ 'false' != 'true' ]; then
+              {
+                echo '; https://wiki.php.net/rfc/make_opcache_required'
+                echo 'zend_extension=opcache'
+              } > '${target.dir}/etc/php-8.3/conf.d/opcache.ini'
+            fi
+
+            install -Dm 0644 LICENSE \
+              '${target.dir}/usr/share/licenses/php-8.3/LICENSE'
+
+            # abuild's doc subpackage postcheck rejects uncompressed man pages.
+            find '${target.dir}/usr/share/man' -type f ! -name '*.gz' \
+              -exec gzip -9n {} +
+        - uses: abuild/setup@v1
+          work-dir: ${source.dir}/aports/php-8.3
+        - uses: abuild/apk@v1
+          work-dir: ${source.dir}/aports/php-8.3
+          with:
+            depends: ca-certificates-bundle
+            description: PHP 8.3 interpreter
+            functions:
+              dev: |
+                pkgdesc="Headers and tools to build extensions for PHP 8.3"
+                depends="$pkgname=$pkgver-r$pkgrel"
+                provides="php-dev=8.3.30-r0"
+                provider_priority="83"
+                replaces="php-dev=8.3.30-r0"
+                replaces_priority="83"
+
+                amove usr/include
+                amove usr/lib/php/build
+                amove usr/bin/phpize-8.3
+                amove usr/bin/php-config-8.3
+              doc: |
+                pkgdesc="Documentation for PHP 8.3"
+                depends=""
+                provides="php-doc=8.3.30-r0"
+                provider_priority="83"
+                replaces="php-doc=8.3.30-r0"
+                replaces_priority="83"
+
+                amove usr/share/man
+                amove usr/share/licenses
+              fpm: |
+                pkgdesc="FastCGI Process Manager for PHP 8.3"
+                depends="$pkgname=$pkgver-r$pkgrel"
+                provides="php-fpm=8.3.30-r0"
+                provider_priority="83"
+                replaces="php-fpm=8.3.30-r0"
+                replaces_priority="83"
+
+                amove usr/sbin/php-fpm-8.3
+                amove etc/php-8.3/php-fpm.conf.default
+                amove etc/php-8.3/php-fpm.d
+              phpdbg: |
+                pkgdesc="Interactive PHP debugger for PHP 8.3"
+                depends="$pkgname=$pkgver-r$pkgrel"
+                provides="php-phpdbg=8.3.30-r0"
+                provider_priority="83"
+                replaces="php-phpdbg=8.3.30-r0"
+                replaces_priority="83"
+
+                amove usr/bin/phpdbg-8.3
+            license: PHP-3.01
+            name: php-8.3
+            provider_priority: 83
+            provides: php=8.3.30-r0
+            rel: 0
+            replaces: php
+            replaces_priority: 83
+            subpackages: $pkgname-fpm $pkgname-phpdbg $pkgname-dev $pkgname-doc::noarch
+            url: https://www.php.net/
+            version: 8.3.30
+        - uses: abuild/build@v1
+          work-dir: ${source.dir}/aports/php-8.3
+      paths:
+        - type: file
+          path: ${source.dir}/keyring.asc
+          uid: 0
+          gid: 0
+          source: package/apk/main/php/key/php8.3.keyring.asc
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
