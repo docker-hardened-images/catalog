@@ -13,9 +13,9 @@ platforms:
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
   COMMIT_SHA: 32f988b78c4277177c3cd0a86915ada135e736c1
-  JRE_REF: dhi/eclipse-temurin:21.0.10.7-alpine3.22@sha256:ef1a003ee223a362010ba4a700bed045174c9a74b977dcbcca07f4b7b3fc1ae7
-  JRE_VERSION: 21.0.10.7
-  MAVEN_REF: dhi/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+  JRE_REF: dhi/eclipse-temurin:21.0.11.10-alpine3.22@sha256:ddc0e5ad51a82ece8144978611b4b7b2a0893db128df836a94f61eb3861374f4
+  JRE_VERSION: 21.0.11.10
+  MAVEN_REF: dhi/maven:3.9.15-jdk21-alpine3.22-dev@sha256:298aef4e5057e84f9bd440bb5e7b9dcdd2dc114adfa3ef8e976a90b4648d5a52
   SEMVER_MAJOR_MINOR_VERSION: "10.1"
   SEMVER_MAJOR_VERSION: "10"
   SEMVER_VERSION: 10.1.0
@@ -41,7 +41,7 @@ contents:
     - yaml-dev
   builds:
     - name: jruby
-      uses: dhi.io/maven:3.9.15-jdk21-alpine3.22-dev@sha256:1697be0dd8267e69b4606a4b5132c834095b69e2897baf462eef9c03fb214ac6
+      uses: dhi.io/maven:3.9.15-jdk21-alpine3.22-dev@sha256:298aef4e5057e84f9bd440bb5e7b9dcdd2dc114adfa3ef8e976a90b4648d5a52
       environment:
         JRE_TRUST_STORE: ${JRE_TRUST_STORE}
       contents:
@@ -84,11 +84,33 @@ contents:
 
             # update uri for CVE-2026-0636 and CVE-2026-5588
             ${source.dir}/patches/patch.sh jruby-openssl 0.16.0
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
         - name: install jruby
           work-dir: ${source.dir}/jruby
           privileged: true
           runs: |
             set -eux -o pipefail
+
+            # Point mvnw bootstrap at GCS mirror; it ignores settings.xml.
+            sed -i "s|https://repo.maven.apache.org/maven2|https://maven-central.storage-download.googleapis.com/maven2|g" \
+              .mvn/wrapper/maven-wrapper.properties
 
             # Set platform-specific Maven properties
             if [ "${ARCH}" = "aarch64" ]; then
@@ -118,7 +140,7 @@ contents:
           path: ${source.dir}/patches/patch.sh
           uid: 0
           gid: 0
-          mode: "777"
+          mode: "0777"
           source: image/jruby/patch/patch.sh
       outputs:
         - source: ${target.dir}/opt/jruby
@@ -130,7 +152,7 @@ contents:
           uid: 0
           gid: 0
   artifacts:
-    - name: dhi.io/eclipse-temurin:21.0.10.7-alpine3.22@sha256:ef1a003ee223a362010ba4a700bed045174c9a74b977dcbcca07f4b7b3fc1ae7
+    - name: dhi.io/eclipse-temurin:21.0.11.10-alpine3.22@sha256:ddc0e5ad51a82ece8144978611b4b7b2a0893db128df836a94f61eb3861374f4
       includes:
         - opt/**
         - usr/local/bin/**
