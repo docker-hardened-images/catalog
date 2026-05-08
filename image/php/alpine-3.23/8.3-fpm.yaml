@@ -1,0 +1,174 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: PHP 8.3.x (fpm)
+image: dhi.io/php
+variant: runtime
+flavor: fpm
+tags:
+  - 8.3-alpine3.23-fpm
+  - 8.3.31-alpine3.23-fpm
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-11-23"
+  end-of-life: "2027-12-31"
+vars:
+  PHP_SYSCONFDIR: /etc/php-8.3
+  SEMVER_MAJOR_MINOR_VERSION: "8.3"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.3.31
+  VERSION: 8.3.31-r0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+    - argon2-libs
+    - busybox
+    - ca-certificates-bundle
+    - icu-data-full
+    - icu-libs
+    - libcrypto3
+    - libcurl
+    - libsodium
+    - libssl3
+    - libxml2
+    - oniguruma
+    - pcre2
+    - php-8.3-fpm=8.3.31-r0
+    - php-8.3=8.3.31-r0
+    - readline
+    - sqlite-libs
+    - zlib
+  builds:
+    - name: php-fpm config
+      contents:
+        packages:
+          - busybox
+          - php-8.3-fpm=8.3.31-r0
+      pipeline:
+        - name: install php-fpm config
+          runs: |
+            set -eux -o pipefail
+
+            cp '/etc/php-8.3/php-fpm.conf.default' '/etc/php-8.3/php-fpm.conf'
+            cp '/etc/php-8.3/php-fpm.d/www.conf.default' '/etc/php-8.3/php-fpm.d/www.conf'
+
+            # comment out localhost-only listen address
+            sed -ri 's/^(listen = 127.0.0.1:9000)/;\1/' \
+              '/etc/php-8.3/php-fpm.d/www.conf'
+      outputs:
+        - source: /etc/php-8.3/php-fpm.conf
+          target: /etc/php-8.3/php-fpm.conf
+          uid: 0
+          gid: 0
+        - source: /etc/php-8.3/php-fpm.d/www.conf
+          target: /etc/php-8.3/php-fpm.d/www.conf
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/www/html
+stop-signal: SIGQUIT
+environment:
+  PHP_INI_DIR: /usr/local/etc/php
+  PHP_VERSION: 8.3.31-r0
+paths:
+  - type: directory
+    path: /usr/local/etc
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/etc/php
+    uid: 0
+    gid: 0
+    source: /etc/php-8.3/php
+  - type: directory
+    path: /var/www/html
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /etc/php-8.3/php/conf.d/opcache.ini
+    content: |
+      # https://wiki.php.net/rfc/make_opcache_required
+      zend_extension=opcache
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.3/conf.d/fpm.ini
+    content: |
+      ; https://github.com/docker-library/php/issues/878#issuecomment-938595965
+      fastcgi.logging = Off
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.3/php-fpm.d/docker.conf
+    content: |
+      [global]
+      error_log = /proc/self/fd/2
+
+      ; https://github.com/docker-library/php/pull/725#issuecomment-443540114
+      log_limit = 8192
+
+      [www]
+      ; php-fpm closes STDOUT on startup, so sending logs to /proc/self/fd/1 does not work.
+      ; https://bugs.php.net/bug.php?id=73886
+      access.log = /proc/self/fd/2
+
+      clear_env = no
+
+      ; Ensure worker stdout and stderr are sent to the main error log.
+      catch_workers_output = yes
+      decorate_workers_output = no
+
+      ; default listen adddress for easy override in later php-fpm.d/*.conf files
+      listen = 9000
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.3/php-fpm.d/zz-docker.conf
+    content: |
+      [global]
+      daemonize = no
+
+      [www]
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: directory
+    path: /var/log
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal PHP image
+  org.opencontainers.image.licenses: PHP-3.01
+entrypoint:
+  - php-fpm
+ports:
+  - 9000/tcp
