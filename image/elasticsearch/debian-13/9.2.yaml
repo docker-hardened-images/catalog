@@ -16,13 +16,14 @@ dates:
 vars:
   ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
   ELASTICSEARCH_COMMIT_SHA: cdb2d7a7a46dfe4ef7c3f859b94fb86ba8e652e1
+  ELASTICSEARCH_HOME: /usr/share/elasticsearch
   ELASTICSEARCH_OUTPUT_ARCHIVE_DIR: '#{ target.arch == "amd64" ? "linux-tar" : "linux-aarch64-tar" }'
   GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  JAVA_BUILD_REFERENCE: dhi/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
   JAVA_HOME: /opt/java/openjdk/21
   JAVA_MAJOR_VERSION: "21"
-  JDK_BUILD_REFERENCE: dhi/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
-  JDK_REFERENCE: dhi/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
-  JDK_VERSION: 21.0.10.7
+  JAVA_REFERENCE: dhi/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
+  JAVA_VERSION: 21.0.11.10
   SEMVER_MAJOR_MINOR_VERSION: "9.2"
   SEMVER_MAJOR_VERSION: "9"
   SEMVER_VERSION: 9.2.8
@@ -43,7 +44,7 @@ contents:
     - tini
   builds:
     - name: elasticsearch
-      uses: dhi.io/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
+      uses: dhi.io/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
       environment:
         ES_JAVA_HOME: /opt/java/openjdk/21
       contents:
@@ -79,6 +80,7 @@ contents:
             options: -p1
             patches:
               - ${source.dir}/patch/9.2.patch
+              - ${source.dir}/patch/docker-entrypoint-fips-keystore.patch
         - name: extract Elastic public key to be properly compatible with Elastic licenses
           work-dir: ${source.dir}/x-pack-core
           runs: |
@@ -91,6 +93,12 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            # DefaultSslContext is unavailable under the FIPS JDK TLS stack, which breaks the Gradle
+            # wrapper download. Compile with the tracked non-FIPS builder image; runtime still ships FIPS Java.
+            unset JDK_JAVA_OPTIONS
+            unset JAVA_TOOL_OPTIONS
+            unset _JAVA_OPTIONS
+
             ./gradlew localDistro -Dbuild.snapshot=false -Dlicense.key=${source.dir}/x-pack-core/public.key
         - name: extract built tarball
           runs: |
@@ -99,17 +107,22 @@ contents:
             # remove bundled jdk
             rm -r "${source.dir}/elasticsearch/distribution/archives/${ELASTICSEARCH_OUTPUT_ARCHIVE_DIR}/build/install/elasticsearch-9.2.8/jdk"
 
-            mkdir -p "${target.dir}/opt/elasticsearch/"
-            cp -r "${source.dir}/elasticsearch/distribution/archives/${ELASTICSEARCH_OUTPUT_ARCHIVE_DIR}/build/install/elasticsearch-9.2.8/." "${target.dir}/opt/elasticsearch/elasticsearch-9.2.8"
+            mkdir -p "${target.dir}/usr/share/elasticsearch/"
+            cp -r "${source.dir}/elasticsearch/distribution/archives/${ELASTICSEARCH_OUTPUT_ARCHIVE_DIR}/build/install/elasticsearch-9.2.8/." "${target.dir}/usr/share/elasticsearch"
       paths:
         - type: file
           path: ${source.dir}/patch/9.2.patch
           uid: 0
           gid: 0
           source: image/elasticsearch/patch/9.2.patch
+        - type: file
+          path: ${source.dir}/patch/docker-entrypoint-fips-keystore.patch
+          uid: 0
+          gid: 0
+          source: image/elasticsearch/patch/docker-entrypoint-fips-keystore.patch
       outputs:
-        - source: ${target.dir}/opt/elasticsearch/elasticsearch-9.2.8
-          target: /opt/elasticsearch/elasticsearch-9.2.8
+        - source: ${target.dir}/usr/share/elasticsearch
+          target: /usr/share/elasticsearch
           uid: 1000
           gid: 1000
         - source: /opt/docker/sbom/elasticsearch
@@ -122,7 +135,7 @@ contents:
           gid: 1000
           mode: "0755"
   artifacts:
-    - name: dhi.io/eclipse-temurin:21.0.10.7-jdk-debian13-dev@sha256:da92dff0e441b33a9f16b993df7dc5df9ee853432dbaf84eb3eb82eab4a59d2d
+    - name: dhi.io/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
       includes:
         - opt/**
         - usr/local/bin/**
@@ -152,26 +165,21 @@ environment:
   ELASTIC_CONTAINER: "true"
   ELASTICSEARCH_VERSION: 9.2.8
   ES_JAVA_HOME: /opt/java/openjdk/21
-  PATH: /opt/elasticsearch/elasticsearch-9.2.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PATH: /usr/share/elasticsearch/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
   - type: symlink
     path: /usr/bin/nc
     uid: 0
     gid: 0
     source: /usr/bin/nc.openbsd
-  - type: symlink
-    path: /usr/share/elasticsearch
-    uid: 0
-    gid: 0
-    source: /opt/elasticsearch/elasticsearch-9.2.8
   - type: file
-    path: /opt/elasticsearch/elasticsearch-9.2.8/config/elasticsearch.yml
+    path: /usr/share/elasticsearch/config/elasticsearch.yml
     uid: 1000
     gid: 1000
     mode: "0644"
     source: image/elasticsearch/config/elasticsearch.yml
   - type: file
-    path: /opt/elasticsearch/elasticsearch-9.2.8/config/log4j2.properties
+    path: /usr/share/elasticsearch/config/log4j2.properties
     uid: 1000
     gid: 1000
     mode: "0644"

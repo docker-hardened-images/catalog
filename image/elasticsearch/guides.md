@@ -31,7 +31,7 @@ password reset tool, run `find / -type f -name "elasticsearch-reset-password" 2>
 replace it in the command below.
 
 ```
-/opt/elasticsearch/elasticsearch-8.19.3/bin/elasticsearch-reset-password -u elastic -b
+/usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -b
 ```
 
 You should see a result like the following, note the newly generated password `<YOUR-ELASTIC-PASSWORD>`, you use it for
@@ -201,6 +201,10 @@ Docker Hardened Images come in different variants depending on their intended us
   - Run as the root user
   - Include a shell and package manager
   - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 
