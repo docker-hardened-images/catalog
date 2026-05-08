@@ -51,6 +51,8 @@ contents:
     - name: cassandra-reaper
       uses: dhi.io/maven:3.9.15-jdk21-debian13-dev@sha256:ee36e4d9023b20bcaf7eada220bf4c15d7db2e5a33a3c0ba2ead122028df20af
       work-dir: ${source.dir}/cassandra-reaper
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
       caches:
         - path: /root/.m2/repository
         - path: /src/cassandra-reaper/src/ui/node_modules
@@ -83,6 +85,7 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - uses: mvn/mirror@v1
         - name: build ui
           work-dir: ${source.dir}/cassandra-reaper/src/ui
           privileged: true
@@ -108,28 +111,15 @@ contents:
         - name: build jar
           work-dir: ${source.dir}/cassandra-reaper
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
-
-            # Mirror Maven Central through Google Cloud's CDN-fronted
-            # copy. Reaper's pom drags in some very old plugin POMs
-            # (e.g. maven-enforcer-plugin:1.4.1 from 2016) that sit on
-            # cold paths in Maven Central's S3 fleet and routinely
-            # 429 under parallel CI load. The Google mirror has a
-            # different rate-limit profile and serves the same bytes.
-            mkdir -p /root/.m2
-            cat > /root/.m2/settings.xml << 'EOF'
-            <settings>
-              <mirrors>
-                <mirror>
-                  <id>google-maven-central</id>
-                  <name>Google Maven Central Mirror</name>
-                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
-                  <mirrorOf>central</mirrorOf>
-                </mirror>
-              </mirrors>
-            </settings>
-            EOF
 
             mvn package -B -pl src/server -am -DskipTests \
               -Daether.connector.http.retryHandler.count=10 \
