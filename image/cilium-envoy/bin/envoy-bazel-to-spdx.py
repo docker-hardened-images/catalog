@@ -30,7 +30,7 @@ def run_bazel_query():
 
     cmd = [
         BAZEL,
-        # "--batch",
+        "--batch",
         "query",
         "--output=build",
         'kind("http_archive", //external:*)',
@@ -51,7 +51,7 @@ def run_bazel_aquery():
 
     cmd = [
         BAZEL,
-        # "--batch",
+        "--batch",
         "aquery",
         'outputs(".*envoy$", //:cilium-envoy)',
     ]
