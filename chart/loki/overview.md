@@ -17,6 +17,7 @@ The following Docker Hardened Images are used in this Helm chart:
 - `dhi/memcached`
 - `dhi/memcached-exporter`
 - `dhi/access-log-exporter`
+- `dhi/kubectl`
 
 To learn more about how to use this Helm chart you can visit the upstream documentation:
 [https://github.com/grafana/loki/blob/main/production/helm/loki/README.md](https://github.com/grafana/loki/blob/main/production/helm/loki/README.md)
