@@ -57,6 +57,8 @@ contents:
       environment:
         MAVEN_ARGS: -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=5 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 -Daether.connector.http.retryHandler.count=5
         MAVEN_OPTS: -Xmx3g
+      caches:
+        - path: /root/.m2/repository
       contents:
         packages:
           - bash
@@ -92,6 +94,59 @@ contents:
             downgrade: false
             mvn-root: ${source.dir}/druid
             properties: ${source.dir}/patch/mvn-properties-36.0.json
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
+        - name: prune unused extensions from build
+          runs: |
+            set -eux -o pipefail
+
+            # Maven module paths to exclude from the reactor.
+            EXCLUDE_MODULES=(
+              "extensions-contrib/cassandra-storage"
+              "extensions-contrib/aliyun-oss-extensions"
+              "extensions-contrib/cloudfiles-extensions"
+              "extensions-core/testing-tools"
+              "extensions-core/hdfs-storage"
+              "extensions-core/druid-kerberos"
+            )
+
+            # Maven artifactIds referenced by distribution/pom.xml pull-deps.
+            EXCLUDE_ARTIFACTS=(
+              "druid-cassandra-storage"
+              "druid-cloudfiles-extensions"
+              "aliyun-oss-extensions"
+              "druid-testing-tools"
+              "druid-hdfs-storage"
+              "druid-kerberos"
+            )
+
+            for m in "${EXCLUDE_MODULES[@]}"; do
+              # Escape forward slash for sed.
+              esc=${m//\//\\/}
+              sed -i "/<module>${esc}<\/module>/d" pom.xml
+            done
+
+            for a in "${EXCLUDE_ARTIFACTS[@]}"; do
+              # Each pull-deps entry is an <argument>-c</argument> followed by
+              # an <argument>...:${a}</argument>. Remove both lines together.
+              sed -i "/<argument>-c<\/argument>/{N;/<argument>org\.apache\.druid\.extensions[^<]*:${a}<\/argument>/d}" distribution/pom.xml
+            done
         - name: build druid
           privileged: true
           runs: |
@@ -100,7 +155,9 @@ contents:
             # Use --no-transfer-progress instead of -q: same noise reduction
             # (no per-byte progress) but preserves the underlying Aether/Wagon
             # error stack traces when artifact resolution actually fails.
-            mvn install -B -ff --no-transfer-progress \
+            # -U forces a re-check of any release artifact whose previous
+            # fetch failed (Maven otherwise caches the failure for 24h).
+            mvn install -B -ff -U --no-transfer-progress \
               -Pdist,bundle-contrib-exts \
               -Pskip-static-checks,skip-tests \
               -Dmaven.javadoc.skip=true \
