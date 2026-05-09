@@ -1,0 +1,136 @@
+# syntax=dhi.io/build:2-debian13
+
+name: AWS Node Termination Handler 1.x
+image: dhi.io/aws-node-termination-handler
+variant: runtime
+tags:
+  - "1"
+  - "1.25"
+  - 1.25.6
+  - 1-debian13
+  - 1.25-debian13
+  - 1.25.6-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-02-28"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 77ca841d1329504e981542775f78403feb114048
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:4209a08b8d03addadd22d98483519296d2f1fb78e6dd84c459b2b3d6d478ac4b
+  SEMVER_MAJOR_MINOR_VERSION: "1.25"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.25.6
+  VERSION: 1.25.6
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: aws-node-termination-handler
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:4209a08b8d03addadd22d98483519296d2f1fb78e6dd84c459b2b3d6d478ac4b
+      work-dir: /go/src/github.com/aws/aws-node-termination-handler
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/aws/aws-node-termination-handler.git#v1.25.6
+            checksum: 77ca841d1329504e981542775f78403feb114048
+            path: /go/src/github.com/aws/aws-node-termination-handler
+            spdx:
+              name: aws-node-termination-handler
+              version: 1.25.6
+              packages:
+                - name: aws-node-termination-handler
+                  purl: pkg:golang/github.com/aws/aws-node-termination-handler@1.25.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # The runtime image uses fips140=on, but the FIPS Go toolchain
+              # defaults to fips140=only at compile/test time. Mirror the
+              # runtime setting so upstream tests that exercise client-go's
+              # X25519 path don't fail under strict FIPS.
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test -short ./cmd/... -count=1 -v
+        - name: build
+          uses: go/build@v1
+          with:
+            extra-env: GODEBUG=fips140=on
+            output: ${target.dir}/usr/local/bin/node-termination-handler
+            packages: ./cmd
+            strip: true
+            tags: nthlinux
+      outputs:
+        - source: ${target.dir}/usr/local/bin/node-termination-handler
+          target: /usr/local/bin/node-termination-handler
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/aws-node-termination-handler
+          target: /opt/docker/sbom/aws-node-termination-handler
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /node-termination-handler
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/node-termination-handler
+annotations:
+  org.opencontainers.image.description: A minimal AWS Node Termination Handler image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/node-termination-handler
