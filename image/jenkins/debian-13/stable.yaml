@@ -74,6 +74,8 @@ contents:
           - gzip
           - sed
           - tar
+          - unzip
+          - zip
         files:
           - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.555.1
             checksum: e650838ad8e3d431f83d8310752841876a71816f
@@ -92,6 +94,18 @@ contents:
             path: ${source.dir}/docker-builds
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/mina/mina-core/2.2.7/mina-core-2.2.7.jar
+            checksum: sha256:b4fed29776eaf632144aca9471ed867d3105631e87ff8dd4cb85669eeb3e5c58
+            path: ${source.dir}/patch/deps/mina-core-2.2.7.jar
+            spdx:
+              name: mina-core
+              version: 2.2.7
+              packages:
+                - name: mina-core
+                  purl: pkg:maven/org.apache.mina/mina-core@2.2.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
         artifacts:
           - name: dhi.io/maven:3.9.15-jdk21-debian13-dev@sha256:ee36e4d9023b20bcaf7eada220bf4c15d7db2e5a33a3c0ba2ead122028df20af
             includes:
@@ -100,6 +114,7 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - uses: mvn/mirror@v1
         - name: patch detached bouncycastle plugin
           uses: patch@v1
           work-dir: ${source.dir}/jenkins
@@ -114,6 +129,13 @@ contents:
             options: -p1
             patches:
               - ${source.dir}/patch/jackson3-api.patch
+        - name: patch stable detached script security plugin
+          uses: patch@v1
+          work-dir: ${source.dir}/jenkins
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/script-security-api.patch
         - name: patch maven dependencies
           uses: mvn/patch@v1
           with:
@@ -130,10 +152,55 @@ contents:
         - name: build
           work-dir: ${source.dir}/jenkins
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
             mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
+        - name: patch bundled mina-core
+          work-dir: ${source.dir}/jenkins
+          runs: |
+            set -eux -o pipefail
+
+            patch_dir="$(mktemp -d)"
+            trap 'rm -rf "${patch_dir}"' EXIT
+
+            war_file="war/target/jenkins.war"
+            hpi_path="WEB-INF/detached-plugins/mina-sshd-api-core.hpi"
+            old_mina_path="WEB-INF/lib/mina-core-2.2.4.jar"
+            new_mina_path="WEB-INF/lib/mina-core-2.2.7.jar"
+
+            unzip -q "${war_file}" "${hpi_path}" -d "${patch_dir}"
+            hpi_file="${patch_dir}/${hpi_path}"
+
+            if jar tf "${hpi_file}" | grep -q "${old_mina_path}"; then
+              zip -q -d "${hpi_file}" "${old_mina_path}"
+            fi
+
+            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/lib"
+            cp "${source.dir}/patch/deps/mina-core-2.2.7.jar" "${patch_dir}/hpi-overlay/${new_mina_path}"
+            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_mina_path}")
+
+            if jar tf "${hpi_file}" | grep -q "${old_mina_path}"; then
+              echo "ERROR: ${old_mina_path} is still present in ${hpi_path}" >&2
+              exit 1
+            fi
+            jar tf "${hpi_file}" | grep -q "${new_mina_path}"
+
+            (cd "${patch_dir}" && jar --update --file "${source.dir}/jenkins/${war_file}" "${hpi_path}")
+
+            unzip -p "${war_file}" "${hpi_path}" > "${patch_dir}/verified-mina-sshd-api-core.hpi"
+            if jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "${old_mina_path}"; then
+              echo "ERROR: ${old_mina_path} is still present in repacked ${war_file}" >&2
+              exit 1
+            fi
+            jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "${new_mina_path}"
         - name: install
           work-dir: ${source.dir}/jenkins
           runs: |
@@ -170,6 +237,11 @@ contents:
           uid: 0
           gid: 0
           source: image/jenkins/patch/jackson3-api.patch
+        - type: file
+          path: ${source.dir}/patch/script-security-api.patch
+          uid: 0
+          gid: 0
+          source: image/jenkins/patch/script-security-api.patch
         - type: file
           path: ${source.dir}/patch/mvn-properties.json
           uid: 0
