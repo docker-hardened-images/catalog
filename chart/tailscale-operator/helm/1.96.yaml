@@ -1,0 +1,65 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Tailscale Operator Helm chart 1.96.x
+image: dhi.io/tailscale-operator-chart
+variant: helm
+tags:
+  - 1.96.5
+platforms:
+  - linux/amd64
+vars:
+  DHI_REGISTRY: dhi.io
+  HELM_REFERENCE: dhi.io/helm:3.20.2-debian13-dev@sha256:ce95680846fc18d3d179f82f9d633c8274f41cd0d0f8213cbfc4039fbe2cd112
+  TAILSCALE_OPERATOR_IMAGE_REFERENCE: dhi.io/tailscale-operator:1.96.5-debian13
+  TAILSCALE_PROXY_IMAGE_REFERENCE: dhi.io/tailscale:1.96.4-debian13@sha256:621f4150a649755ac1a6d098c63252cc00bdf416050b2200a3aedb39f60f4da0
+contents:
+  builds:
+    - name: tailscale-operator-chart
+      uses: ${vars.HELM_REFERENCE}
+      work-dir: ${source.dir}/helm-charts/cmd/k8s-operator/deploy/chart
+      contents:
+        files:
+          - url: git+https://github.com/tailscale/tailscale.git#v1.96.5
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          with:
+            chart:
+              appRef: tailscale-operator
+              description: Docker Hardened Images Helm chart for Tailscale Operator
+              images:
+                - name: tailscale-operator
+                  ref: ${vars.TAILSCALE_OPERATOR_IMAGE_REFERENCE}
+                - name: tailscale
+                  ref: ${vars.TAILSCALE_PROXY_IMAGE_REFERENCE}
+              name: tailscale-operator-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/tailscale/tailscale
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: lint
+          uses: helm/cmd@v1
+          with:
+            chart: .
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: .
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/tailscale-operator/config

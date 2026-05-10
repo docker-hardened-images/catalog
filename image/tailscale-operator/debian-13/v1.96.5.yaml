@@ -1,0 +1,66 @@
+# syntax=dhi.io/build:2-debian13
+
+name: tailscale-operator 1.96.5
+image: dhi.io/tailscale-operator
+variant: runtime
+tags:
+  - "1"
+  - "1.96"
+  - 1.96.5
+  - 1-debian13
+  - 1.96-debian13
+  - 1.96.5-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-10"
+vars:
+  VERSION: 1.96.5
+  COMMIT_SHA: 4ee448d3a47df7cbb5696e671bb317d0bb99fffc
+contents:
+  packages:
+    - ca-certificates
+    - iptables
+    - iproute2
+  builds:
+    - name: tailscale-operator
+      uses: dhi/golang:1.26-debian13
+      work-dir: /go/src/github.com/tailscale/tailscale
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/tailscale/tailscale.git#${vars.COMMIT_SHA}
+            path: /go/src/github.com/tailscale/tailscale
+      pipeline:
+        - name: build
+          runs: |
+            set -eux -o pipefail
+            
+            # Use CGO_ENABLED=0 to ensure a static, pure-Go binary for architecture portability
+            export CGO_ENABLED=0
+            export GOFIPS140=off
+            
+            go build -trimpath \
+              -ldflags="-s -w -X tailscale.com/version.Long=${vars.VERSION} -X tailscale.com/version.Short=${vars.VERSION} -X tailscale.com/version.GitHash=${vars.COMMIT_SHA}" \
+              -o /usr/local/bin/k8s-operator ./cmd/k8s-operator
+      outputs:
+        - source: /usr/local/bin/k8s-operator
+          target: /usr/local/bin/k8s-operator
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+annotations:
+  org.opencontainers.image.description: Hardened Tailscale Kubernetes Operator
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/local/bin/k8s-operator
