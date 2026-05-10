@@ -1,0 +1,205 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cass Config Builder 1.0.x (dev)
+image: dhi.io/cass-config-builder
+variant: dev
+tags:
+  - 1-dev
+  - 1.0-dev
+  - 1.0.19-dev
+  - 1-debian13-dev
+  - 1.0-debian13-dev
+  - 1.0.19-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-26"
+vars:
+  COMMIT_SHA: 22eb0b0c211d2283312c60c2aa3ca6511abab1ab
+  DEFINITIONS_CHECKSUM: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
+  DEFINITIONS_COMMIT_SHA: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+  JAVA_BUILD_REFERENCE: dhi/eclipse-temurin:11.0.30.7-jdk-debian13-dev@sha256:12e42a19e3fcfc0757a010ffa7de5af88540c42328ef2f0f6fca6ba87eb210d0
+  JAVA_REFERENCE: dhi/eclipse-temurin:11.0.30.7-debian13@sha256:da9b9870dcd0becb486d65822fbab63e38167178bd17b160c2abbb23f33d3562
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.19
+  SOURCE_CHECKSUM: sha256:b4142077124542d71a3f4e93e511778070a5fd8b53cb55a81b57dc9040c184dd
+  VERSION: 1.0.19
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - '!tar'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libstdc++6
+    - mawk
+    - perl-base
+    - sed
+    - tar
+    - util-linux
+  builds:
+    - name: build-cass-config-builder
+      uses: dhi.io/eclipse-temurin:11.0.30.7-jdk-debian13-dev@sha256:12e42a19e3fcfc0757a010ffa7de5af88540c42328ef2f0f6fca6ba87eb210d0
+      work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.19
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+        files:
+          - url: https://github.com/datastax/cass-config-builder/archive/refs/tags/v1.0.19.tar.gz
+            checksum: sha256:b4142077124542d71a3f4e93e511778070a5fd8b53cb55a81b57dc9040c184dd
+            path: ${source.dir}/cass-config-builder
+            spdx:
+              name: cass-config-builder
+              version: 1.0.19
+              packages:
+                - name: cass-config-builder
+                  purl: pkg:github/datastax/cass-config-builder@v1.0.19
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/datastax/cass-config-definitions/archive/1b7eaf4e50447fc8168c4a6c16d0ed986941edf8.tar.gz
+            checksum: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
+            path: ${source.dir}/cass-config-definitions
+            spdx:
+              name: cass-config-definitions
+              version: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+              packages:
+                - name: cass-config-definitions
+                  purl: pkg:github/datastax/cass-config-definitions@1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/jackson-cve.patch
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ln -s ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8 cass-config-definitions
+            ./gradlew shadowJar
+
+            mkdir -p ${target.dir}/usr/local/bin
+            cp build/libs/cass-config-builder-*-all.jar ${target.dir}/usr/local/bin/cass-config-builder.jar
+
+            mkdir -p ${target.dir}/definitions
+            cp -r ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8/resources/. ${target.dir}/definitions/
+      paths:
+        - type: file
+          path: ${source.dir}/patch/jackson-cve.patch
+          uid: 0
+          gid: 0
+          source: image/cass-config-builder/patch/jackson-cve.patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cass-config-builder.jar
+          target: /usr/local/bin/cass-config-builder.jar
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/definitions
+          target: /definitions
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cass-config-builder
+          target: /opt/docker/sbom/cass-config-builder
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:11.0.30.7-debian13@sha256:da9b9870dcd0becb486d65822fbab63e38167178bd17b160c2abbb23f33d3562
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /opt/java/openjdk/11-jre
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+paths:
+  - type: directory
+    path: /definitions
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /opt/cass-config-builder/output
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal cass-config-builder image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - java
+  - -jar
+  - /usr/local/bin/cass-config-builder.jar
