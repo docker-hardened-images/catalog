@@ -1,0 +1,166 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-containerd
+variant: runtime
+tags:
+  - 2.3.0-alpine3.23
+  - 2.3.0-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 2976f38ccbfcda5ef1364d63d60b0a304e4bf94a
+  GOLANG_VERSION: 1.26.3-r0
+  PACKAGE_NAME: containerd
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.3"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.3.0
+  VERSION: 2.3.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: containerd
+      work-dir: /go/src/github.com/containerd/containerd/v2
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.3-r0
+          - golang-1.26-oci-config=1.26.3-r0
+        files:
+          - url: git+https://github.com/containerd/containerd.git#v2.3.0
+            checksum: 2976f38ccbfcda5ef1364d63d60b0a304e4bf94a
+            path: /go/src/github.com/containerd/containerd/v2
+            spdx:
+              name: containerd
+              version: 2.3.0
+              packages:
+                - name: containerd
+                  purl: pkg:golang/github.com/containerd/containerd/v2@2.3.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: build ctr
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v${CONTAINERD_VERSION}'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=${CONTAINERD_COMMIT_SHA}'
+            output: ${target.dir}/usr/bin/ctr
+            packages: ./cmd/ctr
+        - name: build containerd
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v2.3.0'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=2976f38ccbfcda5ef1364d63d60b0a304e4bf94a'
+            output: ${target.dir}/usr/bin/containerd
+            packages: ./cmd/containerd
+        - name: build containerd-shim-runc-v2
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v${CONTAINERD_VERSION}'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=${CONTAINERD_COMMIT_SHA}'
+            output: ${target.dir}/usr/bin/containerd-shim-runc-v2
+            packages: ./cmd/containerd-shim-runc-v2
+        - name: build containerd dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v${CONTAINERD_VERSION}'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=${CONTAINERD_COMMIT_SHA}'
+            output: ${target.dir}/usr/bin/ctr-dev
+            packages: ./cmd/ctr
+            strip: false
+        - name: build ctr dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v2.3.0'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=2976f38ccbfcda5ef1364d63d60b0a304e4bf94a'
+            output: ${target.dir}/usr/bin/containerd-dev
+            packages: ./cmd/containerd
+            strip: false
+        - name: build shim dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/containerd/containerd/v2/version.Version=v${CONTAINERD_VERSION}'
+              - -X 'github.com/containerd/containerd/v2/version.Revision=${CONTAINERD_COMMIT_SHA}'
+            output: ${target.dir}/usr/bin/containerd-shim-runc-v2-dev
+            packages: ./cmd/containerd-shim-runc-v2
+            strip: false
+        - name: create config
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/containerd"
+
+            ${target.dir}/usr/bin/containerd config default | tee ${target.dir}/etc/containerd/config.toml
+
+            # Workaround for a dhi/build-pkg:0 bug: a single staged file cannot
+            # be claimed by both the main package and a subpackage at the same
+            # install path without one of them losing the file at install time.
+            # We materialize a second, byte-identical copy of the default
+            # containerd config under a different staging name so the -dev
+            # subpackage can ship its own copy installed to the same final
+            # path (/etc/containerd/config.toml) as the main package.
+            cp ${target.dir}/etc/containerd/config.toml ${target.dir}/etc/containerd/config-dev.toml
+        - uses: dhi/build-pkg:0
+          with:
+            description: Industry-standard container runtime
+            files:
+              - usr/bin/containerd
+              - usr/bin/ctr
+              - usr/bin/containerd-shim-runc-v2
+              - etc/containerd/config.toml
+            license: Apache-2.0
+            name: containerd
+            rel: 0
+            subpackages:
+              - description: containerd binary without strip (dev)
+                files:
+                  - path: usr/bin/containerd
+                    source: usr/bin/containerd-dev
+                  - path: usr/bin/ctr
+                    source: usr/bin/ctr-dev
+                  - path: usr/bin/containerd-shim-runc-v2
+                    source: usr/bin/containerd-shim-runc-v2-dev
+                  - path: etc/containerd/config.toml
+                    source: etc/containerd/config-dev.toml
+                name: containerd-dev
+            url: https://github.com/containerd/containerd
+            version: 2.3.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
