@@ -16,20 +16,26 @@ platforms:
 vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
-  COMMIT_SHA: 8768aa6f65f1a888b5aa5fbf877cf20ad45d1f61
-  GOLANG_REFERENCE: dhi/golang:1.25.10-debian13-dev@sha256:9d21284fafa5372d545c7df69690173cf641c7c97527d0b08fb61aec60875332
-  NODE_REFERENCE: dhi/pkg-node:24.15.0-debian13@sha256:2f5547b162a4c888c43583575a531fca4d0cf5db47f9130526f3f4a9b9236271
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "0.32"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.32.1
-  VERSION: 0.32.1
+  SUFFIX: -dev
+  VERSION: 0.32.1-1
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] https://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
     - '!gawk'
     - '!libelogind0'
+    - '!mawk'
     - '!original-awk'
+    - alertmanager-dev=0.32.1-1
     - apt
+    - base-files
     - bash
     - ca-certificates
     - coreutils
@@ -42,152 +48,6 @@ contents:
     - perl-base
     - sed
     - util-linux
-  builds:
-    - name: alertmanager
-      uses: dhi.io/golang:1.25.10-debian13-dev@sha256:9d21284fafa5372d545c7df69690173cf641c7c97527d0b08fb61aec60875332
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - nix-bin
-        files:
-          - url: git+https://github.com/prometheus/alertmanager.git#v0.32.1
-            checksum: 8768aa6f65f1a888b5aa5fbf877cf20ad45d1f61
-            path: /go/src/github.com/prometheus/alertmanager
-            spdx:
-              name: alertmanager
-              version: 0.32.1
-              packages:
-                - name: alertmanager
-                  purl: pkg:golang/github.com/prometheus/alertmanager@0.32.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/pkg-node:24.15.0-debian13@sha256:2f5547b162a4c888c43583575a531fca4d0cf5db47f9130526f3f4a9b9236271
-            includes:
-              - opt/nodejs
-              - opt/npm
-              - usr/local/bin/node
-              - usr/local/bin/npm
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: fix semconv schema URL for otel SDK v1.43.0
-          uses: git/patch@v1
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          with:
-            patch: /go/src/patch/fix-semconv-schema-url.patch
-        - name: update go dependencies
-          uses: go/bump@v2
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          with:
-            deps:
-              - go.opentelemetry.io/otel/sdk@v1.43.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
-            download: true
-        - name: build ui
-          work-dir: /go/src/github.com/prometheus/alertmanager/ui/app
-          privileged: true
-          caches:
-            - path: /nix/store
-          runs: |
-            set -eux -o pipefail
-
-            # Install JS deps first so node_modules/.bin exists. Skip elm's postinstall:
-            # it tries to download a linux-arm64 binary that upstream never released.
-            npm ci --ignore-scripts
-
-            # Build under a nix-shell that provides a native linux-arm64 elm compiler
-            # (nixpkgs has one, upstream elm/compiler does not). --run executes the
-            # commands non-interactively inside the shell; --pure keeps host PATH out.
-            nix-shell -I nixpkgs=channel:nixpkgs-unstable -p elmPackages.elm --run '
-              set -eux -o pipefail
-              ln -sf "$(command -v elm)" node_modules/.bin/elm
-              npm run build
-            '
-        - name: run tests (without acceptance tests)
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            if [ "${target.fips}" = "true" ]; then
-              export GODEBUG=fips140=on
-            fi
-
-            go test -race -count=1 -v $(go list ./... | grep -v './test')
-        - name: build alertmanager
-          uses: go/build@v1
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          with:
-            ldflags:
-              - -s
-              - -w
-              - -X github.com/prometheus/common/version.Version=0.32.1
-              - -X github.com/prometheus/common/version.Revision=8768aa6f65f1a888b5aa5fbf877cf20ad45d1f61
-              - -X github.com/prometheus/common/version.BuildUser=dhi
-              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
-            output: ${target.dir}/usr/local/bin/alertmanager
-            packages: ./cmd/alertmanager
-        - name: build amtool
-          uses: go/build@v1
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          with:
-            ldflags:
-              - -s
-              - -w
-              - -X github.com/prometheus/common/version.Version=0.32.1
-              - -X github.com/prometheus/common/version.Revision=8768aa6f65f1a888b5aa5fbf877cf20ad45d1f61
-              - -X github.com/prometheus/common/version.BuildUser=dhi
-              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
-            output: ${target.dir}/usr/local/bin/amtool
-            packages: ./cmd/amtool
-        - name: run acceptance tests
-          work-dir: /go/src/github.com/prometheus/alertmanager
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            if [ "${target.fips}" = "true" ]; then
-              export GODEBUG=fips140=on
-            fi
-
-            ln -s "${target.dir}/usr/local/bin/alertmanager" ./alertmanager
-            ln -s "${target.dir}/usr/local/bin/amtool" ./amtool
-
-            go test -count=1 -v ./test/...
-        - name: copy config
-          runs: |
-            set -eux -o pipefail
-
-            cp -r /go/src/github.com/prometheus/alertmanager/examples/ha/alertmanager.yml ${target.dir}/alertmanager.yml
-      paths:
-        - type: file
-          path: /go/src/patch/fix-semconv-schema-url.patch
-          uid: 0
-          gid: 0
-          source: image/alertmanager/patch/fix-semconv-schema-url.patch
-      outputs:
-        - source: ${target.dir}/usr/local/bin/alertmanager
-          target: /usr/local/bin/alertmanager
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/usr/local/bin/amtool
-          target: /usr/local/bin/amtool
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/alertmanager
-          target: /opt/docker/sbom/alertmanager
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/alertmanager.yml
-          target: /etc/alertmanager/alertmanager.yml
-          uid: 65532
-          gid: 65532
-          mode: "0644"
   artifacts:
     - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
       includes:
@@ -239,11 +99,17 @@ paths:
     uid: 65532
     gid: 65532
     mode: "0755"
+  - type: file
+    path: /etc/alertmanager/alertmanager.yml
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+    source: image/alertmanager/config/alertmanager.yml
 annotations:
   org.opencontainers.image.description: A minimal Alertmanager image
   org.opencontainers.image.licenses: Apache-2.0
 entrypoint:
-  - alertmanager
+  - /usr/bin/alertmanager
 cmd:
   - --config.file=/etc/alertmanager/alertmanager.yml
   - --storage.path=/alertmanager
