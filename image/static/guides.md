@@ -75,6 +75,17 @@ All variants of this image:
 - Debian with glibc: Includes glibc (libc6) in addition to ca-certificates and tzdata. Use this variant if your binary
   requires glibc for dynamic linking.
 
+**FIPS variants** include `fips` in the variant name and tag. These variants ship the OpenSSL FIPS provider, validated
+under FIPS 140, a U.S. government standard for secure cryptographic operations, so applications running on top of the
+image can load FIPS-validated cryptographic modules. FIPS variants are available only on flavors that include a C
+runtime: `Debian with glibc` and `Alpine with musl`. The pure no-libc flavors (`Alpine` and `Debian`) have no FIPS
+variant because the OpenSSL FIPS provider requires a C runtime. Use one of the following tags for FIPS workloads:
+
+- `dhi.io/static:<version>-glibc-debian13-fips`
+- `dhi.io/static:<version>-glibc-debian12-fips`
+- `dhi.io/static:<version>-musl-alpine3.23-fips`
+- `dhi.io/static:<version>-musl-alpine3.22-fips`
+
 ## Migrate to a Docker Hardened Image
 
 To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
