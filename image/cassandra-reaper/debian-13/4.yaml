@@ -72,6 +72,12 @@ contents:
             gid: 0
       pipeline:
         - uses: mvn/mirror@v1
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/cassandra-reaper
         - name: build ui
           work-dir: ${source.dir}/cassandra-reaper/src/ui
           privileged: true
@@ -125,27 +131,22 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # The full node_modules from `build ui` is mostly webpack 4 /
-            # babel 6 / bower 1.8 dev tooling that never ships in the
-            # runtime image (the webpack-bundled JS lives inside the
-            # shaded JAR, not as separate node modules). Clearing it
-            # and reinstalling with --omit=dev produces a node_modules
-            # tree that matches what the runtime actually uses, so the
-            # UI SBOM and downstream CVE scans only report on packages
-            # reachable from the shipped JS bundles. Mirrors the
-            # kyverno-policy-reporter-ui prepare-for-sbom pattern.
-            #
-            # `node_modules` is a buildkit cache mount (see `caches:`
-            # above) so we can't `rm -rf` it; clearing its contents
-            # in place leaves the mount intact.
-            find node_modules -mindepth 1 -delete
-            npm install --omit=dev --ignore-scripts
+            # Keep the build cache's full node_modules intact for webpack.
+            # The SBOM only needs the production dependency tree.
+            sbom_dir="${source.dir}/cassandra-reaper/src/ui-sbom"
+            rm -rf "${sbom_dir}"
+            mkdir -p "${sbom_dir}"
+            cp package.json "${sbom_dir}/"
+            if [ -f package-lock.json ]; then
+              cp package-lock.json "${sbom_dir}/"
+            fi
+            npm install --prefix "${sbom_dir}" --omit=dev --ignore-scripts
         - name: sbom ui
           uses: sbom@v1
           with:
             extra-scanners: javascript-package-cataloger
             prefix: cassandra-reaper-ui
-            source: ${source.dir}/cassandra-reaper/src/ui/node_modules
+            source: ${source.dir}/cassandra-reaper/src/ui-sbom/node_modules
         - name: install
           runs: |
             set -eux -o pipefail
@@ -206,6 +207,12 @@ contents:
                   )
               fi
             done
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: image/cassandra-reaper/patch/mvn-dependencies.json
       outputs:
         - source: ${target.dir}/usr/local/share/cassandra-reaper/cassandra-reaper.jar
           target: /usr/local/share/cassandra-reaper/cassandra-reaper.jar
