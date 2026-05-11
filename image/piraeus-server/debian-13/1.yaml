@@ -51,6 +51,10 @@ vars:
   SEMVER_VERSION: 1.33.2
   VERSION: 1.33.2
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] https://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
     - '!libpython3-stdlib'
@@ -443,10 +447,31 @@ contents:
             # This post-processing step removes .+ after 2.21.1 to fix the version
             sed -i 's/2\.21\.1\.\+/2.21.1/g' ./build.gradle || sed -i '' 's/2\.21\.1\.\+/2.21.1/g' ./build.gradle
 
-            # Pin vertx 4.5.24 to fix CVE-2026-1002 (affects vertx-core < 4.5.24)
-            # vertx is a transitive dependency of io.fabric8:kubernetes-client
-            # Append allprojects block to force the version using printf to avoid heredoc YAML issues
-            printf '\n// DHI CVE fix: force vertx 4.5.24 to address CVE-2026-1002\nallprojects {\n    configurations.all {\n        resolutionStrategy.force(\n            "io.vertx:vertx-core:4.5.24",\n            "io.vertx:vertx-auth-common:4.5.24",\n            "io.vertx:vertx-web-client:4.5.24",\n            "io.vertx:vertx-web-common:4.5.24"\n        )\n    }\n}\n' >> ./build.gradle
+            # Force transitive dependency versions to address CVEs
+            # vertx 4.5.24: CVE-2026-1002 (transitive via io.fabric8:kubernetes-client)
+            # netty 4.2.13.Final: CVE-2026-42577 CVE-2026-42578 CVE-2026-42579 CVE-2026-42580 CVE-2026-42581 CVE-2026-42583 CVE-2026-42584 CVE-2026-42585 CVE-2026-42587 CVE-2026-41417
+            # postgresql 42.7.11: CVE-2026-42198
+            cat << 'GRADLE_APPEND' >> ./build.gradle
+
+            // DHI CVE fixes: force dependency versions to address CVEs
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.force(
+                        "io.vertx:vertx-core:4.5.24",
+                        "io.vertx:vertx-auth-common:4.5.24",
+                        "io.vertx:vertx-web-client:4.5.24",
+                        "io.vertx:vertx-web-common:4.5.24",
+                        "io.netty:netty-codec:4.2.13.Final",
+                        "io.netty:netty-codec-dns:4.2.13.Final",
+                        "io.netty:netty-codec-http:4.2.13.Final",
+                        "io.netty:netty-codec-http2:4.2.13.Final",
+                        "io.netty:netty-handler-proxy:4.2.13.Final",
+                        "io.netty:netty-transport-native-epoll:4.2.13.Final",
+                        "org.postgresql:postgresql:42.7.11"
+                    )
+                }
+            }
+            GRADLE_APPEND
 
             # Bump gradle.lockfile dependencies
             BUMPS_FILE="${PATCH_DIR}/dependency_bumps_gradle.lockfile.json"
@@ -472,6 +497,9 @@ contents:
 
             # Verify protoc works on this architecture
             "${PROTOC_DIR}/bin/protoc" --version
+
+            # Regenerate lockfile after dependency bumps (netty 4.2 module split changes artifact names)
+            gradle dependencies --write-locks --no-daemon -PversionOverride=v1.33.2 || true
 
             gradle install --no-daemon -x test -PversionOverride=v1.33.2
         - name: install LINSTOR artifacts
