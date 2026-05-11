@@ -1,0 +1,201 @@
+# syntax=dhi.io/build:2-debian13
+
+name: JupyterHub 5.4.x
+image: dhi.io/jupyterhub
+variant: runtime
+tags:
+  - "5"
+  - "5.4"
+  - 5.4.6
+  - 5-debian13
+  - 5.4-debian13
+  - 5.4.6-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-06"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 9967d653d7503c8abc324b78ba8f669cacd6c876
+  CONFIGURABLE_HTTP_PROXY_REFERENCE: dhi/configurable-http-proxy:5.2.0-debian13@sha256:cbf525d5ff8d0737650521d809a533d146102c31732dee2d45c961ad8a5c5a77
+  PYTHON_BUILD_REFERENCE: dhi/python:3.14.4-debian13-dev@sha256:ef2fa2beab6aa256da894c5c4d7cd81483764f68fc7814f5e8bab26d2c89dc6c
+  PYTHON_REFERENCE: dhi/python:3.14.4-debian13@sha256:edb8192e94aef7bce840d1188f2e19b5fbd4f8aa7bd89bfb2c44eda0eca97346
+  SEMVER_MAJOR_MINOR_VERSION: "5.4"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.4.6
+  VERSION: 5.4.6
+contents:
+  packages:
+    - '!base-files'
+    - ca-certificates
+    - libffi8
+    - sqlite3
+    - tini
+    - tzdata
+  builds:
+    - name: jupyterhub
+      uses: dhi.io/python:3.14.4-debian13-dev@sha256:ef2fa2beab6aa256da894c5c4d7cd81483764f68fc7814f5e8bab26d2c89dc6c
+      work-dir: ${source.dir}/jupyterhub
+      environment:
+        PATH: /opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - build-essential
+          - libssl-dev
+          - libffi-dev
+          - zlib1g-dev
+          - ca-certificates
+          - bash
+          - coreutils
+          - git
+        files:
+          - url: git+https://github.com/jupyterhub/jupyterhub.git#5.4.6
+            checksum: 9967d653d7503c8abc324b78ba8f669cacd6c876
+            path: ${source.dir}/jupyterhub
+            spdx:
+              name: jupyterhub
+              version: 5.4.6
+              packages:
+                - name: jupyterhub
+                  purl: pkg:pypi/jupyterhub@5.4.6
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            mkdir -p /opt/jupyterhub
+            python3 -m venv "$VENV"
+        - name: install jupyterhub
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            # The git clone above is COMMIT_SHA-verified and grounds the SBOM via
+            # spdx; the install itself comes from PyPI because jupyterhub's
+            # setup.py runs `npm install` and `npm run css` to compile assets
+            # when building from source, and PyPI ships those assets prebuilt.
+            # Transitive deps (tornado, SQLAlchemy, ...) are resolved by pip from
+            # PyPI; sbom@v1 below catalogs the resulting venv. When CVE scans
+            # flag a transitive dep, add a follow-up step that pins it forward
+            # (mirrors the `upgrade python deps for cve fixes` pattern in
+            # jupyterhub-k8s-hub). pycurl is omitted: it is an optional perf
+            # shim and would pull libcurl + krb5 + gnutls transients with
+            # unaddressable distro CVEs.
+            "$VENV/bin/python3" -m pip install --no-cache-dir "jupyterhub==5.4.6"
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/jupyterhub/.venv
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: jupyterhub-python
+            source: /opt/jupyterhub/.venv
+      outputs:
+        - source: /opt/jupyterhub
+          target: /opt/jupyterhub
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.14.4-debian13@sha256:edb8192e94aef7bce840d1188f2e19b5fbd4f8aa7bd89bfb2c44eda0eca97346
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/configurable-http-proxy:5.2.0-debian13@sha256:cbf525d5ff8d0737650521d809a533d146102c31732dee2d45c961ad8a5c5a77
+      includes:
+        - opt/nodejs/**
+        - srv/configurable-http-proxy/**
+        - usr/local/bin/node
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /srv/jupyterhub
+environment:
+  JUPYTERHUB_VERSION: 5.4.6
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PATH: /opt/jupyterhub/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /srv/jupyterhub
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/configurable-http-proxy
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/jupyterhub/files/configurable-http-proxy
+annotations:
+  org.opencontainers.image.description: A minimal JupyterHub image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - jupyterhub
+ports:
+  - 8000/tcp
+  - 8081/tcp
