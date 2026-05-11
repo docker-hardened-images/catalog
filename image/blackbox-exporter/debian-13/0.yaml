@@ -1,4 +1,4 @@
-# syntax=dhi.io/build:1-debian13
+# syntax=dhi.io/build:2-debian13
 
 name: Prometheus Blackbox Exporter 0.x
 image: dhi.io/blackbox-exporter
@@ -18,25 +18,35 @@ dates:
 vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
+  BUSYBOX_REFERENCE: dhi/busybox:1.37.0-debian13@sha256:a91d3f23f20f9ab231ebefa0acf1799dd7dbad424fa4dca099762790e900f4f7
   COMMIT_SHA: 5a059bee8d8ffa4e75947c5055fb0abeefc582e6
-  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
+  DEBIAN_VERSION: 0.28.0-7
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "0.28"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.28.0
+  SUFFIX: ""
   VERSION: 0.28.0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] https://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - blackbox-exporter=0.28.0-7
   builds:
-    - name: blackbox-exporter
-      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
-      work-dir: /go/src/github.com/prometheus/blackbox_exporter
-      caches:
-        - path: /go/pkg/mod
+    - name: install default configuration
+      uses: dhi.io/busybox:1.37.0-debian13@sha256:a91d3f23f20f9ab231ebefa0acf1799dd7dbad424fa4dca099762790e900f4f7
       contents:
         files:
           - url: git+https://github.com/prometheus/blackbox_exporter.git#v0.28.0
-            path: /go/src/github.com/prometheus/blackbox_exporter
+            checksum: 5a059bee8d8ffa4e75947c5055fb0abeefc582e6
+            path: ${source.dir}/blackbox_exporter
             spdx:
               name: blackbox-exporter
               version: 0.28.0
@@ -47,56 +57,18 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/prometheus/blackbox_exporter
-          with:
-            deps:
-              - golang.org/x/crypto@v0.45.0
-              - google.golang.org/grpc@v1.79.3
-            download: true
-        - name: test
-          work-dir: /go/src/github.com/prometheus/blackbox_exporter
-          runs: |
-            set -eux -o pipefail
-
-            if [ "${target.fips}" = "true" ]; then
-              # Unit tests use keys smaller than 2048 bits which are not allowed in FIPS mode.
-              export GODEBUG=fips140=on
-            fi
-
-            go test -short ./...
-        - name: build blackbox_exporter
-          uses: go/build@v1
-          work-dir: /go/src/github.com/prometheus/blackbox_exporter
-          with:
-            ldflags:
-              - -X github.com/prometheus/common/version.Version=0.28.0
-              - -X github.com/prometheus/common/version.Revision=5a059bee8d8ffa4e75947c5055fb0abeefc582e6
-              - -X github.com/prometheus/common/version.Branch=HEAD
-              - -X github.com/prometheus/common/version.BuildUser=dhi
-              - -X github.com/prometheus/common/version.BuildDate=${SOURCE_DATE_EPOCH}
-            output: ${target.dir}/usr/local/bin/blackbox_exporter
-            packages: .
         - name: install configuration
-          work-dir: /go/src/github.com/prometheus/blackbox_exporter
+          work-dir: ${source.dir}/blackbox_exporter
           runs: |
             set -eux -o pipefail
 
             install -Dm644 blackbox.yml "${target.dir}/etc/blackbox_exporter/config.yml"
       outputs:
-        - source: ${target.dir}/usr/local/bin/blackbox_exporter
-          target: /usr/local/bin/blackbox_exporter
-          uid: 0
-          gid: 0
         - source: ${target.dir}/etc/blackbox_exporter/config.yml
           target: /etc/blackbox_exporter/config.yml
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/blackbox-exporter
-          target: /opt/docker/sbom/blackbox-exporter
-          uid: 0
-          gid: 0
+          uid: 65532
+          gid: 65532
+          mode: "0644"
   artifacts:
     - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
       includes:
@@ -136,12 +108,6 @@ os-release:
   pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
-paths:
-  - type: symlink
-    path: /bin/blackbox_exporter
-    uid: 0
-    gid: 0
-    source: /usr/local/bin/blackbox_exporter
 annotations:
   org.opencontainers.image.description: A minimal Prometheus Blackbox Exporter image
   org.opencontainers.image.licenses: Apache-2.0
