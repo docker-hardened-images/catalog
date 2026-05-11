@@ -1,0 +1,266 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kubernetes
+variant: runtime
+tags:
+  - 1.36.0-alpine3.23
+  - 1.36.0-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-22"
+  end-of-life: "2027-06-28"
+vars:
+  COMMIT_SHA: ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.3-r0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.36"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.36.0
+  VERSION: 1.36.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubernetes
+      work-dir: /go/src/k8s.io/kubernetes
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - jq
+          - golang-1.26=1.26.3-r0
+          - golang-1.26-oci-config=1.26.3-r0
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.36.0
+            checksum: ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            path: /go/src/k8s.io/kubernetes
+            spdx:
+              name: kubernetes
+              version: 1.36.0
+              packages:
+                - name: kubernetes
+                  purl: pkg:golang/k8s.io/kubernetes@1.36.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: pin dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh golang.org/x/crypto v0.45.0
+            ./hack/pin-dependency.sh github.com/opencontainers/selinux v1.13.0
+            ./hack/pin-dependency.sh go.opentelemetry.io/otel/sdk v1.43.0
+            ./hack/pin-dependency.sh google.golang.org/grpc v1.79.3
+
+            export TMP_DIR="$(mktemp -d /tmp/update-vendor.XXXX)"
+            dump_update_vendor_log() {
+              status=$?
+              if [ "${status}" -ne 0 ] && [ -f "${TMP_DIR}/update-vendor.log" ]; then
+                echo "=== update-vendor.log start ==="
+                cat "${TMP_DIR}/update-vendor.log"
+                echo "=== update-vendor.log end ==="
+              fi
+              exit "${status}"
+            }
+            trap dump_update_vendor_log EXIT
+            ./hack/update-vendor.sh
+            trap - EXIT
+        - name: clean git state
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git add -A
+            git -c user.name=build -c user.email=build@build commit -q -m "dependency updates" --no-verify
+            git tag -f "v1.36.0"
+        - uses: go/hermetic@v1
+        - name: build kube-apiserver
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-apiserver
+            packages: ./cmd/kube-apiserver
+        - name: build kube-apiserver dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-apiserver-dev
+            packages: ./cmd/kube-apiserver
+            strip: false
+        - name: build kube-controller-manager
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-controller-manager
+            packages: ./cmd/kube-controller-manager
+        - name: build kube-controller-manager dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-controller-manager-dev
+            packages: ./cmd/kube-controller-manager
+            strip: false
+        - name: build kube-scheduler
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-scheduler
+            packages: ./cmd/kube-scheduler
+        - name: build kube-scheduler dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-scheduler-dev
+            packages: ./cmd/kube-scheduler
+            strip: false
+        - name: build kube-proxy
+          uses: go/build@v1
+          with:
+            extra-args: -installsuffix=static
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-proxy
+            packages: ./cmd/kube-proxy
+        - name: build kube-proxy dev
+          uses: go/build@v1
+          with:
+            extra-args: -installsuffix=static
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kube-proxy-dev
+            packages: ./cmd/kube-proxy
+            strip: false
+        - name: build kubeadm
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kubeadm
+            packages: ./cmd/kubeadm
+        - name: build kubeadm dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kubeadm-dev
+            packages: ./cmd/kubeadm
+            strip: false
+        - name: build kubectl
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kubectl
+            packages: ./cmd/kubectl
+        - name: build kubectl dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.36.0
+              - -X k8s.io/component-base/version.gitCommit=ecf6decece6a6de25a57aad9ba90b6ce580f6f78
+            output: ${target.dir}/usr/bin/kubectl-dev
+            packages: ./cmd/kubectl
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes control plane and node binaries
+            files:
+              - usr/bin/kube-apiserver
+            license: Apache-2.0
+            name: kubernetes
+            priority: optional
+            rel: 1
+            section: admin
+            subpackages:
+              - files:
+                  - path: usr/bin/kube-controller-manager
+                name: kube-controller-manager
+              - files:
+                  - path: usr/bin/kube-scheduler
+                name: kube-scheduler
+              - files:
+                  - path: usr/bin/kube-proxy
+                name: kube-proxy
+              - files:
+                  - path: usr/bin/kubeadm
+                name: kubeadm
+              - files:
+                  - path: usr/bin/kubectl
+                name: kubectl
+              - files:
+                  - path: usr/bin/kube-apiserver
+                    source: usr/bin/kube-apiserver-dev
+                name: kubernetes-dev
+              - files:
+                  - path: usr/bin/kube-controller-manager
+                    source: usr/bin/kube-controller-manager-dev
+                name: kube-controller-manager-dev
+              - files:
+                  - path: usr/bin/kube-scheduler
+                    source: usr/bin/kube-scheduler-dev
+                name: kube-scheduler-dev
+              - files:
+                  - path: usr/bin/kube-proxy
+                    source: usr/bin/kube-proxy-dev
+                name: kube-proxy-dev
+              - files:
+                  - path: usr/bin/kubeadm
+                    source: usr/bin/kubeadm-dev
+                name: kubeadm-dev
+              - files:
+                  - path: usr/bin/kubectl
+                    source: usr/bin/kubectl-dev
+                name: kubectl-dev
+            url: https://github.com/kubernetes/kubernetes
+            version: 1.36.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
