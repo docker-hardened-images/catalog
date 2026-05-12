@@ -31,7 +31,7 @@ contents:
     - grep
     - tzdata
   builds:
-    - name: build-temporal-server-binaries
+    - name: temporal-server
       uses: dhi.io/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
       work-dir: /go/src/go.temporal.io/server
       caches:
@@ -46,12 +46,12 @@ contents:
               version: 1.31.0
               packages:
                 - name: temporal-server
-                  purl: pkg:golang/go.temporal.io/server@1.31.0
+                  purl: pkg:golang/go.temporal.io/server@v1.31.0
                   license: MIT
             uid: 0
             gid: 0
       pipeline:
-        - name: go dependencies
+        - name: update go dependencies
           uses: go/bump@v2
           with:
             deps:
@@ -62,60 +62,62 @@ contents:
               - github.com/apache/thrift@v0.23.0
               - golang.org/x/net@v0.53.0
             download: true
-        - name: build server
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/usr/local/bin/temporal-server
-            packages: ./cmd/server
-        - name: test temporal server binaries
+        - name: unit test
           runs: |
             set -eux -o pipefail
-
-            ${target.dir}/usr/local/bin/temporal-server --help
 
             echo "Running core temporal unit tests..."
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/log/...
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/config/...
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/util/...
-        - name: Update entrypoint script
-          runs: |
-            set -eux -o pipefail
-
-            # make a copy before modifying
-            mkdir -p "${target.dir}/etc/temporal"
-            cp "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh"
-
-            # Replace getent commands with /etc/hosts parsing to avoid the getent dependency.
-            sed -i 's/getent hosts "\$(hostname)"/cat \/etc\/hosts | grep -v ^# | grep "\$HOSTNAME"/g' "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh"
-
-            install -m 755 /go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh ${target.dir}/etc/temporal/entrypoint.sh
-
-            # Sanity check: Verify exactly 8 diff lines (2 getent replacements)
-            diff_count=$(diff "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh" | wc -l || true)
-            if [ "$diff_count" -ne 8 ]; then
-              echo "ERROR: Expected exactly 8 diff lines (2 getent replacements), got $diff_count"
-              echo "This suggests the upstream entrypoint.sh has changed significantly."
-              echo "Diff output:"
-              diff "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh" || true
-              exit 1
-            fi
-
-            # Verify the modified script contains our expected /etc/hosts logic
-            if ! grep -q "cat /etc/hosts | grep -v \^#" "${target.dir}/etc/temporal/entrypoint.sh"; then
-              echo "ERROR: Modified entrypoint script does not contain expected /etc/hosts logic"
-              exit 1
-            fi
+        - name: build server
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-server
+            packages: ./cmd/server
       outputs:
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/temporal/entrypoint.sh
-          target: /etc/temporal/entrypoint.sh
+        - source: ${target.dir}/usr/local/bin/temporal-server
+          target: /usr/local/bin/temporal-server
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/temporalio-server
           target: /opt/docker/sbom/temporalio-server
+          uid: 0
+          gid: 0
+    - name: entrypoint
+      work-dir: /go/src/go.temporal.io/server
+      contents:
+        packages:
+          - bash
+          - coreutils
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.31.0
+            checksum: 83881961df2bad7d78d93a2d50778dbc8bd1a2fc
+            path: /go/src/go.temporal.io/server
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch entrypoint
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/entrypoint-getent_hostname.30.patch
+        - name: install entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p '${target.dir}/etc/temporal'
+            install -m 755 docker/scripts/sh/entrypoint.sh '${target.dir}/etc/temporal/entrypoint.sh'
+      paths:
+        - type: directory
+          path: /src/patch/entrypoint-getent_hostname.30.patch
+          uid: 0
+          gid: 0
+          source: image/temporalio-server/patch/entrypoint-getent_hostname.30.patch
+      outputs:
+        - source: ${target.dir}/etc/temporal/entrypoint.sh
+          target: /etc/temporal/entrypoint.sh
           uid: 0
           gid: 0
 accounts:
@@ -151,3 +153,12 @@ annotations:
   org.opencontainers.image.licenses: MIT
 cmd:
   - /etc/temporal/entrypoint.sh
+ports:
+  - 6933/tcp
+  - 6934/tcp
+  - 6935/tcp
+  - 6939/tcp
+  - 7233/tcp
+  - 7234/tcp
+  - 7235/tcp
+  - 7239/tcp
