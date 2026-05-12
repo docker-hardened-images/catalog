@@ -5,10 +5,8 @@ image: dhi.io/logstash
 variant: runtime
 flavor: compat
 tags:
-  - 9-compat
   - 9.3-compat
   - 9.3.4-compat
-  - 9-debian13-compat
   - 9.3-debian13-compat
   - 9.3.4-debian13-compat
 platforms:
@@ -25,6 +23,7 @@ vars:
   JAVA_MAJOR_VERSION: "21"
   JDK_REFERENCE: dhi/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
   JDK_VERSION: 21.0.11.10
+  LOGSTASH_JRUBY_BUNDLE_SEGMENT: 3.1.0
   LOGSTASH_PATH: /usr/share/logstash
   LOGSTASH_SOURCE: "1"
   OSS: "true"
@@ -234,29 +233,40 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # CVE-2026-35554 - Replace kafka-clients 3.9.1 with 3.9.2
-            # The kafka-clients JAR is bundled inside the logstash-integration-kafka gem
+            # CVE-2026-35554 - Ensure kafka-clients is at least 3.9.2 inside logstash-integration-kafka.
+            # Newer gems may omit the maven-style .../org/apache/kafka/kafka-clients directory; locate jars directly.
             base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
             kafka_fixed="${source.dir}/patch/deps/kafka-clients-3.9.2.jar"
 
-            kafka_base_path=$(find "$base" -type d -path "*/org/apache/kafka/kafka-clients" | head -1)
+            kafka_old_count=$(find "$base" -type f -name 'kafka-clients-*.jar' ! -name 'kafka-clients-3.9.2.jar' | wc -l | tr -d ' ')
 
-            if [ -z "$kafka_base_path" ]; then
-              echo "ERROR: kafka-clients directory not found"
+            if [ "${kafka_old_count:-0}" -eq 0 ]; then
+              echo "No kafka-clients JAR older than 3.9.2 found; skipping CVE-2026-35554 shim."
+              exit 0
+            fi
+
+            for old_kafka_jar in $(find "$base" -type f -name 'kafka-clients-*.jar' ! -name 'kafka-clients-3.9.2.jar'); do
+              version_dir=$(dirname "$old_kafka_jar")
+              clients_root=$(dirname "$version_dir")
+
+              if [ "$(basename "$clients_root")" = "kafka-clients" ]; then
+                rm "$old_kafka_jar"
+                rmdir "$version_dir" 2> /dev/null || true
+                mkdir -p "$clients_root/3.9.2"
+                cp "$kafka_fixed" "$clients_root/3.9.2/kafka-clients-3.9.2.jar"
+              else
+                echo "kafka-clients CVE shim: non-maven layout; replacing $old_kafka_jar"
+                jar_dir=$(dirname "$old_kafka_jar")
+                rm "$old_kafka_jar"
+                cp "$kafka_fixed" "$jar_dir/kafka-clients-3.9.2.jar"
+              fi
+            done
+
+            kafka_remain=$(find "$base" -type f -name 'kafka-clients-*.jar' ! -name 'kafka-clients-3.9.2.jar' | wc -l | tr -d ' ')
+            if [ "${kafka_remain:-0}" -gt 0 ]; then
+              echo "ERROR: kafka-clients CVE shim left ${kafka_remain} vulnerable jar(s)"
               exit 1
             fi
-
-            # Newer Logstash patch releases may already carry the fixed jar.
-            old_kafka_jar=$(find "$kafka_base_path" -mindepth 2 -maxdepth 2 -type f -name "kafka-clients-*.jar" ! -name "kafka-clients-3.9.2.jar" | head -1)
-            if [ -n "$old_kafka_jar" ]; then
-              old_kafka_dir=$(dirname "$old_kafka_jar")
-              rm "$old_kafka_jar"
-              rmdir "$old_kafka_dir"
-            fi
-
-            # Insert fixed version
-            mkdir -p "$kafka_base_path/3.9.2"
-            cp "$kafka_fixed" "$kafka_base_path/3.9.2/kafka-clients-3.9.2.jar"
         - name: replace vulnerable maven jars
           work-dir: ${source.dir}/logstash
           runs: |
@@ -493,8 +503,16 @@ contents:
 
             install_default_gem "${source.dir}/patch/deps/cgi-0.3.7.gem" cgi cgi-0.3.7
             install_default_gem "${source.dir}/patch/deps/erb-4.0.3.1.gem" erb erb-4.0.3.1
-            install_default_gem "${source.dir}/patch/deps/net-imap-0.5.14.gem" net-imap net-imap-0.5.14
-            install_fixed_gem "${source.dir}/patch/deps/net-imap-0.5.14.gem" net-imap net-imap-0.5.14 true
+            # net-imap 0.5.14 is our CVE-fix pin for versions that ship a vulnerable
+            # net-imap (< 0.5.14). Logstash 9.4+ already ships net-imap 0.6.3 upstream
+            # (past the CVE), and its Gemfile.lock pins 0.6.3 — downgrading there would
+            # delete the gem bundler needs at runtime and break startup.
+            case "9.3" in
+              8.19 | 9.1 | 9.2 | 9.3)
+                install_default_gem "${source.dir}/patch/deps/net-imap-0.5.14.gem" net-imap net-imap-0.5.14
+                install_fixed_gem "${source.dir}/patch/deps/net-imap-0.5.14.gem" net-imap net-imap-0.5.14 true
+                ;;
+            esac
             install_fixed_gem "${source.dir}/patch/deps/nokogiri-1.19.3-java.gem" nokogiri nokogiri-1.19.3-java true
             sed -i 's/nokogiri (1\.18\.10-java)/nokogiri (1.19.3-java)/' "${target.dir}/usr/share/logstash/Gemfile.lock"
             sed -i 's/>= 3\.2/>= 3.1/' "$bundle_dir/specifications/nokogiri-1.19.3-java.gemspec"
