@@ -87,12 +87,34 @@ contents:
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/log/...
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/config/...
             go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/util/...
-        - name: install entrypoint script
+        - name: Update entrypoint script
           runs: |
             set -eux -o pipefail
 
-            mkdir -p ${target.dir}/etc/temporal
-            install -m 755 ./docker/scripts/sh/entrypoint.sh ${target.dir}/etc/temporal/entrypoint.sh
+            # make a copy before modifying
+            mkdir -p "${target.dir}/etc/temporal"
+            cp "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh"
+
+            # Replace getent commands with /etc/hosts parsing to avoid the getent dependency.
+            sed -i 's/getent hosts "\$(hostname)"/cat \/etc\/hosts | grep -v ^# | grep "\$HOSTNAME"/g' "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh"
+
+            install -m 755 /go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh ${target.dir}/etc/temporal/entrypoint.sh
+
+            # Sanity check: Verify exactly 8 diff lines (2 getent replacements)
+            diff_count=$(diff "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh" | wc -l || true)
+            if [ "$diff_count" -ne 8 ]; then
+              echo "ERROR: Expected exactly 8 diff lines (2 getent replacements), got $diff_count"
+              echo "This suggests the upstream entrypoint.sh has changed significantly."
+              echo "Diff output:"
+              diff "/go/src/go.temporal.io/server/docker/scripts/sh/entrypoint.sh" "${source.dir}/entrypoint.sh" || true
+              exit 1
+            fi
+
+            # Verify the modified script contains our expected /etc/hosts logic
+            if ! grep -q "cat /etc/hosts | grep -v \^#" "${target.dir}/etc/temporal/entrypoint.sh"; then
+              echo "ERROR: Modified entrypoint script does not contain expected /etc/hosts logic"
+              exit 1
+            fi
       outputs:
         - source: ${target.dir}/usr/local/bin
           target: /usr/local/bin
@@ -142,5 +164,5 @@ paths:
 annotations:
   org.opencontainers.image.description: Temporal Server - Workflow as Code to build and operate resilient applications
   org.opencontainers.image.licenses: MIT
-entrypoint:
+cmd:
   - /etc/temporal/entrypoint.sh
