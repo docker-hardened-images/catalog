@@ -14,8 +14,12 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
+  ERB_COMMIT_SHA: 6a2e4a76d352127135359e3420d5f42b767a0600
   GEM_HOME: /usr/local/bundle
   JSON_COMMIT_SHA: 54f8a878aebee090476a53c851c943128894be62
+  NET_IMAP_0_4_GEM_SHA256: 88289db8fd3f08aa8c661137810118e58fe309829e815e2ea8f3650662a6501b
+  NET_IMAP_0_5_GEM_SHA256: 1590ca018d65d4165b7324a3f046dd16fd9dd5e72deba4acf494c1becdb55a04
+  NET_IMAP_0_6_GEM_SHA256: 9a5598c67a3022c284d98430ef1d4948e7dbdb62596f61081ea8ca933270a02b
   RUST_DIGEST: sha256:7821ed9522b94e31eeb1b4a3403f20f70f430ac08bc31a63e47d51a56cd0eb0e
   RUST_VERSION: 1.95.0
   SEMVER_MAJOR_MINOR_VERSION: "4.0"
@@ -80,6 +84,26 @@ contents:
           - url: git+https://github.com/ruby/json.git#v2.19.2
             checksum: 54f8a878aebee090476a53c851c943128894be62
             path: ${source.dir}/json
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/net-imap-0.4.24.gem
+            checksum: sha256:88289db8fd3f08aa8c661137810118e58fe309829e815e2ea8f3650662a6501b
+            path: ${source.dir}/net-imap-0.4.24.gem
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/net-imap-0.5.14.gem
+            checksum: sha256:1590ca018d65d4165b7324a3f046dd16fd9dd5e72deba4acf494c1becdb55a04
+            path: ${source.dir}/net-imap-0.5.14.gem
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/net-imap-0.6.4.gem
+            checksum: sha256:9a5598c67a3022c284d98430ef1d4948e7dbdb62596f61081ea8ca933270a02b
+            path: ${source.dir}/net-imap-0.6.4.gem
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ruby/erb.git#v4.0.4.1
+            checksum: 6a2e4a76d352127135359e3420d5f42b767a0600
+            path: ${source.dir}/erb
             uid: 0
             gid: 0
         artifacts:
@@ -165,6 +189,33 @@ contents:
 
             ruby --version
             ruby -e 'puts "hello world"'
+        - name: Upgrade net-imap bundled gem (CVE-2026-42246, CVE-2026-42256, CVE-2026-42257, CVE-2026-42258, CVE-2026-42245)
+          runs: |
+            set -eux -o pipefail
+
+            # Bumping across the net-imap 0.X line is breaking (config defaults,
+            # SequenceSet#size semantics, etc.), so pick the patched version
+            # within the same 0.X line that Ruby ships by default.
+            current=$(gem list -e net-imap | awk '$1=="net-imap" {gsub(/[(),]/," "); print $2; exit}')
+            case "$current" in
+              0.6.*) target=0.6.4 ;;
+              0.5.*) target=0.5.14 ;;
+              0.4.*) target=0.4.24 ;;
+              *)
+                echo "net-imap ${current:-(missing)} not on a known 0.X line; skipping"
+                exit 0
+                ;;
+            esac
+
+            if ! dpkg --compare-versions "$current" lt "$target"; then
+              echo "net-imap ${current} already >= ${target}, skipping"
+              exit 0
+            fi
+            echo "Patching net-imap ${current} -> ${target}"
+
+            gem uninstall net-imap --all --executables --force --ignore-dependencies || true
+            gem install --local "${source.dir}/net-imap-${target}.gem" --no-document
+            gem list -e net-imap
         - name: cleanup
           runs: |
             set -eux -o pipefail
