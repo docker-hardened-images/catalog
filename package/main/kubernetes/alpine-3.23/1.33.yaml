@@ -4,7 +4,7 @@ image: dhi.io/pkg-kubernetes
 variant: runtime
 tags:
   - 1.33.12-alpine3.23
-  - 1.33.12-r0-alpine3.23
+  - 1.33.12-r1-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,9 +13,11 @@ dates:
   end-of-life: "2026-06-28"
 vars:
   COMMIT_SHA: 1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+  FILEPATH_SECUREJOIN_VERSION: ""
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.3-r0
-  REL: "0"
+  REL: "1"
+  SELINUX_VERSION: ""
   SEMVER_MAJOR_MINOR_VERSION: "1.33"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.33.12
@@ -41,6 +43,8 @@ contents:
           - findutils
           - git
           - jq
+          - make
+          - rsync
           - golang-1.26=1.26.3-r0
           - golang-1.26-oci-config=1.26.3-r0
         files:
@@ -63,9 +67,21 @@ contents:
             set -eux -o pipefail
 
             ./hack/pin-dependency.sh golang.org/x/crypto v0.45.0
-            ./hack/pin-dependency.sh github.com/opencontainers/selinux v1.13.0
             ./hack/pin-dependency.sh go.opentelemetry.io/otel/sdk v1.43.0
             ./hack/pin-dependency.sh google.golang.org/grpc v1.79.3
+            # selinux >=v1.13.0 transitively requires filepath-securejoin v0.6+,
+            # which dropped top-level OpenInRoot/Reopen used by kubelet in
+            # k8s <= 1.34. Pin only on releases where the kubelet vendor
+            # already uses the v0.6 API. Leave SELINUX_VERSION empty otherwise.
+            if [ -n "" ]; then
+              ./hack/pin-dependency.sh github.com/opencontainers/selinux ""
+            fi
+            # filepath-securejoin is normally resolved transitively. Allow a
+            # per-release override (e.g. to lock the top-level API kubelet uses)
+            # when something else in the graph forces an incompatible upgrade.
+            if [ -n "" ]; then
+              ./hack/pin-dependency.sh github.com/cyphar/filepath-securejoin ""
+            fi
 
             export TMP_DIR="$(mktemp -d /tmp/update-vendor.XXXX)"
             dump_update_vendor_log() {
@@ -186,6 +202,28 @@ contents:
             output: ${target.dir}/usr/bin/kubeadm-dev
             packages: ./cmd/kubeadm
             strip: false
+        - name: build kubelet
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            GOLDFLAGS= make WHAT=cmd/kubelet DBG=0
+            install -D -m 0755 _output/bin/kubelet '${target.dir}/usr/bin/kubelet'
+        - name: build kubelet dev
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            GOLDFLAGS= make WHAT=cmd/kubelet DBG=1
+            install -D -m 0755 _output/bin/kubelet '${target.dir}/usr/bin/kubelet-dev'
         - name: build kubectl
           uses: go/build@v1
           with:
@@ -205,15 +243,34 @@ contents:
             output: ${target.dir}/usr/bin/kubectl-dev
             packages: ./cmd/kubectl
             strip: false
+        - name: build kubectl-convert
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.33.12
+              - -X k8s.io/component-base/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+            output: ${target.dir}/usr/bin/kubectl-convert
+            packages: ./cmd/kubectl-convert
+        - name: build kubectl-convert dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.33.12
+              - -X k8s.io/component-base/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+            output: ${target.dir}/usr/bin/kubectl-convert-dev
+            packages: ./cmd/kubectl-convert
+            strip: false
         - uses: dhi/build-pkg:0
           with:
             description: Kubernetes control plane and node binaries
             files:
               - usr/bin/kube-apiserver
             license: Apache-2.0
-            name: kubernetes
+            name: kube-apiserver
             priority: optional
-            rel: 0
+            rel: 1
             section: admin
             subpackages:
               - files:
@@ -229,12 +286,16 @@ contents:
                   - path: usr/bin/kubeadm
                 name: kubeadm
               - files:
+                  - path: usr/bin/kubelet
+                name: kubelet
+              - files:
                   - path: usr/bin/kubectl
+                  - path: usr/bin/kubectl-convert
                 name: kubectl
               - files:
                   - path: usr/bin/kube-apiserver
                     source: usr/bin/kube-apiserver-dev
-                name: kubernetes-dev
+                name: kube-apiserver-dev
               - files:
                   - path: usr/bin/kube-controller-manager
                     source: usr/bin/kube-controller-manager-dev
@@ -252,8 +313,14 @@ contents:
                     source: usr/bin/kubeadm-dev
                 name: kubeadm-dev
               - files:
+                  - path: usr/bin/kubelet
+                    source: usr/bin/kubelet-dev
+                name: kubelet-dev
+              - files:
                   - path: usr/bin/kubectl
                     source: usr/bin/kubectl-dev
+                  - path: usr/bin/kubectl-convert
+                    source: usr/bin/kubectl-convert-dev
                 name: kubectl-dev
             url: https://github.com/kubernetes/kubernetes
             version: 1.33.12
