@@ -1,0 +1,317 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Klipper Helm 0.x (dev)
+image: dhi.io/klipper-helm
+variant: dev
+tags:
+  - 0-dev
+  - 0.10-dev
+  - 0.10.0-dev
+  - 0-debian13-dev
+  - 0.10-debian13-dev
+  - 0.10.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-22"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 381474570210004ab69d5114b8d00a477178d579
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
+  HELM_MAPKUBEAPIS_COMMIT_SHA: afa30453b58395ad8215cfe2c1a1edff50428baa
+  HELM_MAPKUBEAPIS_VERSION: 0.6.1
+  HELM_REFERENCE: dhi/helm:3.20.2-debian13@sha256:01464cf45c2250206f82f7a9cfdfb998525b489c94a82da713e240e992a9c29c
+  HELM_SET_STATUS_COMMIT_SHA: 260bbd88a52aba1a76d44ed2ae66dccf5615dbf3
+  HELM_SET_STATUS_VERSION: 0.3.0
+  HELM_VERSION: 3.20.2
+  SEMVER_MAJOR_MINOR_VERSION: "0.10"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.10.0
+  VERSION: 0.10.0-build20260513
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - jq
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: klipper-helm-entry
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
+      work-dir: /go/src/github.com/k3s-io/klipper-helm
+      contents:
+        files:
+          - url: git+https://github.com/k3s-io/klipper-helm.git#v0.10.0-build20260513
+            checksum: 381474570210004ab69d5114b8d00a477178d579
+            path: /go/src/github.com/k3s-io/klipper-helm
+            spdx:
+              name: klipper-helm
+              version: 0.10.0-build20260513
+              packages:
+                - name: klipper-helm
+                  purl: pkg:github/k3s-io/klipper-helm@0.10.0-build20260513
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage entry
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            install -m0555 "/go/src/github.com/k3s-io/klipper-helm/entry" "${target.dir}/usr/local/bin/entry"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/entry
+          target: /usr/local/bin/entry
+          uid: 0
+          gid: 0
+          mode: "0555"
+    - name: klipper-helm-plugin-set-status
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
+      work-dir: /go/src/github.com/k3s-io/helm-set-status
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/k3s-io/helm-set-status.git#v0.3.0
+            checksum: 260bbd88a52aba1a76d44ed2ae66dccf5615dbf3
+            path: /go/src/github.com/k3s-io/helm-set-status
+            spdx:
+              name: helm-set-status
+              version: 0.3.0
+              packages:
+                - name: helm-set-status
+                  purl: pkg:golang/github.com/k3s-io/helm-set-status@0.3.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+            replaces:
+              - helm.sh/helm/v3=helm.sh/helm/v3@v3.20.2
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.version=0.3.0
+            output: ${target.dir}/opt/klipper-helm/bin/helm-set-status
+            packages: ./cmd/helm-set-status
+        - name: stage plugin dir
+          runs: |
+            set -eux -o pipefail
+
+            PLUGIN_DIR="${target.dir}/opt/klipper-helm/data/plugins/helm-set-status"
+            mkdir -p "${PLUGIN_DIR}"
+            install -m0644 "/go/src/github.com/k3s-io/helm-set-status/plugin.yaml" "${PLUGIN_DIR}/plugin.yaml"
+            install -m0555 "${target.dir}/opt/klipper-helm/bin/helm-set-status" "${PLUGIN_DIR}/helm-set-status"
+      outputs:
+        - source: ${target.dir}/opt/klipper-helm/bin/helm-set-status
+          target: /opt/klipper-helm/bin/helm-set-status
+          uid: 0
+          gid: 0
+          mode: "0555"
+        - source: ${target.dir}/opt/klipper-helm/data/plugins/helm-set-status
+          target: /opt/klipper-helm/data/plugins/helm-set-status
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/helm-set-status
+          target: /opt/docker/sbom/helm-set-status
+          uid: 0
+          gid: 0
+    - name: klipper-helm-plugin-mapkubeapis
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:972b3b41ae70170229bd24c019dd60465130be297739a9bb64d834c21ac1a27b
+      work-dir: /go/src/github.com/helm/helm-mapkubeapis
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/helm/helm-mapkubeapis.git#v0.6.1
+            checksum: afa30453b58395ad8215cfe2c1a1edff50428baa
+            path: /go/src/github.com/helm/helm-mapkubeapis
+            spdx:
+              name: helm-mapkubeapis
+              version: 0.6.1
+              packages:
+                - name: helm-mapkubeapis
+                  purl: pkg:golang/github.com/helm/helm-mapkubeapis@0.6.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+            replaces:
+              - helm.sh/helm/v3=helm.sh/helm/v3@v3.20.2
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.version=0.6.1
+            output: ${target.dir}/opt/klipper-helm/bin/mapkubeapis
+            packages: ./cmd/mapkubeapis
+        - name: stage plugin dir
+          runs: |
+            set -eux -o pipefail
+
+            PLUGIN_DIR="${target.dir}/opt/klipper-helm/data/plugins/helm-mapkubeapis"
+            mkdir -p "${PLUGIN_DIR}/config"
+            install -m0644 "/go/src/github.com/helm/helm-mapkubeapis/plugin.yaml" "${PLUGIN_DIR}/plugin.yaml"
+            mkdir -p "${PLUGIN_DIR}/bin"
+            install -m0555 "${target.dir}/opt/klipper-helm/bin/mapkubeapis" "${PLUGIN_DIR}/bin/mapkubeapis"
+            install -m0644 "/go/src/github.com/helm/helm-mapkubeapis/config/Map.yaml" "${PLUGIN_DIR}/config/Map.yaml"
+      outputs:
+        - source: ${target.dir}/opt/klipper-helm/bin/mapkubeapis
+          target: /opt/klipper-helm/bin/mapkubeapis
+          uid: 0
+          gid: 0
+          mode: "0555"
+        - source: ${target.dir}/opt/klipper-helm/data/plugins/helm-mapkubeapis
+          target: /opt/klipper-helm/data/plugins/helm-mapkubeapis
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/helm-mapkubeapis
+          target: /opt/docker/sbom/helm-mapkubeapis
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/helm:3.20.2-debian13@sha256:01464cf45c2250206f82f7a9cfdfb998525b489c94a82da713e240e992a9c29c
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nonroot
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  HELM_DATA_HOME: /opt/klipper-helm/data
+  STABLE_REPO_URL: https://charts.helm.sh/stable/
+paths:
+  - type: directory
+    path: /opt/klipper-helm/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/helm-set-status
+    uid: 0
+    gid: 0
+    source: /opt/klipper-helm/bin/helm-set-status
+  - type: symlink
+    path: /usr/local/bin/mapkubeapis
+    uid: 0
+    gid: 0
+    source: /opt/klipper-helm/bin/mapkubeapis
+  - type: directory
+    path: /opt/klipper-helm/data
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /config
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /chart
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /ca-files
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /auth
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal Klipper Helm image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/entry
