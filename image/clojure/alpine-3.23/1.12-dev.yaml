@@ -6,14 +6,14 @@ variant: dev
 tags:
   - 1-alpine3.23-dev
   - 1.12-alpine3.23-dev
-  - 1.12.4-alpine3.23-dev
+  - 1.12.5-alpine3.23-dev
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2025-12-10"
 vars:
-  COMMIT_SHA: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+  COMMIT_SHA: 3bc2b3e91fdff462620d84bbdfd40379d9c562e5
   JRE_REFERENCE: dhi/eclipse-temurin:21.0.11.10-alpine3.23@sha256:ede34400113cc9c0537e9d480d3ea3ca2afa757900c0dd3c75a015dc91ece17c
   JRE_VERSION: 21.0.11.10
   LEIN_COMMIT_SHA: 40227328d4a9c8945362d6d626d19c2449175df6
@@ -21,12 +21,12 @@ vars:
   MAVEN_REFERENCE: dhi/maven:3.9.15-jdk21-alpine3.22-dev@sha256:298aef4e5057e84f9bd440bb5e7b9dcdd2dc114adfa3ef8e976a90b4648d5a52
   SEMVER_MAJOR_MINOR_VERSION: "1.12"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.12.4
+  SEMVER_VERSION: 1.12.5
   TOOLS_DEPS_COMMIT_SHA: 2209ac9f5d9a938a6575ad1d7f9b8cb8f8fb2be4
   TOOLS_DEPS_LIB_COMMIT_SHA: 2b0ffa7ee452983f03e37ccbcf873fbdd8cc7b9b
   TOOLS_DEPS_LIB_VERSION: 0.30.1607
   TOOLS_DEPS_VERSION: 1.12.5.1638
-  VERSION: 1.12.4
+  VERSION: 1.12.5
 contents:
   repositories:
     - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
@@ -48,19 +48,20 @@ contents:
         packages:
           - bash
         files:
-          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
-            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.5
+            checksum: 3bc2b3e91fdff462620d84bbdfd40379d9c562e5
             path: ${source.dir}/clojure
             spdx:
               name: clojure
-              version: 1.12.4
+              version: 1.12.5
               packages:
                 - name: clojure
-                  purl: pkg:dhi/clojure@1.12.4
+                  purl: pkg:dhi/clojure@1.12.5
                   license: EPL-1.0
             uid: 0
             gid: 0
       pipeline:
+        - uses: mvn/mirror@v1
         - name: strip Sonatype Central publishing plugin from Clojure pom
           runs: |
             set -eux -o pipefail
@@ -72,13 +73,20 @@ contents:
             fi
         - name: build clojure core
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
             mvn -Plocal clean install -DskipTests
       outputs:
-        - source: ${source.dir}/clojure/target/clojure-1.12.4.jar
-          target: /usr/local/lib/clojure/clojure-1.12.4.jar
+        - source: ${source.dir}/clojure/target/clojure-1.12.5.jar
+          target: /usr/local/lib/clojure/clojure-1.12.5.jar
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/clojure
@@ -117,11 +125,15 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - uses: mvn/mirror@v1
         - name: patch tools.deps
-          uses: mvn/patch@v1
-          with:
-            dependencies: ${source.dir}/patch/mvn-deps.json
-            mvn-root: ${source.dir}/tools.deps
+          work-dir: ${source.dir}/tools.deps
+          runs: |
+            set -eux -o pipefail
+
+            # Pin commons-io as a direct dependency (matches mvn-deps-tools-deps.json
+            # pin; replaces mvn/patch@v1 because dhi/maven alpine lacks xq-python).
+            sed -i '/<\/dependencies>/i \    <dependency>\n      <groupId>commons-io<\/groupId>\n      <artifactId>commons-io<\/artifactId>\n      <version>2.17.0<\/version>\n    <\/dependency>' pom.xml
         - name: pin plexus-utils direct (CVE-2025-67030)
           work-dir: ${source.dir}/tools.deps
           runs: |
@@ -145,6 +157,13 @@ contents:
             sed -i 's|^tools_cp=.*|tools_cp="$install_dir/tools.deps-0.30.1607.jar:$install_dir/deps/*"|' "${target.dir}/usr/local/bin/clojure"
         - name: build tools.deps
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
@@ -154,12 +173,6 @@ contents:
             # Build libexec/exec.jar so `clj -T:build` and `clj -X` can locate clojure.run.exec
             mkdir -p "${target.dir}/usr/local/lib/clojure/libexec"
             jar cf "${target.dir}/usr/local/lib/clojure/libexec/exec.jar" -C "${source.dir}/brew-install/src/main/clojure" .
-      paths:
-        - type: file
-          path: /src/patch/mvn-deps.json
-          uid: 0
-          gid: 0
-          source: image/clojure/patch/mvn-deps-tools-deps.json
       outputs:
         - source: ${source.dir}/tools.deps/target/tools.deps-0.30.1607.jar
           target: /usr/local/lib/clojure/tools.deps-0.30.1607.jar
@@ -207,15 +220,15 @@ contents:
         packages:
           - bash
         files:
-          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.4
-            checksum: b4ea0f824b2eea039dfc06b796ed601e35cbeab6
+          - url: git+https://github.com/clojure/clojure.git#clojure-1.12.5
+            checksum: 3bc2b3e91fdff462620d84bbdfd40379d9c562e5
             path: ${source.dir}/clojure
             spdx:
               name: clojure
-              version: 1.12.4
+              version: 1.12.5
               packages:
                 - name: clojure
-                  purl: pkg:dhi/clojure@1.12.4
+                  purl: pkg:dhi/clojure@1.12.5
                   license: EPL-1.0
             uid: 0
             gid: 0
@@ -232,6 +245,7 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - uses: mvn/mirror@v1
         - name: strip Sonatype Central publishing plugin from Clojure pom
           work-dir: ${source.dir}/clojure
           runs: |
@@ -243,6 +257,13 @@ contents:
         - name: build clojure core
           work-dir: ${source.dir}/clojure
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
@@ -268,6 +289,13 @@ contents:
         - name: build leiningen
           work-dir: ${source.dir}/leiningen/leiningen-core
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
