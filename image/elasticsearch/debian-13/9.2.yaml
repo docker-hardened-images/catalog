@@ -19,6 +19,7 @@ vars:
   ELASTICSEARCH_HOME: /usr/share/elasticsearch
   ELASTICSEARCH_OUTPUT_ARCHIVE_DIR: '#{ target.arch == "amd64" ? "linux-tar" : "linux-aarch64-tar" }'
   GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  HAS_SOURCE_SHIMS: "TRUE"
   JAVA_BUILD_REFERENCE: dhi/eclipse-temurin:21.0.11.10-jdk-debian13-dev@sha256:94af871b695a132ebc47af06f5acb29aa53632092047e5622a4fd6b2c85ecc34
   JAVA_HOME: /opt/java/openjdk/21
   JAVA_MAJOR_VERSION: "21"
@@ -27,7 +28,6 @@ vars:
   SEMVER_MAJOR_MINOR_VERSION: "9.2"
   SEMVER_MAJOR_VERSION: "9"
   SEMVER_VERSION: 9.2.8
-  SKIP_PATCHING: "FALSE"
   VERSION: 9.2.8
 contents:
   packages:
@@ -73,14 +73,27 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: git patch elasticsearch
+        - name: git patch elasticsearch docker-entrypoint for FIPS keystore
           uses: patch@v1
           work-dir: ${source.dir}/elasticsearch
           with:
             options: -p1
             patches:
-              - ${source.dir}/patch/9.2.patch
               - ${source.dir}/patch/docker-entrypoint-fips-keystore.patch
+        - name: git patch elasticsearch source-code shims for dependency overrides
+          uses: patch@v1
+          work-dir: ${source.dir}/elasticsearch
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/9.2.source-shims.patch
+        - name: stage gradle dependency overrides init script
+          work-dir: ${source.dir}/elasticsearch
+          runs: |
+            set -eux -o pipefail
+
+            cp "${source.dir}/patch/9.2.overrides.gradle" \
+              "${source.dir}/elasticsearch/dhi-overrides.init.gradle"
         - name: extract Elastic public key to be properly compatible with Elastic licenses
           work-dir: ${source.dir}/x-pack-core
           runs: |
@@ -99,7 +112,23 @@ contents:
             unset JAVA_TOOL_OPTIONS
             unset _JAVA_OPTIONS
 
-            ./gradlew localDistro -Dbuild.snapshot=false -Dlicense.key=${source.dir}/x-pack-core/public.key
+            # Two-pass Gradle build. Pass 1 regenerates gradle/verification-metadata.xml
+            # for the forced dependency versions declared in dhi-overrides.init.gradle so
+            # strict dependency verification passes; --write-verification-metadata
+            # short-circuits task execution. Pass 2 runs the actual localDistro build with
+            # the same overrides in effect.
+            ./gradlew \
+              --init-script "${source.dir}/elasticsearch/dhi-overrides.init.gradle" \
+              --write-verification-metadata sha256 \
+              localDistro \
+              -Dbuild.snapshot=false \
+              -Dlicense.key=${source.dir}/x-pack-core/public.key
+
+            ./gradlew \
+              --init-script "${source.dir}/elasticsearch/dhi-overrides.init.gradle" \
+              localDistro \
+              -Dbuild.snapshot=false \
+              -Dlicense.key=${source.dir}/x-pack-core/public.key
         - name: extract built tarball
           runs: |
             set -eux -o pipefail
@@ -111,15 +140,20 @@ contents:
             cp -r "${source.dir}/elasticsearch/distribution/archives/${ELASTICSEARCH_OUTPUT_ARCHIVE_DIR}/build/install/elasticsearch-9.2.8/." "${target.dir}/usr/share/elasticsearch"
       paths:
         - type: file
-          path: ${source.dir}/patch/9.2.patch
-          uid: 0
-          gid: 0
-          source: image/elasticsearch/patch/9.2.patch
-        - type: file
           path: ${source.dir}/patch/docker-entrypoint-fips-keystore.patch
           uid: 0
           gid: 0
           source: image/elasticsearch/patch/docker-entrypoint-fips-keystore.patch
+        - type: file
+          path: ${source.dir}/patch/9.2.overrides.gradle
+          uid: 0
+          gid: 0
+          source: image/elasticsearch/patch/9.2.overrides.gradle
+        - type: file
+          path: ${source.dir}/patch/9.2.source-shims.patch
+          uid: 0
+          gid: 0
+          source: image/elasticsearch/patch/9.2.source-shims.patch
       outputs:
         - source: ${target.dir}/usr/share/elasticsearch
           target: /usr/share/elasticsearch
