@@ -1,0 +1,319 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Langfuse 2.x
+image: dhi.io/langfuse
+variant: runtime
+tags:
+  - "2"
+  - "2.95"
+  - 2.95.12
+  - 2-debian13
+  - 2.95-debian13
+  - 2.95.12-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-01-30"
+vars:
+  COMMIT_SHA: 565ff73591365394a24e047973c15e69d6ffca93
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+  MIGRATE_COMMIT_SHA: 9023d66a0b649dbd6c99950903ebc7fd90d77ded
+  MIGRATE_VERSION: 4.18.3
+  NODE_BUILD_REFERENCE: dhi/node:20.20.2-debian13-dev@sha256:5b5ae5852904a114ac2ccf3a0ac1c58863c413e0751d9db9542c37ef4a0d441b
+  NODE_RUNTIME_REFERENCE: dhi/node:20.20.2-debian13@sha256:60cab4366868993cf1307ee868c0e99b33c05ab751146ff8e5fbdffc85ac5fd0
+  PNPM_VERSION: 9.5.0
+  PRISMA_VERSION: 5.22.0
+  SEMVER_MAJOR_MINOR_VERSION: "2.95"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.95.12
+  TURBO_VERSION: 1.13.4
+  VERSION: 2.95.12
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates
+    - dash
+    - dumb-init
+    - tzdata
+  builds:
+    - name: golang-migrate
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+      work-dir: /go/src/github.com/golang-migrate/migrate
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/golang-migrate/migrate.git#v4.18.3
+            checksum: 9023d66a0b649dbd6c99950903ebc7fd90d77ded
+            path: /go/src/github.com/golang-migrate/migrate
+            spdx:
+              name: golang-migrate
+              version: 4.18.3
+              packages:
+                - name: golang-migrate
+                  purl: pkg:golang/github.com/golang-migrate/migrate/v4@v4.18.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -tags clickhouse ./cmd/migrate/...
+        - name: build migrate
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/migrate
+            packages: ./cmd/migrate
+            tags: clickhouse
+      outputs:
+        - source: ${target.dir}/usr/bin/migrate
+          target: /usr/bin/migrate
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/golang-migrate
+          target: /opt/docker/sbom/golang-migrate
+          uid: 0
+          gid: 0
+    - name: langfuse
+      uses: dhi.io/node:20.20.2-debian13-dev@sha256:5b5ae5852904a114ac2ccf3a0ac1c58863c413e0751d9db9542c37ef4a0d441b
+      work-dir: ${source.dir}/langfuse
+      environment:
+        CI: "true"
+        DOCKER_BUILD: "1"
+        NEXT_MANUAL_SIG_HANDLE: "true"
+        NEXT_TELEMETRY_DISABLED: "1"
+        PNPM_HOME: /pnpm
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        files:
+          - url: git+https://github.com/langfuse/langfuse.git#v2.95.12
+            checksum: 565ff73591365394a24e047973c15e69d6ffca93
+            path: ${source.dir}/langfuse
+            spdx:
+              name: langfuse
+              version: 2.95.12
+              packages:
+                - name: langfuse
+                  purl: pkg:github/langfuse/langfuse@2.95.12
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build and stage web (v2)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@9.5.0 --activate
+            npm install -g --no-package-lock --no-save turbo@1.13.4
+            export PATH="$(npm config get prefix)/bin:${PATH}"
+
+            # Cloud-only.
+            rm -f ./web/src/middleware.ts
+
+            turbo prune --scope=web --docker
+
+            cd ./out
+            cp -a json/. .
+
+            # Skipped overrides:
+            #   uuid@11 — oci-common@2.127.0 deep-imports uuid/v1 (removed in 11.x); CVE-2026-41907 stays MED.
+            #   webpack, serialize-javascript — build-only LOW SSRF; bloat the bundle and OOM page-gen.
+            #   next-auth — upstream pins a pnpm patch to 4.24.11.
+            node -e '
+              const fs = require("fs");
+              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              p.pnpm = p.pnpm || {};
+              Object.assign(p.pnpm.overrides = p.pnpm.overrides || {}, {
+                "fast-uri":          "3.1.2",   // CVE-2026-6321, CVE-2026-6322 (HIGH)
+                "langsmith":         "0.5.19",  // CVE-2026-40190, CVE-2026-41182 (MED)
+                "nodemailer":        "8.0.5",   // GHSA-vvjj-xcjg-gr5g (MED), GHSA-c7w3-x93f-qmm8 (LOW)
+                "brace-expansion":   "1.1.13",  // CVE-2026-33750 (MED), CVE-2025-5889 (LOW)
+                "fast-xml-parser":   "5.7.0",   // CVE-2026-41650 (MED)
+                "qs":                "6.14.2",  // CVE-2026-2391 (LOW)
+                "@tootallnate/once": "3.0.1",   // CVE-2026-3449 (LOW)
+                "protobufjs":        "7.5.6",   // CVE-2026-44288..44294 (HIGH/MED)
+                "@protobufjs/utf8":  "1.1.1",   // CVE-2026-44288 (MED)
+                "postcss":           "8.5.14",  // CVE-2026-41305 (MED)
+                "form-data":         "4.0.5",   // CVE-2025-7783 (CRITICAL)
+                "follow-redirects":  "1.16.0",  // GHSA-r4q5-vmmm-2653 (MED)
+                "@babel/runtime":    "7.29.2",  // CVE-2025-27789 (MED)
+                "next":              "14.2.35", // CVE-2026-44578, GHSA-mwv6-3258-q52c, GHSA-5j59-xgg2-r9c4 (HIGH)
+              });
+              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            '
+
+            # Overrides above drift the lockfile.
+            pnpm install --no-frozen-lockfile
+
+            cp -a full/. .
+
+            # next.config.mjs patches:
+            #   cpus:1, workerThreads:false — bound static-page worker pool (avoid OOM-kill).
+            #   outputFileTracingExcludes (under experimental on Next 14) — drop @esbuild/*
+            #     native binaries shipping embedded Go stdlib CVEs; traced but never invoked.
+            #   typescript/eslint skip — upstream releases already typechecked + linted.
+            #   optimization.minimize:false — terser/swc-minify is the biggest single
+            #     memory consumer during the webpack optimization pass; disabling it
+            #     trades larger bundles for fitting the container's memory budget.
+            #   withSentryConfig bypass — without SENTRY_AUTH_TOKEN, Sentry's webpack
+            #     plugin adds dep-graph wrapping + source-map work for nothing; the
+            #     working set is enough to OOM-kill the build under tight memory.
+            #     Runtime `Sentry.init(...)` in app code is unaffected.
+            node -e '
+              const fs = require("fs");
+              const f = "./web/next.config.mjs";
+              let s = fs.readFileSync(f, "utf8");
+              const extra = "cpus: 1, workerThreads: false, outputFileTracingExcludes: { \"*\": [\"node_modules/@esbuild/**\"] },";
+              if (/experimental:\s*\{/.test(s)) {
+                s = s.replace(/experimental:\s*\{/, "experimental: { " + extra);
+              } else {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  experimental: { " + extra + " },");
+              }
+              if (!/typescript:\s*\{/.test(s)) {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  typescript: { ignoreBuildErrors: true },");
+              }
+              if (!/eslint:\s*\{/.test(s)) {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  eslint: { ignoreDuringBuilds: true },");
+              }
+              if (/webpack\(config[^)]*\)\s*\{/.test(s)) {
+                s = s.replace(/(webpack\(config[^)]*\)\s*\{)/, "$1\n    config.optimization = { ...(config.optimization || {}), minimize: false };");
+              } else {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  webpack: (config) => { config.optimization = { ...(config.optimization || {}), minimize: false }; return config; },");
+              }
+              s = s.replace(/export\s+default\s+withSentryConfig\([^]*$/, "export default nextConfig;\n");
+              fs.writeFileSync(f, s);
+            '
+
+            HEAP_MB=$(node -e 'console.log(Math.min(5120, Math.floor(require("os").totalmem()/1024/1024*0.6)))')
+            NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" \
+              turbo run build --filter=web... --concurrency=1
+
+            mkdir -p "${target.dir}/opt/prisma"
+            npm install -g --no-package-lock --no-save \
+              --prefix "${target.dir}/opt/prisma" \
+              prisma@5.22.0
+
+            # Runtime image has no /usr/bin/env.
+            find "${target.dir}/opt/prisma" -type f \
+              \( -name '*.js' -o -name 'prisma' \) \
+              -exec sed -i '1s|^#!/usr/bin/env node$|#!/usr/local/bin/node|' {} +
+
+            mkdir -p "${target.dir}/app/web/.next" \
+              "${target.dir}/app/packages/shared/scripts"
+
+            cp -a ./web/.next/standalone/. "${target.dir}/app/"
+            cp -a ./web/.next/static "${target.dir}/app/web/.next/static"
+            cp -a ./web/public "${target.dir}/app/web/public"
+
+            cp -a ./packages/shared/prisma "${target.dir}/app/packages/shared/prisma"
+
+            # entrypoint runs up.sh as `sh up.sh` (shebang bypassed) under
+            # runtime dash; POSIX-ify before staging.
+            if [ -f ./packages/shared/clickhouse/scripts/up.sh ]; then
+              sed -i -E \
+                -e 's| && source | \&\& . |g' \
+                -e 's|&> /dev/null|>/dev/null 2>\&1|g' \
+                -e 's|" == "|" = "|g' \
+                ./packages/shared/clickhouse/scripts/up.sh
+            fi
+            cp -a ./packages/shared/clickhouse "${target.dir}/app/packages/shared/clickhouse"
+
+            cp ./web/next.config.mjs "${target.dir}/app/next.config.mjs"
+            cp ./web/package.json "${target.dir}/app/package.json"
+
+            cp ./web/entrypoint.sh "${target.dir}/app/web/entrypoint.sh"
+            chmod +x "${target.dir}/app/web/entrypoint.sh"
+
+            cp ./packages/shared/scripts/cleanup.sql \
+              "${target.dir}/app/packages/shared/scripts/cleanup.sql"
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 65532
+          gid: 65532
+        - source: ${target.dir}/opt/prisma
+          target: /opt/prisma
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/langfuse
+          target: /opt/docker/sbom/langfuse
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/node:20.20.2-debian13@sha256:60cab4366868993cf1307ee868c0e99b33c05ab751146ff8e5fbdffc85ac5fd0
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  HOSTNAME: 0.0.0.0
+  NEXT_MANUAL_SIG_HANDLE: "true"
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: production
+  PATH: /opt/prisma/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PORT: "3000"
+paths:
+  - type: directory
+    path: /app
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/entrypoint.sh
+    uid: 0
+    gid: 0
+    source: /app/web/entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Langfuse image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - dumb-init
+  - --
+  - /usr/local/bin/entrypoint.sh
+cmd:
+  - node
+  - ./web/server.js
+  - --keepAliveTimeout
+  - "110000"
+ports:
+  - 3000/tcp
