@@ -72,6 +72,8 @@ contents:
     - drbd-utils
     - e2fsprogs
     - findutils
+    - gzip
+    - hostname
     - iproute2
     - iputils-ping
     - jq
@@ -89,6 +91,29 @@ contents:
     - xfsprogs
     - zstd
   builds:
+    - name: fix caps
+      contents:
+        packages:
+          - bash
+          - util-linux
+          - hostname
+          - libcap2-bin
+      pipeline:
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_sys_admin+ep /usr/bin/unshare
+            setcap cap_sys_admin,cap_net_admin+ep /usr/bin/hostname
+      outputs:
+        - source: /usr/bin/unshare
+          target: /usr/bin/unshare
+          uid: 0
+          gid: 0
+        - source: /usr/bin/hostname
+          target: /usr/bin/hostname
+          uid: 0
+          gid: 0
     - name: piraeus-server
       uses: dhi.io/golang:1.25.10-debian13-dev@sha256:6ab2431d046a2e21dbcbcb5111e94bec59650d302ec0ac34e696e7e44f708044
       contents:
@@ -517,8 +542,14 @@ contents:
             cp satellite/build/install/satellite/lib/satellite*.jar "${target.dir}/usr/share/linstor-server/lib/"
 
             # Copy wrapper scripts
-            cp controller/build/install/controller/bin/Controller "${target.dir}/usr/share/linstor-server/bin/Controller"
-            cp satellite/build/install/satellite/bin/Satellite "${target.dir}/usr/share/linstor-server/bin/Satellite"
+            find "controller/build/install/controller/bin/" -type f -executable | while read -r file; do
+              filename="$(basename "$file")"
+              cp "controller/build/install/controller/bin/$filename" "${target.dir}/usr/share/linstor-server/bin/$filename"
+            done
+            find "satellite/build/install/satellite/bin/" -type f -executable | while read -r file; do
+              filename="$(basename "$file")"
+              cp "satellite/build/install/satellite/bin/$filename" "${target.dir}/usr/share/linstor-server/bin/$filename"
+            done
             mkdir -p "${target.dir}/usr/share/linstor-server/lib/conf"
       paths:
         - type: file
@@ -669,6 +700,11 @@ paths:
     gid: 65532
     mode: "0775"
   - type: directory
+    path: /var/log/linstor-satellite
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
     path: /logs
     uid: 65532
     gid: 65532
@@ -684,10 +720,29 @@ paths:
     gid: 65532
     mode: "0775"
   - type: directory
+    path: /etc/linstor
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
     path: /etc/drbd.d
     uid: 65532
     gid: 65532
     mode: "0775"
+  - type: file
+    path: /etc/drbd.d/linstor-resources.res
+    content: |
+      include "/var/lib/linstor.d/*.res";
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+  - type: file
+    path: /etc/drbd.d/global_common.conf
+    content: |
+      global { usage-count no; }
+    uid: 65532
+    gid: 65532
+    mode: "0644"
   - type: file
     path: /etc/lvm/lvm.conf
     content: |
