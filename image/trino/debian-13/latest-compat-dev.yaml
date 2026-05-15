@@ -88,7 +88,7 @@ contents:
           uid: 0
           gid: 0
     - name: trino
-      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+      uses: dhi.io/maven:3.9.15-jdk25-debian13-dev@sha256:e0796b78d668d7a9514aa8b0086bbcb0dcdac58f83c3bdde7d058eb84814e158
       work-dir: ${source.dir}/trino
       environment:
         JAVA_HOME: /opt/java/openjdk/25
@@ -111,28 +111,11 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: git+https://github.com/airlift/launcher.git#316
-            checksum: 16446b279bf21a59516096e5fde1930ab5ba9fab
-            path: /go/src/github.com/airlift/launcher
-            spdx:
-              name: launcher
-              version: "316"
-              packages:
-                - name: launcher
-                  purl: pkg:golang/launcher@316
-            uid: 0
-            gid: 0
         artifacts:
           - name: dhi.io/node:22.22.3-debian13@sha256:a3a4d00ae9cb2cdb20c163f3ac455e772fca387907f900c3754afa9f6887ab0d
             includes:
               - opt/nodejs
               - usr/local/bin
-            uid: 0
-            gid: 0
-          - name: dhi.io/maven:3.9.15-jdk25-debian13-dev@sha256:e0796b78d668d7a9514aa8b0086bbcb0dcdac58f83c3bdde7d058eb84814e158
-            includes:
-              - opt/**
-              - usr/local/bin/**
             uid: 0
             gid: 0
       pipeline:
@@ -143,6 +126,7 @@ contents:
             options: -p1
             patches:
               - /src/patch/ch-guava-grpc.patch
+              - /src/patch/redshift-jdbc.patch
         - name: maven patch
           uses: mvn/patch@v1
           with:
@@ -166,51 +150,19 @@ contents:
             mvn sortpom:sort
             mvn package -q -DskipTests -Dair.check.skip-all -Dmaven.enforcer.skip=true -Dmaven.test.failure.ignore=true -pl '!:trino-docs' -am
 
+            # The launcher binary is specifically excluded here as we build it in a later step.
             tar -C "${target.dir}" -xzf "${source.dir}/trino/core/trino-server/target/trino-server-481.tar.gz" --wildcards \
               "trino-server-481/lib" \
               "trino-server-481/plugin" \
               "trino-server-481/secrets-plugin" \
-              "trino-server-481/bin/launcher*" \
-              "trino-server-481/bin/linux-${ARCH}"
-        - name: replace vulnerable secrets-plugin jackson jars
-          work-dir: ${target.dir}/trino-server-481/secrets-plugin/keystore-secrets-plugin
-          shell: bash
-          runs: |
-            set -eux -o pipefail
-
-            for old_jar in jackson-*-2.20.1.jar; do
-              [ -f "$old_jar" ] || continue
-              new_jar="${old_jar/2.20.1/2.21.1}"
-              src=$(find "${HOME}/.m2/repository" -name "$new_jar" -print -quit 2> /dev/null)
-              if [ -n "$src" ]; then
-                echo "Replacing $old_jar with $new_jar"
-                rm "$old_jar"
-                cp "$src" .
-              else
-                echo "ERROR: Could not find $new_jar in Maven cache"
-                exit 1
-              fi
-            done
+              "trino-server-481/bin/launcher"{,.properties} \
+              "trino-server-481/bin/linux-${ARCH}/libprocname.so"
         - name: address plugin cves
           work-dir: ${target.dir}/trino-server-481/plugin
           runs: |
             set -eux -o pipefail
 
             rm -r ranger
-        - name: patch launcher
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/airlift/launcher/src/main/go
-          with:
-            deps: []
-            download: true
-        - name: build launcher
-          uses: go/build@v1
-          work-dir: /go/src/github.com/airlift/launcher/src/main/go
-          with:
-            ldflags:
-              - -extldflags=-static
-              - -X launcher/args.Version=316
-            output: ${target.dir}/trino-server-481/bin/linux-${ARCH}/launcher
       paths:
         - type: file
           path: /src/patch/bc-fips-hkdf.diff
@@ -222,6 +174,11 @@ contents:
           uid: 0
           gid: 0
           source: image/trino/patch/ch-guava-grpc.patch
+        - type: file
+          path: /src/patch/redshift-jdbc.patch
+          uid: 0
+          gid: 0
+          source: image/trino/patch/redshift-jdbc.patch
         - type: file
           path: /src/patch/minimal-plugins.json
           uid: 0
@@ -258,6 +215,46 @@ contents:
           target: /opt/docker/sbom/trino
           uid: 0
           gid: 0
+    - name: launcher
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+      work-dir: /go/src/github.com/airlift/launcher/src/main/go
+      contents:
+        files:
+          - url: git+https://github.com/airlift/launcher.git#316
+            checksum: 16446b279bf21a59516096e5fde1930ab5ba9fab
+            path: /go/src/github.com/airlift/launcher
+            spdx:
+              name: launcher
+              version: "316"
+              packages:
+                - name: launcher
+                  purl: pkg:golang/launcher@316
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/airlift/launcher/src/main/go
+          with:
+            ldflags:
+              - -extldflags=-static
+              - -X launcher/args.Version=316
+            output: ${target.dir}/launcher
+      paths:
+        - type: directory
+          path: ""
+          uid: 0
+          gid: 0
+      outputs:
+        - source: ${target.dir}/launcher
+          target: /usr/lib/trino/bin/linux-${ARCH}/launcher
+          uid: 1000
+          gid: 1000
     - name: locale
       contents:
         packages:
