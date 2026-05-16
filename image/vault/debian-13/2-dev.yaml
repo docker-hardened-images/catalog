@@ -85,11 +85,35 @@ contents:
               - github.com/go-jose/go-jose/v3@v3.0.5
               - github.com/go-jose/go-jose/v4@v4.1.4
               - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/microsoft/kiota-http-go@v1.5.5
               - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
               - go.opentelemetry.io/otel/sdk@v1.43.0
               - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
               - golang.org/x/image@v0.5.0
             download: true
+        - name: bootstrap
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Use lenient FIPS mode during bootstrap because tool downloads
+              # require X25519 for TLS connections to proxy.golang.org
+              export GODEBUG=fips140=on
+            fi
+
+            # Retry bootstrap to handle transient network errors from proxy.golang.org
+            for attempt in 1 2 3; do
+              if make bootstrap; then
+                break
+              elif [ "$attempt" -eq 3 ]; then
+                echo "Bootstrap failed after 3 attempts" >&2
+                exit 1
+              else
+                echo "Bootstrap attempt $attempt failed, retrying..." >&2
+                sleep 5
+              fi
+            done
         - name: test
           runs: |
             set -eux -o pipefail
@@ -164,18 +188,6 @@ contents:
                 ./helper/pkcs7 \
                 ./helper/storagepacker
             fi
-        - name: bootstrap
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            if [ "${target.fips}" = "true" ]; then
-              # Use lenient FIPS mode during bootstrap because tool downloads
-              # require X25519 for TLS connections to proxy.golang.org
-              export GODEBUG=fips140=on
-            fi
-
-            make bootstrap
         - name: build
           uses: go/build@v1
           environment:
