@@ -61,6 +61,22 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar
+            path: ${source.dir}/patch/deps/postgresql-42.7.11.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.13.Final/netty-transport-native-epoll-4.2.13.Final-linux-x86_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.13.Final-linux-x86_64.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.13.Final/netty-transport-native-epoll-4.2.13.Final-linux-aarch_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.13.Final-linux-aarch_64.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar
+            path: ${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar
+            uid: 0
+            gid: 0
         artifacts:
           - name: dhi.io/maven:3.9.11-jdk23-dev@sha256:97e4283d662a0a0dd680bc67c7cfa519d9cf6ef21567f0a727d050a760df3ff8
             includes:
@@ -103,13 +119,18 @@ contents:
 
             mkdir -p "${target.dir}/flyway"
             cd "${source.dir}/src/flyway"
+            maven_settings_file="/root/.m2/settings.xml"
+            maven_settings=""
+            if [ -f "${maven_settings_file}" ]; then
+              maven_settings="--settings ${maven_settings_file}"
+            fi
 
             # Run Maven
             mvn clean install \
               -DskipTests \
               -pl flyway-commandline,flyway-core \
               -am \
-              --settings ~/.m2/settings.xml
+              ${maven_settings}
 
             # Copy main JAR
             cp "flyway-commandline/target/flyway-commandline-12.6.1.jar" "${target.dir}/flyway/flyway.jar"
@@ -118,16 +139,39 @@ contents:
             mvn dependency:copy-dependencies \
               -pl flyway-commandline \
               -DoutputDirectory="${target.dir}/flyway/lib" \
-              --settings ~/.m2/settings.xml
+              ${maven_settings}
 
-            rm ~/.m2/settings.xml
+            rm -f "${maven_settings_file}"
+
+            # Patch runtime JARs that Flyway's dependency copy still resolves to vulnerable versions:
+            # CVE-2026-42198 (postgresql), CVE-2026-45292 (opentelemetry-api), CVE-2026-42577 (netty-transport-native-epoll).
+            rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
+            install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.11.jar" "${target.dir}/flyway/lib/postgresql-42.7.11.jar"
+
+            rm -f "${target.dir}/flyway/lib/opentelemetry-api-1.52.0.jar"
+            install -m 0644 "${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar" "${target.dir}/flyway/lib/opentelemetry-api-1.62.0.jar"
+
+            for arch in x86_64 aarch_64; do
+              old_epoll="${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.9.Final-linux-${arch}.jar"
+              if [ -f "${old_epoll}" ]; then
+                rm -f "${old_epoll}"
+                install -m 0644 \
+                  "${source.dir}/patch/deps/netty-transport-native-epoll-4.2.13.Final-linux-${arch}.jar" \
+                  "${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.13.Final-linux-${arch}.jar"
+              fi
+            done
 
             # Strip embedded netty from shaded core-io JAR (CVE-2026-33870, CVE-2026-33871)
             # The fixed standalone netty JARs already in lib/ will be used instead
             core_io_jar=$(find "${target.dir}/flyway/lib" -name 'core-io-*.jar' | head -1)
             if [ -n "${core_io_jar}" ]; then
               echo "Stripping embedded netty classes from ${core_io_jar}..."
-              zip -qd "${core_io_jar}" 'io/netty/*' 'META-INF/maven/io.netty/*' 'META-INF/native-image/io.netty/*'
+              netty_entries=$(mktemp)
+              unzip -Z1 "${core_io_jar}" | awk '/^(io\/netty\/|META-INF\/maven\/io.netty\/|META-INF\/native-image\/io.netty\/)/ {print}' > "${netty_entries}"
+              if [ -s "${netty_entries}" ]; then
+                zip -qd "${core_io_jar}" -@ < "${netty_entries}"
+              fi
+              rm -f "${netty_entries}"
             fi
 
             # Create wrapper script
