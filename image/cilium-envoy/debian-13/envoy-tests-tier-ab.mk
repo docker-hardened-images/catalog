@@ -13,7 +13,7 @@ envoy-tests-ci: $(COMPILER_DEP) SOURCE_VERSION proxylib/libcilium.so
 	CARGO_BAZEL_REPIN=true $(BAZEL) $(BAZEL_OPTS) test $(BAZEL_BUILD_OPTS) $(BAZEL_TEST_OPTS) \
 		//:envoy_binary_test \
 		//tests:cilium_network_policy_test \
-		//tests:metadata_config_test \
+		//tests:bpf_metadata_config_test \
 		//tests:accesslog_test \
 		//tests:health_check_sink_test \
 		//tests:cilium_tcp_integration_test \
