@@ -1,4 +1,4 @@
-## About registration-operator
+## About Registration Operator
 
 The registration-operator is a component of the
 [Open Cluster Management (OCM)](https://github.com/open-cluster-management-io/ocm) project, a community-driven
