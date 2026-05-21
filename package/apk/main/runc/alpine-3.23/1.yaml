@@ -4,7 +4,7 @@ image: dhi.io/pkg-runc
 variant: runtime
 tags:
   - 1.4.2-alpine3.23
-  - 1.4.2-r3-alpine3.23
+  - 1.4.2-r4-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,7 +12,7 @@ vars:
   _REL: "2"
   COMMIT_SHA: 27c48bceb6e14cff00893d8e657a37fbd4b7fb86
   PACKAGE_NAME: community/runc
-  REL: "3"
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "1.4"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.4.2
@@ -50,8 +50,34 @@ contents:
         - uses: abuild/setup@v1
         - uses: abuild/bump@v1
           with:
-            rel: 3
+            rel: 4
+        - name: patch go dependencies
+          runs: |
+            set -eux -o pipefail
+
+            # Go writes the sumdb cache under GOPATH/pkg/sumdb during `go get`.
+            # The abuild user cannot create directories there, so pre-create
+            # and chmod it here (this runs as root, before abuild drops privs).
+            install -d -m 0777 "$(go env GOPATH)/pkg/sumdb/sum.golang.org"
+
+            # Inject prepare() to bump golang.org/x/net for:
+            # - CVE-2026-33814 (HIGH, fixed in 0.53.0)
+            # - CVE-2025-58190 (MEDIUM, fixed in 0.45.0)
+            # - CVE-2025-47911 (MEDIUM, fixed in 0.45.0)
+            # $builddir below is an abuild-runtime variable; written literally to APKBUILD.
+            # shellcheck disable=SC2154
+            cat >> APKBUILD << 'EOF'
+
+            prepare() {
+                default_prepare
+                cd "$builddir"
+                go get golang.org/x/net@v0.53.0
+                go mod tidy
+                go mod vendor
+            }
+            EOF
         - uses: abuild/build@v1
+          privileged: true
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
