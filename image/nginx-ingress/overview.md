@@ -1,4 +1,4 @@
-## About nginx-ingress
+## About NGINX Ingress Controller
 
 Docker Hardened Images for nginx-ingress package the NGINX Ingress Controller from the upstream
 `nginx/kubernetes-ingress` project.
