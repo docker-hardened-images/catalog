@@ -3,12 +3,13 @@
 image: dhi.io/pkg-openssl
 variant: runtime
 tags:
-  - 3.5.6-1-deb13u1-dhi0
-  - 3.5.6-1-deb13u1-dhi0-debian13
+  - 3.5.6-1-deb13u1-dhi1
+  - 3.5.6-1-deb13u1-dhi1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   DEBIAN_DEBIAN_CHECKSUM: sha256:ce467b7e373870add5e85fc5e591240557f536424c839a7b2678f20c4227030f
   DEBIAN_DEBIAN_FILENAME: openssl_3.5.6-1~deb13u1.debian.tar.xz
   DEBIAN_DEBIAN_URL: https://deb.debian.org/debian/pool/main/o/openssl/openssl_3.5.6-1~deb13u1.debian.tar.xz
@@ -22,9 +23,9 @@ vars:
   DEBIAN_ORIG_FILENAME: openssl_3.5.6.orig.tar.gz
   DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/o/openssl/openssl_3.5.6.orig.tar.gz
   DEBIAN_VERSION: 3.5.6-1~deb13u1
-  DHI_REL: "0"
-  DHI_VERSION: 3.5.6-1~deb13u1+dhi0
-  TAG_VERSION: 3.5.6-1-deb13u1-dhi0
+  DHI_REL: "1"
+  DHI_VERSION: 3.5.6-1~deb13u1+dhi1
+  TAG_VERSION: 3.5.6-1-deb13u1-dhi1
   UPSTREAM_VERSION: 3.5.6
 contents:
   packages:
@@ -70,13 +71,74 @@ contents:
           with:
             changelog:
               - DHI Rebuild
-            version: 3.5.6-1~deb13u1+dhi0
+            version: 3.5.6-1~deb13u1+dhi1
         - uses: dpkg/build@v1
           environment:
             DEB_BUILD_PROFILES: noudeb
             DEB_LDFLAGS_APPEND: -Wl,-z,noexecstack -Wl,--as-needed
           with:
             args: -uc -us -d
+        - name: stage OCI config snippets for openssl
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/config"
+            cat > "${target.dir}/opt/docker/config/openssl-provider-fips.yaml" << EOF
+            environment:
+              OPENSSL_CONF: /usr/lib/ssl/openssl.cnf
+              OPENSSL_MODULES: /usr/lib/${ARCH}-linux-gnu/ossl-modules
+            EOF
+        - name: build OCI config split .debs for openssl
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            build_oci_config_deb() {
+              pkg_name="$1"
+              provides="$2"
+              description="$3"
+              yaml_src="$4"
+              yaml_dest="$5"
+              depends_pkg="$6"
+
+              stage="${source.dir}/oci-config-stage/${pkg_name}"
+              rm -rf "${stage}"
+              mkdir -p "${stage}/DEBIAN" "${stage}/$(dirname "${yaml_dest}")"
+
+              install -m 0644 "${yaml_src}" "${stage}/${yaml_dest}"
+
+              cat > "${stage}/DEBIAN/control" << EOF
+            Package: ${pkg_name}
+            Source: openssl
+            Version: 3.5.6-1~deb13u1+dhi1
+            Architecture: all
+            Maintainer: Docker Hardened Images <dhi@docker.com>
+            Section: libs
+            Priority: optional
+            Depends: ${depends_pkg} (>= 3.5.6-1~deb13u1)
+            Provides: ${provides}
+            Homepage: https://docker.com/dhi
+            Description: ${description}
+             Ships a DHI build-time configuration snippet (environment) that
+             downstream image definitions consume via apt-get install ${pkg_name}.
+             Mirrors the apk openssl-provider-fips-oci-config subpackage.
+            EOF
+
+              dpkg-deb --root-owner-group --build "${stage}" "${source.dir}/"
+
+              mkdir -p /debian/deb
+              cp -p "${source.dir}/${pkg_name}_3.5.6-1~deb13u1+dhi1_all.deb" /debian/deb/
+            }
+
+            build_oci_config_deb \
+              "openssl-provider-fips-oci-config" \
+              "openssl-fips-oci-config, openssl-provider-fips-oci-config" \
+              "FIPS-mode OCI build-time configuration snippet for openssl" \
+              "${target.dir}/opt/docker/config/openssl-provider-fips.yaml" \
+              "opt/docker/config/openssl-provider-fips.yaml" \
+              "openssl-provider-fips"
+
+            ls -la /debian/deb/openssl-provider-fips-oci-config*.deb
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
