@@ -1,0 +1,136 @@
+# syntax=dhi.io/build:1-alpine3.23-dev
+
+image: dhi.io/pkg-traefik
+variant: runtime
+tags:
+  - 3.7.1-alpine3.23
+  - 3.7.1-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: fa49e2bcad7ffd8a80accdf1fae1ae480913d93d
+  GOLANG_VERSION: 1.25.10-r0
+  PACKAGE_NAME: traefik
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.7"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.7.1
+  VERSION: 3.7.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: traefik
+      work-dir: /go/src/github.com/traefik/traefik/v3
+      contents:
+        packages:
+          - ca-certificates-bundle
+          - grep
+          - sed
+          - golang-1.25-dev=1.25.10-r0
+          - nodejs-22
+          - npm
+        files:
+          - url: git+https://github.com/traefik/traefik.git#v3.7.1
+            checksum: fa49e2bcad7ffd8a80accdf1fae1ae480913d93d
+            path: /go/src/github.com/traefik/traefik/v3
+            spdx:
+              name: traefik
+              version: 3.7.1
+              packages:
+                - name: traefik
+                  purl: pkg:golang/github.com/traefik/traefik@3.7.1#v3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: run unit tests
+          runs: |
+            set -eux -o pipefail
+
+            # Use lenient FIPS mode during tests because redis/go-redis uses SHA-1
+            # for Lua script hashing, which fails in strict mode
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go test -v ./cmd/...
+        - name: build webui (> v2)
+          work-dir: /go/src/github.com/traefik/traefik/v3/webui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # pkg-node currently does not contain corepack
+            npm install -g corepack
+
+            corepack yarn workspaces focus --production
+            corepack yarn run build
+        - name: webui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: traefik-webui
+            source: /go/src/github.com/traefik/traefik/v3/webui/static
+        - name: build traefik
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/traefik/traefik/v3/pkg/version.Version=3.7.1
+              - -X github.com/traefik/traefik/v3/pkg/version.Codename=$(grep -Po 'CODENAME \?= \K\w+' Makefile)
+              - -X github.com/traefik/traefik/v3/pkg/version.BuildDate=$(date -d @${SOURCE_DATE_EPOCH} +'"%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/traefik
+            packages: ./cmd/traefik
+        - name: build traefik dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/traefik/traefik/v3/pkg/version.Version=3.7.1
+              - -X github.com/traefik/traefik/v3/pkg/version.Codename=$(grep -Po 'CODENAME \?= \K\w+' Makefile)
+              - -X github.com/traefik/traefik/v3/pkg/version.BuildDate=$(date -d @${SOURCE_DATE_EPOCH} +'"%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/traefik-dev
+            packages: ./cmd/traefik
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Traefik, The Cloud Native Edge Router
+            files:
+              - usr/bin/traefik
+            license: MIT
+            name: traefik
+            rel: 0
+            subpackages:
+              - description: Traefik, The Cloud Native Edge Router
+                files:
+                  - path: usr/bin/traefik
+                    source: usr/bin/traefik-dev
+                name: traefik-dev
+            url: https://traefik.io/
+            version: 3.7.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
