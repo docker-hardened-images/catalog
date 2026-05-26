@@ -6,10 +6,10 @@ variant: runtime
 tags:
   - "18"
   - "18.11"
-  - 18.11.1
+  - 18.11.3
   - 18-debian13
   - 18.11-debian13
-  - 18.11.1-debian13
+  - 18.11.3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -22,9 +22,9 @@ vars:
   GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
   SEMVER_MAJOR_MINOR_VERSION: "18.11"
   SEMVER_MAJOR_VERSION: "18"
-  SEMVER_VERSION: 18.11.1
-  SOURCE_CHECKSUM: sha256:eb2527e44a5156b70189cca968c93a224909fac6ab42d4ceebaf0a3272c1fb5a
-  VERSION: 18.11.1
+  SEMVER_VERSION: 18.11.3
+  SOURCE_COMMIT: 915eec8402a53691717d287f7b507bd2be3adcf5
+  VERSION: 18.11.3
 contents:
   packages:
     - '!libelogind0'
@@ -68,12 +68,10 @@ contents:
           - gzip
           - libclang-dev
           - libffi-dev
-          - libgit2-1.9
-          - libgit2-dev
+          - libicu-dev
           - libssh2-1-dev
           - libzstd-dev
           - zlib1g-dev
-          - libicu-dev
           - libkrb5-3
           - libkrb5-dev
           - libre2-dev
@@ -88,15 +86,15 @@ contents:
           - pkg-config
           - sudo
         files:
-          - url: https://gitlab.com/gitlab-org/gitlab-foss/-/archive/v18.11.1/gitlab-foss-v18.11.1.tar.gz
-            checksum: sha256:eb2527e44a5156b70189cca968c93a224909fac6ab42d4ceebaf0a3272c1fb5a
-            path: /tmp/gitlab-source.tar.gz
+          - url: git+https://gitlab.com/gitlab-org/gitlab-foss.git#v18.11.3
+            checksum: 915eec8402a53691717d287f7b507bd2be3adcf5
+            path: /srv/gitlab
             spdx:
               name: gitlab-ce
-              version: 18.11.1
+              version: 18.11.3
               packages:
                 - name: gitlab-ce
-                  purl: pkg:gitlab/gitlab-org/gitlab-foss@v18.11.1
+                  purl: pkg:gitlab/gitlab-org/gitlab-foss@v18.11.3
                   license: MIT
             uid: 0
             gid: 0
@@ -120,16 +118,16 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: extract source
+        - name: prepare source tree
           runs: |
             set -eux -o pipefail
 
             # Create git user for the build
             useradd -m -u 1000 -s /bin/bash git
 
-            mkdir -p /srv/gitlab
-            tar xzf /tmp/gitlab-source.tar.gz --strip-components=1 -C /srv/gitlab
-            rm -f /tmp/gitlab-source.tar.gz
+            # The git+ fetcher leaves a .git directory we don't need at runtime
+            # and that would bloat the image; drop it before chown.
+            rm -rf /srv/gitlab/.git
 
             chown -R git:git /srv/gitlab
         - name: bump vulnerable gem versions in lockfile
@@ -141,10 +139,15 @@ contents:
 
             # Update lockfile only (no install) — bumps Rails security patch,
             # addressable, and faraday (CVE-2026-25765, allowed by ~> 2 pin).
-            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday --conservative
+            # Also bumps gems with CVEs that stay within the same major:
+            #   net-imap     0.5.9  -> 0.5.14 (CVE-2026-42245/42246/42256/42257/42258)
+            #   nokogiri     1.19.1 -> 1.19.3 (GHSA-c4rq-3m3g-8wgx, GHSA-v2fc-qm4h-8hqv)
+            #   sidekiq-cron 2.3.1  -> 2.4.0  (CVE-2025-67202)
+            #   graphql      2.5.11 -> 2.5.26 (GHSA-3h96-34p3-xm76)
+            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron graphql --conservative
 
             echo "Lockfile updated:"
-            grep -E "activestorage|addressable|^    faraday " Gemfile.lock | head -8
+            grep -E "activestorage|addressable|^    faraday |^    net-imap |^    nokogiri |^    sidekiq-cron |^    graphql " Gemfile.lock | head -16
         - name: install node dependencies
           privileged: true
           runs: |
@@ -161,60 +164,13 @@ contents:
             export RUSTUP_HOME="/usr/local/rustup"
             export CARGO_HOME="/usr/local/cargo"
 
-            export RUGGED_USE_SYSTEM_LIBRARIES=1
-
             cd /srv/gitlab
             bundle config set --local version system
             bundle config set --local clean 'true'
             bundle config set --local deployment 'true'
             bundle config set --local without 'development test mysql aws'
 
-            # Workaround for rugged 1.9.0 version.h bug on Debian 13:
-            # extconf.rb reads LIBGIT2_VER_MAJOR but the vendored header
-            # only defines LIBGIT2_VERSION_MAJOR.
-            # Fix: download, unpack, patch, rebuild .gem, install it.
-            # https://github.com/libgit2/rugged/issues/990
-            PATCH_DIR="/tmp/rugged-patch"
-            mkdir -p "$PATCH_DIR"
-            cd "$PATCH_DIR"
-            gem fetch rugged -v 1.9.0 --source https://rubygems.org
-            gem unpack rugged-1.9.0.gem
-            gem spec rugged-1.9.0.gem --ruby > rugged-1.9.0/rugged.gemspec
-
-            # Patch version.h to add legacy macro names
-            printf '\n#define LIBGIT2_VER_MAJOR 1\n#define LIBGIT2_VER_MINOR 9\n#define LIBGIT2_VER_REVISION 0\n' \
-              >> rugged-1.9.0/vendor/libgit2/include/git2/version.h
-            sed -i '/^GIT_BEGIN_DECL$/d; /^GIT_END_DECL$/d' \
-              rugged-1.9.0/vendor/libgit2/include/git2/version.h
-
-            # Strip dev dependencies from gemspec so gem build succeeds
-            sed -i '/add_development_dependency/d' rugged-1.9.0/rugged.gemspec
-
-            cd rugged-1.9.0
-            gem build rugged.gemspec
-
-            # Also patch the system header for the try_compile version check
-            printf '\n#define LIBGIT2_VER_MAJOR 1\n#define LIBGIT2_VER_MINOR 9\n#define LIBGIT2_VER_REVISION 0\n' \
-              >> /usr/include/git2/version.h
-            sed -i '/^GIT_BEGIN_DECL$/d; /^GIT_END_DECL$/d' \
-              /usr/include/git2/version.h
-
-            # Install patched gem
-            cd /srv/gitlab
-            RUGGED_USE_SYSTEM_LIBRARIES=1 \
-              gem install "$PATCH_DIR/rugged-1.9.0/rugged-1.9.0.gem" \
-              -i vendor/bundle/ruby/3.3.0 --no-document -- --use-system-libraries
-            rm -rf "$PATCH_DIR"
-
             bundle install --jobs 4 --retry 5
-        - name: bump erb default gem
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # erb is a Ruby default gem (not in Gemfile) — update system-wide
-            gem install erb -v 4.0.3.1 --no-document
-            gem list erb
         - name: compile gettext
           runs: |
             set -eux -o pipefail
@@ -463,6 +419,7 @@ contents:
           uses: go/bump@v2
           with:
             deps:
+              - golang.org/x/crypto@v0.52.0
               - github.com/cloudflare/circl@v1.6.3
               - github.com/go-git/go-git/v5@v5.19.1
               - google.golang.org/grpc@v1.79.3
