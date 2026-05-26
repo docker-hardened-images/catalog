@@ -1,7 +1,7 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Tempo Query 2.x (dev)
-image: dhi.io/tempo-query
+name: Tempo 2.x (dev)
+image: dhi.io/tempo
 variant: dev
 tags:
   - 2-dev
@@ -17,12 +17,16 @@ vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
   COMMIT_SHA: 991ce39eb956e9ed771fcffe05eff42d33de27ba
-  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
-  SEMVER_MAJOR_MINOR_VERSION: "2.10"
-  SEMVER_MAJOR_VERSION: "2"
-  SEMVER_VERSION: 2.10.5
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "2.10"
+  DEBIAN_EPOCH_MAJOR_VERSION: "2"
+  DEBIAN_EPOCH_VERSION: 2.10.5
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:fd3180feff08929120077efe8799d54693a9861006cf400e5788591948f7402d
   VERSION: 2.10.5
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
     - '!gawk'
@@ -42,12 +46,15 @@ contents:
     - sed
     - util-linux
   builds:
-    - name: tempo-query
-      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
+    - name: tempo
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:fd3180feff08929120077efe8799d54693a9861006cf400e5788591948f7402d
       work-dir: /go/src/github.com/grafana/tempo
-      caches:
-        - path: /go/pkg/mod
       contents:
+        packages:
+          - bash
+          - hostname
+          - make
+          - sed
         files:
           - url: git+https://github.com/grafana/tempo.git#v2.10.5
             checksum: 991ce39eb956e9ed771fcffe05eff42d33de27ba
@@ -62,13 +69,13 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: update go dependencies
+        - name: bump go dependencies
           uses: go/bump@v2
           with:
             deps:
-              - golang.org/x/net@v0.55.0
+              - golang.org/x/crypto@v0.52.0
               - github.com/apache/thrift@v0.23.0
-            download: true
+            tidy: true
         - name: build
           uses: go/build@v1
           environment:
@@ -78,11 +85,15 @@ contents:
               - -X main.Version=v2.10.5
               - -X main.Branch=2.10.5
               - -X main.Revision=991ce39eb956e9ed771fcffe05eff42d33de27ba
-            output: ${target.dir}/opt/tempo-query/tempo-query
-            packages: ./cmd/tempo-query
+            output: ${target.dir}/opt/tempo/tempo
+            packages: ./cmd/tempo
       outputs:
-        - source: ${target.dir}/opt/tempo-query
-          target: /opt/tempo-query
+        - source: ${target.dir}/opt/tempo/tempo
+          target: /opt/tempo/tempo
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/grafana/tempo/tools/packaging/tempo.yaml
+          target: /etc/tempo/config.yaml
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/tempo
@@ -134,10 +145,18 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /var/tempo
+    uid: 65532
+    gid: 65532
+    mode: "0755"
 annotations:
-  org.opencontainers.image.description: A minimal Grafana Tempo Query (Jaeger storage plugin) image
+  org.opencontainers.image.description: A minimal Tempo image
   org.opencontainers.image.licenses: AGPL-3.0
 entrypoint:
-  - /opt/tempo-query/tempo-query
+  - /opt/tempo/tempo
+cmd:
+  - -config.file=/etc/tempo/config.yaml
 ports:
-  - 7777/tcp
+  - 3200/tcp
