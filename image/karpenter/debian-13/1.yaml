@@ -1,62 +1,78 @@
 # syntax=dhi.io/build:2-debian13
 
-name: karpenter 1.9.x
+name: karpenter 1.x
 image: dhi.io/karpenter
 variant: runtime
 tags:
   - "1"
-  - "1.9"
-  - 1.9.0
+  - "1.12"
+  - 1.12.1
   - 1-debian13
-  - 1.9-debian13
-  - 1.9.0-debian13
+  - 1.12-debian13
+  - 1.12.1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2026-05-11"
 vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
-  COMMIT_SHA: e7e13271922287f916b3d133505205048a74af4b
+  COMMIT_SHA: 15781e312b8e01d4c2caecd9a4f5c7a70d84a6a0
   GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
-  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.9.0
-  VERSION: 1.9.0
+  SEMVER_VERSION: 1.12.1
+  VERSION: 1.12.1
 contents:
   packages:
     - '!base-files'
   builds:
     - name: karpenter-go
       uses: dhi.io/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
+      work-dir: /go/src/github.com/aws/karpenter-provider-aws
+      caches:
+        - path: /go/pkg/mod
       contents:
         files:
-          - url: git+https://github.com/aws/karpenter-provider-aws#v1.9.0
-            checksum: e7e13271922287f916b3d133505205048a74af4b
+          - url: git+https://github.com/aws/karpenter-provider-aws#v1.12.1
+            checksum: 15781e312b8e01d4c2caecd9a4f5c7a70d84a6a0
             path: /go/src/github.com/aws/karpenter-provider-aws
             spdx:
               name: karpenter
-              version: 1.9.0
+              version: 1.12.1
               packages:
                 - name: karpenter
-                  purl: pkg:dhi/karpenter@1.9.0
+                  purl: pkg:dhi/karpenter@1.12.1
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
-        - name: update go dependencies (1.9 only)
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/aws/karpenter-provider-aws
+        - name: update go dependencies
+          uses: go/bump@v2
           with:
             deps:
               - golang.org/x/net@v0.55.0
             download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # Controller/provider packages use envtest (etcd at
+            # /usr/local/kubebuilder/bin/etcd), which is not in the DHI build
+            # image. Runtime behavior is covered by image/karpenter/tests.
+            PKGS=$(go list ./... | grep -vE '/(test|tests|integration|e2e|fuzz)(/|$)|/pkg/(controllers|cloudprovider|apis/v1)|/pkg/operator$|/pkg/providers/[^/]+$')
+            go test -short $PKGS -count=1
         - name: build
           uses: go/build@v1
-          work-dir: /go/src/github.com/aws/karpenter-provider-aws
           with:
             ldflags:
-              - -X main.Version=1.9.0
-              - -X main.GitSHA=e7e13271922287f916b3d133505205048a74af4b
+              - -X main.Version=1.12.1
+              - -X main.GitSHA=15781e312b8e01d4c2caecd9a4f5c7a70d84a6a0
               - -X main.BuiltAt=$(date -u -d @${SOURCE_DATE_EPOCH} +'%F-%T')
             output: ${target.dir}/usr/local/bin/controller
             packages: ./cmd/controller
