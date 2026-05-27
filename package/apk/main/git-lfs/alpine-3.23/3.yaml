@@ -4,7 +4,7 @@ image: dhi.io/pkg-git-lfs
 variant: runtime
 tags:
   - 3.7.1-alpine3.23
-  - 3.7.1-r2-alpine3.23
+  - 3.7.1-r3-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,7 +13,7 @@ vars:
   _VERSION: 3.7.0
   COMMIT_SHA: cb528479ce7389730baa832e757b0e00914bba19
   PACKAGE_NAME: community/git-lfs
-  REL: "2"
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "3.7"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.7.1
@@ -55,11 +55,34 @@ contents:
         - uses: abuild/setup@v1
         - uses: abuild/bump@v1
           with:
-            rel: 2
+            rel: 3
             version: 3.7.1
         - uses: abuild/build@v1
           with:
             command: checksum
+        - name: patch go dependencies
+          runs: |
+            set -eux -o pipefail
+
+            # Go writes the sumdb cache under GOPATH/pkg/sumdb during `go get`.
+            # The abuild user cannot create directories there, so pre-create
+            # and chmod it here before abuild drops privileges.
+            install -d -m 0777 "$(go env GOPATH)/pkg/sumdb/sum.golang.org"
+
+            # Inject prepare() to bump Go modules without a major version change.
+            # $builddir below is an abuild-runtime variable; written literally to APKBUILD.
+            # shellcheck disable=SC2154
+            cat >> APKBUILD << 'EOF'
+
+            prepare() {
+                default_prepare
+                cd "$builddir"
+                go get golang.org/x/crypto@v0.52.0
+                go get golang.org/x/net@v0.55.0
+                go mod tidy
+                go mod vendor
+            }
+            EOF
         - uses: abuild/build@v1
           privileged: true
 os-release:
