@@ -14,7 +14,6 @@ dates:
   end-of-life: "2026-07-28"
 vars:
   COMMIT_SHA: 1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
-  DBG: '#{ target.dev ? "1" : "0" }'
   GOLANG_REFERENCE: dhi/golang:1.26.3-alpine3.22-dev@sha256:c0d87db3e94eeeb955b366d2a635116e09aea99efbb83c5fe3bb430317b1a1d2
   SEMVER_MAJOR_MINOR_VERSION: "1.33"
   SEMVER_MAJOR_VERSION: "1"
@@ -31,9 +30,8 @@ contents:
     - ca-certificates-bundle
   builds:
     - name: kubectl
+      uses: dhi.io/golang:1.26.3-alpine3.22-dev@sha256:c0d87db3e94eeeb955b366d2a635116e09aea99efbb83c5fe3bb430317b1a1d2
       work-dir: /go/src/k8s.io/kubernetes
-      environment:
-        PATH: /usr/local/go/bin:$PATH
       contents:
         packages:
           - bash
@@ -57,37 +55,52 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-        artifacts:
-          - name: dhi.io/golang:1.26.3-alpine3.22-dev@sha256:c0d87db3e94eeeb955b366d2a635116e09aea99efbb83c5fe3bb430317b1a1d2
-            includes:
-              - usr/local/go
-            uid: 0
-            gid: 0
       pipeline:
-        - name: update dependencies
-          privileged: true
-          environment:
-            GOFIPS140: "off"
-          runs: |
-            set -eux -o pipefail
-
-            ./hack/pin-dependency.sh golang.org/x/net v0.53.0 # CVE-2025-47911, CVE-2025-58190, CVE-2026-33814
-            ./hack/pin-dependency.sh golang.org/x/oauth2 v0.27.0
-            ./hack/update-vendor.sh
-        - name: build
-          runs: |
-            set -eux -o pipefail
-
-            make WHAT=cmd/kubectl DBG=${DBG}
-            make WHAT=cmd/kubectl-convert DBG=${DBG}
-        - name: install
-          runs: |
-            set -eux -o pipefail
-
-            install -D -m 0755 _output/bin/kubectl \
-              '${target.dir}/usr/local/bin/kubectl'
-            install -D -m 0755 _output/bin/kubectl-convert \
-              '${target.dir}/usr/local/bin/kubectl-convert'
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - golang.org/x/oauth2@v0.30.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: build kubectl
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X k8s.io/client-go/pkg/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X k8s.io/component-base/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X k8s.io/client-go/pkg/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+              - -X k8s.io/component-base/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+              - -X k8s.io/client-go/pkg/version.gitTreeState=clean
+              - -X k8s.io/component-base/version.gitTreeState=clean
+              - -X k8s.io/client-go/pkg/version.gitVersion=v1.33.12
+              - -X k8s.io/component-base/version.gitVersion=v1.33.12
+              - -X k8s.io/client-go/pkg/version.gitMajor=${KUBERNETES_MAJOR_VERSION}
+              - -X k8s.io/component-base/version.gitMajor=${KUBERNETES_MAJOR_VERSION}
+              - -X k8s.io/client-go/pkg/version.gitMinor=${KUBERNETES_MINOR_VERSION}
+              - -X k8s.io/component-base/version.gitMinor=${KUBERNETES_MINOR_VERSION}
+            output: ${target.dir}/usr/local/bin/kubectl
+            packages: ./cmd/kubectl
+        - name: build kubectl-convert
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X k8s.io/client-go/pkg/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X k8s.io/component-base/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X k8s.io/client-go/pkg/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+              - -X k8s.io/component-base/version.gitCommit=1f348c8e82cf0f170df4ac2b1e859ea0d398ff09
+              - -X k8s.io/client-go/pkg/version.gitTreeState=clean
+              - -X k8s.io/component-base/version.gitTreeState=clean
+              - -X k8s.io/client-go/pkg/version.gitVersion=v1.33.12
+              - -X k8s.io/component-base/version.gitVersion=v1.33.12
+              - -X k8s.io/client-go/pkg/version.gitMajor=${KUBERNETES_MAJOR_VERSION}
+              - -X k8s.io/component-base/version.gitMajor=${KUBERNETES_MAJOR_VERSION}
+              - -X k8s.io/client-go/pkg/version.gitMinor=${KUBERNETES_MINOR_VERSION}
+              - -X k8s.io/component-base/version.gitMinor=${KUBERNETES_MINOR_VERSION}
+            output: ${target.dir}/usr/local/bin/kubectl-convert
+            packages: ./cmd/kubectl-convert
       outputs:
         - source: ${target.dir}/usr/local/bin/kubectl
           target: /usr/local/bin/kubectl
