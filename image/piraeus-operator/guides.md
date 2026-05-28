@@ -87,7 +87,38 @@ apiVersion: piraeus.io/v1
 kind: LinstorCluster
 metadata:
   name: linstorcluster
-spec: {}
+spec:
+  controller:
+    enabled: true
+    podTemplate:
+      spec:
+        containers:
+          - name: linstor-controller
+            image: dhi.io/piraeus-server:<tag>
+        initContainers:
+          - name: run-migration
+            image: dhi.io/piraeus-server:<tag>
+            securityContext:
+              capabilities:
+                drop:
+                  - ALL
+                add:
+                  - NET_ADMIN
+                  - SYS_ADMIN
+  csiController:
+    enabled: true
+    podTemplate:
+      spec:
+        containers:
+          - name: linstor-csi
+            image: dhi.io/piraeus-csi:<tag>
+  highAvailabilityController:
+    enabled: true
+    podTemplate:
+      spec:
+        containers:
+          - name: ha-controller
+            image: dhi.io/piraeus-ha-controller:<tag>
 ```
 
 Apply with:
@@ -108,6 +139,14 @@ kind: LinstorSatelliteConfiguration
 metadata:
   name: storage-pool-config
 spec:
+  podTemplate:
+    spec:
+      containers:
+        - name: linstor-satellite
+          image: dhi.io/piraeus-server:<tag>
+      initContainers:
+        - name: setup-lvm-configuration
+          image: dhi.io/piraeus-server:<tag>
   storagePools:
     - name: lvm-thin
       lvmThinPool:
