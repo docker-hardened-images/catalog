@@ -15,6 +15,7 @@ platforms:
   - linux/arm64
 dates:
   release: "2026-04-01"
+  end-of-life: "2026-09-30"
 vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
@@ -25,11 +26,18 @@ vars:
   SEMVER_VERSION: 1.29.1
   VERSION: 1.29.1
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-els-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
   builds:
     - name: cloudnative-pg
       uses: dhi.io/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
+      work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - bash
@@ -52,13 +60,23 @@ contents:
       pipeline:
         - name: update go dependencies
           uses: go/bump@v2
-          work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
           with:
             deps:
               - golang.org/x/net@v0.55.0
               - github.com/jackc/pgx/v5@v5.9.2
               - github.com/moby/spdystream@v0.5.1
             tidy: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            # The pkg/management/postgres Ginkgo suite panics inside barman-cloud
+            # backup command setup under this build environment.
+            go test ./pkg/... -count=1 -timeout 10m -skip '^TestPostgres$'
         - name: create operator directory
           runs: |
             set -eux -o pipefail
@@ -66,7 +84,6 @@ contents:
             mkdir -p ${target.dir}/operator
         - name: build manager for amd64
           uses: go/build@v1
-          work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
           environment:
             GOFLAGS: -buildvcs=false
           with:
@@ -79,7 +96,6 @@ contents:
             packages: ./cmd/manager
         - name: build manager for arm64
           uses: go/build@v1
-          work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
           environment:
             GOFLAGS: -buildvcs=false
           with:
