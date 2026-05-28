@@ -1,0 +1,79 @@
+// Route all Maven resolution through a 429-resistant chain to avoid
+// per-IP rate limiting on repo.maven.apache.org / plugins.gradle.org.
+//
+// Each repository list (project, buildscript, pluginManagement,
+// dependencyResolutionManagement) is REPLACED — not appended to —
+// with: Cloudsmith (if creds present) → GCS Maven Central mirror →
+// Plugin Portal with metadataSources restricted to mavenPom+artifact.
+//
+// The Plugin Portal entry uses `ignoreGradleMetadataRedirection()`
+// because a .module lookup there 303-redirects back to
+// repo.maven.apache.org and 429s.
+
+def cloudsmithUrl = 'https://dl.cloudsmith.io/basic/docker/dhi-maven-central/maven/'
+def gcsMirror     = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def pluginPortal  = 'https://plugins.gradle.org/m2/'
+
+def cloudsmithUser = System.getenv('MAVEN_USER')
+def cloudsmithPass = System.getenv('MAVEN_PASSWORD')
+def hasCloudsmith  = cloudsmithUser != null && !cloudsmithUser.isEmpty() &&
+                     cloudsmithPass != null && !cloudsmithPass.isEmpty()
+println "dhi-init: cloudsmith=${hasCloudsmith} gcs-mirror=${gcsMirror}"
+
+def configureRepos = { container ->
+  container.clear()
+  if (hasCloudsmith) {
+    container.maven {
+      url cloudsmithUrl
+      credentials {
+        username = cloudsmithUser
+        password = cloudsmithPass
+      }
+      name 'cloudsmith-central'
+    }
+  }
+  container.maven {
+    url gcsMirror
+    name 'gcs-maven-central-mirror'
+  }
+  container.maven {
+    url pluginPortal
+    name 'gradle-plugin-portal-no-module'
+    metadataSources {
+      mavenPom()
+      artifact()
+      ignoreGradleMetadataRedirection()
+    }
+  }
+}
+
+allprojects {
+  buildscript {
+    repositories {
+      configureRepos delegate
+    }
+  }
+  repositories {
+    configureRepos delegate
+  }
+}
+
+beforeSettings { settings ->
+  settings.pluginManagement {
+    repositories {
+      configureRepos delegate
+    }
+  }
+}
+
+settingsEvaluated { settings ->
+  try {
+    settings.dependencyResolutionManagement {
+      repositories {
+        configureRepos delegate
+      }
+    }
+  } catch (Throwable ignored) {
+    // dependencyResolutionManagement is Gradle 6.8+ only.
+  }
+}
