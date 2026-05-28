@@ -45,6 +45,7 @@ contents:
   builds:
     - name: harbor-registryctl
       uses: dhi.io/golang:1.25.10-debian13-dev@sha256:9df1a12a7a9ee811efe2929045a7eabb8617329e8ce01a3296f4af095f89522c
+      work-dir: /go/src/github.com/goharbor/harbor/src
       contents:
         packages:
           - build-essential
@@ -69,49 +70,46 @@ contents:
             gid: 0
             mode: "755"
       pipeline:
-        - name: generate-swagger
-          work-dir: /go/src/github.com/goharbor/harbor
+        - name: generate swagger server
           runs: |
             set -eux -o pipefail
 
-            SWAGGER_TARGET="src/server/v2.0"
-
-            /usr/local/bin/swagger generate server \
-              --template-dir=tools/swagger/templates \
+            swagger generate server \
+              --template-dir=../tools/swagger/templates \
               --exclude-main \
               --additional-initialism=CVE \
               --additional-initialism=GC \
               --additional-initialism=OIDC \
-              -f api/v2.0/swagger.yaml \
+              -f ../api/v2.0/swagger.yaml \
               -A harbor \
-              --target ${SWAGGER_TARGET}
-        - name: Patch vulnerable Go dependencies
+              --target server/v2.0
+        - name: update go dependencies
           uses: go/bump@v2
-          work-dir: /go/src/github.com/goharbor/harbor/src
           with:
             deps:
               - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
-              - go.opentelemetry.io/otel/sdk@v1.43.0
-              - golang.org/x/net@v0.54.0
-              - google.golang.org/grpc@v1.81.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.44.0
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - google.golang.org/grpc@v1.81.1
             download: true
-        - name: test
-          work-dir: /go/src/github.com/goharbor/harbor/src/registryctl
+        - name: test after bump
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            CGO_ENABLED=0 go test ./...
+            CGO_ENABLED=0 go test ./registryctl/...
         - name: build
           uses: go/build@v1
-          work-dir: /go/src/github.com/goharbor/harbor/src/registryctl
           environment:
             GOFLAGS: -buildvcs=false
           with:
             ldflags:
               - -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=2.15.1
+              - -X github.com/goharbor/harbor/src/pkg/version.GitCommit=335c05f2b9507b4c7116fe69b84e31ef9f4b91dd
             output: ${target.dir}/usr/local/bin/harbor-registryctl
+            packages: ./registryctl
       outputs:
         - source: ${target.dir}/usr/local/bin/harbor-registryctl
           target: /usr/local/bin/harbor-registryctl
