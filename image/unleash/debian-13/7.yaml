@@ -47,13 +47,56 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: bump yarn deps
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+
+            # Add resolutions for vulnerable packages to package.json.
+            # We use jq instead of `yarn set resolution` because the latter
+            # only accepts flat descriptors (e.g. pkg@npm:range) and rejects
+            # path-based keys like "ajv/fast-uri" with "Invalid descriptor".
+            # CVE-2026-6322, CVE-2026-6321 (ajv/fast-uri)
+            # CVE-2026-8723 (body-parser/qs, express/qs)
+            # CVE-2026-42338 (unleash-client/ip-address, express-rate-limit/ip-address, ip-address)
+            # CVE-2026-42570 (devalue)
+            # CVE-2026-42567, GHSA-f3cj-j4f6-wq85, CVE-2026-42573, CVE-2026-42599 (svelte)
+            # CVE-2026-33532 (yaml)
+            jq '.resolutions += {
+              "ajv/fast-uri": "3.1.2",
+              "body-parser/qs": "6.15.2",
+              "express/qs": "6.15.2",
+              "unleash-client/ip-address": "10.1.1",
+              "express-rate-limit/ip-address": "10.1.1",
+              "ip-address": "10.1.1",
+              "devalue": "5.8.1",
+              "svelte": "5.55.7",
+              "yaml": "1.10.3"
+            }' package.json > package.tmp.json
+            mv package.tmp.json package.json
+
+            # frontend/ has its own yarn.lock; add resolutions there too
+            jq '.resolutions += {
+              "ajv/fast-uri": "3.1.2",
+              "devalue": "5.8.1",
+              "svelte": "5.55.7",
+              "yaml": "1.10.3"
+            }' frontend/package.json > frontend/package.tmp.json
+            mv frontend/package.tmp.json frontend/package.json
+
+            # Allow lockfile updates from the new resolutions;
+            # build-frontend-if-needed.sh runs yarn install --immutable
+            # which must be relaxed for resolutions to take effect
+            sed -i 's/--immutable//' scripts/build-frontend-if-needed.sh
         - name: install and build
           privileged: true
           runs: |
             set -eux -o pipefail
 
             corepack enable
-            yarn install --immutable
+            yarn install
             yarn prepare:backend
             yarn local:package
             yarn build:frontend:if-needed
