@@ -1,0 +1,453 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub Frontend 1.x (dev)
+image: dhi.io/datahub-frontend-react
+variant: dev
+tags:
+  - 1-dev
+  - 1.5-dev
+  - 1.5.0-dev
+  - 1.5.0.7-dev
+  - 1-debian13-dev
+  - 1.5-debian13-dev
+  - 1.5.0-debian13-dev
+  - 1.5.0.7-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-22"
+vars:
+  COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:73741511dda299fa7e4ed8a39064c592ef840497fbc00daa753bacc705c62d0a
+  GRADLE_VERSION: 8.14.5
+  JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
+  JMX_PROMETHEUS_VERSION: 0.20.0
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+  JRE_VERSION: 17.0.19.10
+  NODE_REFERENCE: dhi/node:22.22.3-debian13-dev@sha256:ba2cfd44252787ae238f9ca6a353c813fe63ffe5e8e961b190b825080d0416fd
+  NODE_VERSION: 22.22.3
+  OTEL_JAVAAGENT_SHA256: bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b
+  OTEL_JAVAAGENT_VERSION: 2.27.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.0.7
+  VERSION: 1.5.0.7
+  VERSION_MAJOR_MINOR_PATCH: 1.5.0
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libstdc++6
+    - mawk
+    - perl-base
+    - sed
+    - sqlite3
+    - util-linux
+  builds:
+    - name: datahub-frontend-react
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:73741511dda299fa7e4ed8a39064c592ef840497fbc00daa753bacc705c62d0a
+      work-dir: ${source.dir}/datahub
+      environment:
+        CI: "false"
+        NODE_OPTIONS: --max-old-space-size=5120 --openssl-legacy-provider
+      caches:
+        - path: /root/.gradle/caches
+        - path: /root/.gradle/wrapper
+        - path: ${source.dir}/datahub/datahub-web-react/node_modules
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - ca-certificates
+          - curl
+          - findutils
+          - git
+          - grep
+          - gnu-which
+          - libstdc++6
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/datahub-project/datahub.git#v1.5.0.7
+            checksum: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+            path: ${source.dir}/datahub
+            spdx:
+              name: datahub-frontend-react
+              version: 1.5.0.7
+              packages:
+                - name: datahub-frontend-react
+                  purl: pkg:github/datahub-project/datahub@1.5.0.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:22.22.3-debian13-dev@sha256:ba2cfd44252787ae238f9ca6a353c813fe63ffe5e8e961b190b825080d0416fd
+            includes:
+              - opt/**
+              - usr/local/bin/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: fetch java agents
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # The DHI built-in `contents.files` fetcher routes through the
+            # cloud builder which intermittently hits Maven Central's per-IP
+            # 429 throttling and returns a different artifact than the one
+            # that lives at the canonical URL, producing a digest mismatch
+            # that we cannot work around with checksums alone. Download the
+            # agents here from a fallback chain (Maven Central origin →
+            # Google's verbatim mirror → Apache mirror → repo1) and verify
+            # SHA-256 manually. See definitions-external PR #232 for the
+            # same workaround applied to datahub-upgrade.
+            install -d -m 0755 "${target.dir}/opt/javaagents"
+
+            fetch() {
+              local out="$1"
+              shift
+              for url in "$@"; do
+                echo "fetch: $url" >&2
+                if curl --fail --silent --show-error --location \
+                  --retry 4 --retry-delay 5 --retry-all-errors \
+                  --connect-timeout 30 --max-time 600 \
+                  --output "$out" "$url"; then
+                  return 0
+                fi
+              done
+              echo "all mirrors failed for $out" >&2
+              return 1
+            }
+
+            jmx_path="io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
+            fetch "${target.dir}/opt/javaagents/jmx_prometheus_javaagent.jar" \
+              "https://repo.maven.apache.org/maven2/${jmx_path}" \
+              "https://maven-central.storage-download.googleapis.com/maven2/${jmx_path}" \
+              "https://repo1.maven.org/maven2/${jmx_path}"
+
+            fetch "${target.dir}/opt/javaagents/opentelemetry-javaagent.jar" \
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.27.0/opentelemetry-javaagent.jar"
+
+            echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  ${target.dir}/opt/javaagents/jmx_prometheus_javaagent.jar" \
+              | sha256sum -c -
+            echo "bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b  ${target.dir}/opt/javaagents/opentelemetry-javaagent.jar" \
+              | sha256sum -c -
+
+            chmod 0444 "${target.dir}/opt/javaagents/"*.jar
+        - name: jmx_prometheus_javaagent sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: jmx_prometheus_javaagent
+            purl: pkg:maven/io.prometheus.jmx/jmx_prometheus_javaagent@0.20.0
+            version: 0.20.0
+        - name: opentelemetry-javaagent sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: opentelemetry-javaagent
+            purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.27.0
+            version: 2.27.0
+        - name: configure gradle maven mirror
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle/init.d
+            cat > /root/.gradle/init.d/maven-mirror.gradle << 'EOF'
+            def cloudsmithUrl = 'https://dl.cloudsmith.io/basic/docker/dhi-maven-central/maven/'
+            def gcsMirror     = 'https://maven-central.storage-download.googleapis.com/maven2/'
+            def pluginPortal  = 'https://plugins.gradle.org/m2/'
+
+            def cloudsmithUser = System.getenv('MAVEN_USER')
+            def cloudsmithPass = System.getenv('MAVEN_PASSWORD')
+            def hasCloudsmith  = cloudsmithUser != null && !cloudsmithUser.isEmpty() &&
+                                 cloudsmithPass != null && !cloudsmithPass.isEmpty()
+            println "dhi-init: cloudsmith=${hasCloudsmith} gcs-mirror=${gcsMirror}"
+
+            def configureRepos = { container ->
+              container.clear()
+              if (hasCloudsmith) {
+                container.maven {
+                  url cloudsmithUrl
+                  credentials {
+                    username = cloudsmithUser
+                    password = cloudsmithPass
+                  }
+                  name 'cloudsmith-central'
+                }
+              }
+              container.maven { url gcsMirror; name 'gcs-maven-central-mirror' }
+              container.maven {
+                url pluginPortal
+                name 'gradle-plugin-portal'
+                // Plugin Portal 303-redirects `.module` (Gradle Module
+                // Metadata) requests back to repo.maven.apache.org, which
+                // 429s for the cloud builder's IPs. Restrict metadata to
+                // mavenPom() + artifact() so the .module redirect lookup
+                // never happens. (See definitions-external PR #242.)
+                metadataSources {
+                  mavenPom()
+                  artifact()
+                  ignoreGradleMetadataRedirection()
+                }
+              }
+            }
+
+            allprojects {
+              buildscript {
+                repositories {
+                  configureRepos delegate
+                }
+              }
+              repositories {
+                configureRepos delegate
+              }
+            }
+
+            settingsEvaluated { settings ->
+              settings.pluginManagement {
+                repositories {
+                  configureRepos delegate
+                }
+              }
+            }
+            EOF
+        - name: tweak upstream build
+          runs: |
+            set -eux -o pipefail
+
+            # DataHub v1.5.0.7 already pins remediated versions for all the
+            # deps we used to force on v1.4 (spring-boot 3.5.14, jetty 12.0.34,
+            # netty 4.2.13.Final, jackson 2.21.3, log4j 2.25.4, logback 1.5.32,
+            # aircompressor 2.0.3, openTelemetry 1.62.0, etc.). The previous
+            # build.gradle sed/resolutionStrategy block is removed — most
+            # forces would now be downgrades, and the rest are no-ops. If a
+            # future CVE scan flags something upstream hasn't fixed yet, add
+            # it back here as a targeted force.
+            #
+            # The only mutation we still need is to disable the
+            # @codecov/vite-plugin bundle-analysis upload in datahub-web-react:
+            # we have no CODECOV_TOKEN at build time, so the plugin retries
+            # `get-pre-signed-url`, fails, and spams the logs — pure waste in
+            # an offline build.
+            sed -i \
+              "s|enableBundleAnalysis: true|enableBundleAnalysis: false|" \
+              datahub-web-react/vite.config.ts
+            grep -q 'enableBundleAnalysis: false' datahub-web-react/vite.config.ts
+        - name: build datahub-frontend stage
+          work-dir: ${source.dir}/datahub
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # `:datahub-frontend:stage` triggers the Play 2 plugin to assemble
+            # the runnable distribution under datahub-frontend/build/stage/main/.
+            # It transitively builds :datahub-web-react (Vite/Yarn) and bundles
+            # the assets JAR into the Play classpath.
+            #
+            # `-x test -x check` skips unit tests and the full :check graph
+            # (Spotless, static analysis, lint) — saves ~30 min on the cold
+            # build and avoids test-only deps like BouncyCastle/mockito.
+            # `--parallel --max-workers=8` lets independent metadata-events
+            # subprojects compile concurrently. Without it the cumulative
+            # serial compile time runs past the Docker Build Cloud 90-min cap.
+            # The Gradle init script at /root/.gradle/init.d/maven-mirror.gradle
+            # (placed by the `configure gradle maven mirror` step above) is
+            # auto-loaded by Gradle from the user init.d directory — no
+            # `--init-script` flag needed.
+            # `--update-locks` lets Gradle's dependency-locking refresh the
+            # pinned versions when upstream BOMs (Spring Boot, etc.) move,
+            # so the gradle.lockfile doesn't block resolution with "strictly
+            # X" constraint errors. Matches the scope used by sibling
+            # #258 (datahub-mce-consumer) on the same v1.5 base.
+            ./gradlew \
+              --no-daemon \
+              --console=plain \
+              --warning-mode=summary \
+              --parallel \
+              --max-workers=8 \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*' \
+              :datahub-frontend:stage \
+              -x test \
+              -x check
+        - name: stage runtime layout
+          work-dir: ${source.dir}/datahub
+          runs: |
+            set -eux -o pipefail
+
+            # Lay out the runtime image the way upstream does:
+            #   /datahub-frontend/   <- Play distribution (bin/, lib/, conf/)
+            #   /datahub-frontend/conf/mfe.*.yaml
+            #   /datahub-frontend/client-prometheus-config.yaml
+            #   /start.sh            <- entrypoint
+            install -d -m 0755 "${target.dir}/datahub-frontend"
+            cp -a datahub-frontend/build/stage/main/. "${target.dir}/datahub-frontend/"
+
+            # Additional micro-frontend (MFE) config files that ship in the
+            # upstream image alongside the staged distribution.
+            install -D -m 0644 \
+              datahub-frontend/conf/mfe.config.dev.yaml \
+              "${target.dir}/datahub-frontend/conf/mfe.config.dev.yaml"
+            install -D -m 0644 \
+              datahub-frontend/conf/mfe.config.local.yaml \
+              "${target.dir}/datahub-frontend/conf/mfe.config.local.yaml"
+
+            # JMX Prometheus exporter config consumed by the Java agent when
+            # ENABLE_PROMETHEUS=true (see start.sh).
+            install -D -m 0644 \
+              docker/monitoring/client-prometheus-config.yaml \
+              "${target.dir}/datahub-frontend/client-prometheus-config.yaml"
+
+            # Upstream start.sh uses `[[ ... ]]` (bash) under a `/bin/sh`
+            # shebang. Busybox sh on Alpine accepts that, but Debian's dash
+            # does not — rewrite the shebang to /bin/bash and add bash to the
+            # runtime contents.
+            install -D -m 0755 docker/datahub-frontend/start.sh "${target.dir}/start.sh"
+            sed -i '1s|.*|#!/bin/bash|' "${target.dir}/start.sh"
+
+            # Always create /etc/datahub-frontend so the outputs entry can
+            # copy it for every variant. The FIPS-only step below populates
+            # datahub-fips.properties inside it; for non-FIPS variants it
+            # stays empty (the empty dir is a no-op at runtime).
+            install -d -m 0755 "${target.dir}/etc/datahub-frontend"
+      outputs:
+        - source: ${target.dir}/datahub-frontend
+          target: /datahub-frontend
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/javaagents
+          target: /opt/javaagents
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/start.sh
+          target: /start.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/etc/datahub-frontend
+          target: /etc/datahub-frontend
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub-frontend-react
+          target: /opt/docker/sbom/datahub-frontend-react
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/opentelemetry-javaagent
+          target: /opt/docker/sbom/opentelemetry-javaagent
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/jmx_prometheus_javaagent
+          target: /opt/docker/sbom/jmx_prometheus_javaagent
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JMX_VERSION: 0.20.0
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  MFE_CONFIG_FILE_PATH: /datahub-frontend/conf/mfe.config.dev.yaml
+  OTEL_EXPORTER_OTLP_HTTP_COMPRESSION: gzip
+  OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE: "16777215"
+  OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE: "4194304"
+  OTEL_EXPORTER_OTLP_TRACES_COMPRESSION: gzip
+  SERVER_PORT: "9002"
+paths:
+  - type: symlink
+    path: /opentelemetry-javaagent.jar
+    uid: 0
+    gid: 0
+    source: /opt/javaagents/opentelemetry-javaagent.jar
+  - type: symlink
+    path: /jmx_prometheus_javaagent.jar
+    uid: 0
+    gid: 0
+    source: /opt/javaagents/jmx_prometheus_javaagent.jar
+  - type: directory
+    path: /tmp/datahub/logs/datahub-frontend
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal DataHub Frontend image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /start.sh
+ports:
+  - 9002/tcp
