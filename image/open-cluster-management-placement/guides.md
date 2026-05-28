@@ -15,8 +15,8 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened open-cluster-management-placement image includes:
 
 - The `placement` binary built from the official Open Cluster Management releases
-- The entrypoint is the placement binary at `/usr/local/bin/placement`
-- The default command is `controller`, so `docker run` with no arguments starts the Placement Scheduling Controller
+- A `/placement` symlink to the binary at `/usr/local/bin/placement`
+- Default command `[/placement, controller]`, matching the OCM cluster-manager operator argv pattern
 - Configuration via command-line flags
 
 ### Run the Placement controller
@@ -26,28 +26,12 @@ Management hub installed. It cannot be run standalone outside of a Kubernetes en
 
 ### Deploy to a Kubernetes cluster
 
-The Placement controller is deployed by the OCM cluster-manager operator. Upstream's Deployment template passes the
-binary path as `args[0]` (`["/placement", "controller", ...]`). The hardened image has
-`ENTRYPOINT=/usr/local/bin/placement`, so that leading `/placement` arg becomes a subcommand and the container fails
-with `unknown command "/placement"`. Swap the image and drop just that first arg — hosted mode and any other flags the
-operator threads through (`--kubeconfig=...`, feature gates, etc.) are preserved:
+The Placement controller is deployed by the OCM cluster-manager operator using container args such as
+`["/placement", "controller", ...]`. This image uses the same argv-style default command (no separate entrypoint), so it
+is compatible with the operator without patching deployments.
 
-```bash
-# Replace <tag> with the image variant you want to run
-kubectl patch deployment/cluster-manager-placement-controller \
-  -n open-cluster-management-hub \
-  --type=json \
-  -p='[
-    {"op":"replace","path":"/spec/template/spec/containers/0/image","value":"dhi.io/open-cluster-management-placement:<tag>"},
-    {"op":"remove","path":"/spec/template/spec/containers/0/args/0"}
-  ]'
-```
-
-The cluster-manager operator reconciles this Deployment and may revert the patch. For a lasting swap, update the
-`placementImagePullSpec` on the `ClusterManager` CR and override the operator's Deployment template, or manage the
-Placement Deployment outside the operator.
-
-If you renamed the ClusterManager CR, adjust the deployment name and namespace accordingly.
+Set `placementImagePullSpec` on the `ClusterManager` CR (or the cluster-manager Helm chart image overrides) to your DHI
+image reference.
 
 ### Verify the deployment
 
@@ -58,7 +42,7 @@ kubectl get pods -n open-cluster-management-hub -l app=cluster-manager-placement
 ### Check the version
 
 ```bash
-docker run --rm dhi.io/open-cluster-management-placement:<tag> --version
+docker run --rm dhi.io/open-cluster-management-placement:<tag> /placement --version
 ```
 
 ### Configuration
@@ -66,7 +50,7 @@ docker run --rm dhi.io/open-cluster-management-placement:<tag> --version
 The Placement controller is configured via command-line flags. Use the `controller` subcommand to start the controller:
 
 ```bash
-docker run --rm dhi.io/open-cluster-management-placement:<tag> controller --help
+docker run --rm dhi.io/open-cluster-management-placement:<tag> /placement controller --help
 ```
 
 ### Kubernetes deployment
@@ -80,7 +64,7 @@ to the [Open Cluster Management documentation](https://open-cluster-management.i
 | --------------- | -------------------------------------------------------- | ------------------------------------------------------- |
 | Base image      | Red Hat UBI Minimal                                      | Debian 13 hardened base                                 |
 | User            | UID 10001                                                | Nonroot user (UID 65532)                                |
-| Binary location | `/placement`                                             | `/usr/local/bin/placement`                              |
+| Binary location | `/placement`                                             | `/placement` (symlink to `/usr/local/bin/placement`)    |
 | Shell/utilities | Included                                                 | Not included (minimal attack surface)                   |
 | CVE compliance  | Standard patching                                        | Near-zero CVEs with proactive remediation               |
 | Provenance      | Not signed                                               | Signed with complete SBOM/VEX                           |

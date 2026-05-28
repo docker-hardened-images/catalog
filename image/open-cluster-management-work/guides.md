@@ -15,7 +15,8 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened Work image includes:
 
 - The `open-cluster-management-work` binary built from the official Open Cluster Management releases
-- The entrypoint is the work binary at `/usr/local/bin/open-cluster-management-work`
+- A `/work` symlink to the binary at `/usr/local/bin/open-cluster-management-work`
+- Default command `[/work, manager]`, matching the OCM cluster-manager operator argv pattern
 - Configuration via command-line flags
 
 ## Run the Work agent
@@ -44,7 +45,7 @@ kubectl get pods -n open-cluster-management-hub -l app=cluster-manager-work-webh
 ### Check the version
 
 ```bash
-docker run --rm dhi.io/open-cluster-management-work:<tag> --version
+docker run --rm dhi.io/open-cluster-management-work:<tag> /work --version
 ```
 
 ## Configuration

@@ -16,7 +16,8 @@ This Docker Hardened registration-operator image is a component of the
 [Open Cluster Management (OCM)](https://github.com/open-cluster-management-io/ocm) project.
 
 - The `registration-operator` binary built from the official OCM releases
-- The image runs the `registration-operator` binary directly from `/usr/local/bin/registration-operator`
+- Symlink at `/registration-operator` for OCM cluster-manager argv compatibility
+- Default command `[/usr/local/bin/registration-operator, hub]` for the hub operator deployment
 - Configuration via command-line flags
 
 The registration-operator provides two operators:
@@ -34,13 +35,13 @@ access and proper configuration.
 To display version information:
 
 ```bash
-docker run --rm dhi.io/registration-operator:<tag> --version
+docker run --rm dhi.io/registration-operator:<tag> /usr/local/bin/registration-operator --version
 ```
 
 To display help information:
 
 ```bash
-docker run --rm dhi.io/registration-operator:<tag> --help
+docker run --rm dhi.io/registration-operator:<tag> /usr/local/bin/registration-operator --help
 ```
 
 ## Deploy in Kubernetes
@@ -56,8 +57,8 @@ at https://open-cluster-management.io/
 | --------------- | -------------------------------------------------------------------- | ------------------------------------------- |
 | Base image      | UBI 9 minimal                                                        | Debian 13 hardened base                     |
 | User            | UID 10001                                                            | Nonroot user (UID 65532)                    |
-| Entrypoint      | No entrypoint configured                                             | `/usr/local/bin/registration-operator`      |
-| Binary location | `/registration-operator`                                             | `/usr/local/bin/registration-operator`      |
+| Entrypoint      | No entrypoint configured                                             | No entrypoint; argv-style default CMD       |
+| Binaries        | `/registration-operator`                                             | `/registration-operator` (symlink)          |
 | Shell/utilities | Minimal                                                              | Not included (minimal attack surface)       |
 | CVE compliance  | Standard patching                                                    | Near-zero CVEs with proactive remediation   |
 | Provenance      | Not signed                                                           | Signed with complete SBOM/VEX               |
