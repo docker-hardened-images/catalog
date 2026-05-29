@@ -18,6 +18,8 @@ vars:
   COMMIT_SHA: 3c5e7066866006c39ba40861ab0c05b6406ed357
   GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  NODE_BINARIES_EXTRA_SUBDIR: ""
+  NODE_BINARIES_SUBDIR: glibc-217
   NODE_DIGEST: sha256:ba2cfd44252787ae238f9ca6a353c813fe63ffe5e8e961b190b825080d0416fd
   NODE_MAJOR_VERSION: "22"
   NODE_VERSION: 22.22.3
@@ -125,12 +127,17 @@ contents:
             # Note: There's a hardcoded dependency on `linux-x64` directory in the build tooling
             # when it gathers package info to create NOTICE.txt, so create that directory always,
             # regardless of arch.
-            mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/glibc-217/linux-x64"
-            ln -s "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/glibc-217/linux-x64/extract"
-            if [ ${NODE_ARCH} != "x64" ]; then
-              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/glibc-217/linux-${NODE_ARCH}"
-              ln -s "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/glibc-217/linux-${NODE_ARCH}/extract"
-            fi
+            for node_subdir in glibc-217 ; do
+              if [ -z "${node_subdir}" ]; then
+                continue
+              fi
+              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64"
+              ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64/extract"
+              if [ ${NODE_ARCH} != "x64" ]; then
+                mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}"
+                ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}/extract"
+              fi
+            done
 
             # 1. Invoke the build script directly (instead of using "yarn build"), since the option to
             # build the application for all platforms is hard-coded in "yarn build".
@@ -145,9 +152,16 @@ contents:
               --skip-docker-wolfi --skip-docker-cloud --skip-docker-cloud-fips \
               --skip-docker-serverless --skip-docker-fips
 
+            KBN_DIST="${source.dir}/kibana/build/default/kibana-9.1.10-SNAPSHOT-linux-${GO_ARCH}"
+            if [ ! -x "${KBN_DIST}/bin/kibana" ]; then
+              cd "${source.dir}/kibana"
+              KBN_VERSION="9.1.10" KBN_GO_ARCH="${GO_ARCH}" \
+                node --no-experimental-require-module scripts/render-bin-scripts.js
+            fi
+
             mkdir -p "${target.dir}/opt/kibana/kibana-9.1.10"
 
-            cp -r "${source.dir}/kibana/build/default/kibana-9.1.10-SNAPSHOT-linux-${GO_ARCH}"/* "${target.dir}/opt/kibana/kibana-9.1.10"
+            cp -r "${KBN_DIST}"/* "${target.dir}/opt/kibana/kibana-9.1.10"
 
             cd "${target.dir}/opt/kibana/kibana-9.1.10"
             rm -rf data
@@ -171,11 +185,23 @@ contents:
           mode: "0444"
           source: image/kibana/patch/yarn-patches_9.3.json
         - type: file
+          path: ${source.dir}/patches/yarn-patches_9.4.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.4.json
+        - type: file
           path: ${source.dir}/patches/expr-eval_9.1.patch
           uid: 65532
           gid: 65532
           mode: "0444"
           source: image/kibana/patch/expr-eval_9.1.patch
+        - type: file
+          path: ${source.dir}/kibana/scripts/render-bin-scripts.js
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/scripts/render-bin-scripts.js
       accounts:
         run-as: node
         users:

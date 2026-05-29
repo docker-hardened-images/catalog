@@ -1,32 +1,34 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Kibana 9.2.x
+name: Kibana 9.4.x
 image: dhi.io/kibana
 variant: runtime
 tags:
-  - "9.2"
-  - 9.2.8
-  - 9.2-debian13
-  - 9.2.8-debian13
+  - "9"
+  - "9.4"
+  - 9.4.1
+  - 9-debian13
+  - 9.4-debian13
+  - 9.4.1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2025-10-21"
+  release: "2026-05-05"
 vars:
   ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
-  COMMIT_SHA: 2484ea8af037aecc848b80cdf39f66b62eb7b5a0
+  COMMIT_SHA: 6b92ccb460a725bd951d72bba6ead7b9697f9c6b
   GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
-  NODE_BINARIES_EXTRA_SUBDIR: ""
-  NODE_BINARIES_SUBDIR: glibc-217
-  NODE_DIGEST: sha256:ba2cfd44252787ae238f9ca6a353c813fe63ffe5e8e961b190b825080d0416fd
-  NODE_MAJOR_VERSION: "22"
-  NODE_VERSION: 22.22.3
-  SEMVER_MAJOR_MINOR_VERSION: "9.2"
+  NODE_BINARIES_EXTRA_SUBDIR: glibc-217
+  NODE_BINARIES_SUBDIR: default
+  NODE_DIGEST: sha256:835b4312f1fb95020bec832a171e7d6d6d338e1313c05de2bd6335a762656f3e
+  NODE_MAJOR_VERSION: "24"
+  NODE_VERSION: 24.16.0
+  SEMVER_MAJOR_MINOR_VERSION: "9.4"
   SEMVER_MAJOR_VERSION: "9"
-  SEMVER_VERSION: 9.2.8
-  VERSION: 9.2.8
+  SEMVER_VERSION: 9.4.1
+  VERSION: 9.4.1
 contents:
   packages:
     - '!libelogind0'
@@ -41,22 +43,22 @@ contents:
     - tini
   builds:
     - name: kibana
-      uses: dhi.io/node:22.22.3-debian13-dev@sha256:ba2cfd44252787ae238f9ca6a353c813fe63ffe5e8e961b190b825080d0416fd
+      uses: dhi.io/node:24.16.0-debian13-dev@sha256:835b4312f1fb95020bec832a171e7d6d6d338e1313c05de2bd6335a762656f3e
       contents:
         packages:
           - bash
           - gzip
           - jq
         files:
-          - url: git+https://github.com/elastic/kibana.git#v9.2.8
-            checksum: 2484ea8af037aecc848b80cdf39f66b62eb7b5a0
+          - url: git+https://github.com/elastic/kibana.git#v9.4.1
+            checksum: 6b92ccb460a725bd951d72bba6ead7b9697f9c6b
             path: ${source.dir}/kibana
             spdx:
               name: kibana
-              version: 9.2.8
+              version: 9.4.1
               packages:
                 - name: kibana
-                  purl: pkg:dhi/kibana@9.2.8
+                  purl: pkg:dhi/kibana@9.4.1
                   license: Apache-2.0
             uid: 65532
             gid: 65532
@@ -74,31 +76,39 @@ contents:
             # First, check the major version of Node against the build version;
             # this prevents unintentional major version bumps
             REQUIRED_VERSION=$(sed -nr "s/\"node\": \"([0-9]+)\.[0-9]+\.[0-9]+\".*/\1/p" package.json | tr -d " ")
-            if [ "$REQUIRED_VERSION" != "22" ]; then
-              echo "Error: upstream requirement for Node v$REQUIRED_VERSION not met by build v22."
+            if [ "$REQUIRED_VERSION" != "24" ]; then
+              echo "Error: upstream requirement for Node v$REQUIRED_VERSION not met by build v24."
               echo "Error: if version change is intentional, update this version verification logic."
               exit 1
             fi
 
             # Then, update the "engines.node" requirement to reference the current Node build version;
             # otherwise the upstream version check logic will fail
-            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"22.22.3\"/g" package.json
-        - name: bump yarn deps (9.2)
+            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"24.16.0\"/g" package.json
+        - name: bump yarn deps (9.4)
           uses: yarn/bump@v2
           run-as: "65532"
           privileged: true
           with:
-            bumps: ${source.dir}/patches/yarn-patches_9.2.json
+            bumps: ${source.dir}/patches/yarn-patches_9.4.json
             yarn-root: ${source.dir}/kibana
-        - name: fix lodash resolution (9.2)
+        - name: force vulnerable lockfile bumps (9.4)
+          run-as: "65532"
           work-dir: ${source.dir}/kibana
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            jq '.resolutions.lodash = "4.18.1"' package.json > package.new.json
-            rm package.json
-            mv package.new.json package.json
+            # yarn 1's resolutions field can't reach the @elastic/elasticsearch/@elastic/transport
+            # nested undici consumer. Multiple resolution forms were tried and silently dropped:
+            #   - "@elastic/elasticsearch/@elastic/transport/undici" (anchored, 3-segment)
+            #   - "**/@elastic/elasticsearch/@elastic/transport/undici" (globbed)
+            #   - "**/@elastic/elasticsearch/undici" (globbed, post-hoist path)
+            #   - "@elastic/elasticsearch/undici" (anchored, 2-segment)
+            # All left the consumer's range "^7.19.1" locked at the vulnerable 7.22.0.
+            # Workaround: drop the cached lockfile block so yarn re-resolves against the registry,
+            # which currently publishes 7.25.0+ as the latest 7.x.
+            sed -i '/^undici@\^7\.19\.1:/,/^$/d' yarn.lock
 
             yarn install --package-lock-only
         - name: build kibana
@@ -122,15 +132,15 @@ contents:
             # Note: There's a hardcoded dependency on `linux-x64` directory in the build tooling
             # when it gathers package info to create NOTICE.txt, so create that directory always,
             # regardless of arch.
-            for node_subdir in glibc-217 ; do
+            for node_subdir in default glibc-217; do
               if [ -z "${node_subdir}" ]; then
                 continue
               fi
-              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64"
-              ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64/extract"
+              mkdir -p "${source.dir}/kibana/.node_binaries/24.16.0/${node_subdir}/linux-x64"
+              ln -sf "/opt/nodejs/node-v24.16.0" "${source.dir}/kibana/.node_binaries/24.16.0/${node_subdir}/linux-x64/extract"
               if [ ${NODE_ARCH} != "x64" ]; then
-                mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}"
-                ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}/extract"
+                mkdir -p "${source.dir}/kibana/.node_binaries/24.16.0/${node_subdir}/linux-${NODE_ARCH}"
+                ln -sf "/opt/nodejs/node-v24.16.0" "${source.dir}/kibana/.node_binaries/24.16.0/${node_subdir}/linux-${NODE_ARCH}/extract"
               fi
             done
 
@@ -147,18 +157,18 @@ contents:
               --skip-docker-wolfi --skip-docker-cloud --skip-docker-cloud-fips \
               --skip-docker-serverless --skip-docker-fips
 
-            KBN_DIST="${source.dir}/kibana/build/default/kibana-9.2.8-SNAPSHOT-linux-${GO_ARCH}"
+            KBN_DIST="${source.dir}/kibana/build/default/kibana-9.4.1-SNAPSHOT-linux-${GO_ARCH}"
             if [ ! -x "${KBN_DIST}/bin/kibana" ]; then
               cd "${source.dir}/kibana"
-              KBN_VERSION="9.2.8" KBN_GO_ARCH="${GO_ARCH}" \
+              KBN_VERSION="9.4.1" KBN_GO_ARCH="${GO_ARCH}" \
                 node --no-experimental-require-module scripts/render-bin-scripts.js
             fi
 
-            mkdir -p "${target.dir}/opt/kibana/kibana-9.2.8"
+            mkdir -p "${target.dir}/opt/kibana/kibana-9.4.1"
 
-            cp -r "${KBN_DIST}"/* "${target.dir}/opt/kibana/kibana-9.2.8"
+            cp -r "${KBN_DIST}"/* "${target.dir}/opt/kibana/kibana-9.4.1"
 
-            cd "${target.dir}/opt/kibana/kibana-9.2.8"
+            cd "${target.dir}/opt/kibana/kibana-9.4.1"
             rm -rf data
       paths:
         - type: file
@@ -204,8 +214,8 @@ contents:
             uid: 65532
             gid: 65532
       outputs:
-        - source: ${target.dir}/opt/kibana/kibana-9.2.8
-          target: /opt/kibana/kibana-9.2.8
+        - source: ${target.dir}/opt/kibana/kibana-9.4.1
+          target: /opt/kibana/kibana-9.4.1
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/kibana
@@ -233,8 +243,8 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   ELASTIC_CONTAINER: "true"
-  KIBANA_VERSION: 9.2.8
-  PATH: /opt/kibana/kibana-9.2.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  KIBANA_VERSION: 9.4.1
+  PATH: /opt/kibana/kibana-9.4.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
   - type: directory
     path: /usr/share
@@ -245,9 +255,9 @@ paths:
     path: /usr/share/kibana
     uid: 0
     gid: 0
-    source: /opt/kibana/kibana-9.2.8
+    source: /opt/kibana/kibana-9.4.1
   - type: directory
-    path: /opt/kibana/kibana-9.2.8/data
+    path: /opt/kibana/kibana-9.4.1/data
     uid: 65532
     gid: 65532
     mode: "0755"
@@ -258,7 +268,7 @@ paths:
     mode: "0755"
     source: image/kibana/bin/kibana-docker
   - type: file
-    path: /opt/kibana/kibana-9.2.8/config/kibana.yml
+    path: /opt/kibana/kibana-9.4.1/config/kibana.yml
     uid: 65532
     gid: 65532
     mode: "0644"
