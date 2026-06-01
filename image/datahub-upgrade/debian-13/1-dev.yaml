@@ -22,13 +22,13 @@ vars:
   DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
   DOCKERIZE_VERSION: 0.24.3
   GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:fd3180feff08929120077efe8799d54693a9861006cf400e5788591948f7402d
-  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:a6d57632575d2fca4c5a8d4881b67ce79999ba1b77bade83178d552a901872c6
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:eb51cd6aa0a7d03dfd9ef070ba2368ba1d0c6e9c1996239d21c93ffa23976705
   GRADLE_VERSION: 8.14.5
   JMX_PROMETHEUS_SHA256: 7d61f737fd661610ccc14aea79764faa1ea94a340cbc8f0029b3d2edea3d80c1
   JMX_PROMETHEUS_VERSION: 1.0.1
-  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:1c392e32c2e2b4f200e9a9b1db8dcea7f6329619bd448b98a8e37bcee56fef1c
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
   JRE_VERSION: 17.0.19.10
-  KUBECTL_REFERENCE: dhi/kubectl:1.34.8-debian13@sha256:bdd1353c0f66a5284eacee9189e522dcc08151fba2a2467980ea6bf2062b2ef6
+  KUBECTL_REFERENCE: dhi/kubectl:1.34.8-debian13@sha256:44caa250d29f9293151d3af303ceded6a01e103f13a37bde4f453595d3e19159
   KUBECTL_VERSION: 1.34.8
   OTEL_JAVAAGENT_SHA256: bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b
   OTEL_JAVAAGENT_VERSION: 2.27.0
@@ -60,7 +60,7 @@ contents:
     - util-linux
   builds:
     - name: datahub-upgrade
-      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:a6d57632575d2fca4c5a8d4881b67ce79999ba1b77bade83178d552a901872c6
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:eb51cd6aa0a7d03dfd9ef070ba2368ba1d0c6e9c1996239d21c93ffa23976705
       work-dir: ${source.dir}/datahub
       environment:
         GRADLE_OPTS: -Dorg.gradle.daemon=false
@@ -146,6 +146,13 @@ contents:
             name: jmx_prometheus_javaagent
             purl: pkg:maven/io.prometheus.jmx/jmx_prometheus_javaagent@1.0.1
             version: 1.0.1
+        - name: stage gradle dependency overrides init script
+          work-dir: ${source.dir}/datahub
+          runs: |
+            set -eux -o pipefail
+
+            cp "${source.dir}/patch/1.overrides.gradle" \
+              "${source.dir}/datahub/dhi-overrides.init.gradle"
         - name: build
           work-dir: ${source.dir}/datahub
           privileged: true
@@ -175,9 +182,19 @@ contents:
             # shared cache mount. `-PapacheMavenRepositoryUrl` covers
             # DataHub's `repositories.gradle` hook; the init script
             # handles plugin/buildscript classpaths the property doesn't.
+            # `--update-locks` lets Gradle's dependency-locking refresh
+            # the pinned versions for the modules our resolutionStrategy
+            # forces. Without this, the override.gradle's `useVersion`
+            # calls hit gradle's lockfile and fail with
+            #   "Did not resolve <module>:<old> which has been forced /
+            #    substituted to a different version: <new>".
+            # Patterns mirror the groups force-substituted in
+            # patch/1.overrides.gradle.
             ./gradlew :datahub-upgrade:assemble -x test \
               --no-daemon --no-watch-fs --parallel --max-workers=4 \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,org.apache.commons:*,io.opentelemetry:*' \
               --init-script "${source.dir}/files/init.gradle" \
+              --init-script "${source.dir}/datahub/dhi-overrides.init.gradle" \
               -PapacheMavenRepositoryUrl=https://maven-central.storage-download.googleapis.com/maven2/
 
             # Fail loudly if upstream renames the jar path; otherwise
@@ -222,6 +239,11 @@ contents:
           uid: 0
           gid: 0
           source: image/datahub-upgrade/files/init.gradle
+        - type: file
+          path: ${source.dir}/patch/1.overrides.gradle
+          uid: 0
+          gid: 0
+          source: image/datahub-upgrade/patch/1.overrides.gradle
       outputs:
         - source: ${target.dir}/datahub
           target: /datahub
@@ -266,7 +288,10 @@ contents:
         - name: go dependencies
           uses: go/bump@v2
           with:
-            deps: []
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - golang.org/x/sys@v0.45.0
             download: true
         - name: build
           uses: go/build@v1
@@ -284,17 +309,20 @@ contents:
           uid: 0
           gid: 0
   artifacts:
-    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:1c392e32c2e2b4f200e9a9b1db8dcea7f6329619bd448b98a8e37bcee56fef1c
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
       includes:
         - opt/**
         - usr/local/bin/**
       uid: 0
       gid: 0
-    - name: dhi.io/kubectl:1.34.8-debian13@sha256:bdd1353c0f66a5284eacee9189e522dcc08151fba2a2467980ea6bf2062b2ef6
+    - name: dhi.io/kubectl:1.34.8-debian13@sha256:44caa250d29f9293151d3af303ceded6a01e103f13a37bde4f453595d3e19159
       includes:
-        - opt/docker/sbom/kubernetes
+        - opt/docker/sbom/dhi-kubectl/**
+        - usr/bin/kubectl
         - usr/local/bin/kubectl
-        - var/lib/dpkg/status.d/**
+      excludes:
+        - usr/lib/ssl/certs
+        - usr/lib/ssl/private
       uid: 0
       gid: 0
 accounts:
