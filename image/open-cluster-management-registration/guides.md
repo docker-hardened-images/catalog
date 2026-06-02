@@ -15,7 +15,7 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened Registration image includes:
 
 - The `registration` binary built from the official Open Cluster Management releases
-- The entrypoint is the registration binary at `/usr/local/bin/registration`
+- Default command `[/registration, controller]` for OCM hub deployment argv compatibility (no entrypoint)
 - A compatibility symlink at `/registration` for upstream Kubernetes manifests
 - Configuration via command-line flags
 
