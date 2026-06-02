@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-python
+variant: runtime
+tags:
+  - 3.13.13-0
+  - 3.13.13-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COSIGN_DIGEST: sha256:9dfbfe297449aa1f23f4ea8dc1872c91ce40c810b851ae075e0a703461426dc1
+  COSIGN_VERSION: 2.5.0
+  DHI_REL: "0"
+  DHI_VERSION: 3.13.13-0
+  OIDC_IDENTITY: thomas@python.org
+  OIDC_ISSUER: https://accounts.google.com
+  PACKAGE_WORK_DIR: python3.13
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  VERSION: 3.13.13
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: python deb
+      work-dir: ${source.dir}/python3.13
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - g++
+          - gawk
+          - gcc
+          - git
+          - grep
+          - libbluetooth-dev
+          - libbz2-dev
+          - libc6
+          - libc6-dev
+          - libdb-dev
+          - libffi-dev
+          - libgdbm-dev
+          - liblzma-dev
+          - libncurses-dev
+          - libreadline-dev
+          - libsqlite3-dev
+          - libssl-dev
+          - make
+          - pkg-config
+          - sed
+          - tk-dev
+          - uuid-dev
+          - zip
+          - zlib1g-dev
+        files:
+          - url: https://www.python.org/ftp/python/3.13.13/Python-3.13.13.tar.xz.sigstore
+            path: ${source.dir}/Python-3.13.13.tar.xz.sigstore
+            uid: 0
+            gid: 0
+          - url: https://www.python.org/ftp/python/3.13.13/Python-3.13.13.tar.xz
+            path: ${source.dir}/python.tar.xz
+            spdx:
+              name: python
+              version: 3.13.13
+              packages:
+                - name: python
+                  purl: pkg:dhi/python@3.13.13
+                  license: PSF-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/cosign:2.5.0@sha256:9dfbfe297449aa1f23f4ea8dc1872c91ce40c810b851ae075e0a703461426dc1
+            includes:
+              - usr/local/bin/cosign
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify
+          uses: cosign/verify-blob@v1
+          with:
+            blob: ${source.dir}/python.tar.xz
+            certificate-identity: thomas@python.org
+            certificate-oidc-issuer: https://accounts.google.com
+            offline: true
+            signature: ${source.dir}/Python-3.13.13.tar.xz.sigstore
+        - name: setup
+          runs: |
+            set -eux -o pipefail
+
+            tar -xaf "${source.dir}/python.tar.xz" --strip-components=1
+
+            for _subdir in common "3.13"; do
+              _dir="${source.dir}/patch/${_subdir}"
+              [ -d "${_dir}" ] || continue
+              for _p in $(find "${_dir}" -maxdepth 1 -type f -name '*.patch' | LC_ALL=C sort); do
+                git apply "${_p}"
+              done
+            done
+
+            for f in debian/control.in debian/changelog debian/rules debian/not-installed.in \
+              debian/libpython-minimal.install.in \
+              debian/libpython-stdlib.install.in \
+              debian/python-minimal.install.in \
+              debian/python.install.in; do
+              sed -i \
+                -e "s/@PYTHON_MINOR@/3.13/g" \
+                -e "s/@VERSION@/3.13.13/g" \
+                "${f}"
+            done
+
+            mv debian/control.in debian/control
+            mv debian/libpython-minimal.install.in "debian/libpython-3.13-minimal.install"
+            mv debian/libpython-stdlib.install.in "debian/libpython-3.13-stdlib.install"
+            mv debian/python-minimal.install.in "debian/python-3.13-minimal.install"
+            mv debian/python.install.in "debian/python-3.13.install"
+            mv debian/not-installed.in debian/not-installed
+        - uses: dpkg/bump@v1
+          with:
+            version: 3.13.13-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/python/patch
+          recursive: true
+        - type: directory
+          path: ${source.dir}/python3.13/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/python/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
