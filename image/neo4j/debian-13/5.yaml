@@ -148,7 +148,29 @@ contents:
             # After updated dependencies, the pom.xml file may need linting;
             mvn spotless:apply
 
-            mvn clean install -DskipTests -Doverwrite=true
+            # Drop the test-only com.neo4j:enterprise-it-test-support dependency from the
+            # genai-plugin module (added in 2026.05.0). It is an Enterprise artifact not
+            # published to the public Maven mirror, and Maven resolves test-scoped deps
+            # even under maven.test.skip, so the build cannot fetch it. We skip tests, so
+            # removing it does not affect the runtime jar. Guarded so older lines that
+            # lack the module (e.g. 5.x) are unaffected.
+            if [ -f community/genai-plugin/pom.xml ]; then
+              xmlstarlet ed -L \
+                -N m=http://maven.apache.org/POM/4.0.0 \
+                -d "/m:project/m:dependencies/m:dependency[m:groupId='com.neo4j' and m:artifactId='enterprise-it-test-support']" \
+                community/genai-plugin/pom.xml
+            fi
+
+            # Use maven.test.skip (not skipTests) so Maven skips test compilation; this
+            # also avoids resolving the remaining test-scoped dependencies of the test
+            # sources we are not building.
+            # dependency.analyze.skip is neo4j's own property wired into the
+            # maven-dependency-plugin <skip> in the parent pom. With test compilation
+            # skipped, test-scoped deps (e.g. guava, compile-testing) look unused and
+            # modules that hardcode failOnWarning=true (e.g. annotations) would fail
+            # analyze-only. The mdep.analyze.skip property is ignored because neo4j binds
+            # <skip> to its own property, so we set dependency.analyze.skip instead.
+            mvn clean install -Dmaven.test.skip=true -Ddependency.analyze.skip=true -Doverwrite=true
         - name: install
           work-dir: ${source.dir}/neo4j
           runs: |
