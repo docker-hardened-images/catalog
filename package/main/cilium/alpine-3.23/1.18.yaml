@@ -1,0 +1,176 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-cilium
+variant: runtime
+tags:
+  - 1.18.10-alpine3.23
+  - 1.18.10-r2-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-29"
+vars:
+  COMMIT_SHA: 6bf2fe83d2fce50283b702d96c6190f7693dc224
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.3-r0
+  PACKAGE_NAME: cilium-1.18
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "1.18"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.18.10
+  VERSION: 1.18.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cilium-1.18
+      work-dir: /go/src/github.com/cilium/cilium
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.3-r0
+          - golang-1.26-oci-config=1.26.3-r0
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.18.10
+            checksum: 6bf2fe83d2fce50283b702d96c6190f7693dc224
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: cilium-operator
+              version: 1.18.10
+              packages:
+                - name: cilium-operator
+                  purl: pkg:golang/github.com/cilium/cilium@1.18.10
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.18 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel@v1.41.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=vendor -v ./operator/...
+        - name: build cilium-operator-generic
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-generic
+            packages: ./operator
+        - name: build cilium-operator-generic dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-generic-dev
+            packages: ./operator
+            strip: false
+        - name: build cilium-operator-aws
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-aws
+            packages: ./operator
+        - name: build cilium-operator-aws dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-aws-dev
+            packages: ./operator
+            strip: false
+        - name: build cilium-operator-azure
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-azure
+            packages: ./operator
+        - name: build cilium-operator-azure dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-operator-azure-dev
+            packages: ./operator
+            strip: false
+        - name: build cilium-clustermesh-apiserver
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-clustermesh-apiserver
+            packages: ./clustermesh-apiserver
+        - name: build cilium-clustermesh-apiserver dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cilium-clustermesh-apiserver-dev
+            packages: ./clustermesh-apiserver
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Cilium binaries
+            files:
+              - usr/bin/cilium-operator-generic
+            license: Apache-2.0
+            name: cilium-1.18
+            priority: "200"
+            provides: cilium=$pkg_full_version
+            rel: 2
+            replaces: cilium
+            subpackages:
+              - files:
+                  - path: usr/bin/cilium-operator-aws
+                name: cilium-operator-aws
+              - files:
+                  - path: usr/bin/cilium-operator-azure
+                name: cilium-operator-azure
+              - files:
+                  - path: usr/bin/cilium-clustermesh-apiserver
+                name: cilium-clustermesh-apiserver
+              - files:
+                  - path: usr/bin/cilium-operator-generic
+                    source: usr/bin/cilium-operator-generic-dev
+                name: cilium-1.18-dev
+              - files:
+                  - path: usr/bin/cilium-operator-aws
+                    source: usr/bin/cilium-operator-aws-dev
+                name: cilium-operator-aws-dev
+              - files:
+                  - path: usr/bin/cilium-operator-azure
+                    source: usr/bin/cilium-operator-azure-dev
+                name: cilium-operator-azure-dev
+              - files:
+                  - path: usr/bin/cilium-clustermesh-apiserver
+                    source: usr/bin/cilium-clustermesh-apiserver-dev
+                name: cilium-clustermesh-apiserver-dev
+            url: https://github.com/cilium/cilium
+            version: 1.18.10
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
