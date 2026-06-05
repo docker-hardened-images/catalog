@@ -153,8 +153,8 @@ validated under FIPS 140, a U.S. government standard for secure cryptographic op
 
 **Runtime requirements specific to FIPS:**
 
-- FIPS mode restricts cryptographic operations to FIPS-validated algorithms
-- Usage of non-compliant operations (like MD5) will fail
+- FIPS variants enable the Go FIPS runtime posture and use FIPS-validated cryptographic modules for supported operations
+- Strict `fips140=only` behavior, where non-FIPS crypto calls may panic or error, is not enabled by default
 - Larger image size due to FIPS-validated cryptographic libraries
 
 ## Migrate to a Docker Hardened Image
