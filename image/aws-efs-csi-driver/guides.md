@@ -229,9 +229,6 @@ spec:
 The `2-fips` tag provides a FIPS 140-validated build of the AWS EFS CSI Driver. Use this variant in environments that
 require FIPS-compliant cryptographic operations, such as US federal government workloads.
 
-The FIPS variant sets `GODEBUG=fips140=only`, which enforces strict FIPS mode — any use of non-FIPS-approved algorithms
-causes a runtime panic. It also sets `GOFIPS140=v1.0.0` to use the validated Go FIPS module.
-
 Deploy the FIPS variant with Helm:
 
 ```bash
