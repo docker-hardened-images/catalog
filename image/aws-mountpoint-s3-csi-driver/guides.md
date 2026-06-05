@@ -280,7 +280,7 @@ characteristics:
 
 **FIPS implementation:**
 
-- Go binaries use `GODEBUG=fips140=only` with OpenSSL FIPS provider (3.1.2)
+- Go binaries use `GODEBUG=fips140=on` with OpenSSL FIPS provider (3.1.2)
 - OpenSSL FIPS module (3.5.5) provides FIPS 140-3 validated cryptography
 - FIPS mode enforced at runtime via `GOFIPS140=v1.0.0`
 
