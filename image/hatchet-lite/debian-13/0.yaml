@@ -1,0 +1,235 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Hatchet Lite 0.x
+image: dhi.io/hatchet-lite
+variant: runtime
+tags:
+  - "0"
+  - "0.88"
+  - 0.88.0
+  - 0-debian13
+  - 0.88-debian13
+  - 0.88.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-01"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: e6d1f252552935828c7e746fe27311b7651084cc
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+  NODE_BUILD_REFERENCE: dhi/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
+  PNPM_VERSION: 10.16.1
+  SEMVER_MAJOR_MINOR_VERSION: "0.88"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.88.0
+  VERSION: 0.88.0
+contents:
+  packages:
+    - '!base-files'
+    - bash
+    - ca-certificates
+    - tzdata
+  builds:
+    - name: hatchet-frontend
+      uses: dhi.io/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
+      work-dir: ${source.dir}/hatchet/frontend/app
+      environment:
+        CI: "true"
+        PNPM_HOME: /pnpm
+      caches:
+        - path: /pnpm/store
+      contents:
+        packages:
+          - python3
+        files:
+          - url: git+https://github.com/hatchet-dev/hatchet.git#v0.88.0
+            checksum: e6d1f252552935828c7e746fe27311b7651084cc
+            path: ${source.dir}/hatchet
+            spdx:
+              name: hatchet-frontend
+              version: 0.88.0
+              packages:
+                - name: hatchet-frontend
+                  purl: pkg:dhi/hatchet-frontend@0.88.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: generate docs index
+          work-dir: ${source.dir}/hatchet/frontend/snippets
+          runs: |
+            set -eux -o pipefail
+
+            python3 generate.py
+        - name: install dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@10.16.1 --activate
+            pnpm install --frozen-lockfile
+            pnpm store prune
+        - name: build frontend
+          runs: |
+            set -eux -o pipefail
+
+            pnpm run build
+        - name: stage assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/static-assets
+            cp -a dist/. ${target.dir}/static-assets/
+      outputs:
+        - source: ${target.dir}/static-assets
+          target: /static-assets
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/hatchet-frontend
+          target: /opt/docker/sbom/hatchet-frontend
+          uid: 0
+          gid: 0
+    - name: hatchet
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+      work-dir: /go/src/github.com/hatchet-dev/hatchet
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/hatchet-dev/hatchet.git#v0.88.0
+            checksum: e6d1f252552935828c7e746fe27311b7651084cc
+            path: /go/src/github.com/hatchet-dev/hatchet
+            spdx:
+              name: hatchet
+              version: 0.88.0
+              packages:
+                - name: hatchet
+                  purl: pkg:golang/github.com/hatchet-dev/hatchet@0.88.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/slack-go/slack@v0.23.1
+              - golang.org/x/crypto@v0.52.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # Narrow to the three binaries we ship. ./cmd/hatchet-cli includes a flaky
+            # concurrent-file-lock test (TestConcurrentOperationsWithLock) that fails
+            # under xsmall-runner contention; that binary isn't built into this image.
+            CGO_ENABLED=0 go test -short -count=1 -v \
+              ./cmd/hatchet-lite/... \
+              ./cmd/hatchet-admin/... \
+              ./cmd/hatchet-migrate/...
+        - name: build hatchet-lite
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.Version=v0.88.0
+            output: ${target.dir}/usr/local/bin/hatchet-lite
+            packages: ./cmd/hatchet-lite
+        - name: build hatchet-admin
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/hatchet-dev/hatchet/cmd/hatchet-admin/cli.Version=v0.88.0
+            output: ${target.dir}/usr/local/bin/hatchet-admin
+            packages: ./cmd/hatchet-admin
+        - name: build hatchet-migrate
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.Version=v0.88.0
+            output: ${target.dir}/usr/local/bin/hatchet-migrate
+            packages: ./cmd/hatchet-migrate
+      outputs:
+        - source: ${target.dir}/usr/local/bin/hatchet-lite
+          target: /usr/local/bin/hatchet-lite
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/hatchet-admin
+          target: /usr/local/bin/hatchet-admin
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/hatchet-migrate
+          target: /usr/local/bin/hatchet-migrate
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/hatchet
+          target: /opt/docker/sbom/hatchet
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  HATCHET_CONFIG_DIR: /config
+  LITE_FRONTEND_PORT: "8081"
+  LITE_RUNTIME_PORT: "8888"
+  LITE_STATIC_ASSET_DIR: /static-assets
+paths:
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/hatchet-lite/bin/docker-entrypoint.sh
+  - type: directory
+    path: /config
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal Hatchet Lite image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+ports:
+  - 8888/tcp
+  - 7070/tcp
