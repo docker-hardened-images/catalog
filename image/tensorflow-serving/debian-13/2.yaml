@@ -5,28 +5,28 @@ image: dhi.io/tensorflow-serving
 variant: runtime
 tags:
   - "2"
-  - "2.19"
-  - 2.19.1
+  - "2.20"
+  - 2.20.0
   - 2-debian
   - 2-debian13
-  - 2.19-debian
-  - 2.19-debian13
-  - 2.19.1-debian
-  - 2.19.1-debian13
+  - 2.20-debian
+  - 2.20-debian13
+  - 2.20.0-debian
+  - 2.20.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
-  BAZEL_VERSION: 6.6.0
-  COMMIT_SHA: eab9c3529b785dc685ab8c687f298e67016c8f81
+  BAZEL_VERSION: 7.7.1
+  COMMIT_SHA: bc7e9d2b9a419294c4526e293c2df8727b0d3116
   PYTHON_BUILD_DIGEST: sha256:decaef109e54254566a94da61c08fff67f73254d2b455c9324489ac7c4344448
   PYTHON_BUILD_TAG: 3.11.15-debian13-dev
   PYTHON_MAJOR_MINOR_VERSION: "3.11"
-  SEMVER_MAJOR_MINOR_VERSION: "2.19"
+  SEMVER_MAJOR_MINOR_VERSION: "2.20"
   SEMVER_MAJOR_VERSION: "2"
-  SEMVER_VERSION: 2.19.1
-  VERSION: 2.19.1
+  SEMVER_VERSION: 2.20.0
+  VERSION: 2.20.0
 contents:
   packages:
     - ca-certificates
@@ -52,14 +52,14 @@ contents:
           - pkg-config
           - sed
         files:
-          - url: git+https://github.com/tensorflow/serving.git#2.19.1
+          - url: git+https://github.com/tensorflow/serving.git#2.20.0
             path: ${source.dir}/tensorflow-serving
             spdx:
               name: tensorflow-serving
-              version: 2.19.1
+              version: 2.20.0
               packages:
                 - name: tensorflow-serving
-                  purl: pkg:dhi/tensorflow-serving@2.19.1
+                  purl: pkg:dhi/tensorflow-serving@2.20.0
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -67,13 +67,13 @@ contents:
             path: ${source.dir}/tensorflow-serving/third_party/rapidjson/3b2441b87f99ab65f37b141a7b548ebadb607b96.patch
             uid: 0
             gid: 0
-          - url: https://github.com/bazelbuild/bazel/releases/download/6.6.0/bazel-6.6.0-linux-${ARCH}
-            checksum: https://github.com/bazelbuild/bazel/releases/download/6.6.0/bazel-6.6.0-linux-${ARCH}.sha256
+          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${ARCH}.sha256
             path: /opt/bazel/bin/bazel
             uid: 0
             gid: 0
             mode: "0755"
-          - url: https://github.com/bazelbuild/bazel/releases/download/6.6.0/bazel-6.6.0-linux-${ARCH}.sig
+          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${ARCH}.sig
             path: /opt/bazel/signature/bazel.sig
             uid: 0
             gid: 0
@@ -86,7 +86,7 @@ contents:
           uses: git/checkout@v1
           with:
             dir: tensorflow-serving
-            expected-commit: eab9c3529b785dc685ab8c687f298e67016c8f81
+            expected-commit: bc7e9d2b9a419294c4526e293c2df8727b0d3116
         - name: verify bazel binary
           uses: gpg/verify@v1
           with:
@@ -110,8 +110,8 @@ contents:
           with:
             license: Apache-2.0
             name: tensorflow
-            purl: pkg:github/tensorflow/tensorflow@2.19.1
-            version: 2.19.1
+            purl: pkg:github/tensorflow/tensorflow@2.20.0
+            version: 2.20.0
         - name: build
           runs: |
             set -eux -o pipefail
@@ -120,8 +120,15 @@ contents:
 
             PLATFORM_FLAGS=""
             if [ '${target.arch}' = "amd64" ]; then
-              # Though named "release", it's actually enabling amd64-specific optimizations
-              PLATFORM_FLAGS="--config=release"
+              # --config=release enables amd64-specific optimizations (-mavx, -msse4.2).
+              # enable_hermetic_cc=false disables the rules_ml_toolchain hermetic clang +
+              # ubuntu18/glibc-2.27 sysroot that serving 2.20 added. That sysroot predates
+              # strlcpy and the __isoc23_* C23 symbols (glibc 2.38), but libevent's configure
+              # genrule compiles with the container gcc against Debian 13 glibc and emits them,
+              # so linking against glibc 2.27 fails. Disabling it makes bazel use the local
+              # Debian 13 gcc-14/glibc for both compile and link. arm64 is unaffected (its
+              # hermetic sysroot is commented out upstream).
+              PLATFORM_FLAGS="--config=release --@rules_ml_toolchain//cc_toolchain/config:enable_hermetic_cc=false"
             fi
 
             # Upstream uses gcc-10, but that isn't readily available on debian 13, which defaults to gcc-14.
