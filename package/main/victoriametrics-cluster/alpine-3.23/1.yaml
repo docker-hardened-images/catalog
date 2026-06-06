@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-victoriametrics-cluster
+variant: runtime
+tags:
+  - 1.144.0-alpine3.23
+  - 1.144.0-r2-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 874424cf7f6fbd10704b4c46d3feb7230591a527
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.4-r0
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "1.144"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.144.0
+  VERSION: 1.144.0-cluster
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: victoriametrics-cluster
+      work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26=1.26.4-r0
+          - golang-1.26-oci-config=1.26.4-r0
+        files:
+          - url: git+https://github.com/VictoriaMetrics/VictoriaMetrics.git#v1.144.0-cluster
+            checksum: 874424cf7f6fbd10704b4c46d3feb7230591a527
+            path: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+            spdx:
+              name: victoriametrics-vminsert
+              version: 1.144.0-cluster
+              packages:
+                - name: victoriametrics-vminsert
+                  purl: pkg:golang/github.com/VictoriaMetrics/VictoriaMetrics@1.144.0-cluster
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test ./lib/... ./app/...
+        - name: build vminsert
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vminsert-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vminsert
+            packages: ./app/vminsert
+        - name: build vminsert dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vminsert-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vminsert-dev
+            packages: ./app/vminsert
+            strip: false
+        - name: build vmselect
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmselect-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vmselect
+            packages: ./app/vmselect
+        - name: build vmselect dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmselect-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vmselect-dev
+            packages: ./app/vmselect
+            strip: false
+        - name: build vmstorage
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmstorage-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vmstorage
+            packages: ./app/vmstorage
+        - name: build vmstorage dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmstorage-1.144.0-cluster'
+            output: ${target.dir}/usr/bin/vmstorage-dev
+            packages: ./app/vmstorage
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Victoriametrics-cluster binaries
+            files:
+              - usr/bin/vminsert
+            license: Apache-2.0
+            name: victoriametrics-cluster
+            rel: 2
+            subpackages:
+              - files:
+                  - path: usr/bin/vmselect
+                name: vmselect
+              - files:
+                  - path: usr/bin/vmstorage
+                name: vmstorage
+              - files:
+                  - path: usr/bin/vminsert
+                    source: usr/bin/vminsert-dev
+                name: victoriametrics-cluster-dev
+              - files:
+                  - path: usr/bin/vmselect
+                    source: usr/bin/vmselect-dev
+                name: vmselect-dev
+              - files:
+                  - path: usr/bin/vmstorage
+                    source: usr/bin/vmstorage-dev
+                name: vmstorage-dev
+            url: https://github.com/VictoriaMetrics/VictoriaMetrics
+            version: 1.144.0-cluster
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

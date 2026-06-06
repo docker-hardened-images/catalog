@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-victoriametrics
+variant: runtime
+tags:
+  - 1.144.0-alpine3.23
+  - 1.144.0-r2-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: d82ad68f604cd73c5728ca2a33884068538a5278
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.4-r0
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "1.144"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.144.0
+  VERSION: 1.144.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: victoriametrics
+      work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.4-r0
+          - golang-1.26-oci-config=1.26.4-r0
+        files:
+          - url: git+https://github.com/VictoriaMetrics/VictoriaMetrics.git#v1.144.0
+            checksum: d82ad68f604cd73c5728ca2a33884068538a5278
+            path: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+            spdx:
+              name: victoriametrics-vmagent
+              version: 1.144.0
+              packages:
+                - name: victoriametrics-vmagent
+                  purl: pkg:golang/github.com/VictoriaMetrics/VictoriaMetrics@1.144.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+              - golang.org/x/net@v0.55.0
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test ./lib/... ./app/...
+        - name: build vmagent
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmagent-1.144.0'
+            output: ${target.dir}/usr/bin/vmagent
+            packages: ./app/vmagent
+        - name: build vmagent dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmagent-1.144.0'
+            output: ${target.dir}/usr/bin/vmagent-dev
+            packages: ./app/vmagent
+            strip: false
+        - name: build vmauth
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmauth-1.144.0'
+            output: ${target.dir}/usr/bin/vmauth
+            packages: ./app/vmauth
+        - name: build vmauth dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmauth-1.144.0'
+            output: ${target.dir}/usr/bin/vmauth-dev
+            packages: ./app/vmauth
+            strip: false
+        - name: build vmalert
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmalert-1.144.0'
+            output: ${target.dir}/usr/bin/vmalert
+            packages: ./app/vmalert
+        - name: build vmalert dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/VictoriaMetrics/VictoriaMetrics
+          with:
+            fips: false
+            ldflags:
+              - -X 'github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=vmalert-1.144.0'
+            output: ${target.dir}/usr/bin/vmalert-dev
+            packages: ./app/vmalert
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Victoriametrics binaries
+            files:
+              - usr/bin/vmagent
+            license: Apache-2.0
+            name: victoriametrics
+            rel: 2
+            subpackages:
+              - files:
+                  - path: usr/bin/vmauth
+                name: vmauth
+              - files:
+                  - path: usr/bin/vmalert
+                name: vmalert
+              - files:
+                  - path: usr/bin/vmagent
+                    source: usr/bin/vmagent-dev
+                name: victoriametrics-dev
+              - files:
+                  - path: usr/bin/vmauth
+                    source: usr/bin/vmauth-dev
+                name: vmauth-dev
+              - files:
+                  - path: usr/bin/vmalert
+                    source: usr/bin/vmalert-dev
+                name: vmalert-dev
+            url: https://github.com/VictoriaMetrics/VictoriaMetrics
+            version: 1.144.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
