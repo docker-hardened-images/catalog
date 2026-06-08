@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico Typha 3.x
+image: dhi.io/calico-typha
+variant: runtime
+tags:
+  - "3"
+  - "3.32"
+  - 3.32.0
+  - 3-debian
+  - 3-debian13
+  - 3.32-debian
+  - 3.32-debian13
+  - 3.32.0-debian
+  - 3.32.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:fda946333293b2f23e6cf3486403c92590483367c272ffc7d2c12362342e1389
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.0
+  VERSION: 3.32.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: calico-typha
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:fda946333293b2f23e6cf3486403c92590483367c272ffc7d2c12362342e1389
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.0
+            checksum: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico-typha
+              version: 3.32.0
+              packages:
+                - name: calico-typha
+                  purl: pkg:golang/github.com/projectcalico/calico@3.32.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            deps:
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+              - golang.org/x/crypto@v0.52.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/projectcalico/calico/typha
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only; skip packages that require Kubernetes or etcd.
+            CGO_ENABLED=0 go test \
+              ./pkg/calc/... \
+              ./pkg/config/... \
+              ./pkg/jitter/... \
+              ./pkg/snapcache/... \
+              ./pkg/syncproto/... \
+              ./pkg/tlsutils/...
+        - name: install typha config
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/etc/calico"
+            install -m 0644 \
+              /go/src/github.com/projectcalico/calico/typha/docker-image/typha.cfg \
+              "${target.dir}/etc/calico/typha.cfg"
+        - name: build-calico-typha
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/typha
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.0
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            output: ${target.dir}/usr/bin/calico-typha
+            packages: ./cmd/calico-typha
+      outputs:
+        - source: ${target.dir}/usr/bin/calico-typha
+          target: /usr/bin/calico-typha
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/calico/typha.cfg
+          target: /etc/calico/typha.cfg
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/calico-typha
+          target: /opt/docker/sbom/calico-typha
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "999"
+  users:
+    - name: calico-typha
+      uid: 999
+      gid: 999
+  groups:
+    - name: calico-typha
+      gid: 999
+      members:
+        - calico-typha
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Calico Typha image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/calico-typha
