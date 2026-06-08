@@ -1,0 +1,219 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NVIDIA DCGM Exporter 4.x
+image: dhi.io/dcgm-exporter
+variant: runtime
+tags:
+  - "4"
+  - 4.5-4.8
+  - 4-debian
+  - 4-debian13
+  - 4.5.2-4.8.1
+  - 4.5-4.8-debian
+  - 4.5-4.8-debian13
+  - 4.5.2-4.8.1-debian
+  - 4.5.2-4.8.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-01-27"
+vars:
+  COMMIT_SHA: 52ffa18044bdb26d43d7a48944140cdcdf03d0f2
+  DCGM_VERSION: 4.5.2
+  EXPORTER_VERSION: 4.8.1
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+  SEMVER_DCGM_MAJOR_MINOR_VERSION: "4.5"
+  SEMVER_DCGM_MAJOR_VERSION: "4"
+  SEMVER_EXPORTER_MAJOR_MINOR_VERSION: "4.8"
+  SEMVER_EXPORTER_MAJOR_VERSION: "4"
+  SEMVER_MAJOR_MINOR_VERSION: "4.5"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.5.2
+  UPSTREAM_REFERENCE: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
+  VERSION: 4.5.2-4.8.1
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - libc-bin
+    - libc6
+    - libstdc++6
+    - tini
+  builds:
+    - name: dcgm-exporter
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+      work-dir: /go/src/github.com/NVIDIA/dcgm-exporter
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - build-essential
+          - libc-bin
+        files:
+          - url: git+https://github.com/NVIDIA/dcgm-exporter.git#4.5.2-4.8.1
+            checksum: 52ffa18044bdb26d43d7a48944140cdcdf03d0f2
+            path: /go/src/github.com/NVIDIA/dcgm-exporter
+            spdx:
+              name: dcgm-exporter
+              version: 4.8.1
+              packages:
+                - name: dcgm-exporter
+                  purl: pkg:golang/github.com/NVIDIA/dcgm-exporter@4.8.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
+            includes:
+              - usr/lib/*-linux-gnu/libdcgm*.so*
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+              - golang.org/x/crypto@v0.52.0
+            download: true
+        - name: build dcgm-exporter
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.BuildVersion=4.5.2-4.8.1
+            output: ${target.dir}/usr/local/bin/dcgm-exporter
+            packages: ./cmd/dcgm-exporter
+            trimpath: true
+        - name: prebuild ld.so.cache for libdcgm
+          runs: |
+            set -eux -o pipefail
+
+            case "${target.arch}" in
+              amd64) libdir=x86_64-linux-gnu ;;
+              arm64) libdir=aarch64-linux-gnu ;;
+              *)
+                echo "unsupported arch: ${target.arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            mkdir -p ${target.dir}/usr/lib/${libdir} ${target.dir}/etc/ld.so.conf.d
+            cp -a /usr/lib/${libdir}/libdcgm*.so* ${target.dir}/usr/lib/${libdir}/
+            echo "/usr/lib/${libdir}" > ${target.dir}/etc/ld.so.conf.d/libdcgm.conf
+            /sbin/ldconfig -r ${target.dir} -X
+            ls -la ${target.dir}/etc/ld.so.cache
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dcgm-exporter
+          target: /usr/local/bin/dcgm-exporter
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/etc/ld.so.cache
+          target: /etc/ld.so.cache
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/ld.so.conf.d/libdcgm.conf
+          target: /etc/ld.so.conf.d/libdcgm.conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/dcgm-exporter
+          target: /opt/docker/sbom/dcgm-exporter
+          uid: 0
+          gid: 0
+    - name: dcgm-dpkg-status
+      uses: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
+      pipeline:
+        - name: slice dcgm dpkg stanzas into status.d
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            # Keep only the PURL-relevant fields. Dropping Depends/Pre-Depends
+            # matters: they point at packages a minimal image omits (passwd,
+            # login, lshw), and apt solver 3.0 refuses to run while the installed
+            # set looks broken.
+            mkdir -p ${target.dir}/var/lib/dpkg/status.d
+            for pkg in datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary; do
+              grep -q "^Package: ${pkg}$" /var/lib/dpkg/status # fail loud if renamed
+              awk -v pkg="${pkg}" '$0 == "Package: " pkg {f=1} f && !/^(Status|Depends|Pre-Depends|Recommends|Suggests):/{print} /^$/{if(f)exit}' /var/lib/dpkg/status \
+                > ${target.dir}/var/lib/dpkg/status.d/${pkg}
+              test -s ${target.dir}/var/lib/dpkg/status.d/${pkg}
+            done
+      outputs:
+        - source: ${target.dir}/var/lib/dpkg/status.d/datacenter-gpu-manager-4-core
+          target: /var/lib/dpkg/status.d/datacenter-gpu-manager-4-core
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/lib/dpkg/status.d/datacenter-gpu-manager-4-proprietary
+          target: /var/lib/dpkg/status.d/datacenter-gpu-manager-4-proprietary
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
+      includes:
+        - etc/dcgm-exporter/1.x-compatibility-metrics.csv
+        - etc/dcgm-exporter/dcp-metrics-included.csv
+        - etc/dcgm-exporter/default-counters.csv
+        - usr/lib/*-linux-gnu/libdcgm*.so*
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /
+environment:
+  DCGM_EXPORTER_COLLECTORS: /etc/dcgm-exporter/default-counters.csv
+  NVIDIA_DISABLE_REQUIRE: "true"
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  NVIDIA_VISIBLE_DEVICES: all
+paths:
+  - type: symlink
+    path: /bin/dcgm-exporter
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/dcgm-exporter
+  - type: directory
+    path: /usr/local/lib
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /usr/local/lib/x86_64-linux-gnu
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /usr/local/lib/aarch64-linux-gnu
+    uid: 0
+    gid: 0
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal NVIDIA DCGM exporter image
+  org.opencontainers.image.licenses: Apache-2.0 AND LicenseRef-NVIDIA-DCGM-EULA
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/dcgm-exporter
+ports:
+  - 9400/tcp
