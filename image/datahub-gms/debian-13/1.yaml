@@ -22,7 +22,7 @@ vars:
   COMMIT_SHA: ab215193e35711d256463b7a50912ec2d4f370e6
   DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
   DOCKERIZE_VERSION: 0.24.3
-  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
   GRADLE_DIGEST: sha256:282a9ffba68af55448fcf28ff45955deaf59294a717f9a0baf910d8122c6162d
   GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk17-debian13-dev@sha256:282a9ffba68af55448fcf28ff45955deaf59294a717f9a0baf910d8122c6162d
   GRADLE_VERSION: 8.14.4
@@ -54,7 +54,7 @@ contents:
     - wget
   builds:
     - name: dockerize
-      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
       work-dir: /go/src/github.com/powerman/dockerize
       contents:
         files:
@@ -71,6 +71,18 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/sys@v0.45.0
+            download: true
+        - name: test dockerize
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
         - name: build dockerize
           uses: go/build@v1
           with:
@@ -177,6 +189,19 @@ contents:
             #   netty-transport-native-epoll requires the 4.2.x line which is
             #   a major bump — handled by a VEX statement, not here.
             # aircompressor 2.0.3 fixes CVE-2025-67721.
+            # spring-webmvc 6.2.18 fixes CVE-2026-22737, -22745, -22735,
+            #   -22741.
+            # jackson-core 2.18.6 fixes GHSA-72hv-8253-57qq for the unshaded
+            #   2.18.x copies. The shaded 2.15.2 Hazelcast copy is handled
+            #   separately via VEX because Gradle cannot reach it.
+            # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
+            # commons-lang3 3.18.0 fixes CVE-2025-48924.
+            # avro 1.11.5 fixes CVE-2025-33042 (avro-compiler).
+            # jakarta.mail 1.6.8 fixes CVE-2025-7962.
+            # opentelemetry 1.62.0 fixes CVE-2026-45292.
+            # logback 1.5.25 fixes CVE-2026-1225.
+            # rhino 1.7.14.1 fixes CVE-2025-66453 while staying on the 1.7.x
+            #   line used by upstream DataHub.
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -198,6 +223,51 @@ contents:
                         if (req.group == 'io.airlift' && req.name == 'aircompressor') {
                             details.useVersion '2.0.3'
                             details.because 'DHI CVE remediation: CVE-2025-67721'
+                        }
+                        if (req.group == 'org.springframework'
+                                && req.name == 'spring-webmvc') {
+                            details.useVersion '6.2.18'
+                            details.because 'DHI CVE remediation: CVE-2026-22737, CVE-2026-22745, CVE-2026-22735, CVE-2026-22741'
+                        }
+                        if (req.group == 'com.fasterxml.jackson.core'
+                                && req.name == 'jackson-core') {
+                            details.useVersion '2.18.6'
+                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq'
+                        }
+                        if (req.group == 'org.apache.logging.log4j'
+                                && req.name.startsWith('log4j-')) {
+                            details.useVersion '2.25.4'
+                            details.because 'DHI CVE remediation: CVE-2026-34477, CVE-2026-34478, CVE-2026-34480'
+                        }
+                        if (req.group == 'org.apache.commons'
+                                && req.name == 'commons-lang3') {
+                            details.useVersion '3.18.0'
+                            details.because 'DHI CVE remediation: CVE-2025-48924'
+                        }
+                        if (req.group == 'org.apache.avro'
+                                && req.name.startsWith('avro')) {
+                            details.useVersion '1.11.5'
+                            details.because 'DHI CVE remediation: CVE-2025-33042'
+                        }
+                        if (req.group == 'com.sun.mail'
+                                && req.name == 'jakarta.mail') {
+                            details.useVersion '1.6.8'
+                            details.because 'DHI CVE remediation: CVE-2025-7962'
+                        }
+                        if (req.group == 'io.opentelemetry'
+                                && req.name.startsWith('opentelemetry-')) {
+                            details.useVersion '1.62.0'
+                            details.because 'DHI CVE remediation: CVE-2026-45292'
+                        }
+                        if (req.group == 'ch.qos.logback'
+                                && req.name.startsWith('logback-')) {
+                            details.useVersion '1.5.25'
+                            details.because 'DHI CVE remediation: CVE-2026-1225'
+                        }
+                        if (req.group == 'org.mozilla'
+                                && req.name == 'rhino') {
+                            details.useVersion '1.7.14.1'
+                            details.because 'DHI CVE remediation: CVE-2025-66453'
                         }
                     }
                 }
@@ -221,7 +291,7 @@ contents:
               :metadata-service:war:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*' \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
               --no-daemon --console=plain
         - name: stage runtime files
           runs: |
