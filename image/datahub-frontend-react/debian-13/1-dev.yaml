@@ -259,6 +259,39 @@ contents:
               "s|enableBundleAnalysis: true|enableBundleAnalysis: false|" \
               datahub-web-react/vite.config.ts
             grep -q 'enableBundleAnalysis: false' datahub-web-react/vite.config.ts
+
+            # Force narrowly-scoped transitive CVE fixes not yet covered by
+            # upstream's dependency management.
+            #
+            # hazelcast 5.7.0 fixes GHSA-72hv-8253-57qq by updating its
+            # shaded jackson-core copy to a fixed version.
+            # akka-http 10.5.3 fixes CVE-2023-44487 by adding HTTP/2 reset
+            # frame rate limiting; it requires Akka core modules at 2.7.0+.
+            cat >> build.gradle << 'GRADLE'
+
+            // ===== DHI CVE remediation: force minimum versions =====
+            allprojects {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency { details ->
+                        def req = details.requested
+                        if (req.group == 'com.hazelcast' && req.name == 'hazelcast') {
+                            details.useVersion '5.7.0'
+                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq'
+                        }
+                        if (req.group == 'com.typesafe.akka'
+                                && (req.name.startsWith('akka-http')
+                                    || req.name.startsWith('akka-parsing'))) {
+                            details.useVersion '10.5.3'
+                            details.because 'DHI CVE remediation: CVE-2023-44487'
+                        } else if (req.group == 'com.typesafe.akka'
+                                && req.name.startsWith('akka-')) {
+                            details.useVersion '2.7.0'
+                            details.because 'Align Akka modules with akka-http 10.5.3'
+                        }
+                    }
+                }
+            }
+            GRADLE
         - name: build datahub-frontend stage
           work-dir: ${source.dir}/datahub
           privileged: true
@@ -291,7 +324,7 @@ contents:
               --warning-mode=summary \
               --parallel \
               --max-workers=8 \
-              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*' \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,com.hazelcast:*,com.typesafe.akka:*' \
               :datahub-frontend:stage \
               -x test \
               -x check
