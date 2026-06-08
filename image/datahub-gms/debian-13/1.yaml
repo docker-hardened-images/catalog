@@ -1,0 +1,342 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub GMS 1.x
+image: dhi.io/datahub-gms
+variant: runtime
+tags:
+  - "1"
+  - "1.4"
+  - 1.4.0.3
+  - 1-debian13
+  - 1.4-debian13
+  - 1.4.0.3-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-22"
+vars:
+  COMMIT_SHA: ab215193e35711d256463b7a50912ec2d4f370e6
+  DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+  DOCKERIZE_VERSION: 0.24.3
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+  GRADLE_DIGEST: sha256:282a9ffba68af55448fcf28ff45955deaf59294a717f9a0baf910d8122c6162d
+  GRADLE_REFERENCE: dhi/gradle:8.14.4-jdk17-debian13-dev@sha256:282a9ffba68af55448fcf28ff45955deaf59294a717f9a0baf910d8122c6162d
+  GRADLE_VERSION: 8.14.4
+  JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
+  JMX_PROMETHEUS_VERSION: 0.20.0
+  JRE_DIGEST: sha256:1c392e32c2e2b4f200e9a9b1db8dcea7f6329619bd448b98a8e37bcee56fef1c
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:1c392e32c2e2b4f200e9a9b1db8dcea7f6329619bd448b98a8e37bcee56fef1c
+  JRE_VERSION: 17.0.19.10
+  OTEL_JAVAAGENT_SHA256: bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b
+  OTEL_JAVAAGENT_VERSION: 2.27.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.4"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.4.0
+  VERSION: 1.4.0.3
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - grep
+    - libsnappy1v5
+    - libsqlite3-0
+    - tzdata
+    - wget
+  builds:
+    - name: dockerize
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:6e257a15c0aa81a30cd698e950469f07dd71d6c7e4c6a30e0badbf9494b1d6f3
+      work-dir: /go/src/github.com/powerman/dockerize
+      contents:
+        files:
+          - url: git+https://github.com/powerman/dockerize.git#v0.24.3
+            checksum: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+            path: /go/src/github.com/powerman/dockerize
+            spdx:
+              name: dockerize
+              version: 0.24.3
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/powerman/dockerize@0.24.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build dockerize
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/dockerize
+            packages: ./
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dockerize
+          target: /usr/local/bin/dockerize
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/dockerize
+          target: /opt/docker/sbom/dockerize
+          uid: 0
+          gid: 0
+    - name: datahub-gms
+      uses: dhi.io/gradle:8.14.4-jdk17-debian13-dev@sha256:282a9ffba68af55448fcf28ff45955deaf59294a717f9a0baf910d8122c6162d
+      work-dir: ${source.dir}/datahub
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/datahub-project/datahub.git#v1.4.0.3
+            checksum: ab215193e35711d256463b7a50912ec2d4f370e6
+            path: ${source.dir}/datahub
+            spdx:
+              name: datahub
+              version: 1.4.0.3
+              packages:
+                - name: datahub
+                  purl: pkg:dhi/datahub-gms@1.4.0.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch maven central for build cloud rate limits
+          runs: |
+            set -eux -o pipefail
+
+            # Maven Central rate-limits Docker Build Cloud egress IPs (HTTP 429).
+            #
+            # Replace `mavenCentral()` with Google's CDN mirror of Maven Central.
+            #
+            # Replace `gradlePluginPortal()` with an inline Maven repository
+            # at plugins.gradle.org/m2/ that restricts metadataSources to
+            # mavenPom() + artifact() only. The default Plugin Portal config
+            # also asks for `.module` (Gradle Module Metadata) files; Plugin
+            # Portal 303-redirects .module requests to repo.maven.apache.org
+            # which 429s. Skipping that lookup is the difference between
+            # success and a 429 failure on every plugin artifact lookup.
+            MIRROR='maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+            PORTAL=$'maven {\\n    url "https://plugins.gradle.org/m2/"\\n    metadataSources { mavenPom(); artifact(); ignoreGradleMetadataRedirection() }\\n}'
+            find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 \
+              | xargs -0 sed -i \
+                -e "s|mavenCentral()|${MIRROR}|g" \
+                -e "s|gradlePluginPortal()|${PORTAL}|g"
+        - name: bump vulnerable dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            # Patch the version pins in DataHub's root build.gradle to remediate
+            # HIGH/CRITICAL CVEs without crossing major version boundaries.
+            # All replacements are patch/minor bumps within the same major line.
+            #
+            # spring-boot 3.4.5 -> 3.4.13: transitively brings newer netty
+            #   (fixes CVE-2026-42587, -33870, -42584, -33871, -42583, -42579,
+            #   -42577 in netty-codec-http, -http2, -codec, -codec-dns,
+            #   -transport-native-epoll) and newer Spring Boot itself.
+            # jetty 12.0.21 -> 12.0.33: fixes CVE-2026-2332, CVE-2026-1605.
+            # postgresql 42.7.8 -> 42.7.11: fixes CVE-2026-42198.
+            # zookeeper 3.8.4 -> 3.8.6: fixes CVE-2026-24308, CVE-2026-24281.
+            sed -i \
+              -e "s|ext\.springBootVersion = '3\.4\.5'|ext.springBootVersion = '3.4.13'|" \
+              -e "s|ext\.jettyVersion = '12\.0\.21'|ext.jettyVersion = '12.0.33'|" \
+              -e "s|'postgresql': 'org\.postgresql:postgresql:42\.7\.8'|'postgresql': 'org.postgresql:postgresql:42.7.11'|" \
+              -e "s|'zookeeper': 'org\.apache\.zookeeper:zookeeper:3\.8\.4'|'zookeeper': 'org.apache.zookeeper:zookeeper:3.8.6'|" \
+              build.gradle
+
+            # Verify each pin actually changed (sed silently succeeds even if
+            # the pattern did not match — a stale version in the upstream
+            # source would slip through otherwise).
+            grep -q "springBootVersion = '3\.4\.13'" build.gradle
+            grep -q "jettyVersion = '12\.0\.33'" build.gradle
+            grep -q "postgresql:42\.7\.11" build.gradle
+            grep -q "zookeeper:3\.8\.6" build.gradle
+
+            # Force versions of transitive deps the upstream BOM does not
+            # cover. These ride in via Pegasus/Kafka/etc., not via Spring
+            # Boot, so bumping springBootVersion alone is not enough.
+            #
+            # netty 4.1.133.Final fixes CVE-2026-42583, -42579, -42587,
+            #   -33870, -42584, -33871. CVE-2026-42577 in
+            #   netty-transport-native-epoll requires the 4.2.x line which is
+            #   a major bump — handled by a VEX statement, not here.
+            # aircompressor 2.0.3 fixes CVE-2025-67721.
+            cat >> build.gradle << 'GRADLE'
+
+            // ===== DHI CVE remediation: force minimum versions =====
+            // Added by the DHI build pipeline (image/datahub-gms/...inc.yaml).
+            // Forces minimum versions for transitive deps not pinned by the
+            // upstream Spring Boot BOM, to remediate HIGH/CRITICAL CVEs.
+            allprojects {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency { details ->
+                        def req = details.requested
+                        if (req.group == 'io.netty'
+                                && req.name.startsWith('netty-')
+                                && !req.name.startsWith('netty-tcnative')) {
+                            // netty-tcnative-* tracks its own version line
+                            // (2.0.x) — only force core netty-*.
+                            details.useVersion '4.1.133.Final'
+                            details.because 'DHI CVE remediation: CVE-2026-42583, CVE-2026-42579, CVE-2026-42587, CVE-2026-33870, CVE-2026-42584, CVE-2026-33871'
+                        }
+                        if (req.group == 'io.airlift' && req.name == 'aircompressor') {
+                            details.useVersion '2.0.3'
+                            details.because 'DHI CVE remediation: CVE-2025-67721'
+                        }
+                    }
+                }
+            }
+            GRADLE
+        - name: build war
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # `:assemble` (vs `:build`) skips the `:check` task graph entirely
+            # — no Spotless, no static analysis. Combined with --parallel +
+            # --max-workers=4 this trims ~30 min off the cold build and
+            # keeps us under the Docker Build Cloud 90-min cap.
+            #
+            # `--update-locks` lets Gradle's dependency-locking refresh the
+            # pinned versions for the modules we bumped (and their transitive
+            # children). Without this, `gradle.lockfile` entries override our
+            # build.gradle bumps and fail with "strictly X" constraint errors.
+            ./gradlew --init-script ${source.dir}/files/init.gradle \
+              :metadata-service:war:assemble \
+              -x test \
+              --parallel --max-workers=4 \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*' \
+              --no-daemon --console=plain
+        - name: stage runtime files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/datahub/datahub-gms/bin"
+            mkdir -p "${target.dir}/datahub/datahub-gms/scripts"
+            mkdir -p "${target.dir}/datahub/datahub-gms/resources"
+            mkdir -p "${target.dir}/datahub/datahub-gms/lib"
+
+            cp metadata-service/war/build/libs/war.war \
+              "${target.dir}/datahub/datahub-gms/bin/war.war"
+            cp metadata-models/src/main/resources/entity-registry.yml \
+              "${target.dir}/datahub/datahub-gms/resources/entity-registry.yml"
+            cp docker/monitoring/client-prometheus-config.yaml \
+              "${target.dir}/datahub/datahub-gms/scripts/prometheus-config.yaml"
+
+            # Patched start.sh (absolute paths for bundled Java agents under DHI).
+            cp "${source.dir}/files/start.sh" \
+              "${target.dir}/datahub/datahub-gms/scripts/start.sh"
+            chmod 0755 "${target.dir}/datahub/datahub-gms/scripts/start.sh"
+        - name: fetch otel javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/opentelemetry-javaagent.jar \
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.27.0/opentelemetry-javaagent.jar"
+            echo "bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
+            mv /tmp/opentelemetry-javaagent.jar \
+              "${target.dir}/datahub/datahub-gms/lib/opentelemetry-javaagent.jar"
+        - name: fetch jmx prometheus javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Use Google's Maven Central mirror — repo1.maven.org rate-limits
+            # the Docker Build Cloud egress IPs (HTTP 429).
+            curl -fsSL -o /tmp/jmx_prometheus_javaagent.jar \
+              "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
+            echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
+            mv /tmp/jmx_prometheus_javaagent.jar \
+              "${target.dir}/datahub/datahub-gms/lib/jmx_prometheus_javaagent.jar"
+      paths:
+        - type: file
+          path: ${source.dir}/files/start.sh
+          uid: 0
+          gid: 0
+          source: image/datahub-gms/files/start.sh
+        - type: file
+          path: ${source.dir}/files/init.gradle
+          uid: 0
+          gid: 0
+          source: image/datahub-gms/files/init.gradle
+      outputs:
+        - source: ${target.dir}/datahub/datahub-gms
+          target: /datahub/datahub-gms
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub
+          target: /opt/docker/sbom/datahub
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:1c392e32c2e2b4f200e9a9b1db8dcea7f6329619bd448b98a8e37bcee56fef1c
+      includes:
+        - opt/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  JAVA_OPTS: ""
+  JMX_OPTS: ""
+  LD_LIBRARY_PATH: /lib:/lib64
+  OTEL_EXPORTER_OTLP_HTTP_COMPRESSION: gzip
+  OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE: "8388608"
+  OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE: "4194304"
+  OTEL_EXPORTER_OTLP_TRACES_COMPRESSION: gzip
+  PATH: /opt/java/openjdk/17-jre/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /datahub
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /datahub/datahub-gms
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /etc/datahub/plugins/auth/resources
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+annotations:
+  org.opencontainers.image.description: DataHub General Metadata Service (GMS) - the core metadata service backend for the DataHub data discovery and governance platform.
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /datahub/datahub-gms/scripts/start.sh
+ports:
+  - 8080/tcp
+  - 4318/tcp

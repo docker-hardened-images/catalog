@@ -1,0 +1,75 @@
+// Avoid Docker Build Cloud Maven Central rate limits.
+//
+// (1) Add Google's CDN mirror of Maven Central everywhere Gradle resolves
+//     dependencies (project repos, buildscript repos, pluginManagement,
+//     dependencyResolutionManagement).
+// (2) Replace gradlePluginPortal() with an inline Maven repository that has
+//     metadataSources restricted to mavenPom() + artifact() only. The Plugin
+//     Portal redirects .module (Gradle Module Metadata) requests back to
+//     repo.maven.apache.org which 429s for our IPs. By declaring the portal
+//     inline with metadata restrictions baked in, the 429-triggering lookup
+//     never happens.
+
+def GOOGLE_MAVEN_MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def PLUGIN_PORTAL = 'https://plugins.gradle.org/m2/'
+
+allprojects {
+    buildscript {
+        repositories {
+            maven {
+                name 'GoogleMavenCentralMirror'
+                url GOOGLE_MAVEN_MIRROR
+            }
+            maven {
+                name 'GradlePluginPortalNoModule'
+                url PLUGIN_PORTAL
+                metadataSources {
+                    mavenPom()
+                    artifact()
+                    ignoreGradleMetadataRedirection()
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name 'GoogleMavenCentralMirror'
+            url GOOGLE_MAVEN_MIRROR
+        }
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement {
+        repositories {
+            maven {
+                name 'GoogleMavenCentralMirror'
+                url GOOGLE_MAVEN_MIRROR
+            }
+            maven {
+                name 'GradlePluginPortalNoModule'
+                url PLUGIN_PORTAL
+                metadataSources {
+                    mavenPom()
+                    artifact()
+                    ignoreGradleMetadataRedirection()
+                }
+            }
+        }
+    }
+}
+
+settingsEvaluated { settings ->
+    try {
+        settings.dependencyResolutionManagement {
+            repositories {
+                maven {
+                    name 'GoogleMavenCentralMirror'
+                    url GOOGLE_MAVEN_MIRROR
+                }
+            }
+        }
+    } catch (Throwable ignored) {
+        // dependencyResolutionManagement is Gradle 6.8+ only.
+    }
+}
