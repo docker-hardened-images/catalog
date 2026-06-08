@@ -1,0 +1,376 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub MAE Consumer 1.x
+image: dhi.io/datahub-mae-consumer
+variant: runtime
+tags:
+  - "1"
+  - "1.5"
+  - 1.5.0
+  - 1.5.0.7
+  - 1-debian13
+  - 1.5-debian13
+  - 1.5.0-debian13
+  - 1.5.0.7-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-25"
+vars:
+  COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+  DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+  DOCKERIZE_VERSION: 0.24.3
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
+  GRADLE_DIGEST: sha256:47539e2530d902863e81fbacab28e2ca80c5a92200af1b328ce6b9a153fc7cff
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:47539e2530d902863e81fbacab28e2ca80c5a92200af1b328ce6b9a153fc7cff
+  GRADLE_VERSION: 8.14.5
+  JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
+  JMX_PROMETHEUS_VERSION: 0.20.0
+  JRE_DIGEST: sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+  JRE_VERSION: 17.0.19.10
+  OTEL_JAVAAGENT_SHA256: bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b
+  OTEL_JAVAAGENT_VERSION: 2.27.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.0.7
+  VERSION: 1.5.0.7
+  VERSION_MAJOR_MINOR_PATCH: 1.5.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - libsnappy1v5
+    - tzdata
+    - wget
+  builds:
+    - name: dockerize
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:5d1f9634fc21d351b8712212864d435bfe4204eca3d60b61cc7cfd491d776357
+      work-dir: /go/src/github.com/powerman/dockerize
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/powerman/dockerize.git#v0.24.3
+            checksum: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+            path: /go/src/github.com/powerman/dockerize
+            spdx:
+              name: dockerize
+              version: 0.24.3
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/powerman/dockerize@0.24.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+            download: true
+        - name: build dockerize
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/dockerize
+            packages: ./
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dockerize
+          target: /usr/local/bin/dockerize
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/dockerize
+          target: /opt/docker/sbom/dockerize
+          uid: 0
+          gid: 0
+    - name: datahub-mae-consumer
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:47539e2530d902863e81fbacab28e2ca80c5a92200af1b328ce6b9a153fc7cff
+      work-dir: ${source.dir}/datahub
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/datahub-project/datahub.git#v1.5.0.7
+            checksum: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+            path: ${source.dir}/datahub
+            spdx:
+              name: datahub
+              version: 1.5.0.7
+              packages:
+                - name: datahub
+                  purl: pkg:dhi/datahub-mae-consumer@1.5.0.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch maven central for build cloud rate limits
+          runs: |
+            set -eux -o pipefail
+
+            # Maven Central rate-limits Docker Build Cloud egress IPs (HTTP 429).
+            #
+            # Replace `mavenCentral()` with Google's CDN mirror of Maven Central.
+            #
+            # Replace `gradlePluginPortal()` with an inline Maven repository
+            # at plugins.gradle.org/m2/ that restricts metadataSources to
+            # mavenPom() + artifact() only. The default Plugin Portal config
+            # also asks for `.module` (Gradle Module Metadata) files; Plugin
+            # Portal 303-redirects .module requests to repo.maven.apache.org
+            # which 429s. Skipping that lookup is the difference between
+            # success and a 429 failure on every plugin artifact lookup.
+            MIRROR='maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+            PORTAL=$'maven {\\n    url "https://plugins.gradle.org/m2/"\\n    metadataSources { mavenPom(); artifact(); ignoreGradleMetadataRedirection() }\\n}'
+            find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 \
+              | xargs -0 sed -i \
+                -e "s|mavenCentral()|${MIRROR}|g" \
+                -e "s|gradlePluginPortal()|${PORTAL}|g"
+        - name: bump vulnerable dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            # Direct build.gradle version pins are intentionally absent here.
+            # Upstream DataHub v1.5.0.7 already ships spring-boot 3.5.14,
+            # jetty 12.0.34, postgresql 42.7.11, and zookeeper 3.8.6, which
+            # cover the CVEs we previously patched (-42587, -33870, -42584,
+            # -33871 in spring-boot; -2332, -1605 in jetty; -42198 in
+            # postgresql; -24308, -24281 in zookeeper). The resolutionStrategy
+            # block below still handles transitive pins the upstream BOM does
+            # not cover.
+
+            # Force versions of transitive deps the upstream BOM does not
+            # cover. These ride in via Pegasus/Kafka/etc., not via Spring
+            # Boot, so bumping springBootVersion alone is not enough.
+            #
+            # netty 4.1.133.Final fixes CVE-2026-42583, -42579, -42587,
+            #   -33870, -42584, -33871. CVE-2026-42577 in
+            #   netty-transport-native-epoll requires the 4.2.x line which is
+            #   a major bump - handled by a VEX statement, not here.
+            # aircompressor 2.0.3 fixes CVE-2025-67721.
+            # spring-framework 6.2.18 would fix CVE-2026-22737, -22745,
+            #   -22735, -22741 in spring-webmvc - but DataHub's
+            #   :metadata-service:configuration submodule pins to Spring
+            #   Framework 5.3.31, and a blanket org.springframework:spring-*
+            #   force tries to upgrade that across the 5->6 major (jakarta
+            #   namespace migration) which fails resolution. Left as a
+            #   follow-up; those CVEs are MEDIUM/LOW/UNSPECIFIED.
+            # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
+            # jackson-core: no resolutionStrategy entry. We tried forcing
+            #   2.18.6, but with `--update-locks 'com.fasterxml.jackson.core:*'`
+            #   in the assemble step Gradle re-resolves the lock against the
+            #   Spring Boot 3.5.14 BOM and writes back the BOM-managed 2.19.2.
+            #   The 2.15.2 copy shaded inside Hazelcast is unreachable by
+            #   resolutionStrategy regardless. Both copies are handled via
+            #   VEX (vex/datahub-mae-consumer/jackson-core.vex.json).
+            # commons-lang3 3.18.0 fixes CVE-2025-48924.
+            # avro 1.11.5 fixes CVE-2025-33042 (avro-compiler).
+            # jakarta.mail 1.6.8 fixes CVE-2025-7962.
+            # logback 1.5.25 fixes CVE-2026-1225.
+            cat >> build.gradle << 'GRADLE'
+
+            // ===== DHI CVE remediation: force minimum versions =====
+            // Added by the DHI build pipeline (image/datahub-mae-consumer/...inc.yaml).
+            // Forces minimum versions for transitive deps not pinned by the
+            // upstream Spring Boot BOM, to remediate HIGH/CRITICAL/MEDIUM CVEs.
+            allprojects {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency { details ->
+                        def req = details.requested
+                        if (req.group == 'io.netty'
+                                && req.name.startsWith('netty-')
+                                && !req.name.startsWith('netty-tcnative')) {
+                            // netty-tcnative-* tracks its own version line
+                            // (2.0.x) - only force core netty-*.
+                            details.useVersion '4.1.133.Final'
+                            details.because 'DHI CVE remediation: CVE-2026-42583, CVE-2026-42579, CVE-2026-42587, CVE-2026-33870, CVE-2026-42584, CVE-2026-33871'
+                        }
+                        if (req.group == 'io.airlift' && req.name == 'aircompressor') {
+                            details.useVersion '2.0.3'
+                            details.because 'DHI CVE remediation: CVE-2025-67721'
+                        }
+                        if (req.group == 'org.apache.logging.log4j'
+                                && req.name.startsWith('log4j-')) {
+                            details.useVersion '2.25.4'
+                            details.because 'DHI CVE remediation: CVE-2026-34477, CVE-2026-34478, CVE-2026-34480'
+                        }
+                        if (req.group == 'org.apache.commons'
+                                && req.name == 'commons-lang3') {
+                            details.useVersion '3.18.0'
+                            details.because 'DHI CVE remediation: CVE-2025-48924'
+                        }
+                        if (req.group == 'org.apache.avro'
+                                && req.name.startsWith('avro')) {
+                            details.useVersion '1.11.5'
+                            details.because 'DHI CVE remediation: CVE-2025-33042'
+                        }
+                        if (req.group == 'com.sun.mail'
+                                && req.name == 'jakarta.mail') {
+                            details.useVersion '1.6.8'
+                            details.because 'DHI CVE remediation: CVE-2025-7962'
+                        }
+                        if (req.group == 'ch.qos.logback'
+                                && req.name.startsWith('logback-')) {
+                            details.useVersion '1.5.25'
+                            details.because 'DHI CVE remediation: CVE-2026-1225'
+                        }
+                    }
+                }
+            }
+            GRADLE
+        - name: build jar
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # `:assemble` (vs `:build`) skips the `:check` task graph entirely
+            # - no Spotless, no static analysis. Combined with --parallel +
+            # --max-workers=4 this trims ~30 min off the cold build and
+            # keeps us under the Docker Build Cloud 90-min cap.
+            #
+            # `--update-locks` lets Gradle's dependency-locking refresh the
+            # pinned versions for the modules our resolutionStrategy still
+            # forces. The earlier zookeeper / jetty / postgresql / spring-boot
+            # / spring-framework wildcards were dropped here when DataHub
+            # v1.5.0.7's BOM started shipping those at-or-above our targets;
+            # keeping them on this list forced Gradle to re-resolve the
+            # spring-boot 3.5.x dep graph in configure phase, blowing past
+            # the 90-min Docker Build Cloud cap.
+            ./gradlew --init-script ${source.dir}/files/init.gradle \
+              :metadata-jobs:mae-consumer-job:assemble \
+              -x test \
+              --parallel --max-workers=4 \
+              --update-locks 'io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*' \
+              --no-daemon --console=plain
+        - name: stage runtime files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/datahub/datahub-mae-consumer/bin"
+            mkdir -p "${target.dir}/datahub/datahub-mae-consumer/scripts"
+            mkdir -p "${target.dir}/datahub/datahub-mae-consumer/resources"
+            mkdir -p "${target.dir}/datahub/datahub-mae-consumer/lib"
+
+            cp metadata-jobs/mae-consumer-job/build/libs/mae-consumer-job.jar \
+              "${target.dir}/datahub/datahub-mae-consumer/bin/mae-consumer-job.jar"
+            cp metadata-models/src/main/resources/entity-registry.yml \
+              "${target.dir}/datahub/datahub-mae-consumer/resources/entity-registry.yml"
+            cp docker/monitoring/client-prometheus-config.yaml \
+              "${target.dir}/datahub/datahub-mae-consumer/scripts/prometheus-config.yaml"
+
+            # Patched start.sh (absolute paths for bundled Java agents under DHI).
+            cp "${source.dir}/files/start.sh" \
+              "${target.dir}/datahub/datahub-mae-consumer/scripts/start.sh"
+            chmod 0755 "${target.dir}/datahub/datahub-mae-consumer/scripts/start.sh"
+        - name: fetch otel javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/opentelemetry-javaagent.jar \
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.27.0/opentelemetry-javaagent.jar"
+            echo "bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
+            mv /tmp/opentelemetry-javaagent.jar \
+              "${target.dir}/datahub/datahub-mae-consumer/lib/opentelemetry-javaagent.jar"
+        - name: fetch jmx prometheus javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Use Google's Maven Central mirror - repo1.maven.org rate-limits
+            # the Docker Build Cloud egress IPs (HTTP 429).
+            curl -fsSL -o /tmp/jmx_prometheus_javaagent.jar \
+              "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
+            echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
+            mv /tmp/jmx_prometheus_javaagent.jar \
+              "${target.dir}/datahub/datahub-mae-consumer/lib/jmx_prometheus_javaagent.jar"
+      paths:
+        - type: file
+          path: ${source.dir}/files/start.sh
+          uid: 0
+          gid: 0
+          source: image/datahub-mae-consumer/files/start.sh
+        - type: file
+          path: ${source.dir}/files/init.gradle
+          uid: 0
+          gid: 0
+          source: image/datahub-mae-consumer/files/init.gradle
+      outputs:
+        - source: ${target.dir}/datahub/datahub-mae-consumer
+          target: /datahub/datahub-mae-consumer
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub
+          target: /opt/docker/sbom/datahub
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  JAVA_OPTS: ""
+  JMX_OPTS: ""
+  LD_LIBRARY_PATH: /lib:/lib64
+  OTEL_EXPORTER_OTLP_HTTP_COMPRESSION: gzip
+  OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE: "8388608"
+  OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE: "4194304"
+  OTEL_EXPORTER_OTLP_TRACES_COMPRESSION: gzip
+paths:
+  - type: directory
+    path: /datahub
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /datahub/datahub-mae-consumer
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+annotations:
+  org.opencontainers.image.description: DataHub Metadata Audit Event (MAE) Consumer - the Kafka consumer that ingests MetadataChangeLog events and Platform Events into DataHub's search and graph indices.
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /datahub/datahub-mae-consumer/scripts/start.sh
+ports:
+  - 9091/tcp
