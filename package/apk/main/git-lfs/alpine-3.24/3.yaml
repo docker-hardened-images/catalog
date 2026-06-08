@@ -1,0 +1,93 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-git-lfs
+variant: runtime
+tags:
+  - 3.7.1-alpine3.24
+  - 3.7.1-r3-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  _REL: "0"
+  _VERSION: 3.7.1
+  COMMIT_SHA: 3f324c1c7b0de7953d8201306cd269a185ac26a1
+  PACKAGE_NAME: community/git-lfs
+  REL: "3"
+  SEMVER_MAJOR_MINOR_VERSION: "3.7"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.7.1
+  VERSION: 3.7.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: abuild
+      work-dir: ${source.dir}/aports/community/git-lfs
+      contents:
+        repositories:
+          - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+          - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+          - https://dhi.io/apk/alpine/v3.24/main
+          - https://dhi.io/apk/alpine/v3.23/main
+        packages:
+          - git
+          - ruby-3.4
+          - asciidoctor
+          - go
+          - bash
+          - coreutils
+          - curl
+          - git-daemon
+          - perl-utils
+        files:
+          - url: git+https://github.com/alpinelinux/aports.git#3f324c1c7b0de7953d8201306cd269a185ac26a1
+            path: ${source.dir}/aports
+            uid: 0
+            gid: 0
+          - url: https://github.com/git-lfs/git-lfs/archive/v3.7.1.tar.gz
+            checksum: sha256:0e83566a9e2477e03627e7fd6bf81f01fadbf93dcaf6abd2686fca90f6bac7dd
+            path: /var/cache/distfiles/git-lfs-3.7.1.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: abuild/setup@v1
+        - name: patch go dependencies
+          runs: |
+            set -eux -o pipefail
+
+            # Go writes the sumdb cache under GOPATH/pkg/sumdb during `go get`.
+            # The abuild user cannot create directories there, so pre-create
+            # and chmod it here before abuild drops privileges.
+            install -d -m 0777 "$(go env GOPATH)/pkg/sumdb/sum.golang.org"
+
+            # Inject prepare() to bump Go modules without a major version change.
+            # $builddir below is an abuild-runtime variable; written literally to APKBUILD.
+            # shellcheck disable=SC2154
+            cat >> APKBUILD << 'EOF'
+
+            prepare() {
+                default_prepare
+                cd "$builddir"
+                go get golang.org/x/crypto@v0.52.0
+                go get golang.org/x/net@v0.55.0
+                go mod tidy
+                go mod vendor
+            }
+            EOF
+        - uses: abuild/build@v1
+          privileged: true
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
