@@ -102,8 +102,17 @@ Build-time variants typically include `dev` in the variant name and are intended
 multi-stage Dockerfile. These images typically:
 
 - Run as the root user
+
 - Include a shell and package manager
+
 - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+To view the image variants and get more information about them, select the Tags tab for this repository, and then select
+a tag.
 
 ## Migrate to a Docker Hardened Image
 

@@ -1,4 +1,4 @@
-## About Kyverno Policy Reporter
+## About Kyverno Policy Reporter UI
 
 Kyverno is a Kubernetes-native policy engine that enables platform and security teams to validate, mutate, generate, and
 enforce policies using familiar YAML. It integrates with Kubernetes admission controllers and background scans to
