@@ -334,18 +334,7 @@ you override it.
 
 A FIPS-compliant variant of this image is available with the `-fips` suffix (e.g., `k8ssandra-medusa:0-fips`).
 
-The FIPS variant is built with a FIPS-enabled Go toolchain (used by the bundled `grpc_health_probe` binary) and pins
-strict FIPS mode at runtime via the following environment variables:
-
-```
-GODEBUG=fips140=only
-GOFIPS140=v1.0.0
-```
-
-`GODEBUG=fips140=only` enforces strict FIPS 140-3 mode for any Go binary in the image; `GOFIPS140=v1.0.0` pins the Go
-FIPS module version. Only `grpc_health_probe` is a Go binary in this image, and it makes plaintext localhost gRPC calls
-so it never exercises non-FIPS algorithms at runtime. The Medusa Python sidecar handles its own TLS to S3-compatible
-storage via the system OpenSSL FIPS provider, which is included in the FIPS variant.
+The FIPS variant is built with a FIPS-enabled Go toolchain (used by the bundled `grpc_health_probe` binary).
 
 Use the FIPS variant when deploying in environments that require FIPS 140-2 compliance, such as US federal government
 workloads or FedRAMP-authorized systems.
