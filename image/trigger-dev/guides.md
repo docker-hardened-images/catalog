@@ -200,8 +200,6 @@ The DHI `trigger-dev` image differs from upstream `ghcr.io/triggerdotdev/trigger
 - **FIPS variants apply to Node and Go.** The `-fips` and `-fips-dev` tags chain Docker's OpenSSL FIPS provider via
   `OPENSSL_CONF=/usr/lib/ssl/fips.cnf`, which declares a `nodejs_conf` section so Node's OpenSSL routes through the FIPS
   provider, and ship the embedded `goose` binary compiled against the FIPS Go toolchain with `GODEBUG=fips140=on`.
-  `fips140=on` is used (rather than the strict `fips140=only`) because ClickHouse's default TLS cipher negotiation may
-  include X25519, which is not FIPS-approved in strict mode.
 
 ## Image variants
 
