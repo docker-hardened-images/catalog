@@ -242,13 +242,6 @@ Docker Hardened Images come in different variants depending on their intended us
   - Include a shell and package manager
   - Are used to build or compile applications
 
-- FIPS variants include `fips` in the variant name and tag and come in both runtime and build-time flavors. These
-  variants use cryptographic modules validated under FIPS 140, a U.S. government standard for secure cryptographic
-  operations. The `harbor-core` FIPS variants build against the FIPS-validated Go toolchain and run the Core binary with
-  `GODEBUG=fips140=on`. This is the lenient mode: FIPS-validated primitives are used wherever possible, but non-FIPS
-  primitives used by transitive dependencies (for example SHA-1 in redis/go-redis) are still permitted. Strict mode
-  (`fips140=only`) is not used today because those dependencies would otherwise cause Harbor to refuse to start.
-
 To view the image variants and get more information about them, select the Tags tab for this repository, and then select
 a tag.
 
