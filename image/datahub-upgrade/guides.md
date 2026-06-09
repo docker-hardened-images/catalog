@@ -14,9 +14,9 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 
 The DataHub Upgrade image is a run-to-completion batch container that applies schema migrations, rebuilds search and
 graph indices, and emits upgrade readiness signals for a running DataHub deployment. It packages the
-`datahub-upgrade.jar` Spring Boot application (Java 17), along with a `dockerize` readiness wrapper that waits for
-upstream datastores before the JVM starts, a `kubectl` binary for Kubernetes-side operations, and opt-in OpenTelemetry
-and JMX Prometheus Java agents.
+`datahub-upgrade.jar` Spring Boot application (Java 21). The entrypoint waits for upstream datastores before the JVM
+starts, and the image also ships a `kubectl` binary for Kubernetes-side operations and opt-in OpenTelemetry and JMX
+Prometheus Java agents.
 
 The entrypoint is `/datahub/datahub-upgrade/scripts/start.sh`, which reads environment variables to determine which
 datastores to wait for and which optional agents to activate, then starts the upgrade job. Pass the job name with
@@ -79,33 +79,33 @@ Select the job by passing `-u <JobName>` as the command argument:
 
 The entrypoint script reads the following environment variables before starting the JVM:
 
-| Variable                    | Required      | Description                                                                                                                                                          |
-| :-------------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ELASTICSEARCH_HOST`        | Yes           | Elasticsearch hostname.                                                                                                                                              |
-| `ELASTICSEARCH_PORT`        | Yes           | Elasticsearch port (typically `9200`).                                                                                                                               |
-| `EBEAN_DATASOURCE_HOST`     | Yes (default) | MySQL/Postgres `host:port` (combined; upstream `start.sh` passes it verbatim to `dockerize -wait tcp://`). Set `SKIP_EBEAN_CHECK=true` to bypass if not using Ebean. |
-| `EBEAN_DATASOURCE_USERNAME` | Yes (default) | Datasource username.                                                                                                                                                 |
-| `EBEAN_DATASOURCE_PASSWORD` | Yes (default) | Datasource password.                                                                                                                                                 |
-| `EBEAN_DATASOURCE_URL`      | Yes (default) | Full JDBC connection URL.                                                                                                                                            |
-| `ENTITY_SERVICE_IMPL`       | No            | Entity service backend. Defaults to `ebean`; set to `cassandra` to use Cassandra.                                                                                    |
-| `CASSANDRA_DATASOURCE_HOST` | No            | Cassandra host. Set with `ENTITY_SERVICE_IMPL=cassandra`.                                                                                                            |
-| `GRAPH_SERVICE_IMPL`        | No            | Graph service backend. Defaults to Neo4j; set to `elasticsearch` to skip Neo4j.                                                                                      |
-| `NEO4J_HOST`                | No            | Neo4j host. Required when `GRAPH_SERVICE_IMPL` is not `elasticsearch`.                                                                                               |
-| `KAFKA_BOOTSTRAP_SERVER`    | No            | Kafka bootstrap server. Required for `SystemUpdate` to emit the readiness signal.                                                                                    |
-| `SCHEMA_REGISTRY_URL`       | No            | Kafka Schema Registry URL.                                                                                                                                           |
-| `SKIP_EBEAN_CHECK`          | No            | Set to `true` to skip the Ebean datasource readiness check.                                                                                                          |
-| `SKIP_CASSANDRA_CHECK`      | No            | Set to `true` to skip the Cassandra readiness check.                                                                                                                 |
-| `SKIP_NEO4J_CHECK`          | No            | Set to `true` to skip the Neo4j readiness check.                                                                                                                     |
-| `SKIP_ELASTICSEARCH_CHECK`  | No            | Set to `true` to skip the Elasticsearch readiness check.                                                                                                             |
-| `ELASTICSEARCH_USERNAME`    | No            | Elasticsearch username (when security is enabled).                                                                                                                   |
-| `ELASTICSEARCH_PASSWORD`    | No            | Elasticsearch password (when security is enabled).                                                                                                                   |
-| `ELASTICSEARCH_AUTH_HEADER` | No            | Pre-formed `Authorization` header used instead of username/password.                                                                                                 |
-| `ELASTICSEARCH_USE_SSL`     | No            | Set to `true` to enable SSL for Elasticsearch connections.                                                                                                           |
-| `ENABLE_OTEL`               | No            | Set to `true` to activate the OpenTelemetry Java agent.                                                                                                              |
-| `ENABLE_PROMETHEUS`         | No            | Set to `true` to activate the JMX Prometheus agent (binds to port 4318).                                                                                             |
-| `JAVA_OPTS`                 | No            | Extra JVM flags appended to the `java -jar` invocation by `start.sh`.                                                                                                |
-| `JMX_OPTS`                  | No            | JMX-specific JVM flags appended by `start.sh` (e.g., RMI agent configuration).                                                                                       |
-| `JAVA_TOOL_OPTIONS`         | No            | JVM flags picked up automatically by the JVM (independent of `start.sh`).                                                                                            |
+| Variable                    | Required      | Description                                                                                                                                              |
+| :-------------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ELASTICSEARCH_HOST`        | Yes           | Elasticsearch hostname.                                                                                                                                  |
+| `ELASTICSEARCH_PORT`        | Yes           | Elasticsearch port (typically `9200`).                                                                                                                   |
+| `EBEAN_DATASOURCE_HOST`     | Yes (default) | MySQL/Postgres `host:port` (combined; `start.sh` will wait on it with a TCP dependency check). Set `SKIP_EBEAN_CHECK=true` to bypass if not using Ebean. |
+| `EBEAN_DATASOURCE_USERNAME` | Yes (default) | Datasource username.                                                                                                                                     |
+| `EBEAN_DATASOURCE_PASSWORD` | Yes (default) | Datasource password.                                                                                                                                     |
+| `EBEAN_DATASOURCE_URL`      | Yes (default) | Full JDBC connection URL.                                                                                                                                |
+| `ENTITY_SERVICE_IMPL`       | No            | Entity service backend. Defaults to `ebean`; set to `cassandra` to use Cassandra.                                                                        |
+| `CASSANDRA_DATASOURCE_HOST` | No            | Cassandra host. Set with `ENTITY_SERVICE_IMPL=cassandra`.                                                                                                |
+| `GRAPH_SERVICE_IMPL`        | No            | Graph service backend. Defaults to Neo4j; set to `elasticsearch` to skip Neo4j.                                                                          |
+| `NEO4J_HOST`                | No            | Neo4j host. Required when `GRAPH_SERVICE_IMPL` is not `elasticsearch`.                                                                                   |
+| `KAFKA_BOOTSTRAP_SERVER`    | No            | Kafka bootstrap server. Required for `SystemUpdate` to emit the readiness signal.                                                                        |
+| `SCHEMA_REGISTRY_URL`       | No            | Kafka Schema Registry URL.                                                                                                                               |
+| `SKIP_EBEAN_CHECK`          | No            | Set to `true` to skip the Ebean datasource readiness check.                                                                                              |
+| `SKIP_CASSANDRA_CHECK`      | No            | Set to `true` to skip the Cassandra readiness check.                                                                                                     |
+| `SKIP_NEO4J_CHECK`          | No            | Set to `true` to skip the Neo4j readiness check.                                                                                                         |
+| `SKIP_ELASTICSEARCH_CHECK`  | No            | Set to `true` to skip the Elasticsearch readiness check.                                                                                                 |
+| `ELASTICSEARCH_USERNAME`    | No            | Elasticsearch username (when security is enabled).                                                                                                       |
+| `ELASTICSEARCH_PASSWORD`    | No            | Elasticsearch password (when security is enabled).                                                                                                       |
+| `ELASTICSEARCH_AUTH_HEADER` | No            | Pre-formed `Authorization` header used instead of username/password.                                                                                     |
+| `ELASTICSEARCH_USE_SSL`     | No            | Set to `true` to enable SSL for Elasticsearch connections.                                                                                               |
+| `ENABLE_OTEL`               | No            | Set to `true` to activate the OpenTelemetry Java agent.                                                                                                  |
+| `ENABLE_PROMETHEUS`         | No            | Set to `true` to activate the JMX Prometheus agent (binds to port 4318).                                                                                 |
+| `JAVA_OPTS`                 | No            | Extra JVM flags appended to the `java -jar` invocation by the entrypoint.                                                                                |
+| `JMX_OPTS`                  | No            | JMX-specific JVM flags appended by `start.sh` (e.g., RMI agent configuration).                                                                           |
+| `JAVA_TOOL_OPTIONS`         | No            | JVM flags picked up automatically by the JVM (independent of the entrypoint).                                                                            |
 
 ### Deploy with Helm (recommended for production)
 
@@ -198,11 +198,8 @@ The FIPS variant (`dhi.io/datahub-upgrade:<tag>-fips`) enables FIPS 140-validate
   `JDK_JAVA_OPTIONS=@/datahub/datahub-upgrade/scripts/datahub-fips.properties`. The properties file prepends the
   BouncyCastle jars to the boot classpath (`-Xbootclasspath/a:`), enables `org.bouncycastle.fips.approved_only=true`,
   and sets the JVM trust store to the BCFKS store shipped by the FIPS Temurin
-  (`/opt/java/openjdk/17-jre/lib/security/cacerts.bcfks`). The net effect is that all Java TLS and JCE operations —
+  (`/opt/java/openjdk/21-jre/lib/security/cacerts.bcfks`). The net effect is that all Java TLS and JCE operations —
   JDBC, Kafka client TLS, Elasticsearch HTTPS — go through BouncyCastle FIPS rather than the default SunJCE provider.
-- The bundled `dockerize` helper (a thin TCP/HTTP wait wrapper invoked by `start.sh`) performs no cryptographic
-  operations, so it is intentionally built with the non-FIPS `dhi/golang` toolchain in the FIPS variant. The FIPS
-  boundary is the JVM; there is no Go crypto path to validate.
 - The environment variable `DATAHUB_FIPS=true` is set automatically in this variant so operators can branch on it at
   runtime without inspecting image labels.
 

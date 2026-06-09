@@ -33,10 +33,8 @@ Full job reference: https://docs.datahub.com
 
 ## Bundled tools
 
-In addition to the `datahub-upgrade.jar` Spring Boot application (Java 17), the image ships:
+In addition to the `datahub-upgrade.jar` Spring Boot application (Java 21), the image ships:
 
-- **`dockerize`** — a Go-based readiness wrapper (built from `github.com/powerman/dockerize`) used by the entrypoint to
-  wait on upstream datastores (Elasticsearch, Ebean/MySQL/Postgres, Cassandra, Neo4j) before starting the JVM.
 - **`kubectl`** — Kubernetes CLI, used by some upgrade jobs that perform Kubernetes-side operations during migration.
 - **OpenTelemetry Java agent** — bundled at `/datahub/datahub-upgrade/lib/opentelemetry-javaagent.jar`. Activated by
   setting `ENABLE_OTEL=true` at runtime.
