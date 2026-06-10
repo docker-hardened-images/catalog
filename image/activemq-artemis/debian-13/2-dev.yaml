@@ -69,6 +69,22 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-x86_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.135.Final-linux-x86_64.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-aarch_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.135.Final-linux-aarch_64.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-kqueue/4.1.135.Final/netty-transport-native-kqueue-4.1.135.Final-osx-x86_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-kqueue-4.1.135.Final-osx-x86_64.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-kqueue/4.1.135.Final/netty-transport-native-kqueue-4.1.135.Final-osx-aarch_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-kqueue-4.1.135.Final-osx-aarch_64.jar
+            uid: 0
+            gid: 0
       pipeline:
         - name: patch dependencies
           uses: mvn/patch@v1
@@ -107,6 +123,42 @@ contents:
             fi
 
             mvn clean install -DskipTests
+        - name: patch native netty classifier jars
+          runs: |
+            set -eux -o pipefail
+
+            # mvn/patch bumps netty dependencyManagement to 4.1.135.Final, but
+            # classifier JARs stay on the upstream 4.1.132.Final line unless swapped
+            # explicitly (CVE-2026-45536).
+            dist_lib="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.54.0-bin/apache-artemis-2.54.0/lib"
+            netty_version="4.1.135.Final"
+
+            for arch in x86_64 aarch_64; do
+              find "${dist_lib}" \
+                -name "netty-transport-native-epoll-*-linux-${arch}.jar" \
+                ! -name "netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
+                -delete
+              install -m 0644 \
+                "${source.dir}/patch/deps/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
+                "${dist_lib}/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar"
+            done
+
+            for arch in x86_64 aarch_64; do
+              stale_kqueue=$(find "${dist_lib}" \
+                -name "netty-transport-native-kqueue-*-osx-${arch}.jar" \
+                ! -name "netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
+                -print)
+              if [ -z "${stale_kqueue}" ]; then
+                continue
+              fi
+              find "${dist_lib}" \
+                -name "netty-transport-native-kqueue-*-osx-${arch}.jar" \
+                ! -name "netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
+                -delete
+              install -m 0644 \
+                "${source.dir}/patch/deps/netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
+                "${dist_lib}/netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar"
+            done
       paths:
         - type: directory
           path: /src/patch
