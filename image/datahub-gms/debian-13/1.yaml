@@ -129,6 +129,16 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: install gradle init scripts
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-72hv-8253-57qq: force jackson-core 2.21.1 at resolution time.
+            # Installed as an init script so the force applies before lock refresh
+            # and is not defeated by --update-locks against the Spring Boot BOM.
+            install -D -m 0644 \
+              ${source.dir}/patch/force-cve-deps.gradle \
+              /root/.gradle/init.d/force-cve-deps.gradle
         - name: patch maven central for build cloud rate limits
           runs: |
             set -eux -o pipefail
@@ -165,9 +175,13 @@ contents:
             # aircompressor 2.0.3 fixes CVE-2025-67721.
             # spring-webmvc 6.2.18 fixes CVE-2026-22737, -22745, -22735,
             #   -22741.
-            # jackson-core 2.18.6 fixes GHSA-72hv-8253-57qq for the unshaded
-            #   2.18.x copies. The shaded 2.15.2 Hazelcast copy is handled
-            #   separately via VEX because Gradle cannot reach it.
+            # jackson-core 2.21.1 fixes GHSA-72hv-8253-57qq for the unshaded
+            #   copies via force-cve-deps.gradle (init script). We tried forcing
+            #   here with `--update-locks 'com.fasterxml.jackson.core:*'` but
+            #   Gradle re-resolves the lock against the Spring Boot BOM and
+            #   writes back the BOM-managed 2.19.2, defeating the force. The
+            #   shaded 2.15.2 Hazelcast copy is handled separately via VEX
+            #   because Gradle cannot reach it.
             # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
             # commons-lang3 3.18.0 fixes CVE-2025-48924.
             # avro 1.11.5 fixes CVE-2025-33042 (avro-compiler).
@@ -202,11 +216,6 @@ contents:
                                 && req.name == 'spring-webmvc') {
                             details.useVersion '6.2.18'
                             details.because 'DHI CVE remediation: CVE-2026-22737, CVE-2026-22745, CVE-2026-22735, CVE-2026-22741'
-                        }
-                        if (req.group == 'com.fasterxml.jackson.core'
-                                && req.name == 'jackson-core') {
-                            details.useVersion '2.18.6'
-                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq'
                         }
                         if (req.group == 'org.apache.logging.log4j'
                                 && req.name.startsWith('log4j-')) {
@@ -261,11 +270,17 @@ contents:
             # pinned versions for the modules we bumped (and their transitive
             # children). Without this, `gradle.lockfile` entries override our
             # build.gradle bumps and fail with "strictly X" constraint errors.
+            #
+            # Removed com.fasterxml.jackson.core:* and
+            # com.fasterxml.jackson.dataformat:* from the update-locks list
+            # so the force-cve-deps.gradle init script force to 2.21.1
+            # (GHSA-72hv-8253-57qq) is not defeated by lock refresh against
+            # the Spring Boot BOM.
             ./gradlew --init-script ${source.dir}/files/init.gradle \
               :metadata-service:war:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
               --no-daemon --console=plain
         - name: stage runtime files
           runs: |
@@ -320,6 +335,11 @@ contents:
           uid: 0
           gid: 0
           source: image/datahub-gms/files/init.gradle
+        - type: file
+          path: ${source.dir}/patch/force-cve-deps.gradle
+          uid: 0
+          gid: 0
+          source: image/datahub-gms/patch/force-cve-deps.gradle
       outputs:
         - source: ${target.dir}/datahub/datahub-gms
           target: /datahub/datahub-gms
