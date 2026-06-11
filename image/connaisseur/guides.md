@@ -127,7 +127,7 @@ FIPS variants include `fips` in the variant name and tag. They come in both runt
 variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
 cryptographic operations.
 
-FIPS variants of Connaisseur set `GODEBUG=fips140=only` and use a FIPS-validated Go cryptographic module. To verify FIPS
+FIPS variants of Connaisseur set `GODEBUG=fips140=on` and use a FIPS-validated Go cryptographic module. To verify FIPS
 compliance, check that the cryptographic module version is in use by your Connaisseur instance.
 
 ## Migrate to a Docker Hardened Image
