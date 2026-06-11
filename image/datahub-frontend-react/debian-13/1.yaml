@@ -23,11 +23,11 @@ dates:
   release: "2025-08-22"
 vars:
   COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
-  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:82865c7434b479ca3f18283ee1d0ac1837314b4ab3df8a69a6b5b5ac1d465ba6
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:047446eb7257dd7a9198f6f607ce704793a3b5e452f59b80ba9697799a5dfddd
   GRADLE_VERSION: 8.14.5
   JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
   JMX_PROMETHEUS_VERSION: 0.20.0
-  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:b8ee2af45c3115b12932cd67db55555bf18c1cbd4f7c81d91d3a5755d5ca4188
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:5b62cc91c58a2faa53ad9c14e2eb3dc428a980317b52a7a25206246b0b2f3897
   JRE_VERSION: 17.0.19.10
   NODE_REFERENCE: dhi/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
   NODE_VERSION: 22.22.3
@@ -54,7 +54,7 @@ contents:
     - sqlite3
   builds:
     - name: datahub-frontend-react
-      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:82865c7434b479ca3f18283ee1d0ac1837314b4ab3df8a69a6b5b5ac1d465ba6
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:047446eb7257dd7a9198f6f607ce704793a3b5e452f59b80ba9697799a5dfddd
       work-dir: ${source.dir}/datahub
       environment:
         CI: "false"
@@ -259,6 +259,10 @@ contents:
             # shaded jackson-core copy to a fixed version.
             # akka-http 10.5.3 fixes CVE-2023-44487 by adding HTTP/2 reset
             # frame rate limiting; it requires Akka core modules at 2.7.0+.
+            # netty 4.2.13.Final -> 4.2.15.Final fixes CVE-2026-44249,
+            # CVE-2026-44250, CVE-2026-44890, CVE-2026-44892, CVE-2026-44893,
+            # CVE-2026-44894, CVE-2026-45416, CVE-2026-45536, CVE-2026-45673,
+            # CVE-2026-45674, CVE-2026-46340, CVE-2026-47244, CVE-2026-47691.
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -280,6 +284,12 @@ contents:
                             details.useVersion '2.7.0'
                             details.because 'Align Akka modules with akka-http 10.5.3'
                         }
+                        if (req.group == 'io.netty'
+                                && req.name.startsWith('netty-')
+                                && !req.name.startsWith('netty-tcnative')) {
+                            details.useVersion '4.2.15.Final'
+                            details.because 'DHI CVE remediation: multiple Netty CVEs'
+                        }
                     }
                 }
             }
@@ -289,6 +299,12 @@ contents:
           privileged: true
           runs: |
             set -eux -o pipefail
+
+            # Stale lockfiles in the persistent Gradle cache mount can block
+            # later builds with "Timeout waiting to lock journal cache".
+            find /root/.gradle/caches -name '*.lock' -delete 2> /dev/null || true
+            find /root/.gradle/caches/journal-* -mindepth 1 -maxdepth 1 \
+              -name '*.lock' -delete 2> /dev/null || true
 
             # `:datahub-frontend:stage` triggers the Play 2 plugin to assemble
             # the runnable distribution under datahub-frontend/build/stage/main/.
@@ -312,6 +328,7 @@ contents:
             # #258 (datahub-mce-consumer) on the same v1.5 base.
             ./gradlew \
               --no-daemon \
+              --no-watch-fs \
               --console=plain \
               --warning-mode=summary \
               --parallel \
@@ -416,7 +433,7 @@ contents:
           uid: 0
           gid: 0
   artifacts:
-    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:b8ee2af45c3115b12932cd67db55555bf18c1cbd4f7c81d91d3a5755d5ca4188
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:5b62cc91c58a2faa53ad9c14e2eb3dc428a980317b52a7a25206246b0b2f3897
       includes:
         - opt/**
         - usr/local/bin/**
