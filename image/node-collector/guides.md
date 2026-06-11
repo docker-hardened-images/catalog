@@ -64,19 +64,6 @@ If you deploy node-collector directly (without Trivy Operator), your Pod spec mu
 Because of these requirements, standalone deployment is uncommon; the Trivy Operator path is recommended unless you have
 a specific reason to run it directly.
 
-### FIPS deployments
-
-If you run the FIPS variant against an API server that negotiates post-quantum TLS (Go 1.24+ defaults to
-`X25519MLKEM768` for TLS key exchange), the in-cluster handshake may fail under strict `fips140=only` because ML-KEM is
-not yet covered by the validated FIPS 140 module. If you hit this, add `GODEBUG: fips140=only,tlsmlkem=0` to the Pod's
-`env` to disable the ML-KEM offer and fall back to classical curves:
-
-```yaml
-env:
-  - name: GODEBUG
-    value: fips140=only,tlsmlkem=0
-```
-
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
