@@ -33,17 +33,72 @@ contents:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - dbus
+    - diffutils
+    - dmidecode
+    - dpkg
+    - ethtool
+    - findutils
+    - gnutls-bin
+    - grep
+    - iproute2
+    - iptables
+    - ipxe-qemu
+    - kmod
+    - libc-bin
+    - libcap2-bin
     - libnbd-bin
+    - libnbd0
+    - libusbredirhost1t64
+    - libusbredirparser1t64
+    - libvirt-clients
+    - libvirt-daemon-driver-qemu
+    - libvirt-daemon-system
     - libvirt0
+    - mawk
+    - ncat
+    - nftables
+    - numactl
+    - numad
+    - ovmf
+    - passt
+    - perl-base
+    - procps
+    - psmisc
+    - qemu-system-common
+    - qemu-system-data
+    - qemu-system-x86
+    - qemu-utils
+    - seabios
+    - sed
+    - swtpm
+    - swtpm-tools
+    - tzdata
+    - util-linux
+    - virtiofsd
+    - xorriso
   builds:
     - name: virt-launcher
       uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
       work-dir: /go/src/kubevirt.io/kubevirt
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - pkg-config
           - libvirt-dev
           - libnbd-dev
+          - gcc
+          - libc6-dev
+          - libcap2-bin
         files:
           - url: git+https://github.com/kubevirt/kubevirt.git#v1.8.3
             checksum: 540f37cfa3caed601ac6710cb002b11a249d0639
@@ -76,13 +131,19 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            if [ "${target.fips}" = "true" ]; then
+              # Some unit tests will try to use X25519 which fips140=only rejects.
+              # We run lenient mode in test to match the runtime variant.
+              export GODEBUG=fips140=on
+            fi
+
             # Build test helper binary required by monitor_test.go
             CGO_ENABLED=0 go build -o _out/cmd/fake-qemu-process/fake-qemu-process ./cmd/fake-qemu-process/
 
             # -vet=off: virt-launcher v1.5.x has non-constant format strings caught by Go 1.26's linting
             # CGO_ENABLED=1: upstream requires libvirt C bindings (libvirt-dev)
             CGO_ENABLED=1 go test -vet=off ./cmd/virt-launcher/... ./pkg/virt-launcher/...
-        - name: build
+        - name: build virt-launcher
           uses: go/build@v1
           environment:
             GOFLAGS: -buildvcs=false
@@ -91,8 +152,75 @@ contents:
             ldflags:
               - -X kubevirt.io/client-go/version.gitVersion=v1.8.3
               - -X kubevirt.io/client-go/version.gitCommit=540f37cfa3caed601ac6710cb002b11a249d0639
-            output: ${target.dir}/usr/local/bin/virt-launcher
+            output: ${target.dir}/usr/bin/virt-launcher
             packages: ./cmd/virt-launcher
+        - name: build virt-launcher-monitor
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.3
+              - -X kubevirt.io/client-go/version.gitCommit=540f37cfa3caed601ac6710cb002b11a249d0639
+            output: ${target.dir}/usr/bin/virt-launcher-monitor
+            packages: ./cmd/virt-launcher-monitor
+        - name: build virt-probe
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/bin/virt-probe
+            packages: ./cmd/virt-probe
+        - name: build virt-tail
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/bin/virt-tail
+            packages: ./cmd/virt-tail
+        - name: build virt-freezer
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/bin/virt-freezer
+            packages: ./cmd/virt-freezer
+        - name: build libvirt-hook-client
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/bin/libvirt-hook-client
+            packages: ./cmd/virt-launcher/libvirt-hook-client
+        - name: build container-disk
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/usr/bin
+            gcc -static -O2 -Wall \
+              -o ${target.dir}/usr/bin/container-disk \
+              ./cmd/container-disk-v2alpha/main.c
+            chmod 0755 ${target.dir}/usr/bin/container-disk
+        - name: set file capabilities
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_net_bind_service+ep ${target.dir}/usr/bin/virt-launcher-monitor
+            getcap ${target.dir}/usr/bin/virt-launcher-monitor
+        - name: install scripts and config
+          runs: |
+            set -eux -o pipefail
+
+            install -m 0755 -D ./cmd/virt-launcher/node-labeller/node-labeller.sh ${target.dir}/usr/bin/node-labeller.sh
+            install -m 0644 -D ./cmd/virt-launcher/qemu.conf ${target.dir}/etc/libvirt/qemu.conf
+            install -m 0644 -D ./cmd/virt-launcher/virtqemud.conf ${target.dir}/etc/libvirt/virtqemud.conf
+            install -m 0755 -D ./cmd/virt-launcher/qemu ${target.dir}/etc/libvirt/hooks/qemu
+            install -m 0644 -D ./cmd/virt-launcher/nsswitch.conf ${target.dir}/etc/nsswitch.conf
       paths:
         - type: directory
           path: ${source.dir}/patch
@@ -100,8 +228,52 @@ contents:
           gid: 0
           source: image/virt-launcher/patch
       outputs:
-        - source: ${target.dir}/usr/local/bin/virt-launcher
-          target: /usr/local/bin/virt-launcher
+        - source: ${target.dir}/usr/bin/virt-launcher
+          target: /usr/bin/virt-launcher
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/virt-launcher-monitor
+          target: /usr/bin/virt-launcher-monitor
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/virt-probe
+          target: /usr/bin/virt-probe
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/virt-tail
+          target: /usr/bin/virt-tail
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/virt-freezer
+          target: /usr/bin/virt-freezer
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/libvirt-hook-client
+          target: /usr/bin/libvirt-hook-client
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/container-disk
+          target: /usr/bin/container-disk
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/node-labeller.sh
+          target: /usr/bin/node-labeller.sh
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/libvirt/qemu.conf
+          target: /etc/libvirt/qemu.conf
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/libvirt/virtqemud.conf
+          target: /etc/libvirt/virtqemud.conf
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/libvirt/hooks/qemu
+          target: /etc/libvirt/hooks/qemu
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/nsswitch.conf
+          target: /etc/nsswitch.conf
           uid: 0
           gid: 0
         - source: /opt/docker/sbom/virt-launcher
@@ -129,16 +301,18 @@ contents:
       uid: 0
       gid: 0
 accounts:
-  run-as: "65532"
+  root: true
+  run-as: root
   users:
-    - name: nonroot
-      uid: 65532
+    - name: qemu
+      uid: 107
+      gid: 107
+    - name: _apt
+      uid: 42
       gid: 65532
   groups:
-    - name: nonroot
-      gid: 65532
-      members:
-        - nonroot
+    - name: qemu
+      gid: 107
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
@@ -147,8 +321,36 @@ os-release:
   pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /usr/lib64/qemu-kvm
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /var/lib/kubevirt-node-labeller
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /var/run
+    uid: 0
+    gid: 0
+    source: ../run
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: iptables-legacy
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: ip6tables-legacy
 annotations:
-  org.opencontainers.image.description: A minimal Virt Launcher image
+  org.opencontainers.image.description: Virt Launcher - hardened qemu/libvirt VM runtime for KubeVirt
   org.opencontainers.image.licenses: Apache-2.0
 entrypoint:
-  - /usr/local/bin/virt-launcher
+  - /usr/bin/virt-launcher

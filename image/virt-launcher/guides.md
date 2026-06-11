@@ -12,12 +12,46 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 
 ### What's included in this virt-launcher image
 
-This Docker Hardened Virt Launcher image is a component of the [KubeVirt](https://github.com/kubevirt/kubevirt) project.
+This image bundles every binary upstream's virt-launcher container ships, plus the Debian system packages that KubeVirt
+expects to find at runtime. It is intentionally **not** a minimal image; virt-launcher's job is to host an entire VM
+runtime stack inside a single pod, and the upstream container is correspondingly large (~800MB-1GB).
 
-- `virt-launcher`: Virt Launcher provides the runtime environment for virtual machines in KubeVirt
+**KubeVirt binaries shipped at `/usr/bin/`:**
+
+- `virt-launcher`: VM supervisor that spawns the qemu process for one VirtualMachineInstance and proxies libvirt RPC.
+- `virt-launcher-monitor`: parent process the KubeVirt operator runs as the pod entrypoint; supervises `virt-launcher`
+  and carries the `cap_net_bind_service` file capability so qemu can bind privileged ports without an elevated pod.
+- `virt-probe`: liveness/readiness probe binary the KubeVirt operator wires into VirtualMachineInstance pod specs.
+- `virt-tail`: streams the qemu serial console log to the VM owner via `kubectl logs`.
+- `virt-freezer`: issues qemu-guest-agent freeze/thaw commands so guest filesystems are quiesced before snapshots.
+- `libvirt-hook-client`: Go binary that replaces the static `/etc/libvirt/hooks/qemu` shell hook when the
+  `LibvirtHooksServerAndClient` feature gate is enabled.
+- `container-disk`: tiny static C binary upstream embeds in customer-built ContainerDisk images to publish a VM disk
+  over a unix socket. Shipped here so customers can `COPY --from=...` it.
+- `node-labeller.sh`: shell script the KubeVirt operator runs once per node to detect hypervisor capabilities and
+  publish them as node labels (used for scheduling decisions).
+
+**Virtualization stack:**
+
+- `qemu-system-x86_64` and supporting userland: the KVM hypervisor.
+- `libvirtd` / `virtqemud`: connection manager that mediates between virt-launcher and qemu.
+- `virtiofsd`: shared-filesystem daemon for VM disk and config mounts.
+- `swtpm`, `swtpm-tools`: software TPM emulation.
+- `passt`: userspace VM networking.
+- `ovmf`, `seabios`, `ipxe-qemu`: UEFI / legacy / network boot firmware.
+- `dmidecode`, `ethtool`, `numactl`, `numad`: hardware introspection used by `node-labeller.sh`.
 
 KubeVirt extends Kubernetes with virtualization capabilities. The virt-launcher is one of several KubeVirt components
-typically deployed by the KubeVirt operator as part of a full installation.
+typically deployed by the KubeVirt operator. The companion images Docker Hardened Images ships are `dhi/virt-handler`,
+`dhi/virt-controller`, `dhi/virt-api`, and `dhi/virt-operator`.
+
+### A note on privileges
+
+virt-launcher's runtime variant is **root-by-design**. Upstream needs root to start `libvirtd` / `virtqemud` and to
+mediate access to `/dev/kvm`; the qemu process the daemon spawns drops to `uid 107` (the `qemu` user) before executing
+guest code. The image therefore deviates from the usual Docker Hardened Images convention of running runtime variants as
+the `nonroot` user. The KubeVirt operator wires the appropriate `securityContext.privileged` and `runAsUser: 0` settings
+when it creates the VM pod.
 
 ### Run the virt-launcher container
 
@@ -92,17 +126,88 @@ multi-stage Dockerfile. These images typically:
 FIPS variants include `fips` in the variant name and tag. These variants use cryptographic modules that have been
 validated under FIPS 140, a U.S. government standard for secure cryptographic operations.
 
+#### FIPS scope in virt-launcher specifically
+
+virt-launcher is a fat image with both Go-side and C-side cryptography. In KubeVirt's default deployment configuration,
+no cryptographic traffic terminates in the C-side code, so the `fips-compliant: true` attestation is meaningful:
+
+- **Go side** (the KubeVirt binaries: virt-launcher, virt-launcher-monitor, virt-probe, virt-tail, virt-freezer,
+  libvirt-hook-client): built against the Go FIPS 140 module with `GODEBUG=fips140=on`. Every TLS connection these
+  binaries originate - to the Kubernetes API server, between virt-handler and virt-launcher, the CBT backup HTTP/2
+  tunnel - uses FIPS-validated crypto. The mode is **lenient** (`fips140=on`) rather than strict (`fips140=only`)
+  because the Kubernetes client-go dependency graph includes X25519 for TLS 1.3 key exchange and patching client-go is
+  not tractable.
+
+- **C side** (qemu, libvirt, virtiofsd, swtpm): these link against system crypto libraries that are **not** in FIPS
+  mode. However, in KubeVirt 1.6 / 1.7 / 1.8 the shipped configuration explicitly disables every network-facing TLS
+  endpoint in this code path:
+
+  - `virtqemud.conf` ships with `listen_tls = 0` and `listen_tcp = 0`; the libvirt daemon only accepts connections on
+    its local unix socket inside the pod.
+  - `qemu.conf` ships with `vnc_tls = 0` and `vnc_sasl = 0`; VNC connections are plaintext and intended to be wrapped by
+    an external proxy (typically virtctl over a websocket through the Kubernetes API).
+  - Live VM migration uses a `qemu+unix:///` URI to a Go TLS proxy in `dhi/virt-handler` (a separate FIPS image), not
+    qemu's own TLS migration. The qemu-to-qemu byte stream stays inside a unix socket; the network-facing TLS is Go's
+    `crypto/tls`.
+
+  Reference: upstream KubeVirt v1.8.2 `cmd/virt-launcher/virtqemud.conf`, `cmd/virt-launcher/qemu.conf`,
+  `pkg/virt-launcher/virtwrap/live-migration-source.go`, `pkg/virt-handler/migration-proxy/migration-proxy.go`.
+
+- **OpenSSL FIPS overlay**: the `-fips` variant overlays `dhi/pkg-openssl-fips` so that any libvirt or virtiofsd code
+  path that loads libssl gets the FIPS provider for defence in depth. qemu and libvirt do not consume it via the OpenSSL
+  FIPS provider mechanism in the deployed configuration, but the libraries are present and would be picked up if a
+  customer ever enabled a TLS listener.
+
+**Out of scope** — the following modes would route through non-FIPS C-side crypto and are not covered by this image's
+FIPS attestation:
+
+- Out-of-tree libvirt sidecars or custom configuration that re-enables qemu's TLS listener (`listen_tls = 1`).
+- LUKS-encrypted backing volumes decrypted inside the qemu process. KubeVirt 1.8 does not support this path
+  (`pkg/virt-launcher/` contains no LUKS code).
+- VNC over TLS terminated directly in qemu (`vnc_tls = 1`).
+
+For workloads operating KubeVirt in its default configuration, the `-fips` variant is suitable. For workloads that need
+qemu-internal crypto to be FIPS-validated end to end (e.g. SEV-SNP with in-qemu attestation, or future LUKS support),
+the FIPS gap is a known limitation — talk to Docker about the timeline for rebuilding qemu against the OpenSSL FIPS
+provider.
+
 **Runtime requirements specific to FIPS:**
 
-- FIPS mode restricts cryptographic operations to FIPS-validated algorithms
-- Usage of non-compliant operations (like MD5) will fail
-- Larger image size due to FIPS-validated cryptographic libraries
+- FIPS mode restricts cryptographic operations on the Go side to FIPS-validated algorithms.
+- Usage of non-compliant operations (like MD5) on the Go side will fail.
+- Larger image size due to FIPS-validated cryptographic libraries.
 
 ## Migrate to a Docker Hardened Image
 
-To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
-base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
-following table of migration notes:
+virt-launcher is not consumed via Dockerfile - it is deployed by the KubeVirt operator. To switch an existing KubeVirt
+installation to the hardened virt-launcher, patch the `KubeVirt` custom resource so the operator reaches into `dhi.io`
+instead of `quay.io`. For example:
+
+```yaml
+apiVersion: kubevirt.io/v1
+kind: KubeVirt
+metadata:
+  name: kubevirt
+  namespace: kubevirt
+spec:
+  imageRegistry: dhi.io
+  imageTag: "1.8"
+  # ... existing config ...
+```
+
+After this change, the operator will roll out a new virt-handler DaemonSet whose pods pull `dhi.io/virt-launcher:1.8` as
+the VM pod init image, replacing `quay.io/kubevirt/virt-launcher:v1.8.x`. No changes to your application VMs are
+required; the next time a `VirtualMachineInstance` starts, it uses the hardened image.
+
+The companion images need to be mirrored alongside virt-launcher so the operator can find them: `dhi/virt-handler`,
+`dhi/virt-controller`, `dhi/virt-api`, `dhi/virt-operator`. All four are published with matching tags.
+
+The rest of this section is the generic Docker Hardened Images migration guidance and applies primarily to images you
+consume from a Dockerfile, not to virt-launcher specifically.
+
+To migrate a Dockerfile-consumed image to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must
+update the base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are
+listed in the following table of migration notes:
 
 | Item               | Migration note                                                                                                                                                                                                            |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
