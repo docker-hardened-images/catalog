@@ -548,9 +548,6 @@ GODEBUG=fips140=on
 GOFIPS140=v1.0.0
 ```
 
-`GODEBUG=fips140=on` enables Go's FIPS mode without enforcing strict `fips140=only` behavior, which can break
-Kubernetes-related runtime paths used by this operator. `GOFIPS140=v1.0.0` pins the Go FIPS module version.
-
 The FIPS variant also includes the OpenSSL FIPS provider for any operations that delegate to OpenSSL.
 
 Use the FIPS variant when deploying in environments that require FIPS 140-2 compliance, such as US federal government
