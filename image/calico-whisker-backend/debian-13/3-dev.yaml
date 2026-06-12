@@ -1,0 +1,175 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico Whisker Backend 3.x (dev)
+image: dhi.io/calico-whisker-backend
+variant: dev
+tags:
+  - 3-dev
+  - 3.32-dev
+  - 3.32.0-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.32-debian-dev
+  - 3.32-debian13-dev
+  - 3.32.0-debian-dev
+  - 3.32.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.0
+  VERSION: 3.32.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: calico-whisker-backend
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.0
+            checksum: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico-whisker-backend
+              version: 3.32.0
+              packages:
+                - name: calico-whisker-backend
+                  purl: pkg:golang/github.com/projectcalico/calico/whisker-backend@3.32.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/projectcalico/calico/whisker-backend
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only; skip fv packages that require a running Goldmane daemon.
+            CGO_ENABLED=0 go test $(go list ./... | grep -v -E '/fv$')
+        - name: build-whisker-backend
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/whisker-backend
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.0
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            output: ${target.dir}/usr/local/bin/whisker-backend
+            packages: ./cmd
+        - name: install license
+          work-dir: /go/src/github.com/projectcalico/calico
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/licenses"
+            cp LICENSE.md "${target.dir}/licenses/LICENSE"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/whisker-backend
+          target: /usr/local/bin/whisker-backend
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/licenses/LICENSE
+          target: /licenses/LICENSE
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/calico-whisker-backend
+          target: /opt/docker/sbom/calico-whisker-backend
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: whisker-backend
+      uid: 10001
+      gid: 10001
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: whisker-backend
+      gid: 10001
+      members:
+        - whisker-backend
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /whisker-backend
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/whisker-backend
+annotations:
+  org.opencontainers.image.description: A minimal Calico Whisker Backend image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /whisker-backend
+ports:
+  - 8080/tcp
