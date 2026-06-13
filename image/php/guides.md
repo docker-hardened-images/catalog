@@ -68,19 +68,17 @@ FROM dhi.io/php:<tag>-dev AS builder
 WORKDIR /tmp
 ```
 
-Example of building Redis extension manually:
+Example of installing the Redis extension using [PIE](https://github.com/php/pie):
 
 ```dockerfile
-RUN pecl install redis
+FROM dhi.io/php:<tag>-dev AS builder
+
+RUN --mount=type=bind,from=ghcr.io/php/pie:bin,source=/pie,target=/usr/local/bin/pie \
+    pie --no-interaction install phpredis/phpredis;
 
 FROM dhi.io/php:<tag>-fpm
-COPY --from=builder $PHP_PREFIX/lib/php/extensions $PHP_PREFIX/lib/php/extensions
-```
-
-Add extension configuration:
-
-```dockerfile
-RUN echo "extension=redis.so" > $PHP_INI_DIR/conf.d/redis.ini
+COPY --from=builder $PHP_INI_DIR/conf.d/* $PHP_INI_DIR/conf.d/
+COPY --from=builder /usr/lib/php/extensions /usr/lib/php/extensions
 ```
 
 ## Non-hardened images vs. Docker Hardened Images
@@ -281,22 +279,17 @@ modern `hash` extension instead.
 
 Use a multi-stage build to compile extensions using the standard PHP build process.
 
-Building an extension from PECL:
+Installing an extension using [PIE](https://github.com/php/pie):
 
 ```dockerfile
 FROM dhi.io/php:<tag>-dev AS builder
-WORKDIR /tmp
-RUN pecl download redis \
-    && tar xzf redis-*.tgz \
-    && cd redis-* \
-    && phpize \
-    && ./configure \
-    && make \
-    && make install
+
+RUN --mount=type=bind,from=ghcr.io/php/pie:bin,source=/pie,target=/usr/local/bin/pie \
+    pie --no-interaction install phpredis/phpredis;
 
 FROM dhi.io/php:<tag>-fpm
-COPY --from=builder /usr/local/lib/php/extensions /usr/local/lib/php/extensions
-RUN echo "extension=redis.so" > $PHP_INI_DIR/conf.d/redis.ini
+COPY --from=builder /usr/lib/php/extensions /usr/lib/php/extensions
+COPY --from=builder $PHP_INI_DIR/conf.d/* $PHP_INI_DIR/conf.d/
 ```
 
 Building an extension from source:
