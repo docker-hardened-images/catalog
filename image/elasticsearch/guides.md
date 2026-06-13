@@ -132,7 +132,7 @@ Run the environment by running `docker compose up -d` in the same directory.
 
 You can deploy the Debian 13 Elasticsearch image with
 [Elastic Cloud on Kubernetes (ECK)](https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s). Use a current Debian
-13 image tag, such as `dhi.io/elasticsearch:9.3.1-debian13`, so the ECK readiness probe can find `nc` in the standard
+13 image tag, such as `dhi.io/elasticsearch:8.19.1-debian13`, so the ECK readiness probe can find `nc` in the standard
 container `PATH`.
 
 For ECK, set a numeric pod security context so Kubernetes can verify the container runs as a non-root user:
@@ -143,8 +143,8 @@ kind: Elasticsearch
 metadata:
   name: elasticsearch-sample
 spec:
-  version: 9.3.1
-  image: dhi.io/elasticsearch:9.3.1-debian13
+  version: 8.19.1
+  image: dhi.io/elasticsearch:8.19.1-debian13
   nodeSets:
     - name: default
       count: 1
