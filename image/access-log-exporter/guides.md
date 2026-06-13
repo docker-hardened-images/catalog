@@ -153,10 +153,6 @@ validated under FIPS 140, a U.S. government standard for secure cryptographic op
 
 **Runtime requirements specific to FIPS:**
 
-- FIPS variants enable the Go FIPS runtime posture and use FIPS-validated cryptographic modules for supported operations
-- Strict `fips140=only` behavior, where non-FIPS crypto calls may panic or error, is not enabled by default
-- Larger image size due to FIPS-validated cryptographic libraries
-
 ## Migrate to a Docker Hardened Image
 
 To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
