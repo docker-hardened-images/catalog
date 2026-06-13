@@ -86,11 +86,6 @@ multi-stage Dockerfile. These images typically:
 
 - Are used to build or compile applications
 
-- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
-  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-  cryptographic operations. Strict `fips140=only` behavior, where non-FIPS crypto calls may panic or error, is not
-  enabled by default.
-
 ## Migrate to a Docker Hardened Image
 
 Switching to the hardened ADC image does not require any special changes. You can use it as a drop-in replacement for
