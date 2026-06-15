@@ -1,0 +1,50 @@
+#!/usr/bin/make -f
+
+# Builds the pruned workspace staged at worker-src by the pipeline.
+# PNPM_VERSION / SEMVER_MAJOR_VERSION arrive via the build environment.
+SRC := $(CURDIR)/worker-src
+PROD := /prod/worker
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+override_dh_auto_build:
+	corepack enable
+	# node-corepack ships pnpm.js non-executable; restore it so the shims run
+	chmod +x /usr/lib/nodejs/corepack/dist/*.js
+	cd $(SRC) && \
+		corepack prepare pnpm@$(PNPM_VERSION) --activate && \
+		pnpm install --no-frozen-lockfile && \
+		pnpm exec turbo run build --filter=worker...
+
+override_dh_auto_install:
+	# prod deploy; pnpm 9 (v2) defaults to the legacy layout, pnpm 10+ (v3) needs --legacy
+	cd $(SRC) && if [ "$(SEMVER_MAJOR_VERSION)" = "2" ]; then \
+		pnpm --filter worker deploy --prod $(PROD); \
+		rm -rf $(PROD)/src $(PROD)/Dockerfile $(PROD)/.eslintrc.js $(PROD)/.turbo $(PROD)/tsconfig.json; \
+	else \
+		pnpm --filter worker deploy --legacy --prod $(PROD); \
+	fi
+	# pnpm deploy drops the generated Prisma client; copy the built one back
+	set -eu; \
+		builder_client="$$(find $(SRC)/node_modules/.pnpm -path '*/node_modules/@prisma/client' -type d | head -n 1)"; \
+		deployed_client="$$(find $(PROD)/node_modules/.pnpm -path '*/node_modules/@prisma/client' -type d | head -n 1)"; \
+		builder_runtime="$$(dirname "$$(dirname "$$builder_client")")/.prisma"; \
+		deployed_runtime="$$(dirname "$$(dirname "$$deployed_client")")/.prisma"; \
+		rm -rf "$$deployed_client" "$$deployed_runtime"; \
+		cp -R "$$builder_client" "$$deployed_client"; \
+		cp -R "$$builder_runtime" "$$deployed_runtime"
+	cp $(SRC)/worker/entrypoint.sh $(PROD)/entrypoint.sh
+	chmod +x $(PROD)/entrypoint.sh
+	mkdir -p debian/tmp/usr/lib/nodejs/langfuse-worker
+	cp -a $(PROD)/. debian/tmp/usr/lib/nodejs/langfuse-worker/
+
+# Prebuilt Node bundle: stripping breaks Prisma/wasm natives, and the only
+# interpreter (node) comes from the consuming image, so skip strip/shlibdeps.
+override_dh_strip:
+override_dh_shlibdeps:
+override_dh_dwz:
