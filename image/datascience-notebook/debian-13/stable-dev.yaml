@@ -1,0 +1,562 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Jupyter Data Science Notebook 2026-05-11 (dev)
+image: dhi.io/datascience-notebook
+variant: dev
+tags:
+  - 2026-05-11-dev
+  - 2026-05-11-debian-dev
+  - 2026-05-11-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-11"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: e73d308ba06fd5bcc75a4ee8417711743860c964
+  JULIA_LINUX_ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
+  JULIA_MAJOR_MINOR: "1.12"
+  JULIA_SHA256: '#{ target.arch == "amd64" ? "bbabf3bef19421a9dbd24a767d807606ab85e444323b5a1c73ffe293fa3d079a" : "029b93b857bd0ffd627f9a8580d3bbaa63daf008d7b7aed02fbceb8fd57c4899" }'
+  JULIA_TRIPLET: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  JULIA_VERSION: 1.12.6
+  MAMBA_LINUX_ARCH: '#{ target.arch == "amd64" ? "64" : "aarch64" }'
+  MAMBA_SHA256: '#{ target.arch == "amd64" ? "e9482483cd42cb28a936298419e47a9411a60b4595c767b3c6b5967d9ef64633" : "169523131ddcb40658f822117116c75721654fcbe5953479fef998de5c46d5c4" }'
+  MICROMAMBA_VERSION: 2.6.0-0
+  PYTHON_BUILD_REFERENCE: dhi/python:3.13.13-debian13-dev@sha256:c96d691f22c82f3dfc7f78c7935331a127d5f44e273265a1e03912f819eb640e
+  VERSION: "2026-05-11"
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - debianutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - locales
+    - mawk
+    - perl-base
+    - sed
+    - tini
+    - tzdata
+    - util-linux
+  builds:
+    - name: datascience-notebook
+      uses: dhi.io/python:3.13.13-debian13-dev@sha256:c96d691f22c82f3dfc7f78c7935331a127d5f44e273265a1e03912f819eb640e
+      work-dir: ${source.dir}
+      environment:
+        CONDA_DIR: /opt/conda
+        CONDA_PKGS_DIRS: /var/cache/conda-pkgs
+        MAMBA_ROOT_PREFIX: /opt/conda
+        PATH: /opt/conda/bin:/opt/julia-1.12.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /var/cache/conda-pkgs
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - git
+          - gzip
+          - tar
+        files:
+          - url: https://github.com/mamba-org/micromamba-releases/releases/download/2.6.0-0/micromamba-linux-${MAMBA_LINUX_ARCH}
+            checksum: sha256:${MAMBA_SHA256}
+            path: ${source.dir}/micromamba
+            spdx:
+              name: micromamba
+              version: 2.6.0-0
+              packages:
+                - name: micromamba
+                  purl: pkg:github/mamba-org/micromamba-releases@2.6.0-0
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+          - url: https://julialang-s3.julialang.org/bin/linux/${JULIA_LINUX_ARCH}/1.12/julia-1.12.6-linux-${JULIA_TRIPLET}.tar.gz
+            checksum: sha256:${JULIA_SHA256}
+            path: ${source.dir}/julia.tar.gz
+            spdx:
+              name: julia
+              version: 1.12.6
+              packages:
+                - name: julia
+                  purl: pkg:generic/julialang/julia@1.12.6
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jupyter/docker-stacks.git#e73d308ba06fd5bcc75a4ee8417711743860c964
+            checksum: e73d308ba06fd5bcc75a4ee8417711743860c964
+            path: ${source.dir}/docker-stacks
+            spdx:
+              name: jupyter-docker-stacks
+              version: e73d308ba06fd5bcc75a4ee8417711743860c964
+              packages:
+                - name: jupyter-docker-stacks
+                  purl: pkg:github/jupyter/docker-stacks@e73d308ba06fd5bcc75a4ee8417711743860c964
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bootstrap micromamba
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            install -m 0755 "${source.dir}/micromamba" /usr/local/bin/micromamba
+            /usr/local/bin/micromamba --version
+        - name: bootstrap conda env
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/conda
+            cat > /opt/conda/.condarc << 'EOF'
+            channels:
+              - conda-forge
+            channel_priority: strict
+            EOF
+
+            # Create base env at /opt/conda with Python + mamba/conda CLIs.
+            # Pin conda below 26: conda 26.x hard-depends on the experimental
+            # conda-rattler-solver, which installs py-rattler (a Rust extension)
+            # whose bundled crates (aws-lc-sys, openssl, rustls-webpki, quinn-proto)
+            # carry HIGH CVEs our pip-based patch-CVEs step cannot reach. The
+            # libmamba-based conda 25.x line has no rattler dependency, keeping
+            # that surface out of the image. Lift the cap once a conda release can
+            # select py-rattler >=0.24, which bundles the fixed crates.
+            /usr/local/bin/micromamba install --yes \
+              --root-prefix /opt/conda \
+              --prefix /opt/conda \
+              -c conda-forge \
+              python=3.13 \
+              mamba \
+              'conda<26'
+
+            # Micromamba was only needed for bootstrap; mamba/conda survive.
+            rm -f /usr/local/bin/micromamba
+        - name: install base-notebook packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # fonts-conda-ecosystem replaces upstream's apt fonts-liberation +
+            # fonts-dejavu so matplotlib/seaborn render with real fonts instead
+            # of bitmap fallbacks. pandoc is required by `jupyter nbconvert`
+            # for HTML/Markdown export; without it nbconvert errors at runtime.
+            # NOTE: upstream also installs `run-one` for the RESTARTABLE
+            # opt-in mode of start-notebook.py. run-one is an Ubuntu-only
+            # apt package with no conda-forge equivalent, so we don't ship
+            # it; RESTARTABLE=yes is not supported in this image.
+            mamba install --yes -c conda-forge \
+              fonts-conda-ecosystem \
+              jupyterhub-singleuser \
+              jupyterlab \
+              nbclassic \
+              "notebook>=7.2.2" \
+              pandoc
+        - name: install scipy-notebook packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mamba install --yes -c conda-forge \
+              altair \
+              beautifulsoup4 \
+              bokeh \
+              bottleneck \
+              cloudpickle \
+              "conda-forge::blas=*=openblas" \
+              cython \
+              dask \
+              dill \
+              h5py \
+              ipympl \
+              ipywidgets \
+              jupyterlab-git \
+              matplotlib-base \
+              numba \
+              numexpr \
+              openpyxl \
+              pandas \
+              patsy \
+              protobuf \
+              pytables \
+              scikit-image \
+              scikit-learn \
+              scipy \
+              seaborn \
+              sqlalchemy \
+              statsmodels \
+              sympy \
+              widgetsnbextension \
+              xlrd
+        - name: install R packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mamba install --yes -c conda-forge \
+              r-base \
+              r-caret \
+              r-crayon \
+              r-devtools \
+              r-e1071 \
+              r-forecast \
+              r-hexbin \
+              r-htmltools \
+              r-htmlwidgets \
+              r-irkernel \
+              r-nycflights13 \
+              r-randomforest \
+              r-rcurl \
+              r-rmarkdown \
+              r-rodbc \
+              r-rsqlite \
+              r-shiny \
+              r-tidymodels \
+              r-tidyverse \
+              rpy2 \
+              unixodbc
+        - name: bump python deps for cve fixes
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # python-json-logger 3.2.x has CVE-2025-27607 (HIGH); fixed in
+            # 3.3.0. mamba install (with or without --no-deps) OOMs the
+            # cloud builder once R is fully installed; the solver has to
+            # load the whole env's metadata. Pip is much lighter, so we use
+            # it. After pip writes the new dist-info, we remove the stale
+            # conda-meta entry so syft's conda-cataloger doesn't keep
+            # reporting the old version.
+            /opt/conda/bin/pip install --no-deps --upgrade 'python-json-logger>=3.3.0,<4.0.0'
+
+            # Remove conda-meta record of the old version so the SBOM only
+            # lists the pip-installed 3.3.x.
+            rm -f /opt/conda/conda-meta/python-json-logger-3.2.*.json
+
+            # pyjwt 2.12.x has CVE-2026-48522/48524/48525/48526 (HIGH); fixed in
+            # 2.13.0. Same pip-upgrade-then-drop-stale-conda-meta pattern. The
+            # >= floor keeps remediation deterministic: a rebuild can re-resolve
+            # pyjwt upward but never below the fixed version.
+            /opt/conda/bin/pip install --no-deps --upgrade 'pyjwt>=2.13.0,<3.0.0'
+            rm -f /opt/conda/conda-meta/pyjwt-2.12.*.json
+
+            # aiohttp 3.13.x has CVE-2026-34993/CVE-2026-47265 (MEDIUM); fixed in
+            # 3.14.0. Same >= floor pattern.
+            /opt/conda/bin/pip install --no-deps --upgrade 'aiohttp>=3.14.0'
+            rm -f /opt/conda/conda-meta/aiohttp-3.13.*.json
+        - name: install julia
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/julia-1.12.6
+            tar -xf "${source.dir}/julia.tar.gz" \
+              -C /opt/julia-1.12.6 \
+              --strip-components=1
+            # No /usr/local/bin/julia symlink: Julia's RPATH is $ORIGIN/../lib,
+            # so the binary must be invoked from its real /opt/julia-<v>/bin
+            # path. PATH at runtime includes that directory.
+            /opt/julia-1.12.6/bin/julia --version
+        - name: install julia packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Mirror upstream setup-julia-packages.bash. Two non-obvious env
+            # vars matter:
+            #
+            #   JULIA_NUM_THREADS=1: Pkg's multithreaded download_artifacts
+            #     hits a GC-safepoint segfault in containerized Julia 1.12
+            #     when the task scheduler races against artifact download
+            #     workers. Single-threaded sidesteps the bug entirely.
+            #
+            #   JULIA_CPU_TARGET=...: precompilation defaults to the build-
+            #     host CPU only. The container will later run on customer
+            #     CPUs that may not match. The multi-target string here
+            #     causes Julia to AOT-compile for each named generation
+            #     (sourced from JuliaCI/julia-buildkite#build_envs.sh; keep
+            #     in sync with upstream's setup-julia-packages.bash).
+            export JULIA_DEPOT_PATH=/opt/julia
+            export JULIA_PKGDIR=/opt/julia
+            export JULIA_NUM_THREADS=1
+            # Disable Pkg's auto-precompile so we control when/how it runs
+            # (auto mode eats stderr from the worker, hiding real failures).
+            export JULIA_PKG_PRECOMPILE_AUTO=0
+
+            mkdir -p "$JULIA_DEPOT_PATH"
+
+            # KNOWN-ISSUE: Pkg.precompile() fails opaquely in this build
+            # environment when emitting REPL's cache to /opt/julia. The
+            # symptom is "Failed to precompile REPL" with no worker stderr
+            # surfaced. Diagnostic probes showed the precompile worker
+            # reports "Package Sockets not found in current path", which is
+            # normally handled by Pkg's project setup. Probable cause is a
+            # buildkit overlayfs lock-file interaction, a Julia 1.12 quirk,
+            # or a depot/HOME ownership issue. Running this step as jovyan
+            # (matching upstream) was not attempted in the build for the
+            # initial PR; doing so requires a chown dance for /opt/julia
+            # plus rewriting the kernelspec install path, and the lazy-
+            # compile workaround is functionally equivalent for users.
+            #
+            # We disable auto-precompile and let Julia compile caches lazily
+            # on first use at runtime (~30s one-time per package on first
+            # import). To revisit: try running this step as the jovyan UID
+            # (with appropriate /opt/julia chown) or upgrading to Julia 1.13
+            # once it reaches stable, and remove --compiled-modules=no from
+            # the IJulia.installkernel call below if precompile succeeds.
+
+            julia -e 'using Pkg; Pkg.add(["HDF5", "IJulia", "Pluto"])'
+
+            # IJulia.installkernel() registers the Jupyter kernel and writes
+            # kernel.json. It requires `using IJulia`, which would trigger
+            # precompile (broken; see KNOWN-ISSUE above). Use
+            # --compiled-modules=no to bypass the cache entirely; slower but
+            # functional. We also direct the kernelspec to a system path
+            # under /opt/conda so JupyterLab discovers it at runtime.
+            julia --compiled-modules=no -e '
+              using IJulia
+              IJulia.installkernel(
+                "Julia",
+                "--depwarn=no",
+                env=Dict("JULIA_DEPOT_PATH"=>"/opt/julia:"),
+                specname="julia",
+              )
+            '
+
+            # IJulia drops the kernelspec under $HOME/.local; relocate it to
+            # /opt/conda/share so it's discoverable for any UID at runtime.
+            mkdir -p /opt/conda/share/jupyter/kernels
+            if compgen -G "/root/.local/share/jupyter/kernels/julia*" > /dev/null; then
+              mv /root/.local/share/jupyter/kernels/julia* /opt/conda/share/jupyter/kernels/
+              chmod -R go+rx /opt/conda/share/jupyter
+            fi
+
+            # Pluto's jupyter proxy lives on conda-forge, not Julia's registry.
+            mamba install --yes -c conda-forge jupyter-pluto-proxy
+        - name: install start scripts and configs
+          runs: |
+            set -eux -o pipefail
+
+            SRC=${source.dir}/docker-stacks/images
+
+            # start.sh expects run-hooks.sh adjacent + start-notebook.d and
+            # before-notebook.d hook directories. fix-permissions is called
+            # by start.sh when starting as root.
+            install -m 0755 -t /usr/local/bin \
+              "$SRC/docker-stacks-foundation/start.sh" \
+              "$SRC/docker-stacks-foundation/run-hooks.sh" \
+              "$SRC/docker-stacks-foundation/fix-permissions" \
+              "$SRC/base-notebook/start-notebook.py" \
+              "$SRC/base-notebook/start-notebook.sh" \
+              "$SRC/base-notebook/start-singleuser.py" \
+              "$SRC/base-notebook/start-singleuser.sh"
+
+            mkdir -p /usr/local/bin/start-notebook.d /usr/local/bin/before-notebook.d
+            install -m 0755 \
+              "$SRC/docker-stacks-foundation/10activate-conda-env.sh" \
+              /usr/local/bin/before-notebook.d/
+
+            mkdir -p /etc/jupyter
+            install -m 0644 -t /etc/jupyter \
+              "$SRC/base-notebook/jupyter_server_config.py" \
+              "$SRC/base-notebook/docker_healthcheck.py"
+
+            install -m 0644 \
+              "$SRC/docker-stacks-foundation/initial-condarc" \
+              /opt/conda/.condarc
+
+            mkdir -p /opt/conda/lib/R/etc
+            install -m 0644 \
+              "$SRC/minimal-notebook/Rprofile.site" \
+              /opt/conda/lib/R/etc/
+        - name: prepare jovyan home
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /home/jovyan/work
+            chown -R 1000:100 /home/jovyan
+            chown -R 1000:100 /opt/julia
+        - name: warm caches
+          runs: |
+            set -eux -o pipefail
+
+            # Matplotlib font cache: silences a first-run warning.
+            python -c 'import matplotlib.pyplot' || true
+        - name: cleanup
+          runs: |
+            set -eux -o pipefail
+
+            mamba clean --all --yes
+
+            # Strip test fixtures, *.pyc, *.pyo from /opt/conda. The `tests`/
+            # `test` directory match also hits R packages under
+            # /opt/conda/lib/R/library/<pkg>/tests/. That is intentional and
+            # safe at runtime: R uses those directories only for
+            # tools::testInstalledPackage() development workflows, not for
+            # library() loading. None of the R packages we install depend
+            # on shipped tests at import.
+            find /opt/conda \
+              \( -type d -a \( -name __pycache__ -o -name tests -o -name test \) \
+              -prune -exec rm -rf '{}' + \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \
+              -exec rm -f '{}' + \)
+
+            # The conda download/extraction cache lives at /var/cache/
+            # conda-pkgs (see CONDA_PKGS_DIRS above), which is a buildkit
+            # cache mount outside /opt/conda and therefore outside the SBOM
+            # scan source. Defensively remove /opt/conda/pkgs anyway in case
+            # any tool falls back to the conda default path.
+            rm -rf \
+              /opt/conda/pkgs \
+              /opt/conda/share/doc/* \
+              /opt/conda/share/man/* \
+              /root/.cache
+        - name: conda packages sbom
+          uses: sbom@v1
+          with:
+            prefix: datascience-notebook-conda
+            source: /opt/conda
+      outputs:
+        - source: /opt/conda
+          target: /opt/conda
+          uid: 0
+          gid: 0
+        - source: /opt/julia-1.12.6
+          target: /opt/julia-1.12.6
+          uid: 0
+          gid: 0
+        - source: /opt/julia
+          target: /opt/julia
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start.sh
+          target: /usr/local/bin/start.sh
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/run-hooks.sh
+          target: /usr/local/bin/run-hooks.sh
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/fix-permissions
+          target: /usr/local/bin/fix-permissions
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start-notebook.py
+          target: /usr/local/bin/start-notebook.py
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start-notebook.sh
+          target: /usr/local/bin/start-notebook.sh
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start-singleuser.py
+          target: /usr/local/bin/start-singleuser.py
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start-singleuser.sh
+          target: /usr/local/bin/start-singleuser.sh
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/start-notebook.d
+          target: /usr/local/bin/start-notebook.d
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/before-notebook.d
+          target: /usr/local/bin/before-notebook.d
+          uid: 0
+          gid: 0
+        - source: /etc/jupyter
+          target: /etc/jupyter
+          uid: 0
+          gid: 0
+        - source: /home/jovyan
+          target: /home/jovyan
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: jovyan
+      uid: 1000
+      gid: 100
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: users
+      gid: 100
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/jovyan
+environment:
+  CONDA_DIR: /opt/conda
+  DEBIAN_FRONTEND: noninteractive
+  HOME: /home/jovyan
+  LANG: C.UTF-8
+  LANGUAGE: C.UTF-8
+  LC_ALL: C.UTF-8
+  NB_GID: "100"
+  NB_UID: "1000"
+  NB_USER: jovyan
+  PATH: /opt/conda/bin:/opt/julia-1.12.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  SHELL: /bin/bash
+paths:
+  - type: directory
+    path: /home/jovyan/work
+    uid: 1000
+    gid: 100
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Jupyter Data Science Notebook image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - tini
+  - -g
+  - --
+  - start.sh
+cmd:
+  - start-notebook.py
+ports:
+  - 8888/tcp
