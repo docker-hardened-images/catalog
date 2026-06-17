@@ -1,0 +1,166 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico Pod2Daemon FlexVol 3.x (dev)
+image: dhi.io/calico-pod2daemon-flexvol
+variant: dev
+tags:
+  - 3-dev
+  - 3.32-dev
+  - 3.32.0-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.32-debian-dev
+  - 3.32-debian13-dev
+  - 3.32.0-debian-dev
+  - 3.32.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9350c6e0c0a06f23b487c39850188b2a5c2bd176d1fc5ae361400c8c068e42b0
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.0
+  VERSION: 3.32.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: calico-pod2daemon-flexvol
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9350c6e0c0a06f23b487c39850188b2a5c2bd176d1fc5ae361400c8c068e42b0
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.0
+            checksum: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico-pod2daemon-flexvol
+              version: 3.32.0
+              packages:
+                - name: calico-pod2daemon-flexvol
+                  purl: pkg:golang/github.com/projectcalico/calico@3.32.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/projectcalico/calico
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test ./pod2daemon/flexvol/...
+        - name: build-flexvol
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/pod2daemon/flexvol
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            output: ${target.dir}/usr/local/bin/flexvol
+            packages: .
+        - name: install-flexvol-script
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/local/bin"
+            install -m 0755 \
+              /go/src/github.com/projectcalico/calico/pod2daemon/flexvol/docker-image/flexvol.sh \
+              "${target.dir}/usr/local/bin/flexvol.sh"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/flexvol
+          target: /usr/local/bin/flexvol
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/flexvol.sh
+          target: /usr/local/bin/flexvol.sh
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/calico-pod2daemon-flexvol
+          target: /opt/docker/sbom/calico-pod2daemon-flexvol
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Calico Pod2Daemon FlexVol image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/flexvol.sh
