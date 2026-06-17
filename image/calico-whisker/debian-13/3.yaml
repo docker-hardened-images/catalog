@@ -1,0 +1,255 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico Whisker 3.x
+image: dhi.io/calico-whisker
+variant: runtime
+tags:
+  - "3"
+  - "3.32"
+  - 3.32.0
+  - 3-debian
+  - 3-debian13
+  - 3.32-debian
+  - 3.32-debian13
+  - 3.32.0-debian
+  - 3.32.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+  NGINX_REFERENCE: dhi/nginx:1.31.1-debian13@sha256:4aca154cf2aaa8fe05bb6c156d963227c0498e756b40b97c86aa76685c5ec3e3
+  NODE_BUILD_REFERENCE: dhi/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.0
+  VERSION: 3.32.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - coreutils
+    - dash
+    - sed
+  builds:
+    - name: calico-whisker
+      uses: dhi.io/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
+      work-dir: ${source.dir}/calico/whisker
+      caches:
+        - path: ${source.dir}/calico/whisker/node_modules
+        - path: /root/.cache/yarn
+      contents:
+        packages:
+          - jq
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.0
+            checksum: eb1cf57823a1dd8d25c48b82fd023ea9e3e17996
+            path: ${source.dir}/calico
+            spdx:
+              name: calico-whisker
+              version: 3.32.0
+              packages:
+                - name: calico-whisker
+                  purl: pkg:golang/github.com/projectcalico/calico/whisker@3.32.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump yarn dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # CVE-2026-41907
+            # CVE-2026-33532
+            # CVE-2026-40181
+            jq '.resolutions += {
+              "uuid": "11.1.1",
+              "yaml": "1.10.3",
+              "react-router": "6.30.4",
+              "@remix-run/router": "1.23.3"
+            }' package.json > package.tmp.json
+            mv package.tmp.json package.json
+        - name: install dependencies
+          privileged: true
+          environment:
+            HUSKY: "0"
+          runs: |
+            set -eux -o pipefail
+
+            yarn install --ignore-scripts
+            yarn upgrade uuid@11.1.1 yaml@1.10.3 react-router@6.30.4 @remix-run/router@1.23.3
+        - name: build whisker ui
+          runs: |
+            set -eux -o pipefail
+
+            node_opts="--max_old_space_size=8192"
+            if [ "${target.fips}" = "true" ]; then
+              # rsbuild/jiti hashes config with MD5. The FIPS node builder sets
+              # OPENSSL_CONF with default_properties=fips=yes, which rejects MD5
+              # even with --openssl-legacy-provider. Drop FIPS conf for this
+              # compile-only step; the runtime image still ships FIPS OpenSSL.
+              unset OPENSSL_CONF
+              node_opts="${node_opts} --openssl-legacy-provider"
+            fi
+
+            NODE_OPTIONS="${node_opts}" \
+              CNX_APP_VERSION="v3.32.0" \
+              yarn build
+
+            mkdir -p "${target.dir}/usr/share/nginx/html"
+            cp -r dist/. "${target.dir}/usr/share/nginx/html/"
+        - name: install nginx configs
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/nginx/conf.d"
+
+            # Apply upstream nginx-start.sh runtime edits at build time so the
+            # non-root entrypoint does not need write access to /etc/nginx.
+            sed 's!/var/run/nginx.pid!/tmp/nginx.pid!g; /user  nginx;/d' \
+              docker-image/nginx.conf > "${target.dir}/etc/nginx/nginx.conf"
+            cp docker-image/default.conf "${target.dir}/etc/nginx/conf.d/default.conf"
+
+            # Drop in-place sed edits; nginx.conf is already patched above.
+            mkdir -p "${target.dir}/usr/bin"
+            grep -v 'sed -i.*nginx.conf' docker-image/nginx-start.sh \
+              > "${target.dir}/usr/bin/nginx-start.sh"
+            chmod 0755 "${target.dir}/usr/bin/nginx-start.sh"
+
+            mkdir -p "${target.dir}/licenses"
+            cp ../LICENSE.md "${target.dir}/licenses/LICENSE"
+        - name: reinstall production dependencies for sbom
+          privileged: true
+          environment:
+            HUSKY: "0"
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+            yarn install --production --ignore-scripts
+        - name: generate sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: calico-whisker
+            source: ${source.dir}/calico/whisker
+      outputs:
+        - source: ${target.dir}/usr/share/nginx/html
+          target: /usr/share/nginx/html
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/etc/nginx/nginx.conf
+          target: /etc/nginx/nginx.conf
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/nginx/conf.d/default.conf
+          target: /etc/nginx/conf.d/default.conf
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/usr/bin/nginx-start.sh
+          target: /usr/bin/nginx-start.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/licenses/LICENSE
+          target: /licenses/LICENSE
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/calico-whisker
+          target: /opt/docker/sbom/calico-whisker
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/nginx:1.31.1-debian13@sha256:4aca154cf2aaa8fe05bb6c156d963227c0498e756b40b97c86aa76685c5ec3e3
+      excludes:
+        - etc/nginx/conf.d/default.conf
+        - etc/nginx/nginx.conf
+        - usr/share/nginx/html/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "10001"
+  users:
+    - name: whisker
+      uid: 10001
+      gid: 10001
+  groups:
+    - name: whisker
+      gid: 10001
+      members:
+        - whisker
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/nginx
+    uid: 0
+    gid: 0
+    source: /usr/sbin/nginx
+  - type: directory
+    path: /etc/config
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+  - type: directory
+    path: /var/cache/nginx
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+  - type: directory
+    path: /var/log/nginx
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Calico Whisker image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/nginx-start.sh
+ports:
+  - 8081/tcp
