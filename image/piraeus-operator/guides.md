@@ -109,9 +109,57 @@ spec:
     enabled: true
     podTemplate:
       spec:
+        initContainers:
+          - name: linstor-wait-api-online
+            image: dhi.io/piraeus-csi:<tag>
         containers:
           - name: linstor-csi
             image: dhi.io/piraeus-csi:<tag>
+            securityContext:
+              capabilities:
+                drop:
+                  - ALL
+                add:
+                  - IPC_LOCK
+          - name: csi-attacher
+            image: dhi.io/csi-attacher:<tag>
+          - name: csi-provisioner
+            image: dhi.io/csi-provisioner:<tag>
+          - name: csi-snapshotter
+            image: dhi.io/csi-snapshotter:<tag>
+          - name: csi-resizer
+            image: dhi.io/csi-resizer:<tag>
+          - name: csi-health-monitor
+            image: dhi.io/csi-external-health-monitor-controller:<tag>
+          - name: csi-livenessprobe
+            image: dhi.io/livenessprobe:<tag>
+  csiNode:
+    enabled: true
+    podTemplate:
+      spec:
+        initContainers:
+          - name: linstor-wait-node-online
+            image: dhi.io/piraeus-csi:<tag>
+        containers:
+          - name: linstor-csi
+            image: dhi.io/piraeus-csi:<tag>
+            securityContext:
+              capabilities:
+                drop:
+                  - ALL
+                add:
+                  - IPC_LOCK
+          - name: csi-node-driver-registrar
+            image: dhi.io/csi-node-driver-registrar:<tag>
+            securityContext:
+              capabilities:
+                drop:
+                  - ALL
+                add:
+                  - IPC_LOCK
+          - name: csi-livenessprobe
+            image: dhi.io/livenessprobe:<tag>
+
   highAvailabilityController:
     enabled: true
     podTemplate:
