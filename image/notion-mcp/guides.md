@@ -10,7 +10,7 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-### What's included in this notion-mcp-server image
+### What's included in this notion-mcp image
 
 The Notion MCP Server is the official [Model Context Protocol](https://spec.modelcontextprotocol.io/) implementation for
 the [Notion API](https://developers.notion.com/reference/intro), maintained by Notion Labs. It exposes 22 Notion API
@@ -23,7 +23,7 @@ transport is also supported for web-based or remote deployments. Authentication 
 (`NOTION_TOKEN`), which can be created at
 [https://www.notion.so/profile/integrations](https://www.notion.so/profile/integrations).
 
-### Run the notion-mcp-server container
+### Run the notion-mcp container
 
 The server communicates over stdio, so the container must be launched with `-i` (interactive) to keep stdin open. The
 `--rm` flag removes the container when the MCP client disconnects.
@@ -31,7 +31,7 @@ The server communicates over stdio, so the container must be launched with `-i` 
 To verify the image works and print help information:
 
 ```bash
-docker run --rm dhi.io/notion-mcp-server:2 --help
+docker run --rm dhi.io/notion-mcp:2 --help
 ```
 
 To run the server for use by an MCP client:
@@ -39,7 +39,7 @@ To run the server for use by an MCP client:
 ```bash
 docker run --rm -i \
   -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2
+  dhi.io/notion-mcp:2
 ```
 
 Replace `ntn_****` with your Notion integration token.
@@ -55,7 +55,7 @@ Pass the token via the `NOTION_TOKEN` environment variable:
 ```bash
 docker run --rm -i \
   -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2
+  dhi.io/notion-mcp:2
 ```
 
 For advanced use cases — such as specifying a custom `Notion-Version` header or using a different authorization scheme —
@@ -64,7 +64,7 @@ you can use the `OPENAPI_MCP_HEADERS` environment variable instead. This accepts
 ```bash
 docker run --rm -i \
   -e 'OPENAPI_MCP_HEADERS={"Authorization":"Bearer ntn_****","Notion-Version":"2025-09-03"}' \
-  dhi.io/notion-mcp-server:2
+  dhi.io/notion-mcp:2
 ```
 
 When `OPENAPI_MCP_HEADERS` is set, its `Authorization` header takes precedence over `NOTION_TOKEN`.
@@ -86,7 +86,7 @@ Add the following entry to your `claude_desktop_config.json` (macOS:
         "--rm",
         "-i",
         "-e", "NOTION_TOKEN",
-        "dhi.io/notion-mcp-server:2"
+        "dhi.io/notion-mcp:2"
       ],
       "env": {
         "NOTION_TOKEN": "ntn_****"
@@ -112,7 +112,7 @@ Add the following to `.cursor/mcp.json` at the root of your project or to your g
         "--rm",
         "-i",
         "-e", "NOTION_TOKEN",
-        "dhi.io/notion-mcp-server:2"
+        "dhi.io/notion-mcp:2"
       ],
       "env": {
         "NOTION_TOKEN": "ntn_****"
@@ -137,7 +137,7 @@ Add to your `settings.json`:
           "--rm",
           "-i",
           "-e", "NOTION_TOKEN",
-          "dhi.io/notion-mcp-server:2"
+          "dhi.io/notion-mcp:2"
         ],
         "env": {
           "NOTION_TOKEN": "ntn_****"
@@ -158,7 +158,7 @@ The server also supports an optional streamable HTTP transport for web-based cli
 docker run --rm \
   -p 3000:3000 \
   -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2 \
+  dhi.io/notion-mcp:2 \
   --transport http --port 3000
 ```
 
@@ -175,14 +175,14 @@ Auto-generated token (the server prints it to the console on startup, suitable f
 
 ```bash
 docker run --rm -p 3000:3000 -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2 --transport http --port 3000
+  dhi.io/notion-mcp:2 --transport http --port 3000
 ```
 
 Custom token via command-line argument (recommended for production):
 
 ```bash
 docker run --rm -p 3000:3000 -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2 \
+  dhi.io/notion-mcp:2 \
   --transport http --port 3000 --auth-token "your-secret-token"
 ```
 
@@ -192,7 +192,7 @@ Custom token via environment variable:
 docker run --rm -p 3000:3000 \
   -e NOTION_TOKEN=ntn_**** \
   -e AUTH_TOKEN=your-secret-token \
-  dhi.io/notion-mcp-server:2 --transport http --port 3000
+  dhi.io/notion-mcp:2 --transport http --port 3000
 ```
 
 The `--auth-token` argument takes precedence over the `AUTH_TOKEN` environment variable when both are set. To disable
@@ -200,7 +200,7 @@ authentication entirely (not recommended for production), add `--disable-auth`:
 
 ```bash
 docker run --rm -p 3000:3000 -e NOTION_TOKEN=ntn_**** \
-  dhi.io/notion-mcp-server:2 \
+  dhi.io/notion-mcp:2 \
   --transport http --port 3000 --disable-auth
 ```
 
