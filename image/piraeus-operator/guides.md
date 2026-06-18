@@ -133,6 +133,16 @@ spec:
             image: dhi.io/csi-external-health-monitor-controller:<tag>
           - name: csi-livenessprobe
             image: dhi.io/livenessprobe:<tag>
+  nfsServer:
+     enabled: true
+    podTemplate:
+      spec:
+        initContainers:
+          - name: linstor-wait-node-online
+            image: dhi.io/piraeus-csi:<tag>
+        containers:
+           - name: nfs-server
+            image: dhi.io/piraeus-csi-nfs-server:<tag>
   csiNode:
     enabled: true
     podTemplate:
