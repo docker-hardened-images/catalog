@@ -1,0 +1,144 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Upstash Context7 MCP 3.x
+image: dhi.io/context7-mcp
+variant: runtime
+tags:
+  - "3"
+  - "3.2"
+  - 3.2.1
+  - latest
+  - 3-debian
+  - 3-debian13
+  - 3.2-debian
+  - 3.2-debian13
+  - 3.2.1-debian
+  - 3.2.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: dec6cf361c58a09968a7f76b3c12c225b5eed39a
+  SEMVER_MAJOR_MINOR_VERSION: "3.2"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.2.1
+  VERSION: 3.2.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates-bundle
+    - libc6
+    - libgomp1
+    - libstdc++6
+    - netbase
+    - nodejs-24
+    - tzdata
+  builds:
+    - name: context7-mcp
+      work-dir: ${source.dir}/context7
+      contents:
+        packages:
+          - yq
+          - nodejs-24
+          - npm
+          - node-corepack
+          - yarn-classic
+          - base-files
+          - ca-certificates
+          - libc6
+          - libstdc++6
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - sfw-free
+          - sfw-free-oci-config
+        files:
+          - url: git+https://github.com/upstash/context7.git#@upstash/context7-mcp@3.2.1
+            checksum: dec6cf361c58a09968a7f76b3c12c225b5eed39a
+            path: ${source.dir}/context7
+            spdx:
+              name: context7-mcp
+              version: 3.2.1
+              packages:
+                - name: context7-mcp
+                  purl: pkg:npm/%40upstash/context7-mcp@3.2.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update dependencies
+          runs: |
+            set -eux -o pipefail
+
+            yq -y -i '.overrides."ajv" = "8.18.0"' pnpm-workspace.yaml           # CVE-2025-69873
+            yq -y -i '.overrides."body-parser" = "2.2.1"' pnpm-workspace.yaml    # CVE-2025-13466
+            yq -y -i '.overrides."fast-uri" = "3.1.2"' pnpm-workspace.yaml       # CVE-2026-6321, CVE-2026-6322
+            yq -y -i '.overrides."hono" = "4.12.25"' pnpm-workspace.yaml         # CVE-2026-65290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287
+            yq -y -i '.overrides."path-to-regexp" = "8.4.0"' pnpm-workspace.yaml # CVE-2026-4926, CVE-2026-4923
+            yq -y -i '.overrides."qs" = "6.15.2"' pnpm-workspace.yaml            # CVE-2025-15284, CVE-2026-2391, CVE-2026-8723
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            sfw corepack pnpm install --ignore-scripts
+            sfw corepack pnpm --filter @upstash/context7-mcp build
+
+            mkdir -p '${target.dir}/app/packages/mcp'
+        - name: install
+          work-dir: ${target.dir}/app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cp -t '${target.dir}/app' '${source.dir}/context7/'{package.json,pnpm-lock.yaml,pnpm-workspace.yaml}
+            cp -r -t '${target.dir}/app/packages/mcp' '${source.dir}/context7/packages/mcp/'{dist,package.json}
+
+            sfw corepack pnpm install --filter @upstash/context7-mcp \
+              --frozen-lockfile --ignore-scripts --prod
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/context7-mcp
+          target: /opt/docker/sbom/context7-mcp
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app/packages/mcp
+annotations:
+  org.opencontainers.image.description: Upstash Context7 MCP Server
+  org.opencontainers.image.licenses: MIT
+labels:
+  io.modelcontextprotocol.server.name: io.upstash/context7-mcp
+cmd:
+  - node
+  - dist/index.js
