@@ -1,0 +1,275 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Datadog Cluster Agent 7.x (dev)
+image: dhi.io/datadog-cluster-agent
+variant: dev
+tags:
+  - 7-dev
+  - 7.78-dev
+  - 7.78.4-dev
+  - 7-debian-dev
+  - 7-debian13-dev
+  - 7.78-debian-dev
+  - 7.78-debian13-dev
+  - 7.78.4-debian-dev
+  - 7.78.4-debian13-dev
+platforms:
+  - linux/amd64
+dates:
+  release: "2019-11-22"
+vars:
+  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:cd26c6fe4eaa4bc2ecd022223dd3cd2dc01101c13344fb3f9793dfd4c7179b77
+  COMMIT_SHA: 8e28384edf65c400e54688a57d515b495d81469d
+  GOLANG_REFERENCE: dhi/golang:1.26.3-debian13-dev@sha256:fd3180feff08929120077efe8799d54693a9861006cf400e5788591948f7402d
+  SEMVER_MAJOR_MINOR_VERSION: "7.78"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.78.4
+  VERSION: 7.78.4
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libseccomp2
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: datadog-cluster-agent
+      uses: dhi.io/golang:1.26.3-debian13-dev@sha256:fd3180feff08929120077efe8799d54693a9861006cf400e5788591948f7402d
+      work-dir: /go/src/github.com/DataDog/datadog-agent
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - build-essential
+          - gcc
+          - libc6-dev
+          - libseccomp-dev
+          - pkg-config
+        files:
+          - url: git+https://github.com/DataDog/datadog-agent.git#7.78.4
+            checksum: 8e28384edf65c400e54688a57d515b495d81469d
+            path: /go/src/github.com/DataDog/datadog-agent
+            spdx:
+              name: datadog-agent
+              version: 7.78.4
+              packages:
+                - name: datadog-agent
+                  purl: pkg:golang/github.com/DataDog/datadog-agent@7.78.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+              - golang.org/x/crypto@v0.52.0
+              - github.com/modelcontextprotocol/go-sdk@v1.4.1
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # Match runtime GODEBUG; fips140=only rejects X25519 via client-go.
+              export GODEBUG=fips140=on
+            fi
+
+            # Scoped to pkg/version: lightweight and the only thing whose
+            # invariants we directly control via -ldflags. Full subcommand
+            # tree pulls k8s/cgo deps that need the upstream build harness
+            # and isn't viable here.
+            CGO_ENABLED=1 go test -short -count=1 \
+              -ldflags "-X github.com/DataDog/datadog-agent/pkg/version.AgentVersion=7.78.4 -X github.com/DataDog/datadog-agent/pkg/version.Commit=8e28384edf65c400e54688a57d515b495d81469d" \
+              -tags clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,zstd,ec2,cel \
+              ./pkg/version/...
+        - name: generate datadog-cluster.yaml
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              # go run compiles + executes; fips140=only can reject TLS during compile.
+              export GODEBUG=fips140=on
+            fi
+
+            go run ./pkg/config/render_config/render_config.go dca \
+              ./pkg/config/config_template.yaml \
+              ./Dockerfiles/cluster-agent/datadog-cluster.yaml
+        - name: build datadog-cluster-agent
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X github.com/DataDog/datadog-agent/pkg/version.AgentVersion=7.78.4
+              - -X github.com/DataDog/datadog-agent/pkg/version.Commit=8e28384edf65c400e54688a57d515b495d81469d
+            output: ${target.dir}/opt/datadog-agent/bin/datadog-cluster-agent
+            packages: ./cmd/cluster-agent
+            tags: clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,zstd,ec2,cel
+        - name: build cws-instrumentation
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            ldflags:
+              - -X main.Version=7.78.4
+              - -X main.GitCommit=8e28384edf65c400e54688a57d515b495d81469d
+            output: ${target.dir}/opt/datadog-agent/bin/cws-instrumentation
+            packages: ./cmd/cws-instrumentation
+            strip: true
+            tags: netgo,osusergo
+        - name: build secret-generic-connector
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            extra-args: -gcflags=all=-l
+            ldflags:
+              - -X main.appVersion=7.78.4
+            output: ${target.dir}/opt/datadog-agent/bin/secret-generic-connector
+            packages: ./cmd/secret-generic-connector
+            strip: true
+        - name: build nosys.so
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/usr/lib/x86_64-linux-gnu
+            gcc -pipe -Wall -Wextra -O2 -shared -fPIC \
+              -Wl,--version-script=./Dockerfiles/agent/nosys-seccomp/nosys.sym \
+              -o ${target.dir}/usr/lib/x86_64-linux-gnu/nosys.so \
+              ./Dockerfiles/agent/nosys-seccomp/nosys.c -lseccomp
+        - name: stage /etc/datadog-agent
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/etc/datadog-agent/conf.d
+            mkdir -p ${target.dir}/etc/datadog-agent/private-action-runner
+            cp -r ./Dockerfiles/cluster-agent/conf.d/. ${target.dir}/etc/datadog-agent/conf.d/
+            cp ./Dockerfiles/cluster-agent/datadog-cluster.yaml ${target.dir}/etc/datadog-agent/datadog-cluster.yaml
+            cp ./Dockerfiles/cluster-agent/install_info ${target.dir}/etc/datadog-agent/install_info
+            cp ./pkg/privateactionrunner/autoconnections/conf/script-config.yaml \
+              ${target.dir}/etc/datadog-agent/private-action-runner/script-config.yaml
+      outputs:
+        - source: ${target.dir}/opt/datadog-agent/bin/datadog-cluster-agent
+          target: /opt/datadog-agent/bin/datadog-cluster-agent
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/opt/datadog-agent/bin/cws-instrumentation
+          target: /opt/datadog-agent/bin/cws-instrumentation
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/opt/datadog-agent/bin/secret-generic-connector
+          target: /opt/datadog-agent/bin/secret-generic-connector
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/lib/x86_64-linux-gnu/nosys.so
+          target: /usr/lib/x86_64-linux-gnu/nosys.so
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/etc/datadog-agent
+          target: /etc/datadog-agent
+          uid: 0
+          gid: 0
+          mode: "0755"
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:cd26c6fe4eaa4bc2ecd022223dd3cd2dc01101c13344fb3f9793dfd4c7179b77
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DD_SECRET_BACKEND_COMMAND_ALLOW_GROUP_EXEC_PERM: "true"
+  DEBIAN_FRONTEND: noninteractive
+  DOCKER_DD_AGENT: "true"
+  LD_PRELOAD: /usr/lib/x86_64-linux-gnu/nosys.so
+  PATH: /opt/datadog-agent/bin:/usr/local/bin:/usr/bin:/bin
+paths:
+  - type: symlink
+    path: /opt/datadog-agent/bin/agent
+    uid: 0
+    gid: 0
+    source: /opt/datadog-agent/bin/datadog-cluster-agent
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/datadog-cluster-agent
+    uid: 0
+    gid: 0
+    source: /opt/datadog-agent/bin/datadog-cluster-agent
+  - type: directory
+    path: /opt/datadog-agent/bin/datadog-cws-instrumentation
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/datadog-agent/bin/datadog-cws-instrumentation/cws-instrumentation.${target.arch}
+    uid: 0
+    gid: 0
+    source: /opt/datadog-agent/bin/cws-instrumentation
+  - type: directory
+    path: /var/log/datadog
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal Datadog Cluster Agent image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/datadog-cluster-agent
+cmd:
+  - start
+ports:
+  - 5005/tcp
