@@ -1,0 +1,223 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Certbot 5.x (dev)
+image: dhi.io/certbot
+variant: dev
+tags:
+  - 5-dev
+  - 5.6-dev
+  - 5.6.0-dev
+  - 5-debian13-dev
+  - 5.6-debian13-dev
+  - 5.6.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-02"
+vars:
+  BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+  BASE_TAG: 20250419-debian13
+  COMMIT_SHA: 03b5cf3cb035d1ff79f0fb008e7dacb4b40a579e
+  PYTHON_BUILD_REFERENCE: dhi/python:3.14.5-debian13-dev@sha256:98f54e1d2ba526f945659f512f21e94c76bc750c0b7935cb75995e22939beb86
+  PYTHON_REFERENCE: dhi/python:3.14.5-debian13@sha256:4b669716481a34691219b9148cd81b27801111339a37fb0ebb2108149d4b99ca
+  SEMVER_MAJOR_MINOR_VERSION: "5.6"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.6.0
+  VERSION: 5.6.0
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libffi8
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: certbot
+      uses: dhi.io/python:3.14.5-debian13-dev@sha256:98f54e1d2ba526f945659f512f21e94c76bc750c0b7935cb75995e22939beb86
+      work-dir: ${source.dir}/certbot-src
+      environment:
+        CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      caches:
+        - path: /root/.cache/pip
+        - path: /root/.cargo
+      contents:
+        packages:
+          - build-essential
+          - libssl-dev
+          - libffi-dev
+          - pkg-config
+          - cargo
+          - rustc
+          - git
+          - ca-certificates
+          - bash
+          - coreutils
+          - findutils
+        files:
+          - url: git+https://github.com/certbot/certbot.git#03b5cf3cb035d1ff79f0fb008e7dacb4b40a579e
+            checksum: 03b5cf3cb035d1ff79f0fb008e7dacb4b40a579e
+            path: ${source.dir}/certbot-src
+            spdx:
+              name: certbot
+              version: 5.6.0
+              packages:
+                - name: certbot
+                  purl: pkg:pypi/certbot@5.6.0
+                  license: Apache-2.0
+                - name: acme
+                  purl: pkg:pypi/acme@5.6.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/certbot/.venv
+            mkdir -p /opt/certbot
+            python3 -m venv "$VENV"
+        - name: install certbot
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/certbot/.venv
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            # Install acme and certbot from source. Force cryptography to build
+            # from source via --no-binary so it links against the image's
+            # OpenSSL (dhi/pkg-openssl, FIPS-validated in the -fips variants)
+            # instead of the non-FIPS OpenSSL statically bundled in the
+            # cryptography manylinux wheel.
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              --no-binary=cryptography \
+              ./acme \
+              ./certbot
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/certbot/.venv
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: certbot-python
+            source: /opt/certbot/.venv
+      outputs:
+        - source: /opt/certbot
+          target: /opt/certbot
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/python:3.14.5-debian13@sha256:4b669716481a34691219b9148cd81b27801111339a37fb0ebb2108149d4b99ca
+      includes:
+        - opt/**
+        - usr/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/certbot
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /opt/certbot/.venv/bin:/opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/certbot
+    uid: 0
+    gid: 0
+    source: /opt/certbot/.venv/bin/certbot
+  - type: directory
+    path: /etc/letsencrypt
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /var/lib/letsencrypt
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /var/log/letsencrypt
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: Certbot - EFF's ACME client for obtaining TLS certificates from Let's Encrypt and any ACME-compatible CA
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/certbot
+ports:
+  - 80/tcp
+  - 443/tcp
