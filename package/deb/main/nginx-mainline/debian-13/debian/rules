@@ -48,14 +48,31 @@ override_dh_auto_configure:
 		--with-stream_realip_module \
 		--with-stream_ssl_module \
 		--with-stream_ssl_preread_module \
+		--add-dynamic-module=../njs/nginx \
 		--with-cc-opt="$(DEB_CFLAGS)" \
 		--with-ld-opt="$(DEB_LDFLAGS)"
 
 override_dh_auto_build:
 	cd nginx-src && make -j$$(nproc)
+	sed -i 's/find_package(protobuf REQUIRED)/find_package(Protobuf REQUIRED)/' nginx-otel/CMakeLists.txt
+	cmake -S nginx-otel -B nginx-otel/build \
+		-DNGX_OTEL_GRPC=package \
+		-DNGX_OTEL_NGINX_BUILD_DIR=$(CURDIR)/nginx-src/objs \
+		-DNGX_OTEL_PROTO_DIR=$(CURDIR)/opentelemetry-proto \
+		-DNGX_OTEL_SDK=package
+	cmake --build nginx-otel/build --parallel $$(nproc)
 
+# Install into debian/tmp; per-package .install files route the core server and
+# each dynamic module into their own binary package (mirroring upstream's
+# nginx-module-* layout).
 override_dh_auto_install:
-	cd nginx-src && make install DESTDIR=$(CURDIR)/debian/nginx-mainline
+	cd nginx-src && make install DESTDIR=$(CURDIR)/debian/tmp
+	install -Dm644 nginx-src/objs/ngx_http_js_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_js_module.so
+	install -Dm644 nginx-src/objs/ngx_stream_js_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_stream_js_module.so
+	install -Dm644 nginx-otel/build/ngx_otel_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_otel_module.so
 
 override_dh_auto_test:
 
