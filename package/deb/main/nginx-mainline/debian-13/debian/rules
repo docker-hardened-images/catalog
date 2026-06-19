@@ -3,57 +3,71 @@
 DEB_CFLAGS := $(shell dpkg-buildflags --get CFLAGS) $(shell dpkg-buildflags --get CPPFLAGS)
 DEB_LDFLAGS := $(shell dpkg-buildflags --get LDFLAGS)
 
+# Configure flags shared by the production and debug nginx builds. Upstream ships
+# a second binary, nginx-debug, built from the same sources with --with-debug
+# (verbose debug logging) in the same package. --with-compat is kept on both so
+# the same dynamic modules load in either binary, matching upstream which ships a
+# single set of modules for nginx and nginx-debug.
+NGINX_CONFIGURE_ARGS := \
+	--prefix=/etc/nginx \
+	--sbin-path=/usr/sbin/nginx \
+	--modules-path=/usr/lib/nginx/modules \
+	--conf-path=/etc/nginx/nginx.conf \
+	--error-log-path=/var/log/nginx/error.log \
+	--http-log-path=/var/log/nginx/access.log \
+	--pid-path=/run/nginx.pid \
+	--lock-path=/run/nginx.lock \
+	--http-client-body-temp-path=/var/cache/nginx/client_temp \
+	--http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+	--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+	--http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+	--http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+	--user=nginx \
+	--group=nginx \
+	--with-compat \
+	--with-threads \
+	--with-file-aio \
+	--with-http_ssl_module \
+	--with-http_v2_module \
+	--with-http_v3_module \
+	--with-http_realip_module \
+	--with-http_addition_module \
+	--with-http_sub_module \
+	--with-http_dav_module \
+	--with-http_flv_module \
+	--with-http_mp4_module \
+	--with-http_gunzip_module \
+	--with-http_gzip_static_module \
+	--with-http_random_index_module \
+	--with-http_secure_link_module \
+	--with-http_stub_status_module \
+	--with-http_auth_request_module \
+	--with-http_slice_module \
+	--with-mail \
+	--with-mail_ssl_module \
+	--with-stream \
+	--with-stream_realip_module \
+	--with-stream_ssl_module \
+	--with-stream_ssl_preread_module \
+	--with-cc-opt="$(DEB_CFLAGS)" \
+	--with-ld-opt="$(DEB_LDFLAGS)"
+
 %:
 	dh $@
 
+# Configure the debug build (into objs-debug) first, then the production build
+# (default objs) last. nginx regenerates the root Makefile on each configure to
+# point at the last builddir, so `make`/`make install` operate on the production
+# build; the debug binary is built explicitly via its own Makefile. The njs
+# dynamic module is only added to the production build (the debug binary loads
+# modules at runtime through --with-compat).
 override_dh_auto_configure:
-	cd nginx-src && ./auto/configure \
-		--prefix=/etc/nginx \
-		--sbin-path=/usr/sbin/nginx \
-		--modules-path=/usr/lib/nginx/modules \
-		--conf-path=/etc/nginx/nginx.conf \
-		--error-log-path=/var/log/nginx/error.log \
-		--http-log-path=/var/log/nginx/access.log \
-		--pid-path=/run/nginx.pid \
-		--lock-path=/run/nginx.lock \
-		--http-client-body-temp-path=/var/cache/nginx/client_temp \
-		--http-proxy-temp-path=/var/cache/nginx/proxy_temp \
-		--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
-		--http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
-		--http-scgi-temp-path=/var/cache/nginx/scgi_temp \
-		--user=nginx \
-		--group=nginx \
-		--with-compat \
-		--with-threads \
-		--with-file-aio \
-		--with-http_ssl_module \
-		--with-http_v2_module \
-		--with-http_v3_module \
-		--with-http_realip_module \
-		--with-http_addition_module \
-		--with-http_sub_module \
-		--with-http_dav_module \
-		--with-http_flv_module \
-		--with-http_mp4_module \
-		--with-http_gunzip_module \
-		--with-http_gzip_static_module \
-		--with-http_random_index_module \
-		--with-http_secure_link_module \
-		--with-http_stub_status_module \
-		--with-http_auth_request_module \
-		--with-http_slice_module \
-		--with-mail \
-		--with-mail_ssl_module \
-		--with-stream \
-		--with-stream_realip_module \
-		--with-stream_ssl_module \
-		--with-stream_ssl_preread_module \
-		--add-dynamic-module=../njs/nginx \
-		--with-cc-opt="$(DEB_CFLAGS)" \
-		--with-ld-opt="$(DEB_LDFLAGS)"
+	cd nginx-src && ./auto/configure --builddir=objs-debug --with-debug $(NGINX_CONFIGURE_ARGS)
+	cd nginx-src && ./auto/configure $(NGINX_CONFIGURE_ARGS) --add-dynamic-module=../njs/nginx
 
 override_dh_auto_build:
 	cd nginx-src && make -j$$(nproc)
+	cd nginx-src && make -f objs-debug/Makefile -j$$(nproc)
 	sed -i 's/find_package(protobuf REQUIRED)/find_package(Protobuf REQUIRED)/' nginx-otel/CMakeLists.txt
 	cmake -S nginx-otel -B nginx-otel/build \
 		-DNGX_OTEL_GRPC=package \
@@ -64,9 +78,12 @@ override_dh_auto_build:
 
 # Install into debian/tmp; per-package .install files route the core server and
 # each dynamic module into their own binary package (mirroring upstream's
-# nginx-module-* layout).
+# nginx-module-* layout). nginx-debug is shipped in the core package alongside
+# nginx, as upstream does.
 override_dh_auto_install:
 	cd nginx-src && make install DESTDIR=$(CURDIR)/debian/tmp
+	install -Dm755 nginx-src/objs-debug/nginx \
+		$(CURDIR)/debian/tmp/usr/sbin/nginx-debug
 	install -Dm644 nginx-src/objs/ngx_http_js_module.so \
 		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_js_module.so
 	install -Dm644 nginx-src/objs/ngx_stream_js_module.so \
@@ -78,3 +95,4 @@ override_dh_auto_test:
 
 override_dh_auto_clean:
 	cd nginx-src && [ ! -f Makefile ] || make clean
+	cd nginx-src && rm -rf objs-debug
