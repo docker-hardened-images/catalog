@@ -44,9 +44,9 @@ Docker Hardened Images come in different variants depending on their intended us
   - Improve compatibility with upstream helm charts
   - Include optional tools that are critical for certain use-cases
 
-<!-- - FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
   variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-  cryptographic operations. For example, usage of MD5 fails in FIPS variants. -->
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 

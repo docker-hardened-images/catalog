@@ -25,8 +25,8 @@ vars:
   CILIUM_ENVOY_COMMIT_SHA: a7f42a3390781539911b5b9107881b35ecc4e752
   CILIUM_ENVOY_VERSION: 1.36.8
   CLANG_VERSION: "18"
-  GO_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
-  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:f94a659e449ef119bb13fcce52c16636fd29ad7b82d72f176966e3a926695d53
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:d1295e34ae659bfd57c305d67ec5177c15694fb82f25d98aee76d0ae08ef8ad1
+  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:1a211b3861bb85e5fc42397aed8db6ce05b5d0f08611959c9b1577c213705913
   SEMVER_MAJOR_MINOR_VERSION: "1.17"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.17.17
@@ -36,9 +36,11 @@ contents:
     - '!base-files'
     - ca-certificates
     - libatomic1
+    - libc++1-18
+    - libc++abi1-18
   builds:
     - name: cilium-envoy
-      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:9a675e23c51e343854caccdcf56c40a9f39b5c3024ca02ae045b48786d0d7a42
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:d1295e34ae659bfd57c305d67ec5177c15694fb82f25d98aee76d0ae08ef8ad1
       environment:
         PATH: /opt/bazel/bin:/opt/python/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       caches:
@@ -90,7 +92,7 @@ contents:
             gid: 0
             mode: "0755"
         artifacts:
-          - name: dhi.io/python:3.12.13-debian13@sha256:f94a659e449ef119bb13fcce52c16636fd29ad7b82d72f176966e3a926695d53
+          - name: dhi.io/python:3.12.13-debian13@sha256:1a211b3861bb85e5fc42397aed8db6ce05b5d0f08611959c9b1577c213705913
             includes:
               - opt/**
             uid: 0
@@ -157,6 +159,7 @@ contents:
               --keep_going=false
               --verbose_failures
               --sandbox_debug
+              --output_filter='.*'
               --jobs=auto
               --disk_cache=/bazel-disk-cache
               --repository_cache=/bazel-repo-cache
@@ -165,14 +168,22 @@ contents:
               --experimental_disk_cache_gc_max_age=30d
             )
 
-            # # Configure FIPS BoringSSL if requested.
-            # if [ "${target.fips}" = "true" ]; then
-            #   BAZEL_BUILD_OPTS+=(--define=boringssl=fips)
-            #   # FIPS build triggers bazelrc configs that restrict PATH; symlink python to /usr/bin
-            #   ln -sf /opt/python/bin/python3 /usr/bin/python3
-            # fi
+            # Configure FIPS BoringSSL if requested.
+            if [ "${target.fips}" = "true" ]; then
+              BAZEL_BUILD_OPTS+=(
+                --define=boringssl=fips
+                --cxxopt=-stdlib=libc++
+                --linkopt=-lc++
+                --linkopt=-lc++abi
+              )
+              # FIPS build triggers bazelrc configs that restrict PATH; symlink python to /usr/bin
+              ln -sf /opt/python/bin/python3 /usr/bin/python3
+            fi
 
-            BAZEL_OPTS=--batch BAZELRC_FILE="${PWD}/clang.bazelrc" DESTDIR=${target.dir}/ \
+            # Configure architecture-specific build flags
+            test '${target.arch}' = 'arm64' && BAZEL_BUILD_OPTS+=(--cpu=aarch64)
+
+            CARGO_BAZEL_REPIN=true BAZEL_OPTS=--batch BAZELRC_FILE="${PWD}/clang.bazelrc" DESTDIR=${target.dir}/ \
               BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS[@]}" PKG_BUILD=1 V=1 make install
         - name: envoy bazel sbom
           work-dir: /go/src/github.com/cilium/proxy
