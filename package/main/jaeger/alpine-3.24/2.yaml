@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-jaeger
+variant: runtime
+tags:
+  - 2.19.0-alpine3.24
+  - 2.19.0-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-11-04"
+vars:
+  COMMIT_SHA: 48f1e46121d1c428a6c989d08e7d69df4bccae82
+  GOLANG_VERSION: 1.26.4-r1
+  PACKAGE_NAME: jaeger
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.19"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.19.0
+  UI_CHECKSUM: sha256:3fe8ebeec0ba8f9bd1523666489ec33844e41ac90362506ae44f9324a1587205
+  VERSION: 2.19.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: jaeger
+      work-dir: /go/src/github.com/jaegertracing/jaeger
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.4-r1
+          - golang-1.26-oci-config=1.26.4-r1
+        files:
+          - url: git+https://github.com/jaegertracing/jaeger.git#v2.19.0
+            checksum: 48f1e46121d1c428a6c989d08e7d69df4bccae82
+            path: /go/src/github.com/jaegertracing/jaeger
+            spdx:
+              name: jaeger
+              version: 2.19.0
+              packages:
+                - name: jaeger
+                  purl: pkg:golang/github.com/jaegertracing/jaeger@v2.19.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/jaegertracing/jaeger-ui/releases/download/v2.19.0/assets.tar.gz
+            checksum: sha256:3fe8ebeec0ba8f9bd1523666489ec33844e41ac90362506ae44f9324a1587205
+            path: ${source.dir}/jaeger-ui-assets-2.19.0.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - uses: go/hermetic@v1
+        - name: embed jaeger-ui assets
+          work-dir: /go/src/github.com/jaegertracing/jaeger
+          runs: |
+            set -eux -o pipefail
+
+            embed=cmd/jaeger/internal/extension/jaegerquery/internal/ui/actual
+            rm -rf "${embed:?}"/*
+            # tarball contains packages/jaeger-ui/build/* -- strip those 3 levels
+            tar -xzf "${source.dir}/jaeger-ui-assets-2.19.0.tar.gz" \
+              --strip-components=3 -C "${embed}"
+            find "${embed}" -type f | grep -v .gitignore | xargs gzip --no-name
+        - name: test
+          work-dir: /go/src/github.com/jaegertracing/jaeger
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./cmd/jaeger/...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/jaegertracing/jaeger/internal/version.commitSHA=48f1e46121d1c428a6c989d08e7d69df4bccae82
+              - -X github.com/jaegertracing/jaeger/internal/version.latestVersion=v2.19.0
+              - -X github.com/jaegertracing/jaeger/internal/version.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/jaeger
+            packages: ./cmd/jaeger
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/jaegertracing/jaeger/internal/version.commitSHA=48f1e46121d1c428a6c989d08e7d69df4bccae82
+              - -X github.com/jaegertracing/jaeger/internal/version.latestVersion=v2.19.0
+              - -X github.com/jaegertracing/jaeger/internal/version.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/jaeger-dev
+            packages: ./cmd/jaeger
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Jaeger, a CNCF Distributed Tracing Platform (v2 unified binary)
+            files:
+              - usr/bin/jaeger
+            license: Apache-2.0
+            name: jaeger
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/jaeger
+                    source: usr/bin/jaeger-dev
+                name: jaeger-dev
+            url: https://github.com/jaegertracing/jaeger
+            version: 2.19.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
