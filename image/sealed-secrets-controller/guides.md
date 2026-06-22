@@ -34,7 +34,7 @@ manage Kubernetes Secrets. You can install Sealed Secrets using the official hel
 with the desired image tag.
 
 ```bash
-helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+helm repo add sealed-secrets https://bitnami.github.io/sealed-secrets
 helm repo update
 
 helm install sealed-secrets sealed-secrets/sealed-secrets --namespace kube-system --create-namespace \
