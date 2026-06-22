@@ -1,0 +1,36 @@
+Patch telegraf remotefile output plugin for rclone v1.74.x compatibility.
+
+rclone v1.74.x introduced breaking API changes:
+- https://github.com/rclone/rclone/commit/c6f2b08 (vfs.New added context.Context parameter)
+- https://github.com/rclone/rclone/pull/8329 (logging rewrite: fs.LogOutput removed, logrus replaced with log/slog)
+
+The vfs.New() function signature changed from:
+  func New(f fs.Fs, opt *vfscommon.Options) *VFS
+to:
+  func New(ctx context.Context, f fs.Fs, opt *vfscommon.Options) *VFS
+
+The fs.LogOutput variable was removed when rclone migrated from logrus to log/slog.
+
+diff --git a/plugins/outputs/remotefile/remotefile.go b/plugins/outputs/remotefile/remotefile.go
+--- a/plugins/outputs/remotefile/remotefile.go
++++ b/plugins/outputs/remotefile/remotefile.go
+@@ -83,10 +83,6 @@
+ 	if f.MaxCacheSize > 0 {
+ 		f.vfsopts.CacheMaxSize = fs.SizeSuffix(f.MaxCacheSize)
+ 	}
+-
+-	fs.LogOutput = func(level fs.LogLevel, text string) {
+-		f.Log.Tracef("[%s] %s", level.String(), text)
+-	}
+ 
+ 	// Setup custom template functions
+ 	funcs := template.FuncMap{"now": time.Now}
+@@ -144,7 +140,7 @@
+ 		return fmt.Errorf("creating remote failed: %w", err)
+ 	}
+ 	f.fscancel = cancel
+-	f.root = vfs.New(rootfs, &f.vfsopts)
++	f.root = vfs.New(ctx, rootfs, &f.vfsopts)
+ 
+ 	// Force connection to make sure we actually can connect
+ 	if _, err := f.root.Fs().List(ctx, "/"); err != nil {
