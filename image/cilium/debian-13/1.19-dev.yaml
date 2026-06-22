@@ -1,0 +1,239 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cilium 1.19.x (dev)
+image: dhi.io/cilium
+variant: dev
+tags:
+  - 1.19-dev
+  - 1.19.5-dev
+  - 1.19-debian-dev
+  - 1.19-debian13-dev
+  - 1.19.5-debian-dev
+  - 1.19.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-03"
+vars:
+  COMMIT_SHA: 20eaccfef029cb046d70219717fb6dbbdf27a59f
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.5
+  VERSION: 1.19.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - iproute2
+    - ipset
+    - iptables
+    - kmod
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: cilium
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - adduser
+          - ca-certificates
+          - coreutils
+          - git
+          - iproute2
+          - iptables
+          - ipset
+          - kmod
+          - make
+          - sed
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26
+          - findutils
+          - mawk
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.19.5
+            checksum: 20eaccfef029cb046d70219717fb6dbbdf27a59f
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: cilium
+              version: 1.19.5
+              packages:
+                - name: cilium
+                  purl: pkg:golang/github.com/cilium/cilium@1.19.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cilium/cilium
+          with:
+            deps: []
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/cilium/cilium
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test ./daemon/cmd/...
+        - name: build
+          work-dir: /go/src/github.com/cilium/cilium
+          runs: |
+            set -eux -o pipefail
+
+            # ex: '1.16.18 ab500221 2025-12-17T04:09:29Z'
+            CILIUM_FULL_VERSION="1.19.5 $(git --no-pager show -s --format='format:%h %aI')"
+            # Envoy version is pinned via ARG in Dockerfile, extract the commit sha from ref string.
+            CILIUM_ENVOY_IMAGE=$(sed -nE 's/^ARG CILIUM_ENVOY_IMAGE=([^ ]*)/\1/p' images/cilium/Dockerfile)
+            CILIUM_ENVOY_SHA=$(echo ${CILIUM_ENVOY_IMAGE} | sed -E 's/[^/]*\/[^:]*:(.*-)?([^:@]*).*/\2/p;d')
+
+            GOLDFLAGS="-s -w \
+              -X 'github.com/cilium/cilium/pkg/version.ciliumVersion=${CILIUM_FULL_VERSION}' \
+              -X 'github.com/cilium/cilium/pkg/envoy.requiredEnvoyVersionSHA=${CILIUM_ENVOY_SHA}' \
+            "
+
+            CGO_ENABLED=0 go -C ./cilium-dbg build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-dbg
+
+            CGO_ENABLED=0 go -C ./daemon build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-agent
+
+            CGO_ENABLED=0 go -C ./cilium-health build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-health
+
+            CGO_ENABLED=0 go -C ./cilium-health/responder build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-health-responder
+
+            CGO_ENABLED=0 go -C ./bugtool build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-bugtool
+
+            CGO_ENABLED=0 go -C ./tools/mount build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-mount
+
+            CGO_ENABLED=0 go -C ./tools/sysctlfix build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-sysctlfix
+
+            CGO_ENABLED=0 go -C ./plugins/cilium-cni build -mod=vendor \
+              -ldflags "${GOLDFLAGS}" \
+              -tags=osusergo \
+              -o cilium-cni
+        - name: install
+          work-dir: /go/src/github.com/cilium/cilium
+          runs: |
+            set -eux -o pipefail
+
+            make install-container-binary \
+              DESTDIR=${target.dir}
+
+            # Copies over the BPF source files from bpf/ to /var/lib/cilium/bpf/
+            make install-bpf \
+              DESTDIR=${target.dir}
+
+            # Wrap iptables for compat
+            ln -sf /usr/sbin/iptables-nft /usr/sbin/iptables
+            ln -sf /usr/sbin/ip6tables-nft /usr/sbin/ip6tables
+            ./images/runtime/iptables-wrapper-installer.sh --no-sanity-check
+
+            # Container entrypoints
+            install -m 755 images/cilium/init-container.sh ${target.dir}/init-container.sh
+            install -m 755 plugins/cilium-cni/cni-uninstall.sh ${target.dir}/cni-uninstall.sh
+      outputs:
+        - source: /usr/sbin/iptables
+          target: /usr/sbin/iptables
+          uid: 0
+          gid: 0
+        - source: /usr/sbin/ip6tables
+          target: /usr/sbin/ip6tables
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/var/lib/cilium/bpf/
+          target: /var/lib/cilium/bpf/
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/init-container.sh
+          target: /init-container.sh
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/cni-uninstall.sh
+          target: /cni-uninstall.sh
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/bin/
+          target: /usr/bin/
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/cni/bin/cilium-cni
+          target: /opt/cni/bin/cilium-cni
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cilium
+          target: /opt/docker/sbom/cilium
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  INITSYSTEM: SYSTEMD
+annotations:
+  org.opencontainers.image.description: A minimal Cilium image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/cilium
