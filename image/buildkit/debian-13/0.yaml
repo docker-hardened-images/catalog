@@ -5,33 +5,31 @@ image: dhi.io/buildkit
 variant: runtime
 tags:
   - "0"
-  - "0.30"
-  - 0.30.0
+  - "0.31"
+  - 0.31.0
   - 0-debian
   - 0-debian13
-  - 0.30-debian
-  - 0.30-debian13
-  - 0.30.0-debian
-  - 0.30.0-debian13
+  - 0.31-debian
+  - 0.31-debian13
+  - 0.31.0-debian
+  - 0.31.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates: {}
 vars:
-  COMMIT_SHA: dd2170e156c9633da1b2d1a58a6188e3f7d36fa4
-  CONTAINERD_COMMIT_SHA: 64b425cf570b3b8dd1d4cc46da7c1fce65c6651a
-  CONTAINERD_VERSION: 2.3.1
-  FLAVORED_SUFFIX: ""
-  GODEBUG: ""
+  COMMIT_SHA: c411f0ac55a2c56d3d68b7d92d257538d5d6f464
+  LIBPATHRS_VERSION: 0.2.5
   ROOTLESSKIT_COMMIT_SHA: a1d6ded184cf5915981a2978c61116013b91189f
   ROOTLESSKIT_VERSION: 2.3.6
-  RUNC_COMMIT_SHA: bb14dabeb7185bb72c8c86735d090dcb20f36587
-  RUNC_VERSION: 1.4.3
-  SEMVER_MAJOR_MINOR_VERSION: "0.30"
+  RUNC_COMMIT_SHA: c4bb59526d0c9cf3a3a46a04d08ca031749a2119
+  RUNC_VERSION: 1.5.0
+  RUST_REFERENCE: dhi/rust:1.96.0-debian13@sha256:b0349cc78c14ea565dac16ad471a546279a8cb55150aa17a52b81e2cbae8889a
+  RUST_VERSION: 1.96.0
+  SEMVER_MAJOR_MINOR_VERSION: "0.31"
   SEMVER_MAJOR_VERSION: "0"
-  SEMVER_VERSION: 0.30.0
-  SUFFIX: ""
-  VERSION: 0.30.0
+  SEMVER_VERSION: 0.31.0
+  VERSION: 0.31.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -39,38 +37,219 @@ contents:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
-    - ca-certificates
     - ca-certificates-bundle
-    - curl
     - fuse-overlayfs
     - fuse3
     - git
+    - isal
     - openssh-client
     - openssl
     - tzdata
     - uidmap
     - xz-utils
   builds:
-    - name: fix uidmap caps
+    - name: buildkit
+      work-dir: /go/src/github.com/moby/buildkit
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - bash
-          - uidmap
-          - libcap2-bin
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+        files:
+          - url: git+https://github.com/moby/buildkit.git#v0.31.0
+            checksum: c411f0ac55a2c56d3d68b7d92d257538d5d6f464
+            path: /go/src/github.com/moby/buildkit
+            spdx:
+              name: moby-buildkit
+              version: 0.31.0
+              packages:
+                - name: buildkit
+                  purl: pkg:golang/github.com/moby/buildkit@0.31.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
-        - name: setcap
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/containerd/containerd/v2@v2.2.5
+            download: true
+        - name: build buildkitd
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X 'github.com/moby/buildkit/version.Version=v0.31.0'
+              - -X 'github.com/moby/buildkit/version.Revision=c411f0ac55a2c56d3d68b7d92d257538d5d6f464'
+            output: ${target.dir}/usr/local/bin/buildkitd
+            packages: ./cmd/buildkitd
+        - name: build buildctl
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X 'github.com/moby/buildkit/version.Version=v0.31.0'
+              - -X 'github.com/moby/buildkit/version.Revision=c411f0ac55a2c56d3d68b7d92d257538d5d6f464'
+            output: ${target.dir}/usr/local/bin/buildctl
+            packages: ./cmd/buildctl
+      outputs:
+        - source: ${target.dir}/usr/local/bin/buildkitd
+          target: /usr/local/bin/buildkitd
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/buildctl
+          target: /usr/local/bin/buildctl
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/moby-buildkit
+          target: /opt/docker/sbom/moby-buildkit
+          uid: 0
+          gid: 0
+    - name: runc
+      work-dir: /go/src/github.com/opencontainers/runc
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - gcc
+          - golang-1.26
+          - gpg
+          - gpg-agent
+          - libseccomp-dev
+          - linux-libc-dev
+          - pkgconf
+          - sed
+          - tar
+          - util-linux
+          - xz-utils
+          - zstd
+        files:
+          - url: git+https://github.com/opencontainers/runc#v1.5.0
+            checksum: c4bb59526d0c9cf3a3a46a04d08ca031749a2119
+            path: /go/src/github.com/opencontainers/runc
+            spdx:
+              name: runc
+              version: 1.5.0
+              packages:
+                - name: runc
+                  purl: pkg:golang/github.com/opencontainers/runc@1.5.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs-0.2.5.tar.xz.asc
+            path: ${source.dir}/libpathrs-0.2.5.tar.xz.asc
+            uid: 0
+            gid: 0
+          - url: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs-0.2.5.tar.xz
+            checksum: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs.sha256sum
+            path: ${source.dir}/libpathrs-0.2.5.tar.xz
+            spdx:
+              name: libpathrs
+              version: 0.2.5
+              packages:
+                - name: libpathrs
+                  purl: pkg:cargo/libpathrs@0.2.5
+                  license: MPL-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs.vendor.tar.zst.asc
+            path: ${source.dir}/libpathrs.vendor.tar.zst.asc
+            uid: 0
+            gid: 0
+          - url: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs.vendor.tar.zst
+            checksum: https://github.com/cyphar/libpathrs/releases/download/v0.2.5/libpathrs.sha256sum
+            path: ${source.dir}/libpathrs.vendor.tar.zst
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/rust:1.96.0-debian13@sha256:b0349cc78c14ea565dac16ad471a546279a8cb55150aa17a52b81e2cbae8889a
+            includes:
+              - usr/local/bin/**
+              - usr/local/lib/**
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify libpathrs
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/libpathrs-0.2.5.tar.xz
+            keys: ${source.dir}/key/C9C370B246B09F6DBCFC744C34401015D1D2D386.asc
+            signature: ${source.dir}/libpathrs-0.2.5.tar.xz.asc
+        - name: verify libpathrs vendored sources
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/libpathrs.vendor.tar.zst
+            keys: ${source.dir}/key/C9C370B246B09F6DBCFC744C34401015D1D2D386.asc
+            signature: ${source.dir}/libpathrs.vendor.tar.zst.asc
+        - name: extract libpathrs
           runs: |
             set -eux -o pipefail
 
-            setcap cap_setuid+eip /usr/bin/newuidmap
-            setcap cap_setgid+eip /usr/bin/newgidmap
-      outputs:
-        - source: /usr/bin/newuidmap
-          target: /usr/bin/newuidmap
+            mkdir -p "${source.dir}/libpathrs"
+            tar -xJf "${source.dir}/libpathrs-0.2.5.tar.xz" \
+              -C "${source.dir}/libpathrs" --strip-components=1
+
+            zstd -dc "${source.dir}/libpathrs.vendor.tar.zst" \
+              | sed -n '/PaxHeaders/,$p' \
+              | tar -x -C "${source.dir}/libpathrs"
+        - name: build libpathrs
+          work-dir: ${source.dir}/libpathrs
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${source.dir}/libpathrs/.cargo"
+            cat > "${source.dir}/libpathrs/.cargo/config.toml" << 'EOF'
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "vendor"
+            EOF
+
+            export LIBPATHRS_CAPI_BUILDMODE=staticlib
+
+            cargo rustc --features=capi --release --frozen \
+              --crate-type=${LIBPATHRS_CAPI_BUILDMODE} \
+              -- -C panic=abort
+
+            ./install.sh --enable-static --disable-dynamic
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+            download: true
+        - name: build runc
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -extldflags '-static'
+              - -X 'main.gitCommit=c4bb59526d0c9cf3a3a46a04d08ca031749a2119'
+            output: ${target.dir}/usr/local/bin/runc
+            tags: seccomp,libpathrs,netgo,osusergo
+      paths:
+        - type: directory
+          path: ${source.dir}/key
           uid: 0
           gid: 0
-        - source: /usr/bin/newgidmap
-          target: /usr/bin/newgidmap
+          source: image/buildkit/key
+      outputs:
+        - source: ${target.dir}/usr/local/bin/runc
+          target: /usr/local/bin/runc
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/runc
+          target: /opt/docker/sbom/runc
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/libpathrs
+          target: /opt/docker/sbom/libpathrs
           uid: 0
           gid: 0
     - name: rootlesskit
@@ -83,9 +262,6 @@ contents:
           - ca-certificates-bundle
           - coreutils
           - golang-1.26
-          - findutils
-          - mawk
-          - sed
         files:
           - url: git+https://github.com/rootless-containers/rootlesskit#v2.3.6
             checksum: a1d6ded184cf5915981a2978c61116013b91189f
@@ -106,7 +282,7 @@ contents:
             deps:
               - golang.org/x/net@v0.55.0
             download: true
-        - name: build binary
+        - name: build rootlesskit
           uses: go/build@v1
           with:
             ldflags:
@@ -118,195 +294,30 @@ contents:
           target: /usr/local/bin/rootlesskit
           uid: 0
           gid: 0
-          mode: "0755"
         - source: /opt/docker/sbom/rootlesskit
           target: /opt/docker/sbom/rootlesskit
           uid: 0
           gid: 0
-    - name: buildkit
-      work-dir: /go/src/github.com/moby/buildkit
-      caches:
-        - path: /go/pkg/mod
+    - name: fix uidmap caps
       contents:
         packages:
           - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/moby/buildkit.git#v0.30.0
-            checksum: dd2170e156c9633da1b2d1a58a6188e3f7d36fa4
-            path: /go/src/github.com/moby/buildkit
-            spdx:
-              name: moby-buildkit
-              version: 0.30.0
-              packages:
-                - name: buildkit
-                  purl: pkg:golang/github.com/moby/buildkit@0.30.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
+          - uidmap
+          - libcap2-bin
       pipeline:
-        - name: update go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - golang.org/x/crypto@v0.52.0
-              - golang.org/x/net@v0.55.0
-              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
-              - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
-              - github.com/cloudflare/circl@v1.6.3
-              - github.com/containerd/containerd/v2@v2.2.4
-              - github.com/in-toto/in-toto-golang@v0.11.0
-              - github.com/opencontainers/selinux@v1.13.1
-              - github.com/sigstore/rekor@v1.5.0
-              - github.com/sigstore/timestamp-authority/v2@v2.0.6
-              - github.com/theupdateframework/go-tuf/v2@v2.4.1
-            download: true
-        - name: build daemon binary
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X 'github.com/moby/buildkit/version.Version=v0.30.0'
-              - -X 'github.com/moby/buildkit/version.Revision=dd2170e156c9633da1b2d1a58a6188e3f7d36fa4'
-            output: ${target.dir}/usr/local/bin/buildkitd
-            packages: ./cmd/buildkitd
-        - name: build cli binary
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X 'github.com/moby/buildkit/version.Version=v0.30.0'
-              - -X 'github.com/moby/buildkit/version.Revision=dd2170e156c9633da1b2d1a58a6188e3f7d36fa4'
-            output: ${target.dir}/usr/local/bin/buildctl
-            packages: ./cmd/buildctl
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_setuid+eip /usr/bin/newuidmap
+            setcap cap_setgid+eip /usr/bin/newgidmap
       outputs:
-        - source: ${target.dir}/usr/local/bin/buildkitd
-          target: /usr/local/bin/buildkitd
+        - source: /usr/bin/newuidmap
+          target: /usr/bin/newuidmap
           uid: 0
           gid: 0
-          mode: "0755"
-        - source: ${target.dir}/usr/local/bin/buildctl
-          target: /usr/local/bin/buildctl
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/moby-buildkit
-          target: /opt/docker/sbom/moby-buildkit
-          uid: 0
-          gid: 0
-    - name: containerd
-      work-dir: /go/src/github.com/containerd/containerd/v2
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/containerd/containerd#v2.3.1
-            checksum: 64b425cf570b3b8dd1d4cc46da7c1fce65c6651a
-            path: /go/src/github.com/containerd/containerd/v2
-            spdx:
-              name: containerd
-              version: 2.3.1
-              packages:
-                - name: containerd
-                  purl: pkg:golang/github.com/containerd/containerd/v2@2.3.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v2
-          environment:
-            GODEBUG: ""
-          with:
-            deps:
-              - golang.org/x/crypto@v0.52.0
-              - golang.org/x/net@v0.55.0
-              - github.com/go-jose/go-jose/v4@v4.1.4
-            download: true
-        - name: build binary
-          uses: go/build@v1
-          environment:
-            GOFLAGS: -buildvcs=false
-          with:
-            ldflags:
-              - -X 'github.com/containerd/containerd/v2/version.Version=v2.3.1'
-              - -X 'github.com/containerd/containerd/v2/version.Revision=64b425cf570b3b8dd1d4cc46da7c1fce65c6651a'
-            output: ${target.dir}/usr/local/bin/containerd
-            packages: ./cmd/containerd
-      outputs:
-        - source: ${target.dir}/usr/local/bin/containerd
-          target: /usr/local/bin/containerd
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/containerd
-          target: /opt/docker/sbom/containerd
-          uid: 0
-          gid: 0
-    - name: runc
-      work-dir: /go/src/github.com/opencontainers/runc
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - pkgconf
-          - gcc
-          - libseccomp-dev
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/opencontainers/runc#v1.4.3
-            checksum: bb14dabeb7185bb72c8c86735d090dcb20f36587
-            path: /go/src/github.com/opencontainers/runc
-            spdx:
-              name: runc
-              version: 1.4.3
-              packages:
-                - name: runc
-                  purl: pkg:golang/github.com/opencontainers/runc@1.4.3
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - golang.org/x/net@v0.55.0
-            download: true
-        - name: build binary
-          uses: go/build@v1
-          with:
-            cgo_enabled: 1
-            ldflags:
-              - -X 'main.extraVersion=v1.4.3'
-              - -X 'main.gitCommit=bb14dabeb7185bb72c8c86735d090dcb20f36587'
-            output: ${target.dir}/usr/local/bin/runc
-            tags: apparmor,seccomp,netgo,cgo,static_build,osusergo
-      outputs:
-        - source: ${target.dir}/usr/local/bin/runc
-          target: /usr/local/bin/runc
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/runc
-          target: /opt/docker/sbom/runc
+        - source: /usr/bin/newgidmap
+          target: /usr/bin/newgidmap
           uid: 0
           gid: 0
 accounts:
@@ -331,69 +342,56 @@ os-release:
 environment:
   BUILDKIT_HOST: unix:///run/user/1000/buildkit/buildkitd.sock
   HOME: /home/nonroot
-  TMPDIR: /home/nonroot/.local/tmp
   USER: nonroot
   XDG_RUNTIME_DIR: /run/user/1000
 paths:
-  - type: directory
-    path: /tmp
-    uid: 1000
-    gid: 1000
-    mode: "0777"
+  - type: file
+    path: /etc/subuid
+    content: nonroot:100000:65536
+    uid: 0
+    gid: 0
+  - type: file
+    path: /etc/subgid
+    content: nonroot:100000:65536
+    uid: 0
+    gid: 0
   - type: directory
     path: /run/user/1000
     uid: 1000
     gid: 1000
-    mode: "0755"
   - type: directory
     path: /home/nonroot
     uid: 1000
     gid: 1000
   - type: directory
-    path: /home/nonroot/.local/tmp
-    uid: 1000
-    gid: 1000
-    mode: "0755"
-  - type: directory
     path: /home/nonroot/.local/share/buildkit
     uid: 1000
     gid: 1000
-    mode: "0755"
-  - type: file
-    path: /etc/subuid
-    content: nonroot:100000:65536
-    uid: 1000
-    gid: 1000
-    mode: "0644"
-  - type: file
-    path: /etc/subgid
-    content: nonroot:100000:65536
-    uid: 1000
-    gid: 1000
-    mode: "0644"
   - type: directory
     path: /etc/cdi
     uid: 1000
     gid: 1000
-    mode: "0755"
   - type: directory
     path: /run/cdi
     uid: 1000
     gid: 1000
-    mode: "0755"
   - type: directory
     path: /etc/buildkit/cdi
     uid: 1000
     gid: 1000
-    mode: "0755"
+  - type: directory
+    path: /var/lib/buildkit
+    uid: 1000
+    gid: 1000
   - type: directory
     path: /var/lib/containerd
     uid: 1000
     gid: 1000
-    mode: "0755"
 annotations:
   org.opencontainers.image.description: A minimal buildkit builder toolkit image
   org.opencontainers.image.licenses: Apache-2.0
 entrypoint:
   - rootlesskit
   - buildkitd
+cmd:
+  - --root=/var/lib/buildkit
