@@ -22,18 +22,14 @@ vars:
   COMMIT_SHA: 814710cbaf43c9a37baed249feec0db5f0868fa9
   NGINX_AGENT_COMMIT_SHA: 4a95e5301c7d06a6b7c75971868bd508b724dfab
   NGINX_AGENT_VERSION: 3.8.0
-  NGINX_REFERENCE: dhi/nginx:1.31.2-debian13@sha256:736b0f376addce2ef7ee7cef9ebf7a8b207d112060e225976cace336adb5090e
-  NGINX_VERSION: 1.31.2
   SEMVER_MAJOR_MINOR_VERSION: "5.5"
   SEMVER_MAJOR_VERSION: "5"
   SEMVER_VERSION: 5.5.1
   VERSION: 5.5.1
 contents:
   repositories:
-    - deb [signed-by=/usr/share/keyrings/nginx-otel-keyring.gpg] http://packages.nginx.org/nginx/mainline/debian trixie nginx
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
   keyring:
-    - https://nginx.org/keys/nginx_signing.key
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!gawk'
@@ -50,34 +46,54 @@ contents:
     - gcc-14-base
     - grep
     - libc-bin
+    - libc6
+    - libcrypt1
+    - libgcc-s1
+    - libgrpc++1.51t64
+    - libgrpc29t64
+    - libpcre2-8-0
+    - libprotobuf32t64
+    - libssl3t64
+    - libstdc++6
+    - libxml2
     - mawk
-    - nginx-module-njs
-    - nginx-module-otel
+    - nginx-mainline
+    - nginx-mainline-module-njs
+    - nginx-mainline-module-otel
+    - opentelemetry-cpp
     - perl-base
     - sed
     - util-linux
+    - zlib1g
   builds:
-    - name: setcaps nginx and nginx debug
+    - name: setcap nginx
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
           - base-files
           - coreutils
           - libcap2-bin
-        artifacts:
-          - name: dhi.io/nginx:1.31.2-debian13@sha256:736b0f376addce2ef7ee7cef9ebf7a8b207d112060e225976cace336adb5090e
-            includes:
-              - usr/sbin/nginx
-              - usr/sbin/nginx-debug
-            uid: 0
-            gid: 0
+          - nginx-mainline
       pipeline:
         - name: setcap
           runs: |
             set -eux -o pipefail
 
-            setcap 'cap_net_bind_service=+eip' /usr/sbin/nginx 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
-            setcap -v 'cap_net_bind_service=+eip' /usr/sbin/nginx 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
+            setcap 'cap_net_bind_service=+eip' /usr/sbin/nginx
+            setcap -v 'cap_net_bind_service=+eip' /usr/sbin/nginx
+
+            # nginx-debug ships in nginx-mainline alongside nginx and upstream
+            # grants it the same capability so debug builds can also bind
+            # privileged ports.
+            setcap 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
+            setcap -v 'cap_net_bind_service=+eip' /usr/sbin/nginx-debug
+
+            chown -R 101:0 /etc/nginx
+            chmod -R g+w /etc/nginx
       outputs:
         - source: /usr/sbin/nginx
           target: /usr/sbin/nginx
@@ -86,6 +102,10 @@ contents:
         - source: /usr/sbin/nginx-debug
           target: /usr/sbin/nginx-debug
           uid: 0
+          gid: 0
+        - source: /etc/nginx
+          target: /etc/nginx
+          uid: 101
           gid: 0
     - name: build nginx-agent
       work-dir: /go/src/github.com/nginx/agent
@@ -235,21 +255,6 @@ contents:
           target: /opt/docker/sbom/nginx-ingress
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/nginx:1.31.2-debian13@sha256:736b0f376addce2ef7ee7cef9ebf7a8b207d112060e225976cace336adb5090e
-      excludes:
-        - etc/group
-        - etc/passwd
-        - etc/shadow
-        - usr/sbin/nginx
-        - usr/sbin/nginx-debug
-        - var/lib/dpkg/status
-        - var/lib/dpkg/status.d/gcc-14-base
-        - var/lib/dpkg/status.d/libc-bin
-        - var/lib/dpkg/status.d/libc6
-        - var/lib/dpkg/status.d/libgcc-s1
-      uid: 101
-      gid: 0
 accounts:
   root: true
   run-as: root
