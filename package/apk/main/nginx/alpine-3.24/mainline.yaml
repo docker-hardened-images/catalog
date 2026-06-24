@@ -4,7 +4,7 @@ image: dhi.io/pkg-nginx
 variant: runtime
 tags:
   - 1.31.2-alpine3.24
-  - 1.31.2-r1-alpine3.24
+  - 1.31.2-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -47,7 +47,7 @@ vars:
   HTTP_ZSTD_VERSION: 0.1.1
   NJS_VERSION: 0.9.9
   PACKAGE_NAME: main/nginx
-  REL: "1"
+  REL: "2"
   RTMP_VERSION: 1.2.2
   SEMVER_MAJOR_MINOR_VERSION: "1.31"
   SEMVER_MAJOR_VERSION: "1"
@@ -255,6 +255,26 @@ contents:
             gid: 0
       pipeline:
         - uses: abuild/setup@v1
+        - uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/train-specific-package.patch
+        - name: apply train-specific package name
+          runs: |
+            set -eux -o pipefail
+
+            sed -i \
+              -e "s/@NGINX_TRAIN@/mainline/g" \
+              -e 's/\$pkgname-tests-/nginx-tests-/' \
+              -e 's/\$pkgname-njs-/nginx-njs-/' \
+              -e 's/\$pkgname\.logrotate/nginx.logrotate/' \
+              -e 's/\$pkgname\.initd/nginx.initd/' \
+              -e 's/\$pkgname\.confd/nginx.confd/' \
+              -e 's|^_modules_dir="usr/lib/\$pkgname/modules"|_modules_dir="usr/lib/nginx/modules"|' \
+              APKBUILD
+
+            for hook in pre-install post-install pre-upgrade post-upgrade; do
+              cp "nginx.${hook}" "nginx-mainline.${hook}"
+            done
         - name: drop patches already applied upstream in mainline
           runs: |
             set -eux -o pipefail
@@ -262,7 +282,7 @@ contents:
             sed -i '/CVE-2026-49975\.patch/d' APKBUILD
         - uses: abuild/bump@v1
           with:
-            rel: 1
+            rel: 2
             version: 1.31.2
         - uses: abuild/build@v1
           with:
@@ -272,19 +292,12 @@ contents:
             function: check
         - uses: abuild/build@v1
           privileged: true
-        - uses: abuild/apk@v1
-          work-dir: ${source.dir}/aports/nginx-${NAME}
-          with:
-            depends: nginx=1.31.2-r1
-            description: HTTP and reverse proxy server (mainline version)
-            license: BSD-2-Clause
-            name: nginx-mainline
-            options: '!check !strip'
-            rel: 1
-            url: https://www.nginx.org/
-            version: 1.31.2
-        - uses: abuild/build@v1
-          work-dir: ${source.dir}/aports/nginx-mainline
+      paths:
+        - type: file
+          path: ${source.dir}/patch/train-specific-package.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/nginx/alpine-3.24/patch/train-specific-package.patch
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine

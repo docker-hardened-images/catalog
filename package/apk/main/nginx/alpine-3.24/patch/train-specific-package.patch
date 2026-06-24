@@ -1,0 +1,138 @@
+This patch makes Alpine's nginx APKBUILD produce train-specific binary
+packages, `nginx-mainline` and `nginx-stable`, while preserving the upstream
+nginx runtime layout.
+
+The Alpine aport uses `pkgname` for both APK identity and installed paths. If
+we only rename `pkgname`, abuild also tries to install paths like
+`/etc/nginx-mainline` and `/usr/sbin/nginx-mainline`, and it looks for a source
+directory named `nginx-mainline-$pkgver`. DHI needs the package names to be
+train-specific so mainline and stable can coexist in the APK repository, but
+the installed runtime contract must stay standard: `/etc/nginx`,
+`/usr/sbin/nginx`, `/var/lib/nginx`, and `/var/log/nginx`.
+
+This was generated from the Alpine 3.24 `main/nginx` APKBUILD by changing the
+binary package name to `nginx-@NGINX_TRAIN@`, setting `builddir` back to the
+upstream nginx source directory, and replacing runtime paths that should remain
+`nginx` paths instead of following `$pkgname`. The build definition substitutes
+`@NGINX_TRAIN@` with `mainline` or `stable` before abuild runs.
+
+When refreshing this patch for a newer Alpine aport, start from Alpine's
+current `main/nginx/APKBUILD`, reapply the same intent, and regenerate the
+unified diff against that APKBUILD.
+
+--- a/APKBUILD
++++ b/APKBUILD
+@@ -2,11 +2,12 @@
+ # Contributor: Bartłomiej Piotrowski <nospam@bpiotrowski.pl>
+ # Contributor: Jakub Jirutka <jakub@jirutka.cz>
+ # Maintainer: Jakub Jirutka <jakub@jirutka.cz>
+-pkgname=nginx
++pkgname=nginx-@NGINX_TRAIN@
+ # NOTE: Upgrade only to even-numbered versions (e.g. 1.14.z, 1.16.z)!
+ # Odd-numbered versions are mainline (development) versions.
+ pkgver=1.30.3
+ pkgrel=0
++builddir="$srcdir/nginx-$pkgver"
+ # Revision of nginx-tests to use for check().
+ _tests_rev=4d1de3f357afeb91865d024b27516d6b67aad86e
+ _njs_ver=0.9.9
+@@ -17,7 +18,7 @@ _libinjection_rev=b9fcaaf9e50e9492807b23ffcc6af46ee1f203b9
+ # if this isn't set higher than testing/openresty that comes first for some reason
+ # even though this has a higher version..
+ provider_priority=100
+-pkgdesc="HTTP and reverse proxy server (stable version)"
++pkgdesc="HTTP and reverse proxy server (@NGINX_TRAIN@ version)"
+ url="https://www.nginx.org/"
+ arch="all"
+ license="BSD-2-Clause"
+@@ -351,17 +352,17 @@ _build() {
+ 	export NGX_HTTP_KEYVAL_ZONE_REDIS=1
+ 
+ 	./configure \
+-		--prefix=/var/lib/$pkgname \
+-		--sbin-path=/usr/sbin/$pkgname \
++		--prefix=/var/lib/nginx \
++		--sbin-path=/usr/sbin/nginx \
+ 		--modules-path=/$_modules_dir \
+-		--conf-path=/etc/$pkgname/$pkgname.conf \
+-		--pid-path=/run/$pkgname/$pkgname.pid \
+-		--lock-path=/run/$pkgname/$pkgname.lock \
+-		--http-client-body-temp-path=/var/lib/$pkgname/tmp/client_body \
+-		--http-proxy-temp-path=/var/lib/$pkgname/tmp/proxy \
+-		--http-fastcgi-temp-path=/var/lib/$pkgname/tmp/fastcgi \
+-		--http-uwsgi-temp-path=/var/lib/$pkgname/tmp/uwsgi \
+-		--http-scgi-temp-path=/var/lib/$pkgname/tmp/scgi \
++		--conf-path=/etc/nginx/nginx.conf \
++		--pid-path=/run/nginx/nginx.pid \
++		--lock-path=/run/nginx/nginx.lock \
++		--http-client-body-temp-path=/var/lib/nginx/tmp/client_body \
++		--http-proxy-temp-path=/var/lib/nginx/tmp/proxy \
++		--http-fastcgi-temp-path=/var/lib/nginx/tmp/fastcgi \
++		--http-uwsgi-temp-path=/var/lib/nginx/tmp/uwsgi \
++		--http-scgi-temp-path=/var/lib/nginx/tmp/scgi \
+ 		--with-perl_modules_path=/usr/lib/perl5/vendor_perl \
+ 		\
+ 		--user=$pkgusers \
+@@ -434,43 +435,43 @@ package() {
+ 
+ 	install -Dm644 LICENSE "$pkgdir"/usr/share/licenses/$pkgname/LICENSE
+-	install -Dm644 README.md "$pkgdir"/usr/share/doc/$pkgname/README.md
++	install -Dm644 README.md "$pkgdir"/usr/share/doc/nginx/README.md
+ 
+-	install -Dm644 objs/$pkgname.8 "$pkgdir"/usr/share/man/man8/$pkgname.8
++	install -Dm644 objs/nginx.8 "$pkgdir"/usr/share/man/man8/nginx.8
+ 
+ 	local name; for name in ngx_devel_kit nginx-rtmp-module; do
+-		cp -r "$srcdir"/$name-*/doc* "$pkgdir"/usr/share/doc/$pkgname/$name
++		cp -r "$srcdir"/$name-*/doc* "$pkgdir"/usr/share/doc/nginx/$name
+ 	done
+ 	if $_has_luajit; then
+-		cp -r "$srcdir"/lua-nginx-module-*/doc* "$pkgdir"/usr/share/doc/$pkgname/lua-nginx-module
++		cp -r "$srcdir"/lua-nginx-module-*/doc* "$pkgdir"/usr/share/doc/nginx/lua-nginx-module
+ 	fi
+ 
+ 	cd "$pkgdir"
+ 
+-	install -Dm644 "$srcdir"/nginx.conf ./etc/$pkgname/nginx.conf
+-	install -dm755 ./etc/$pkgname/http.d ./etc/$pkgname/modules
++	install -Dm644 "$srcdir"/nginx.conf ./etc/nginx/nginx.conf
++	install -dm755 ./etc/nginx/http.d ./etc/nginx/modules
+ 
+-	install -Dm755 "$srcdir"/$pkgname.initd ./etc/init.d/$pkgname
+-	install -Dm644 "$srcdir"/$pkgname.confd ./etc/conf.d/$pkgname
+-	install -Dm644 "$srcdir"/$pkgname.logrotate ./etc/logrotate.d/$pkgname
++	install -Dm755 "$srcdir"/nginx.initd ./etc/init.d/nginx
++	install -Dm644 "$srcdir"/nginx.confd ./etc/conf.d/nginx
++	install -Dm644 "$srcdir"/nginx.logrotate ./etc/logrotate.d/nginx
+ 
+-	install -dm750 -o $pkgusers -g $_grp_ngx ./var/lib/$pkgname
+-	install -dm700 -o $pkgusers -g $_grp_ngx ./var/lib/$pkgname/tmp
++	install -dm750 -o $pkgusers -g $_grp_ngx ./var/lib/nginx
++	install -dm700 -o $pkgusers -g $_grp_ngx ./var/lib/nginx/tmp
+ 	install -dm755 -g $_grp_www ./var/www/localhost/htdocs
+ 
+-	install -Dm644 "$srcdir"/default.conf ./usr/share/$pkgname/http-default_server.conf
++	install -Dm644 "$srcdir"/default.conf ./usr/share/nginx/http-default_server.conf
+ 
+ 	install -dm755 ./var/log
+-	mv ./var/lib/$pkgname/logs ./var/log/$pkgname
+-	chown $pkgusers:$_grp_ngx var/log/$pkgname
++	mv ./var/lib/nginx/logs ./var/log/nginx
++	chown $pkgusers:$_grp_ngx var/log/nginx
+ 
+-	ln -sf /$_modules_dir ./var/lib/$pkgname/modules
+-	ln -sf /var/log/$pkgname ./var/lib/$pkgname/logs
+-	ln -sf /run/$pkgname ./var/lib/$pkgname/run
++	ln -sf /$_modules_dir ./var/lib/nginx/modules
++	ln -sf /var/log/nginx ./var/lib/nginx/logs
++	ln -sf /run/nginx ./var/lib/nginx/run
+ 
+ 	# Remove archaic charset maps.
+-	rm ./etc/$pkgname/koi-* ./etc/$pkgname/win-utf
++	rm ./etc/nginx/koi-* ./etc/nginx/win-utf
+ 
+-	rm -rf ./run ./etc/$pkgname/*.default
++	rm -rf ./run ./etc/nginx/*.default
+ }
+ 
+ # http://nginx.org/en/docs/debugging_log.html
