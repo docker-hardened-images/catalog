@@ -1,0 +1,302 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub MCE Consumer 1.x (dev)
+image: dhi.io/datahub-mce-consumer
+variant: dev
+tags:
+  - 1-dev
+  - 1.5-dev
+  - 1.5.0-dev
+  - 1.5.0.7-dev
+  - 1-debian-dev
+  - 1-debian13-dev
+  - 1.5-debian-dev
+  - 1.5-debian13-dev
+  - 1.5.0-debian-dev
+  - 1.5.0-debian13-dev
+  - 1.5.0.7-debian-dev
+  - 1.5.0.7-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+  DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+  DOCKERIZE_VERSION: 0.24.3
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:c02293a491c454b4fa27653b9d1ff8991b7355ce7b71a9ff6bc6b827e3eb9379
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:eb51cd6aa0a7d03dfd9ef070ba2368ba1d0c6e9c1996239d21c93ffa23976705
+  JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
+  JMX_PROMETHEUS_VERSION: 0.20.0
+  JRE_REFERENCE: dhi/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+  OTEL_JAVAAGENT_SHA256: bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b
+  OTEL_JAVAAGENT_VERSION: 2.27.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.0.7
+  VERSION: 1.5.0.7
+  VERSION_MAJOR_MINOR_PATCH: 1.5.0
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libsnappy1v5
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: dockerize
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:c02293a491c454b4fa27653b9d1ff8991b7355ce7b71a9ff6bc6b827e3eb9379
+      work-dir: /go/src/github.com/powerman/dockerize
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        files:
+          - url: git+https://github.com/powerman/dockerize.git#v0.24.3
+            checksum: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
+            path: /go/src/github.com/powerman/dockerize
+            spdx:
+              name: dockerize
+              version: 0.24.3
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/powerman/dockerize@0.24.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump dockerize go deps for CVE remediation
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+            download: true
+        - name: test dockerize after bump
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
+        - name: build dockerize
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/dockerize
+            packages: ./
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dockerize
+          target: /usr/local/bin/dockerize
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/dockerize
+          target: /opt/docker/sbom/dockerize
+          uid: 0
+          gid: 0
+    - name: datahub-mce-consumer
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:eb51cd6aa0a7d03dfd9ef070ba2368ba1d0c6e9c1996239d21c93ffa23976705
+      work-dir: ${source.dir}/datahub
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/datahub-project/datahub.git#v1.5.0.7
+            checksum: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+            path: ${source.dir}/datahub
+            spdx:
+              name: datahub
+              version: 1.5.0.7
+              packages:
+                - name: datahub
+                  purl: pkg:dhi/datahub-mce-consumer@1.5.0.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch maven central for build cloud rate limits
+          runs: |
+            set -eux -o pipefail
+
+            MIRROR='maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+            PORTAL=$'maven {\\n    url "https://plugins.gradle.org/m2/"\\n    metadataSources { mavenPom(); artifact(); ignoreGradleMetadataRedirection() }\\n}'
+            find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 \
+              | xargs -0 sed -i \
+                -e "s|mavenCentral()|${MIRROR}|g" \
+                -e "s|gradlePluginPortal()|${PORTAL}|g"
+        - name: bump vulnerable dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            cat >> build.gradle << 'GRADLE'
+
+            allprojects {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency { details ->
+                        def req = details.requested
+                        if (req.group == 'io.netty'
+                                && req.name.startsWith('netty-')
+                                && !req.name.startsWith('netty-tcnative')) {
+                            details.useVersion '4.2.15.Final'
+                            details.because 'DHI CVE remediation: CVE-2026-44249, CVE-2026-44250, CVE-2026-44890, CVE-2026-44892, CVE-2026-44893, CVE-2026-44894, CVE-2026-45416, CVE-2026-45674, CVE-2026-46340, CVE-2026-47691, CVE-2026-45536, CVE-2026-45673, CVE-2026-47244'
+                        }
+                        if (req.group == 'org.springframework.kafka'
+                                && req.name == 'spring-kafka') {
+                            details.useVersion '3.3.16'
+                            details.because 'DHI CVE remediation: CVE-2026-41731'
+                        }
+                    }
+                }
+            }
+            GRADLE
+        - name: build jar
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./gradlew --init-script ${source.dir}/files/init.gradle \
+              :metadata-jobs:mce-consumer-job:assemble \
+              -x test \
+              --parallel --max-workers=4 \
+              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*' \
+              --no-daemon --console=plain
+        - name: stage runtime files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/datahub/datahub-mce-consumer/bin"
+            mkdir -p "${target.dir}/datahub/datahub-mce-consumer/scripts"
+            mkdir -p "${target.dir}/datahub/datahub-mce-consumer/resources"
+            mkdir -p "${target.dir}/datahub/datahub-mce-consumer/lib"
+
+            cp metadata-jobs/mce-consumer-job/build/libs/mce-consumer-job.jar \
+              "${target.dir}/datahub/datahub-mce-consumer/bin/mce-consumer-job.jar"
+            cp metadata-models/src/main/resources/entity-registry.yml \
+              "${target.dir}/datahub/datahub-mce-consumer/resources/entity-registry.yml"
+            cp docker/monitoring/client-prometheus-config.yaml \
+              "${target.dir}/datahub/datahub-mce-consumer/scripts/prometheus-config.yaml"
+
+            cp "${source.dir}/files/start.sh" \
+              "${target.dir}/datahub/datahub-mce-consumer/scripts/start.sh"
+            chmod 0755 "${target.dir}/datahub/datahub-mce-consumer/scripts/start.sh"
+        - name: fetch otel javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/opentelemetry-javaagent.jar \
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.27.0/opentelemetry-javaagent.jar"
+            echo "bd01fea1304e8c8803fff827a0bdda02b2266742a85c62548053c6761474bb5b  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
+            mv /tmp/opentelemetry-javaagent.jar \
+              "${target.dir}/datahub/datahub-mce-consumer/lib/opentelemetry-javaagent.jar"
+        - name: fetch jmx prometheus javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/jmx_prometheus_javaagent.jar \
+              "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
+            echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
+            mv /tmp/jmx_prometheus_javaagent.jar \
+              "${target.dir}/datahub/datahub-mce-consumer/lib/jmx_prometheus_javaagent.jar"
+      paths:
+        - type: file
+          path: ${source.dir}/files/start.sh
+          uid: 0
+          gid: 0
+          source: image/datahub-mce-consumer/files/start.sh
+        - type: file
+          path: ${source.dir}/files/init.gradle
+          uid: 0
+          gid: 0
+          source: image/datahub-mce-consumer/files/init.gradle
+      outputs:
+        - source: ${target.dir}/datahub/datahub-mce-consumer
+          target: /datahub/datahub-mce-consumer
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub
+          target: /opt/docker/sbom/datahub
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:17.0.19.10-debian13@sha256:c01a48528dd90d1f6de69ad5f8c13a8abfc4ecd181b30b0528695d124eed29c4
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_OPTS: ""
+  JMX_OPTS: ""
+  LD_LIBRARY_PATH: /lib:/lib64
+  OTEL_EXPORTER_OTLP_HTTP_COMPRESSION: gzip
+  OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE: "8388608"
+  OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE: "4194304"
+  OTEL_EXPORTER_OTLP_TRACES_COMPRESSION: gzip
+paths:
+  - type: directory
+    path: /datahub
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /datahub/datahub-mce-consumer
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+annotations:
+  org.opencontainers.image.description: DataHub Metadata Change Event (MCE) Consumer - the Kafka consumer that processes MetadataChangeProposal events from upstream sources and applies them to DataHub's metadata storage layer.
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /datahub/datahub-mce-consumer/scripts/start.sh
+ports:
+  - 9090/tcp
