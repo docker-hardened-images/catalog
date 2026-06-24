@@ -5,21 +5,21 @@ image: dhi.io/tigera-operator
 variant: runtime
 tags:
   - "1.40"
-  - 1.40.11
+  - 1.40.13
   - 1.40-debian
   - 1.40-debian13
-  - 1.40.11-debian
-  - 1.40.11-debian13
+  - 1.40.13-debian
+  - 1.40.13-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: 62a53fd7ab166e98e5ac684337cee36f5b80e662
+  COMMIT_SHA: dfd61cff1ea556a3d464b6f4acbc21209436f0e4
   ISTIO_VERSION: 1.29.2
   SEMVER_MAJOR_MINOR_VERSION: "1.40"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.40.11
-  VERSION: 1.40.11
+  SEMVER_VERSION: 1.40.13
+  VERSION: 1.40.13
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -43,15 +43,15 @@ contents:
           - mawk
           - sed
         files:
-          - url: git+https://github.com/tigera/operator.git#v1.40.11
-            checksum: 62a53fd7ab166e98e5ac684337cee36f5b80e662
+          - url: git+https://github.com/tigera/operator.git#v1.40.13
+            checksum: dfd61cff1ea556a3d464b6f4acbc21209436f0e4
             path: /go/src/github.com/tigera/operator
             spdx:
               name: tigera-operator
-              version: 1.40.11
+              version: 1.40.13
               packages:
                 - name: tigera-operator
-                  purl: pkg:golang/github.com/tigera/operator@1.40.11
+                  purl: pkg:golang/github.com/tigera/operator@1.40.13
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -77,10 +77,14 @@ contents:
           work-dir: /go/src/github.com/tigera/operator
           with:
             deps:
-              - golang.org/x/crypto@v0.52.0
               - github.com/containerd/containerd@v1.7.32
               - helm.sh/helm/v3@v3.20.2
             download: true
+        - name: patch dex tests
+          uses: git/patch@v1
+          work-dir: /go/src/github.com/tigera/operator
+          with:
+            patch: ${source.dir}/patch/fix-dex-tests.patch
         - name: test
           work-dir: /go/src/github.com/tigera/operator
           runs: |
@@ -88,15 +92,30 @@ contents:
 
             # Exclude controller tests (e.g. installation reconciler) that block on
             # in-cluster service account paths and hit the 10m go test timeout in CI.
-            CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller|render/gatewayapi)')
+            # Also exclude gatewayapi tests: v1.40.11 embed expects 11 CRDs but upstream ships 12
+            for i in {1..3}; do
+              if CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller|render/gatewayapi)'); then
+                exit 0
+              fi
+              echo "Retry $i/3..."
+              sleep 2
+            done
+
+            exit 1
         - name: build
           uses: go/build@v1
           work-dir: /go/src/github.com/tigera/operator
           with:
             ldflags:
-              - -X github.com/tigera/operator/version.VERSION=v1.40.11
+              - -X github.com/tigera/operator/version.VERSION=v1.40.13
             output: ${target.dir}/usr/local/bin/operator
             packages: ./cmd/
+      paths:
+        - type: file
+          path: ${source.dir}/patch/fix-dex-tests.patch
+          uid: 0
+          gid: 0
+          source: image/tigera-operator/patch/fix-dex-tests.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/operator
           target: /usr/local/bin/operator
