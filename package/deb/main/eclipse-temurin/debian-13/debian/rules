@@ -1,0 +1,42 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+# Eclipse Temurin ships prebuilt binaries from Adoptium; there is nothing to
+# configure, build, test, or clean from source.
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+# Do not strip or dwz-optimize the upstream prebuilt JVM binaries; they are
+# shipped as released by Adoptium.
+override_dh_strip:
+override_dh_dwz:
+
+# Runtime dependencies are declared explicitly in debian/control. The bundled
+# JVM libraries resolve each other via rpath, which confuses dh_shlibdeps.
+override_dh_shlibdeps:
+
+override_dh_auto_install:
+	mkdir -p debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)
+	# Stage the extracted JDK/JRE tree. Exclude debian/ and the pipeline-generated
+	# fips/ and oci-config/ staging dirs (those ship in their own packages).
+	find . -maxdepth 1 -mindepth 1 ! -name debian ! -name fips ! -name oci-config \
+		-exec cp -a {} debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/ \;
+	# Expose the JVM tools on PATH via /usr/bin symlinks (FHS-friendly). The JRE
+	# only ships a subset, so guard each tool with a presence check.
+	mkdir -p debian/tmp/usr/bin
+	for tool in java javac jar jcmd jdeps jfr jimage jinfo jlink jmap jmod jps jrunscript jshell jstack jstat jstatd keytool rmiregistry; do \
+		if [ -e debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/bin/$$tool ]; then \
+			ln -sf ../lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/bin/$$tool debian/tmp/usr/bin/$$tool; \
+		fi; \
+	done
+	# Stage the pre-generated OCI config(s) for the -oci-config / -fips-oci-config packages.
+	mkdir -p debian/tmp/opt/docker/config
+	cp oci-config/*.yaml debian/tmp/opt/docker/config/
+	# Stage the FIPS payload (BouncyCastle jars + BCFKS store + security config)
+	# for the -fips package.
+	mkdir -p debian/tmp/usr/lib/bouncycastle
+	cp -a fips/. debian/tmp/usr/lib/bouncycastle/
