@@ -52,9 +52,17 @@ if [ -n "$CUSTOM_AGGREGATION_OPTIONS" ]; then
     replace_placeholder_in_js "PLACEHOLDER_CUSTOM_AGGREGATIONS" "$esc"
 fi
 
+# Drop the welcome server the nginx package ships at conf.d/default.conf so it is
+# not served alongside opencost's server (conf.d is owned by the nginx user, so
+# this root-owned file can be unlinked).
+rm -f /etc/nginx/conf.d/default.conf
+
+# Generate opencost's server block from the template, but only if conf.d does not
+# already provide default.nginx.conf. The upstream OpenCost helm chart mounts its
+# own default.nginx.conf here; honor it (do not clobber) when present.
 if [ ! -e /etc/nginx/conf.d/default.nginx.conf ]; then
     envsubst '$API_PORT $API_SERVER $UI_PORT $NGINX_ROOT $UI_PATH $BASE_URL $PROXY_CONNECT_TIMEOUT $PROXY_SEND_TIMEOUT $PROXY_READ_TIMEOUT' \
-        < /etc/nginx/conf.d/default.nginx.conf.template \
+        < /etc/nginx/default.nginx.conf.template \
         > /etc/nginx/conf.d/default.nginx.conf
 fi
 echo "Starting OpenCost UI version $VERSION ($HEAD)"

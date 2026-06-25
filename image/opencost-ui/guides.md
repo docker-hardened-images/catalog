@@ -213,5 +213,6 @@ starts.
 ### nginx config not generated
 
 If nginx fails to start with a message about a missing `default.conf`, the entrypoint script may not have been able to
-write to `/tmp/nginx-conf.d/`. Ensure the container is not run with a read-only root filesystem without also mounting a
-writable `/tmp` volume.
+write to `/etc/nginx/conf.d/`. The entrypoint also rewrites JS assets under `/var/www` at startup, so this image needs a
+writable root filesystem; if you run it with a read-only root filesystem, mount writable volumes over
+`/etc/nginx/conf.d` and `/var/www`.
