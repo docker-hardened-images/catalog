@@ -60,6 +60,7 @@ contents:
           - npm
           - sed
           - yarn-classic
+          - yq
         files:
           - url: git+https://github.com/Unleash/unleash.git#v8.0.1
             checksum: f6125bdb437d506b7bb43e6b61f9e9364fdb7e7c
@@ -74,13 +75,27 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: bump pnpm deps for cve fixes
+          runs: |
+            set -eux -o pipefail
+
+            # Unleash v8 declares pnpm `overrides` in pnpm-workspace.yaml, so a
+            # package.json `pnpm.overrides` block would be ignored. Inject the
+            # override into that file instead.
+            # GHSA-p6gq-j5cr-w38f (nodemailer)
+            yq -Y -i '.overrides."nodemailer" = "9.0.1"' pnpm-workspace.yaml
+
+            # nodemailer 9.0.1 may be newer than the configured minimumReleaseAge
+            # (7 days); allow it so the override resolves regardless of build date.
+            yq -Y -i '.minimumReleaseAgeExclude += ["nodemailer@9.0.1"]' pnpm-workspace.yaml
         - name: install and build
           privileged: true
           runs: |
             set -eux -o pipefail
 
             corepack enable
-            pnpm install --frozen-lockfile --ignore-scripts
+            # --no-frozen-lockfile so the new override updates the lockfile.
+            pnpm install --no-frozen-lockfile --ignore-scripts
             pnpm prepare:backend
             pnpm local:package
             pnpm build:frontend:if-needed
