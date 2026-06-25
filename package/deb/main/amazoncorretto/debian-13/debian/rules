@@ -1,0 +1,41 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+# Amazon Corretto ships prebuilt binaries; there is nothing to configure, build,
+# test, or clean from source.
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+# Do not strip or dwz-optimize the upstream prebuilt JVM binaries; they are
+# shipped as released by Amazon.
+override_dh_strip:
+override_dh_dwz:
+
+# Runtime dependencies are declared explicitly in debian/control. The bundled
+# JVM libraries resolve each other via rpath, which confuses dh_shlibdeps.
+override_dh_shlibdeps:
+
+override_dh_auto_install:
+	mkdir -p debian/tmp/usr/lib/jvm/$(JAVA_DST_BASENAME)
+	# Stage the extracted JDK tree. Exclude debian/ and the pipeline-generated
+	# fips/ and oci-config/ staging dirs (those ship in their own packages).
+	find . -maxdepth 1 -mindepth 1 ! -name debian ! -name fips ! -name oci-config \
+		-exec cp -a {} debian/tmp/usr/lib/jvm/$(JAVA_DST_BASENAME)/ \;
+	# Expose every JVM tool on PATH via /usr/bin symlinks (FHS-friendly).
+	mkdir -p debian/tmp/usr/bin
+	for f in debian/tmp/usr/lib/jvm/$(JAVA_DST_BASENAME)/bin/*; do \
+		[ -f "$$f" ] || [ -L "$$f" ] || continue; \
+		ln -sf ../lib/jvm/$(JAVA_DST_BASENAME)/bin/$$(basename "$$f") debian/tmp/usr/bin/$$(basename "$$f"); \
+	done
+	# Stage the pre-generated OCI config(s) for the -oci-config / -fips-oci-config packages.
+	mkdir -p debian/tmp/opt/docker/config
+	cp oci-config/*.yaml debian/tmp/opt/docker/config/
+	# Stage the FIPS payload (ACCP jars + ACCP java.security overlay) for the
+	# -fips package, under /opt/aws-lc (out of the base JVM tree so each file is
+	# owned by exactly one .deb).
+	mkdir -p debian/tmp/opt/aws-lc
+	cp -a fips/. debian/tmp/opt/aws-lc/
