@@ -23,7 +23,7 @@ dates:
   release: "2025-08-22"
 vars:
   COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
-  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:41b5a91db3cf0210c45f00543a5317c86ed4456051f59cc0f8980fb22337c910
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:67c3404b2f79758c1e753effce5032b0017bf6a199e8b5744f588e3e0f8ee2ea
   GRADLE_VERSION: 8.14.5
   JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
   JMX_PROMETHEUS_VERSION: 0.20.0
@@ -56,7 +56,7 @@ contents:
     - sqlite3
   builds:
     - name: datahub-frontend-react
-      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:41b5a91db3cf0210c45f00543a5317c86ed4456051f59cc0f8980fb22337c910
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:67c3404b2f79758c1e753effce5032b0017bf6a199e8b5744f588e3e0f8ee2ea
       work-dir: ${source.dir}/datahub
       environment:
         CI: "false"
@@ -268,6 +268,11 @@ contents:
             # CVE-2026-45674, CVE-2026-46340, CVE-2026-47244, CVE-2026-47691,
             # CVE-2026-48006, CVE-2026-48043, CVE-2026-48059.
             # shiro-core 2.2.1 fixes CVE-2026-49268 (LDAP DN injection).
+            # jackson-core group 2.21.3 -> 2.21.4 fixes CVE-2026-54512,
+            # CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517,
+            # and CVE-2026-54518. CVE-2026-54515 is fixed only in 2.21.5
+            # (unpublished on Maven Central) or the 2.22.x minor line, so it is
+            # tracked via VEX rather than a minor bump.
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -299,6 +304,16 @@ contents:
                             details.useVersion '2.2.1'
                             details.because 'DHI CVE remediation: CVE-2026-49268'
                         }
+                        // Only jackson-databind and jackson-core publish a
+                        // 2.21.4 patch; jackson-annotations tracks the bare
+                        // 2.21 line (no .4), so forcing the whole group breaks
+                        // resolution. Leave annotations to resolve via the BOM.
+                        if (req.group == 'com.fasterxml.jackson.core'
+                                && (req.name == 'jackson-databind'
+                                    || req.name == 'jackson-core')) {
+                            details.useVersion '2.21.4'
+                            details.because 'DHI CVE remediation: jackson CVE-2026-54512/54513/54514/54516/54517/54518'
+                        }
                     }
                 }
             }
@@ -323,9 +338,9 @@ contents:
             # `-x test -x check` skips unit tests and the full :check graph
             # (Spotless, static analysis, lint) — saves ~30 min on the cold
             # build and avoids test-only deps like BouncyCastle/mockito.
-            # `--parallel --max-workers=8` lets independent metadata-events
-            # subprojects compile concurrently. Without it the cumulative
-            # serial compile time runs past the Docker Build Cloud 90-min cap.
+            # `--parallel --max-workers=4` lets independent metadata-events
+            # subprojects compile concurrently while avoiding Gradle javaCompile
+            # cache lock contention seen at higher worker counts.
             # The Gradle init script at /root/.gradle/init.d/maven-mirror.gradle
             # (placed by the `configure gradle maven mirror` step above) is
             # auto-loaded by Gradle from the user init.d directory — no
@@ -341,7 +356,7 @@ contents:
               --console=plain \
               --warning-mode=summary \
               --parallel \
-              --max-workers=8 \
+              --max-workers=4 \
               --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,com.hazelcast:*,com.typesafe.akka:*,org.apache.shiro:*' \
               :datahub-frontend:stage \
               -x test \
