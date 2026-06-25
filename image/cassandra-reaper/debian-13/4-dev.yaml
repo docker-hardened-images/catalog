@@ -22,15 +22,17 @@ vars:
   COMMIT_SHA: 1689d34fd151e74252a1f211a5ddf716596d2652
   JRE_REFERENCE: dhi/eclipse-temurin:11.0.31.11-debian13@sha256:1b14e43959b7c8141435dc94a03096a87590875f64ffc7413c40971e7a951e4d
   JRE_VERSION: 11.0.31.11
-  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:b6f1afe18c675aa619a92c7b420b8ac3fb8adeafdd9f899c2577818be8512aab
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:f393499e3b7f66a45f0e00c65d1d87a45951c468f5833358193c35fdbf994005
   MAVEN_VERSION: 3.9.16
-  NODE_REFERENCE: dhi/node:24.16.0-debian13-dev@sha256:5b4f1c85c63ab8517bf84e864276f3d047a3e29a90a735b2f9a66af16c2c0209
-  NODE_VERSION: 24.16.0
   SEMVER_MAJOR_MINOR_VERSION: "4.2"
   SEMVER_MAJOR_VERSION: "4"
   SEMVER_VERSION: 4.2.5
   VERSION: 4.2.5
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!gawk'
     - '!libelogind0'
@@ -46,13 +48,15 @@ contents:
     - findutils
     - grep
     - libc-bin
+    - libc6
+    - libstdc++6
     - mawk
     - perl-base
     - sed
     - util-linux
   builds:
     - name: cassandra-reaper
-      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:b6f1afe18c675aa619a92c7b420b8ac3fb8adeafdd9f899c2577818be8512aab
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:f393499e3b7f66a45f0e00c65d1d87a45951c468f5833358193c35fdbf994005
       work-dir: ${source.dir}/cassandra-reaper
       environment:
         MAVEN_ARGS: --batch-mode --no-transfer-progress
@@ -67,6 +71,15 @@ contents:
           - git
           - sed
           - tar
+          - base-files
+          - ca-certificates
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - yarn-classic
         files:
           - url: git+https://github.com/thelastpickle/cassandra-reaper.git#4.2.5
             checksum: 1689d34fd151e74252a1f211a5ddf716596d2652
@@ -80,23 +93,30 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-        artifacts:
-          - name: dhi.io/node:24.16.0-debian13-dev@sha256:5b4f1c85c63ab8517bf84e864276f3d047a3e29a90a735b2f9a66af16c2c0209
-            includes:
-              - opt/**
-              - usr/local/bin/**
-            uid: 0
-            gid: 0
       pipeline:
         - uses: mvn/mirror@v1
         - name: patch maven dependencies
           uses: mvn/patch@v1
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           with:
             dependencies: ${source.dir}/patch/mvn-dependencies.json
             dependencies-key: dependencyManagement.dependencies
             mvn-root: ${source.dir}/cassandra-reaper
         - name: patch server netty dependency
           uses: mvn/patch@v1
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           with:
             dependencies: ${source.dir}/patch/mvn-dependencies-server.json
             mvn-root: ${source.dir}/cassandra-reaper/src/server
@@ -114,7 +134,15 @@ contents:
             export NODE_OPTIONS=--openssl-legacy-provider
 
             # CVE-2026-53550: js-yaml <=4.1.1 vulnerable to algorithmic complexity DoS
-            npm pkg set "overrides.js-yaml"="4.2.0"
+            # Use Node.js to modify package.json directly since npm pkg set can fail
+            # with certain package.json structures or npm versions.
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              if (!pkg.overrides) pkg.overrides = {};
+              pkg.overrides['js-yaml'] = '4.2.0';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
 
             npm install
             # `npm run navbar` runs build-navbar.sh which expands the
@@ -149,6 +177,7 @@ contents:
               -Dspotless.skip=true \
               -Denforcer.skip=true \
               -Djacoco.skip=true \
+              -Dexec.skip=true \
               -Drat.skip=true
         - name: prepare for sbom
           work-dir: ${source.dir}/cassandra-reaper/src/ui
@@ -166,9 +195,11 @@ contents:
               cp package-lock.json "${sbom_dir}/"
             fi
 
-            # CVE-2026-53550: js-yaml <=4.1.1 vulnerable to algorithmic complexity DoS
             cd "${sbom_dir}"
-            npm pkg set "overrides.js-yaml"="4.2.0"
+
+            # CVE-2026-53550: js-yaml <=4.1.1 vulnerable to algorithmic complexity DoS
+            # The package.json was already modified in the build ui step, so the
+            # override is already present in the copied file.
 
             npm install --prefix "${sbom_dir}" --omit=dev --ignore-scripts
         - name: sbom ui
@@ -334,9 +365,11 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /opt/java/openjdk
   LANG: en_US.UTF-8
   LANGUAGE: en_US:en
   LC_ALL: en_US.UTF-8
+  PATH: /opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
   - type: directory
     path: /var/lib/cassandra-reaper
