@@ -22,12 +22,14 @@ vars:
   BASE_DIGEST: sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
   BASE_TAG: 20250419-debian13
   COMMIT_SHA: 2327edf58f0a9cd0c1c52dd9f8442e5b074a1313
-  DRBD_REACTOR_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:e6ca1eadd8e3ee659c1792775bb99420fe90d9d98bb49f4b3a701e633ff644ef" : "sha256:ecf54b712867de1125d7ebba2354f3ce934a1047a63220263f00466a009f8a22" }'
-  DRBD_REACTOR_VERSION: 1.11.0-1
+  DRBD_REACTOR_VERSION: 1.11.0-2
+  DRBD_UTILS_VERSION: 9.34.0-2
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "1.11"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.11.2
-  VERSION: 1.11.2
+  SUFFIX: ""
+  VERSION: 1.11.2-2
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -37,8 +39,13 @@ contents:
     - base-files
     - ca-certificates
     - ca-certificates-bundle
+    - drbd-reactor=1.11.0-2
+    - drbd-utils=9.34.0-2
     - e2fsprogs
     - libc-bin
+    - libkeyutils1
+    - linstor-csi-nfs-helper=1.11.2-2
+    - mount
     - nfs-ganesha
     - nfs-ganesha-vfs
     - procps
@@ -46,130 +53,6 @@ contents:
     - systemd
     - tzdata
     - xfsprogs
-  builds:
-    - name: piraeus-csi-nfs-server
-      work-dir: /go/src/github.com/piraeusdatastore/linstor-csi
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/piraeusdatastore/linstor-csi.git#v1.11.2
-            checksum: 2327edf58f0a9cd0c1c52dd9f8442e5b074a1313
-            path: /go/src/github.com/piraeusdatastore/linstor-csi
-            spdx:
-              name: piraeus-csi-nfs-server
-              version: 1.11.2
-              packages:
-                - name: piraeus-csi-nfs-server
-                  purl: pkg:golang/github.com/piraeusdatastore/linstor-csi@1.11.2
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://packages.linbit.com/public/dists/trixie/misc/pool/drbd-reactor_1.11.0-1_${target.arch}.deb
-            checksum: ${DRBD_REACTOR_CHECKSUM}
-            path: /tmp/drbd-reactor.deb
-            spdx:
-              name: drbd-reactor
-              version: 1.11.0-1
-              packages:
-                - name: drbd-reactor
-                  purl: pkg:deb/debian/drbd-reactor@1.11.0-1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: extract drbd-reactor
-          runs: |
-            set -eux -o pipefail
-
-            dpkg-deb -x /tmp/drbd-reactor.deb /tmp/drbd-reactor
-            mkdir -p ${target.dir}/usr/sbin ${target.dir}/usr/lib/systemd/system ${target.dir}/etc
-            cp /tmp/drbd-reactor/usr/sbin/drbd-reactor ${target.dir}/usr/sbin/
-            cp /tmp/drbd-reactor/lib/systemd/system/drbd-reactor.service ${target.dir}/usr/lib/systemd/system/
-            cp -r /tmp/drbd-reactor/etc/drbd-reactor.d ${target.dir}/etc/
-        - name: install upstream systemd unit files
-          runs: |
-            set -eux -o pipefail
-
-            src=nfs/service
-            units=${target.dir}/usr/lib/systemd/system
-
-            mkdir -p "$units" "$units/drbd@.service.d" "$units/drbd-demote-or-escalate@.service.d"
-            mkdir -p ${target.dir}/etc/nfs-helper ${target.dir}/etc/systemd
-
-            cp "$src/nfs-ganesha@.service" \
-              "$src/growfs@.service" "$src/growfs@.timer" \
-              "$src/mount-export@.service" "$src/mount-recovery@.service" \
-              "$src/chmod@.service" \
-              "$src/prepare-device-links@.service" \
-              "$src/advertise-nfs-endpoint@.service" "$src/clean-nfs-endpoint@.service" \
-              "$src/start-stop-reactor.service" \
-              "$units/"
-
-            cp "$src/drbd@.service.override.conf" \
-              "$units/drbd@.service.d/container.conf"
-            cp "$src/drbd-demote-or-escalate@.service.override.conf" \
-              "$units/drbd-demote-or-escalate@.service.d/container.conf"
-
-            cp "$src/default-config.tmpl" ${target.dir}/etc/nfs-helper/default-config.tmpl
-            cp "$src/journald.conf" ${target.dir}/etc/systemd/journald.conf
-        - name: update go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - golang.org/x/net@v0.55.0
-            download: true
-        - name: test
-          runs: |
-            set -eux -o pipefail
-
-            CGO_ENABLED=0 go test ./cmd/nfs-helper/... ./pkg/...
-        - name: build
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X github.com/piraeusdatastore/linstor-csi/pkg/driver.Version=1.11.2
-            output: ${target.dir}/usr/bin/nfs-helper
-            packages: ./cmd/nfs-helper
-      outputs:
-        - source: ${target.dir}/usr/bin/nfs-helper
-          target: /usr/bin/nfs-helper
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/usr/sbin/drbd-reactor
-          target: /usr/sbin/drbd-reactor
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/usr/lib/systemd/system
-          target: /usr/lib/systemd/system
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/drbd-reactor.d
-          target: /etc/drbd-reactor.d
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/nfs-helper
-          target: /etc/nfs-helper
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/systemd/journald.conf
-          target: /etc/systemd/journald.conf
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/piraeus-csi-nfs-server
-          target: /opt/docker/sbom/piraeus-csi-nfs-server
-          uid: 0
-          gid: 0
   artifacts:
     - name: dhi.io/static:20250419-debian13@sha256:74fc43fa240887b8159970e434244039aab0c6efaaa9cf044004cdc22aa2a34d
       includes:
