@@ -18,6 +18,8 @@ platforms:
   - linux/arm64
 vars:
   COMMIT_SHA: b71bd26b6e8633d0f37984aa502aa0c095cce979
+  JACKSON_DATABIND_2_VERSION: 2.21.4
+  JACKSON_DATABIND_3_VERSION: 3.1.4
   JAVA_BIN: /opt/java/openjdk/21/bin
   JAVA_HOME_PATH: /opt/java/openjdk
   JDK_MAJOR_VERSION: "21"
@@ -174,6 +176,14 @@ contents:
             path: ${source.dir}/patch/deps/postgresql-42.7.11.jar
             uid: 0
             gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar
+            path: ${source.dir}/patch/deps/jackson-databind-2.21.4.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/tools/jackson/core/jackson-databind/3.1.4/jackson-databind-3.1.4.jar
+            path: ${source.dir}/patch/deps/jackson-databind-3.1.4.jar
+            uid: 0
+            gid: 0
       pipeline:
         - name: set elasticsearch arch
           work-dir: ${source.dir}/sonarqube/sonar-application
@@ -244,6 +254,92 @@ contents:
 
             unzip -p "${scanner_jar}" META-INF/maven/org.apache.sshd/sshd-common/pom.properties | grep -q "version=2.12.0"
             unzip -p "${scanner_jar}" META-INF/maven/org.apache.sshd/sshd-core/pom.properties | grep -q "version=2.12.0"
+        - name: patch bundled jackson databind
+          runs: |
+            set -eux -o pipefail
+
+            shopt -s nullglob
+
+            patched_count=0
+
+            patch_databind() {
+              local group_id="$1"
+              local class_dir="$2"
+              local patch_jar="$3"
+              local expected_version="$4"
+              local metadata_dir="META-INF/maven/${group_id}/jackson-databind"
+              local pom_properties="${repack_dir}/${metadata_dir}/pom.properties"
+
+              if [[ ! -f "${pom_properties}" ]]; then
+                return
+              fi
+
+              if grep -q "version=${expected_version}" "${pom_properties}"; then
+                return
+              fi
+
+              rm -rf "${repack_dir:?}/${class_dir}" "${repack_dir:?}/${metadata_dir}"
+              rm -rf "${overlay_dir:?}"/*
+              (cd "${overlay_dir}" && jar xf "${patch_jar}")
+
+              mkdir -p "${repack_dir}/$(dirname "${class_dir}")" "${repack_dir}/META-INF/maven/${group_id}"
+              cp -a "${overlay_dir}/${class_dir}" "${repack_dir}/${class_dir}"
+              cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+              grep -q "version=${expected_version}" "${repack_dir}/${metadata_dir}/pom.properties"
+
+              patched_count=$((patched_count + 1))
+            }
+
+            patch_fat_jar() {
+              local relative_glob="$1"
+              local matches=("${target.dir}/sonarqube"/${relative_glob})
+              if [[ "${#matches[@]}" -ne 1 ]]; then
+                echo "ERROR: expected exactly one JAR for ${relative_glob}, found ${#matches[@]}" >&2
+                exit 1
+              fi
+
+              local outer_jar="${matches[0]}"
+              local before_count="${patched_count}"
+              patch_dir="$(mktemp -d)"
+              repack_dir="${patch_dir}/repack"
+              overlay_dir="${patch_dir}/overlay"
+              mkdir -p "${repack_dir}" "${overlay_dir}"
+
+              (cd "${repack_dir}" && jar xf "${outer_jar}")
+
+              patch_databind \
+                "com.fasterxml.jackson.core" \
+                "com/fasterxml/jackson/databind" \
+                "${source.dir}/patch/deps/jackson-databind-2.21.4.jar" \
+                "2.21.4"
+              patch_databind \
+                "tools.jackson.core" \
+                "tools/jackson/databind" \
+                "${source.dir}/patch/deps/jackson-databind-3.1.4.jar" \
+                "3.1.4"
+
+              if [[ "${patched_count}" -eq "${before_count}" ]]; then
+                echo "ERROR: no jackson-databind metadata patched in ${outer_jar}" >&2
+                exit 1
+              fi
+
+              patched_jar="${patch_dir}/$(basename "${outer_jar}")"
+              (cd "${repack_dir}" && jar --create --file "${patched_jar}" --manifest META-INF/MANIFEST.MF .)
+              mv "${patched_jar}" "${outer_jar}"
+              rm -rf "${patch_dir}"
+            }
+
+            patch_fat_jar "lib/extensions/sonar-python-plugin-*.jar"
+            patch_fat_jar "lib/extensions/sonar-text-plugin-*.jar"
+            patch_fat_jar "lib/scanner/sonar-scanner-engine-community-*.jar"
+            patch_fat_jar "lib/sonar-application-*.jar"
+
+            if [[ "${patched_count}" -ne 5 ]]; then
+              echo "ERROR: expected 5 bundled jackson-databind patches, got ${patched_count}" >&2
+              exit 1
+            fi
+
+            echo "Patched ${patched_count} bundled jackson-databind JARs"
       paths:
         - type: file
           path: ${source.dir}/patch/dhi-patch-config.json
