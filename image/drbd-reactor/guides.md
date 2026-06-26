@@ -104,7 +104,7 @@ following table of migration notes.
 | Nonroot user       | By default, non-dev images, intended for runtime, run as a nonroot user. Ensure that necessary files and directories are accessible to that user.                           |
 | Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                                  |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                          |
-| Entry point        | The image uses `/usr/local/bin/drbd-reactor` as the CMD. The daemon reads configuration from `/etc/drbd-reactor.toml` by default.                                           |
+| Entry point        | The image uses `/usr/sbin/drbd-reactor` as the CMD. The daemon reads configuration from `/etc/drbd-reactor.toml` by default.                                                |
 | No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage. |
 
 ## Troubleshooting migration
@@ -137,8 +137,8 @@ To see if a shell is available in an image variant and which one, select the **T
 
 ### Entry point
 
-The image uses `/usr/local/bin/drbd-reactor` as the CMD. The daemon will start automatically when the container runs.
-Ensure your configuration file is mounted at `/etc/drbd-reactor.toml`.
+The image uses `/usr/sbin/drbd-reactor` as the CMD. The daemon will start automatically when the container runs. Ensure
+your configuration file is mounted at `/etc/drbd-reactor.toml`.
 
 To view the Entrypoint or CMD defined for an image variant, select the **Tags** tab for this repository, select a tag,
 and then select the **Specifications** tab.
