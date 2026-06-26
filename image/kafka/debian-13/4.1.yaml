@@ -44,6 +44,9 @@ contents:
   builds:
     - name: kafka
       uses: dhi.io/gradle:8.14.5-jdk21-debian13-dev@sha256:f955e4ea20599ed50258334838020e41ccf4688bd8d40b51588100acef2723c9
+      caches:
+        - path: /root/.gradle/caches
+        - path: /root/.gradle/wrapper
       contents:
         packages:
           - gzip
@@ -74,6 +77,36 @@ contents:
           work-dir: ${source.dir}/kafka
           with:
             patch: ${source.dir}/patch/jetty-cve-4.1.patch
+        - name: apply jline remote-telnet cve patch
+          uses: git/patch@v1
+          work-dir: ${source.dir}/kafka
+          with:
+            patch: ${source.dir}/patch/jline-remote-telnet-cve.patch
+        - name: configure gradle mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle
+            cat > /root/.gradle/init.gradle << 'EOF'
+            def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+
+            def mirrorMavenCentral = { repo ->
+                if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
+                    repo.url.toString() == "https://repo.maven.apache.org/maven2/") {
+                    repo.setUrl(mavenCentralMirror)
+                }
+            }
+
+            settingsEvaluated { settings ->
+                settings.pluginManagement.repositories.configureEach(mirrorMavenCentral)
+                settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+            }
+
+            allprojects {
+                buildscript.repositories.configureEach(mirrorMavenCentral)
+                repositories.configureEach(mirrorMavenCentral)
+            }
+            EOF
         - name: build kafka distribution
           work-dir: ${source.dir}/kafka
           privileged: true
@@ -125,6 +158,11 @@ contents:
           uid: 0
           gid: 0
           source: image/kafka/patch/jetty-cve-4.1.patch
+        - type: file
+          path: ${source.dir}/patch/jline-remote-telnet-cve.patch
+          uid: 0
+          gid: 0
+          source: image/kafka/patch/jline-remote-telnet-cve.patch
       outputs:
         - source: ${target.dir}/opt/kafka
           target: /opt/kafka
