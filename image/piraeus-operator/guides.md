@@ -202,7 +202,11 @@ spec:
       containers:
         - name: linstor-satellite
           image: dhi.io/piraeus-server:<tag>
+        - name: drbd-reactor
+          image: dhi.io/drbd-reactor:<tag>
       initContainers:
+        - name: drbd-shutdown-guard
+          image: dhi.io/drbd-shutdown-guard:<tag>
         - name: setup-lvm-configuration
           image: dhi.io/piraeus-server:<tag>
   storagePools:
