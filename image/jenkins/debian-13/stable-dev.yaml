@@ -168,6 +168,57 @@ contents:
             set -eux -o pipefail
 
             mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
+        - name: download jackson-databind jars
+          work-dir: ${source.dir}/jenkins
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${source.dir}/patch/deps
+
+            # Download jackson-databind 2.21.4 for jackson2-api plugin
+            mvn dependency:get \
+              -Dartifact=com.fasterxml.jackson.core:jackson-databind:2.21.4 \
+              -Dtransitive=false
+            cp ~/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar \
+              ${source.dir}/patch/deps/jackson-databind-2.21.4.jar
+        - name: patch bundled jackson-databind in jackson2-api
+          work-dir: ${source.dir}/jenkins
+          runs: |
+            set -eux -o pipefail
+
+            patch_dir="$(mktemp -d)"
+            trap 'rm -rf "${patch_dir}"' EXIT
+
+            war_file="war/target/jenkins.war"
+            hpi_path="WEB-INF/detached-plugins/jackson2-api.hpi"
+            old_jackson_path="WEB-INF/lib/jackson-databind-2.21.2.jar"
+            new_jackson_path="WEB-INF/lib/jackson-databind-2.21.4.jar"
+
+            unzip -q "${war_file}" "${hpi_path}" -d "${patch_dir}"
+            hpi_file="${patch_dir}/${hpi_path}"
+
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_path}"; then
+              zip -q -d "${hpi_file}" "${old_jackson_path}"
+            fi
+
+            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/lib"
+            cp "${source.dir}/patch/deps/jackson-databind-2.21.4.jar" "${patch_dir}/hpi-overlay/${new_jackson_path}"
+            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_jackson_path}")
+
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_path}"; then
+              echo "ERROR: ${old_jackson_path} is still present in ${hpi_path}" >&2
+              exit 1
+            fi
+            jar tf "${hpi_file}" | grep -q "${new_jackson_path}"
+
+            (cd "${patch_dir}" && jar --update --file "${source.dir}/jenkins/${war_file}" "${hpi_path}")
+
+            unzip -p "${war_file}" "${hpi_path}" > "${patch_dir}/verified-jackson2-api.hpi"
+            if jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${old_jackson_path}"; then
+              echo "ERROR: ${old_jackson_path} is still present in repacked ${war_file}" >&2
+              exit 1
+            fi
+            jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${new_jackson_path}"
         - name: patch bundled mina-core
           work-dir: ${source.dir}/jenkins
           runs: |
