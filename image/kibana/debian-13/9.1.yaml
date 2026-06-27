@@ -22,14 +22,18 @@ vars:
   NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
   NODE_BINARIES_EXTRA_SUBDIR: ""
   NODE_BINARIES_SUBDIR: glibc-217
-  NODE_DIGEST: sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
+  NODE_DEB_VERSION: 22.23.1-0
   NODE_MAJOR_VERSION: "22"
-  NODE_VERSION: 22.22.3
+  NODE_VERSION: 22.23.1
   SEMVER_MAJOR_MINOR_VERSION: "9.1"
   SEMVER_MAJOR_VERSION: "9"
   SEMVER_VERSION: 9.1.10
   VERSION: 9.1.10
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!libelogind0'
     - '!mawk'
@@ -43,12 +47,24 @@ contents:
     - tini
   builds:
     - name: kibana
-      uses: dhi.io/node:22.22.3-debian13-dev@sha256:cbe1cbec93a0eb5ca704355825021de4362704a5181768afc24fac2082d13fca
       contents:
         packages:
           - bash
           - gzip
           - jq
+          - base-files
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-22
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
         files:
           - url: git+https://github.com/elastic/kibana.git#v9.1.10
             checksum: 3c5e7066866006c39ba40861ab0c05b6406ed357
@@ -84,7 +100,7 @@ contents:
 
             # Then, update the "engines.node" requirement to reference the current Node build version;
             # otherwise the upstream version check logic will fail
-            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"22.22.3\"/g" package.json
+            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"$(node --version | sed 's/^v//')\"/g" package.json
         - name: bump yarn deps (9.1)
           uses: yarn/bump@v2
           run-as: "65532"
@@ -123,21 +139,46 @@ contents:
 
             yarn kbn bootstrap
 
-            # Symlink the build system's Node to the `.node_binaries` directory, since
-            # Kibana bundles Node alongside its application code. The build system will
-            # grab a license and `bin` files from Node to bundle in the final app dir.
+            # Populate `.node_binaries` with the HSP Node layout Kibana expects (LICENSE and
+            # bin/node), since the build copies extract/ into the distributable and reads
+            # LICENSE for NOTICE.txt. The dhi/node image exposed a full tarball tree at
+            # /opt/nodejs/node-vX.Y.Z; the HSP package only installs /usr/bin/node.
             # Note: There's a hardcoded dependency on `linux-x64` directory in the build tooling
             # when it gathers package info to create NOTICE.txt, so create that directory always,
             # regardless of arch.
+            NODE_RUNTIME_VERSION="$(node --version | sed 's/^v//')"
+            populate_node_extract() {
+              local variant="$1"
+              local platform="$2"
+              local extract="${source.dir}/kibana/.node_binaries/${NODE_RUNTIME_VERSION}/${variant}/${platform}/extract"
+
+              mkdir -p "${extract}/bin"
+              cp -a /usr/bin/node "${extract}/bin/node"
+              node << EOF
+            const fs = require('fs');
+            const https = require('https');
+            const url = 'https://raw.githubusercontent.com/nodejs/node/v${NODE_RUNTIME_VERSION}/LICENSE';
+            https.get(url, (res) => {
+              if (res.statusCode !== 200) {
+                console.error('failed to download Node LICENSE:', res.statusCode);
+                process.exit(1);
+              }
+              const chunks = [];
+              res.on('data', (chunk) => chunks.push(chunk));
+              res.on('end', () => fs.writeFileSync('${extract}/LICENSE', Buffer.concat(chunks)));
+            }).on('error', (err) => {
+              console.error(err);
+              process.exit(1);
+            });
+            EOF
+            }
             for node_subdir in glibc-217 ; do
               if [ -z "${node_subdir}" ]; then
                 continue
               fi
-              mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64"
-              ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-x64/extract"
+              populate_node_extract "${node_subdir}" "linux-x64"
               if [ ${NODE_ARCH} != "x64" ]; then
-                mkdir -p "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}"
-                ln -sf "/opt/nodejs/node-v22.22.3" "${source.dir}/kibana/.node_binaries/22.22.3/${node_subdir}/linux-${NODE_ARCH}/extract"
+                populate_node_extract "${node_subdir}" "linux-${NODE_ARCH}"
               fi
             done
 
