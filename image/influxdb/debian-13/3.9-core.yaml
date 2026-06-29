@@ -5,11 +5,8 @@ image: dhi.io/influxdb
 variant: runtime
 flavor: core
 tags:
-  - 3-core
   - 3.9-core
   - 3.9.4-core
-  - 3-debian-core
-  - 3-debian13-core
   - 3.9-debian-core
   - 3.9-debian13-core
   - 3.9.4-debian-core
@@ -20,11 +17,8 @@ platforms:
 dates:
   release: "2026-04-01"
 vars:
-  BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:cd26c6fe4eaa4bc2ecd022223dd3cd2dc01101c13344fb3f9793dfd4c7179b77
   COMMIT_SHA: 5c4863aa75d740db607b0afed0cb21655073eb77
   PYTHON_MAJOR_MINOR_VERSION: "3.13"
-  PYTHON_REFERENCE: dhi/python:3.13.14-debian13@sha256:6e8db8c9c5e95077a0f387c6196dfd92bdd5872370987b73e3d4d843b04f0628
-  PYTHON_VERSION: 3.13.14
   RUST_REFERENCE: dhi/rust:1.96.0-debian13@sha256:fc6221ac8ea122b06b786a73ab4cbbb1aac4e57ef56856cdcc993b435acacfd7
   RUST_VERSION: 1.96.0
   SEMVER_MAJOR_MINOR_VERSION: "3.9"
@@ -32,10 +26,22 @@ vars:
   SEMVER_VERSION: 3.9.4
   VERSION: 3.9.4
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - '!base-files'
+    - base-files
     - bash
+    - ca-certificates-bundle
     - coreutils
+    - libc6
+    - python-3.13
+    - python-3.13-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - tzdata
   builds:
     - name: influxdb3
       uses: dhi.io/rust:1.96.0-debian13@sha256:fc6221ac8ea122b06b786a73ab4cbbb1aac4e57ef56856cdcc993b435acacfd7
@@ -48,6 +54,11 @@ contents:
           - lld
           - protobuf-compiler
           - sed
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
         files:
           - url: git+https://github.com/influxdata/influxdb.git#v3.9.4
             checksum: 5c4863aa75d740db607b0afed0cb21655073eb77
@@ -59,14 +70,6 @@ contents:
                 - name: influxdb3
                   purl: pkg:cargo/influxdb3@3.9.4
                   license: MIT
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/python:3.13.14-debian13@sha256:6e8db8c9c5e95077a0f387c6196dfd92bdd5872370987b73e3d4d843b04f0628
-            excludes:
-              - etc/group
-              - etc/passwd
-              - etc/shadow
             uid: 0
             gid: 0
       pipeline:
@@ -106,6 +109,21 @@ contents:
             lock.write_text(c)
             print('patched: rustls-webpki 0.103.9->0.103.13, rand 0.9.2->0.9.3')
             EOF
+        - name: bump quinn-proto and pyo3 cargo deps
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-4w2j-m93h-cj5j: quinn-proto 0.11.14 -> 0.11.15 (patch bump,
+            # stays within the existing 0.11.x requirement).
+            cargo update --package quinn-proto --precise 0.11.15
+
+            # GHSA-36hh-v3qg-5jq4, GHSA-chgr-c6px-7xpp: pyo3 -> 0.29.0.
+            # pyo3 0.x minor releases are semver-incompatible, so relax the
+            # workspace requirement before pinning the lock to the fixed release.
+            sed -i -E 's/^pyo3 = \{ version = "[^"]*"/pyo3 = { version = "0.29"/' Cargo.toml
+            cargo update --package pyo3 --precise 0.29.0
         - name: cargo sbom
           uses: sbom@v1
           with:
@@ -122,8 +140,8 @@ contents:
             shared=true
             abi3=false
             lib_name=python3.13
-            lib_dir=/opt/python/lib
-            executable=/opt/python/bin/python3.13
+            lib_dir=/usr/lib
+            executable=/usr/bin/python3.13
             pointer_width=64
             build_flags=
             suppress_build_script_link_lines=false
@@ -159,33 +177,6 @@ contents:
           target: /opt/docker/sbom/influxdb3-cargo
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/python:3.13.14-debian13@sha256:6e8db8c9c5e95077a0f387c6196dfd92bdd5872370987b73e3d4d843b04f0628
-      excludes:
-        - etc/group
-        - etc/passwd
-        - etc/shadow
-      uid: 0
-      gid: 0
-    - name: dhi.io/static:20250419-glibc-debian13@sha256:cd26c6fe4eaa4bc2ecd022223dd3cd2dc01101c13344fb3f9793dfd4c7179b77
-      includes:
-        - bin
-        - etc
-        - home
-        - lib
-        - lib64
-        - opt
-        - sbin
-        - tmp
-        - usr
-        - var
-      excludes:
-        - etc/group
-        - etc/os-release
-        - etc/passwd
-        - var/lib/dpkg/status
-      uid: 0
-      gid: 0
 accounts:
   run-as: nonroot
   users:
