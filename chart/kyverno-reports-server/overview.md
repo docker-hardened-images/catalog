@@ -7,6 +7,7 @@ The following Docker Hardened Images are used in this Helm chart:
 
 - `dhi/kyverno-reports-server`
 - `dhi/kubectl`
+- `dhi/etcd`
 
 To learn more about how to use this Helm chart you can visit the upstream documentation:
 [https://github.com/kyverno/reports-server/blob/main/charts/reports-server/README.md](https://github.com/kyverno/reports-server/blob/main/charts/reports-server/README.md)
