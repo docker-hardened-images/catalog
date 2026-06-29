@@ -24,6 +24,12 @@ Advanced capabilities:
 Docker Hardened Images (DHI) are secure, minimal container images with near-zero CVEs, signed provenance, and complete
 SBOM/VEX metadata. They provide a secure foundation for production workloads.
 
+### Why use Docker Hardened Images?
+
+These images are published with near-zero known CVEs, include signed provenance, and come with a complete Software Bill
+of Materials (SBOM) and VEX metadata. They're designed to secure your software supply chain while fitting seamlessly
+into existing Docker workflows.
+
 ## Trademarks
 
 Grafana® is a trademark of Raintank, Inc. dba Grafana Labs. All rights in the mark are reserved to Raintank, Inc. dba
