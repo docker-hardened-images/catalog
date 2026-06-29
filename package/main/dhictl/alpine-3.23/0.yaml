@@ -1,0 +1,108 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-dhictl
+variant: runtime
+tags:
+  - 0.0.4-alpine3.23
+  - 0.0.4-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: daff082f5829b6972e1511058c21dbee36bb8035
+  DHI_TEST_APK_PACKAGES: dhictl_
+  GOLANG_VERSION: 1.26.4-r1
+  PACKAGE_NAME: dhictl
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.0"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.0.4
+  VERSION: 0.0.4
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: dhictl
+      work-dir: /go/src/github.com/docker-hardened-images/dhictl
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.4-r1
+          - golang-1.26-oci-config=1.26.4-r1
+        files:
+          - url: git+https://github.com/docker-hardened-images/dhictl-cli-plugin.git#v0.0.4
+            checksum: daff082f5829b6972e1511058c21dbee36bb8035
+            path: /go/src/github.com/docker-hardened-images/dhictl
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - golang.org/x/sys@v0.45.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/docker-hardened-images/dhictl/internal/version.Version=0.0.4
+              - -X github.com/docker-hardened-images/dhictl/internal/version.Commit=daff082f5829b6972e1511058c21dbee36bb8035
+            output: ${target.dir}/usr/bin/docker-dhi
+            packages: ./cli/dhictl
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/docker-hardened-images/dhictl/internal/version.Version=0.0.4
+              - -X github.com/docker-hardened-images/dhictl/internal/version.Commit=daff082f5829b6972e1511058c21dbee36bb8035
+            output: ${target.dir}/usr/bin/docker-dhi-dev
+            packages: ./cli/dhictl
+            strip: false
+        - name: create docker cli symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/local/libexec/docker/cli-plugins"
+            ln -s /usr/bin/docker-dhi "${target.dir}/usr/local/libexec/docker/cli-plugins/docker-dhi"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Docker Hardened Images Docker CLI plugin
+            files:
+              - usr/bin/docker-dhi
+            license: https://www.docker.com/legal/docker-subscription-service-agreement/
+            name: dhictl
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/docker-dhi
+                    source: usr/bin/docker-dhi-dev
+                name: dhictl-dev
+              - depends:
+                  - dhictl
+                description: Docker CLI plugin for dhictl
+                files:
+                  - path: usr/local/libexec/docker/cli-plugins/docker-dhi
+                    source: usr/local/libexec/docker/cli-plugins/docker-dhi
+                name: docker-cli-dhictl
+            url: https://github.com/docker-hardened-images/dhictl
+            version: 0.0.4
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
