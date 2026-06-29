@@ -1,4 +1,4 @@
-# syntax=dhi.io/build:1-debian13
+# syntax=dhi.io/build:2-debian13
 
 name: CouchDB 3.4.x
 image: dhi.io/couchdb
@@ -24,7 +24,6 @@ vars:
   ERLANG_DEV_REFERENCE: dhi/erlang-otp:27.3-debian13-dev@sha256:92f35943e51288c4c3befbfb34b5ad56e6cd62440181419df281e1ab3b16979d
   ERLANG_REFERENCE: dhi/erlang-otp:27.3-debian13@sha256:cb2d5573fe5fdf903e6f78a7e7240c3d117e5a42bdede5a8f300ee34fd312d1c
   GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:12d485ffad58a867a4a9fedb2b889f72c53810c2b2d44eb4fb2032bee371cb33
-  NODE_REFERENCE: dhi/node:22.23.1-0-debian13-dev@sha256:86f9fe2e01aa50200ba36063a9f56e8a903fbdb3f615a63dccaa688e77101155
   PYTHON_REFERENCE: dhi/python:3.13.14-debian13-dev@sha256:9c3e8a019237e3e248cf7d1d97773a828d09b3fd53585cdb1eb1e20c00980d0f
   REBAR_COMMIT_SHA: 619df55d9dab109cbd1b5d9ed1d45c93f5450e24
   REBAR_VERSION: 3.27.0
@@ -33,6 +32,10 @@ vars:
   SEMVER_VERSION: 3.4.3
   VERSION: 3.4.3
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - bash
     - ca-certificates
@@ -43,6 +46,7 @@ contents:
     - libmozjs-128-0
     - libncurses6
     - libstdc++6
+    - libtinfo6
     - sed
     - tini
   files:
@@ -71,6 +75,8 @@ contents:
           - dpkg-dev
           - elixir
           - findutils
+          - g++
+          - gcc
           - gcc-14
           - git
           - libabsl-dev
@@ -97,8 +103,16 @@ contents:
           - mesa-utils
           - perl
           - pkg-config
+          - python3
           - python3.13-venv
           - sed
+          - base-files
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
         files:
           - url: git+https://github.com/apache/couchdb#3.4.3
             checksum: e12b967d7f674f8388092bf2b043a978cabce151
@@ -123,6 +137,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: git+https://github.com/WhatsApp/erlfmt.git#v1.8.0
+            checksum: 2005d2581fede02e47791cf081dfa66be8d30acb
+            path: ${source.dir}/couchdb/src/erlfmt
+            spdx:
+              name: erlfmt
+              version: v1.8.0
+              packages:
+                - name: erlfmt
+                  purl: pkg:github/WhatsApp/erlfmt@v1.8.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
           - url: https://raw.githubusercontent.com/apache/couchdb-docker/adcb4f73e8a3c6fb0e901ab88cab50d71f02937a/3.4.3/vm.args
             checksum: sha256:5f84c4bfc47f16f404443dc1437829372ab9ee126d30fc819a2927a4cd333da7
             path: ${source.dir}/opt/couchdb/etc/vm.args
@@ -130,12 +156,6 @@ contents:
             gid: 65532
             mode: "0644"
         artifacts:
-          - name: dhi.io/node:22.23.1-0-debian13-dev@sha256:86f9fe2e01aa50200ba36063a9f56e8a903fbdb3f615a63dccaa688e77101155
-            includes:
-              - opt/**
-              - usr/**
-            uid: 0
-            gid: 0
           - name: dhi.io/pkg-gosu:1.19-debian13@sha256:12d485ffad58a867a4a9fedb2b889f72c53810c2b2d44eb4fb2032bee371cb33
             includes:
               - usr/local/sbin/gosu
@@ -159,6 +179,19 @@ contents:
 
             ./bootstrap
             install -D -m755 rebar3 /usr/local/bin/rebar3
+        - name: install erlfmt
+          work-dir: ${source.dir}/couchdb
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/usr/local/bin:$PATH"
+
+            mkdir -p bin
+            cd src/erlfmt
+            rebar3 as release escriptize
+            mv _build/release/bin/erlfmt ../../bin/erlfmt
+            rebar3 clean
         - name: configure
           work-dir: ${source.dir}/couchdb
           privileged: true
@@ -172,7 +205,7 @@ contents:
               ln -sf /usr/include/x86_64-linux-gnu/mozjs-128 /usr/include/mozjs-128
             fi
 
-            ./configure --spidermonkey-version 128 --rebar3 /usr/local/bin/rebar3
+            ./configure --spidermonkey-version 128 --rebar3 /usr/local/bin/rebar3 --erlfmt bin/erlfmt
         - name: build
           work-dir: ${source.dir}/couchdb
           privileged: true
