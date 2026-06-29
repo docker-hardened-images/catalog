@@ -1,50 +1,29 @@
-CVE-2026-45292 (GHSA-rcgg-9c38-7xpx): unbounded memory allocation in the
-OpenTelemetry Java W3C baggage propagator, fixed in opentelemetry 1.62.0.
-Nessie's gradle/libs.versions.toml already declares opentelemetry 1.62.0, but
-the Quarkus platform BOM can still constrain the resolved OpenTelemetry jars to
-an older version in the fast-jar packaging (and therefore in the SBOM/Scout
-scan). This patch forces the OpenTelemetry core modules to 1.62.0 so the
-resolved jars match the fixed version. Applied after the jackson and netty
-force patches, which edit the same build.gradle.kts region.
-
-Advisory: https://github.com/open-telemetry/opentelemetry-java/security/advisories/GHSA-rcgg-9c38-7xpx
-Fix: https://github.com/open-telemetry/opentelemetry-java/releases/tag/v1.62.0
-
+CVE-2026-45292 (GHSA-rcgg-9c38-7xpx): force all io.opentelemetry artifacts to 1.62.0.
+https://github.com/open-telemetry/opentelemetry-java/security/advisories/GHSA-rcgg-9c38-7xpx
+Use 1.62.0 (not 1.63.0): Quarkus 3.37 calls ExporterBuilderUtil.validateEndpoint,
+which was removed in OpenTelemetry 1.63.0.
 diff --git a/servers/quarkus-server/build.gradle.kts b/servers/quarkus-server/build.gradle.kts
-index 3405492..9e67744 100644
 --- a/servers/quarkus-server/build.gradle.kts
 +++ b/servers/quarkus-server/build.gradle.kts
-@@ -77,6 +77,33 @@ configurations.configureEach {
-   }
- }
+@@ -30,6 +30,21 @@
+ 
+ publishingHelper { mavenName = "Nessie - Quarkus Server" }
  
 +// CVE-2026-45292 (GHSA-rcgg-9c38-7xpx): unbounded memory allocation in
-+// OpenTelemetry W3C baggage propagation, fixed in 1.62.0. libs.versions.toml
-+// declares opentelemetry 1.62.0, but the Quarkus platform BOM can still
-+// constrain the resolved OpenTelemetry jars to an older version, so force the
-+// core modules to 1.62.0 so the fast-jar packaging and the SBOM/Scout scan
-+// reflect the fixed version.
++// OpenTelemetry W3C baggage propagation, fixed in 1.62.0+. libs.versions.toml
++// declares opentelemetry 1.63.0, but the Quarkus platform BOM can still constrain
++// individual OpenTelemetry jars to an older train. Pin to 1.62.0 (the minimum fixed
++// release): 1.63.0 removes ExporterBuilderUtil.validateEndpoint, which Quarkus 3.37
++// still invokes at startup.
 +configurations.configureEach {
-+  resolutionStrategy {
-+    force(
-+      "io.opentelemetry:opentelemetry-api:1.62.0",
-+      "io.opentelemetry:opentelemetry-common:1.62.0",
-+      "io.opentelemetry:opentelemetry-context:1.62.0",
-+      "io.opentelemetry:opentelemetry-exporter-common:1.62.0",
-+      "io.opentelemetry:opentelemetry-exporter-otlp:1.62.0",
-+      "io.opentelemetry:opentelemetry-exporter-otlp-common:1.62.0",
-+      "io.opentelemetry:opentelemetry-extension-trace-propagators:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-common:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-extension-autoconfigure-spi:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-logs:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-metrics:1.62.0",
-+      "io.opentelemetry:opentelemetry-sdk-trace:1.62.0",
-+    )
++  resolutionStrategy.eachDependency {
++    if (requested.group == "io.opentelemetry" && requested.version?.endsWith("-alpha") != true) {
++      useVersion("1.62.0")
++      because("CVE-2026-45292: force OpenTelemetry 1.62.0 (Quarkus 3.37 compatible, CVE fixed)")
++    }
 +  }
 +}
 +
- val quarkusRunner by
-   configurations.creating {
-     description = "Used to reference the generated runner-jar (either fast-jar or uber-jar)"
+ // Force reactor-netty to 1.2.18 to resolve CVE-2025-22227 (only fixed in reactor-netty
+ // >= 1.2.8). reactor-netty 1.2.x belongs to the Reactor 2024.0 train and requires
+ // reactor-core 3.7.x, so reactor-core is bumped from 3.5.x to 3.7.19 to keep the train
