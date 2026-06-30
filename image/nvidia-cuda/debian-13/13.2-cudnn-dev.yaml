@@ -1,0 +1,187 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NVIDIA CUDA 13.2.x (cudnn, dev)
+image: dhi.io/nvidia-cuda
+variant: dev
+flavor: cudnn
+tags:
+  - 13-cudnn-dev
+  - 13.2-cudnn-dev
+  - 13.2.1-cudnn-dev
+  - 13-debian-cudnn-dev
+  - 13-debian13-cudnn-dev
+  - 13.2-debian-cudnn-dev
+  - 13.2-debian13-cudnn-dev
+  - 13.2.1-debian-cudnn-dev
+  - 13.2.1-debian13-cudnn-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-03"
+vars:
+  CUDNN_REDIST_LABEL: 9.20.0
+  CUDNN_TARBALL_SHA: '#{ target.arch == "amd64" ? "sha256:" + definition.vars.CUDNN_TARBALL_SHA_AMD64 : "sha256:" + definition.vars.CUDNN_TARBALL_SHA_ARM64 }'
+  CUDNN_TARBALL_SHA_AMD64: 73f091ee57668dc18e8b1b61811c0ddff2ec0b762efe613e9f27f9ebfd6c20c0
+  CUDNN_TARBALL_SHA_ARM64: 21140178191c620799ec09620ae1d89649c9b95441163f8ef956e1493a0e3704
+  CUDNN_TARBALL_VERSION: 9.20.0.48
+  CUDNN_VERSION: 9.20.0.48-1
+  GNU_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  NVIDIA_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "sbsa" }'
+  SEMVER_MAJOR_MINOR_VERSION: "13.2"
+  SEMVER_MAJOR_VERSION: "13"
+  SEMVER_MINOR_VERSION: "2"
+  SEMVER_VERSION: 13.2.1
+  VERSION: 13.2.1-1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/8793F200.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/${NVIDIA_ARCH}/ /
+  keyring:
+    - https://developer.download.nvidia.com/compute/cuda/repos/debian13/${NVIDIA_ARCH}/8793F200.pub
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - build-essential
+    - ca-certificates
+    - coreutils
+    - cuda-minimal-build-13-2
+    - cuda-runtime-13-2
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: cudnn
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - tar
+          - xz-utils
+        files:
+          - url: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-${NVIDIA_ARCH}/cudnn-linux-${NVIDIA_ARCH}-9.20.0.48_cuda13-archive.tar.xz
+            checksum: ${CUDNN_TARBALL_SHA}
+            path: /tmp/cudnn.tar.xz
+            spdx:
+              name: cudnn
+              version: 9.20.0.48
+              packages:
+                - name: cudnn
+                  purl: pkg:generic/nvidia/cudnn@9.20.0.48
+                  license: LicenseRef-NVIDIA-cuDNN-SLA
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract cuDNN runtime libraries
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /extract
+            tar -xJf /tmp/cudnn.tar.xz -C /extract --strip-components=1
+            # runtime: versioned shared libs only (no static .a, no .so symlinks).
+            # -dR preserves symlinks; we do NOT preserve the tarball's packer
+            # ownership so the files land root-owned like the rest of the image.
+            mkdir -p ${target.dir}/usr/lib/${GNU_ARCH}-linux-gnu
+            cp -dR --preserve=timestamps /extract/lib/libcudnn*.so.* ${target.dir}/usr/lib/${GNU_ARCH}-linux-gnu/
+            mkdir -p ${target.dir}/usr/share/doc/cudnn
+            cp /extract/LICENSE ${target.dir}/usr/share/doc/cudnn/LICENSE
+        - name: add cuDNN dev symlinks and headers
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            cp -dR --preserve=timestamps /extract/lib/libcudnn*.so ${target.dir}/usr/lib/${GNU_ARCH}-linux-gnu/
+            mkdir -p ${target.dir}/usr/include/${GNU_ARCH}-linux-gnu
+            cp -dR --preserve=timestamps /extract/include/cudnn*.h ${target.dir}/usr/include/${GNU_ARCH}-linux-gnu/
+      outputs:
+        - source: ${target.dir}/usr/lib/${GNU_ARCH}-linux-gnu
+          target: /usr/lib/${GNU_ARCH}-linux-gnu
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/share/doc/cudnn
+          target: /usr/share/doc/cudnn
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cudnn
+          target: /opt/docker/sbom/cudnn
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/include/${GNU_ARCH}-linux-gnu
+          target: /usr/include/${GNU_ARCH}-linux-gnu
+          uid: 0
+          gid: 0
+  mappings:
+    cuda-minimal-build-13-2: pkg:deb/nvidia/cuda-minimal-build-13-2@13.2.1-1?os_name=debian&os_version=13
+    cuda-runtime-13-2: pkg:deb/nvidia/cuda-runtime-13-2@13.2.1-1?os_name=debian&os_version=13
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /workspace
+environment:
+  CUDA_VERSION: 13.2.1
+  DEBIAN_FRONTEND: noninteractive
+  LD_LIBRARY_PATH: /usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+  LIBRARY_PATH: /usr/local/cuda/lib64/stubs
+  NVARCH: ${NVIDIA_ARCH}
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  NVIDIA_PRODUCT_NAME: CUDA
+  NVIDIA_REQUIRE_CUDA: cuda>=13.2
+  NVIDIA_VISIBLE_DEVICES: all
+  PATH: /usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+paths:
+  - type: symlink
+    path: /usr/local/cuda
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-13.2
+  - type: symlink
+    path: /usr/local/cuda-13
+    uid: 0
+    gid: 0
+    source: /usr/local/cuda-13.2
+  - type: directory
+    path: /workspace
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  com.nvidia.volumes.needed: nvidia_driver
+  org.opencontainers.image.description: NVIDIA CUDA - GPU-accelerated computing toolkit and runtime libraries
+  org.opencontainers.image.licenses: LicenseRef-NVIDIA-CUDA-EULA AND LicenseRef-NVIDIA-cuDNN-SLA
+cmd:
+  - /bin/bash
