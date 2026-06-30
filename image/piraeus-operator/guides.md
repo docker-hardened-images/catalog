@@ -19,6 +19,24 @@ This Docker Hardened piraeus-operator image includes:
 
 ## Start a piraeus-operator image
 
+### Create a Kubernetes secret for pulling images
+
+The Docker Hardened Images that the chart uses require authentication. To allow your Kubernetes cluster to pull those
+images, you need to create a Kubernetes secret with your Docker Hub credentials or with the credentials for your own
+registry.
+
+Follow the [authentication instructions for DHI in Kubernetes](https://docs.docker.com/dhi/how-to/k8s/#authentication).
+
+For example:
+
+```console
+kubectl create secret docker-registry helm-pull-secret \
+  --docker-server=dhi.io \
+  --docker-username=<Docker username> \
+  --docker-password=<Docker token> \
+  --docker-email=<Docker email>
+```
+
 Piraeus Operator is a Kubernetes operator that manages LINSTOR storage clusters. It automates the deployment,
 configuration, and lifecycle management of LINSTOR components including controllers, satellites, CSI drivers, and HA
 controllers. The operator watches Kubernetes custom resources (`LinstorCluster`, `LinstorSatelliteConfiguration`) and
@@ -30,10 +48,12 @@ environments.
 The recommended way to deploy Piraeus Operator is using the official Helm chart:
 
 ```bash
-helm repo add piraeus-charts https://piraeus.io/helm-charts/
-helm install piraeus-operator piraeus-charts/piraeus-operator \
+version=<version>
+helm install piraeus-operator https://github.com/piraeusdatastore/piraeus-operator/releases/download/v${version}/piraeus-${version}.tgz \
+  --set installCRDs=true \
   --set operator.image.repository=dhi.io/piraeus-operator \
-  --set operator.image.tag=<tag>
+  --set operator.image.tag=<tag> \
+  --set imagePullSecrets[0].name=<secret-name>
 ```
 
 ### Deploy with Kubernetes manifests
@@ -57,6 +77,8 @@ spec:
         app.kubernetes.io/name: piraeus-operator
     spec:
       serviceAccountName: piraeus-operator
+      imagePullSecrets:
+        - name: <secret-name>
       containers:
         - name: manager
           image: dhi.io/piraeus-operator:<tag>
@@ -92,6 +114,8 @@ spec:
     enabled: true
     podTemplate:
       spec:
+        imagePullSecrets:
+          - name: <secret-name>
         containers:
           - name: linstor-controller
             image: dhi.io/piraeus-server:<tag>
@@ -109,6 +133,8 @@ spec:
     enabled: true
     podTemplate:
       spec:
+        imagePullSecrets:
+          - name: <secret-name>
         initContainers:
           - name: linstor-wait-api-online
             image: dhi.io/piraeus-csi:<tag>
@@ -134,22 +160,41 @@ spec:
           - name: csi-livenessprobe
             image: dhi.io/livenessprobe:<tag>
   nfsServer:
-     enabled: true
+    enabled: true
     podTemplate:
       spec:
+        imagePullSecrets:
+          - name: <secret-name>
         initContainers:
           - name: linstor-wait-node-online
             image: dhi.io/piraeus-csi:<tag>
         containers:
-           - name: nfs-server
+          - name: nfs-server
             image: dhi.io/piraeus-csi-nfs-server:<tag>
   csiNode:
     enabled: true
     podTemplate:
       spec:
+        imagePullSecrets:
+          - name: <secret-name>
         initContainers:
           - name: linstor-wait-node-online
             image: dhi.io/piraeus-csi:<tag>
+          - name: fix-csi-permissions
+            image: dhi.io/busybox:1
+            command:
+              - sh
+            args:
+              - -c
+              - chmod a+rwx /csi /registration
+            volumeMounts:
+              - mountPath: /csi
+                name: plugin-dir
+              - mountPath: /registration
+                name: registration-dir
+            securityContext:
+              runAsUser: 0
+              runAsGroup: 0
         containers:
           - name: linstor-csi
             image: dhi.io/piraeus-csi:<tag>
@@ -174,6 +219,8 @@ spec:
     enabled: true
     podTemplate:
       spec:
+        imagePullSecrets:
+          - name: <secret-name>
         containers:
           - name: ha-controller
             image: dhi.io/piraeus-ha-controller:<tag>
@@ -199,6 +246,8 @@ metadata:
 spec:
   podTemplate:
     spec:
+      imagePullSecrets:
+        - name: <secret-name>
       containers:
         - name: linstor-satellite
           image: dhi.io/piraeus-server:<tag>
@@ -209,6 +258,8 @@ spec:
           image: dhi.io/drbd-shutdown-guard:<tag>
         - name: setup-lvm-configuration
           image: dhi.io/piraeus-server:<tag>
+      securityContext:
+        fsGroup: 65532
   storagePools:
     - name: lvm-thin
       lvmThinPool:
