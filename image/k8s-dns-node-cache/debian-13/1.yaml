@@ -1,0 +1,135 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NodeLocal DNS Cache 1.x
+image: dhi.io/k8s-dns-node-cache
+variant: runtime
+tags:
+  - "1"
+  - "1.26"
+  - 1.26.8
+  - 1-debian
+  - 1-debian13
+  - 1.26-debian
+  - 1.26-debian13
+  - 1.26.8-debian
+  - 1.26.8-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-07"
+vars:
+  COMMIT_SHA: 9aa70b8f97dc751445a7370960cd45e411506003
+  SEMVER_MAJOR_MINOR_VERSION: "1.26"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.26.8
+  VERSION: 1.26.8
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - iproute2
+    - iptables
+    - tzdata
+  builds:
+    - name: node-cache
+      work-dir: /go/src/k8s.io/dns
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/kubernetes/dns.git#1.26.8
+            checksum: 9aa70b8f97dc751445a7370960cd45e411506003
+            path: /go/src/k8s.io/dns
+            spdx:
+              name: k8s-dns-node-cache
+              version: 1.26.8
+              packages:
+                - name: k8s-dns-node-cache
+                  purl: pkg:golang/k8s.io/dns@1.26.8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - github.com/quic-go/quic-go@v0.59.1
+              - github.com/coredns/coredns@v1.14.3
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test ./cmd/node-cache/...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X k8s.io/dns/pkg/version.VERSION=1.26.8
+            output: ${target.dir}/node-cache
+            packages: ./cmd/node-cache
+      outputs:
+        - source: ${target.dir}/node-cache
+          target: /node-cache
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/k8s-dns-node-cache
+          target: /opt/docker/sbom/k8s-dns-node-cache
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: iptables-nft
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: ip6tables-nft
+annotations:
+  org.opencontainers.image.description: A minimal NodeLocal DNS Cache image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /node-cache
+ports:
+  - 53/tcp
+  - 53/udp
