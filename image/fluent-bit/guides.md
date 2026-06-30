@@ -85,7 +85,7 @@ Verify the built-in HTTP server is running:
 
 ```bash
 $ curl http://localhost:2020/
-{"fluent-bit":{"version":"4.2.4","edition":"Community", ... }}
+{"fluent-bit":{"version":"5.4","edition":"Community", ... }}
 ```
 
 ## Deploy to Kubernetes with the DHI Helm chart
@@ -135,7 +135,7 @@ Confirm the running pods are the digest-pinned DHI image:
 ```bash
 $ kubectl get pod -l app.kubernetes.io/instance=my-fluent-bit \
     -o jsonpath='{.items[0].spec.containers[0].image}'
-dhi.io/fluent-bit:4.2.4-debian13@sha256:817c1d8898b31ab5b06dd393ae8ebf92f0230da3cbf4a2673d8fee45b93b32de
+dhi.io/fluent-bit:5.4-debian13@sha256:817c1d8898b31ab5b06dd393ae8ebf92f0230da3cbf4a2673d8fee45b93b32de
 ```
 
 Port-forward to a pod and hit the Fluent Bit HTTP server:
