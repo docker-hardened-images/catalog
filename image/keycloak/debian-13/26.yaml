@@ -6,28 +6,28 @@ variant: runtime
 tags:
   - "26"
   - "26.6"
-  - 26.6.3
+  - 26.6.4
   - 26-debian
   - 26-debian13
   - 26.6-debian
   - 26.6-debian13
-  - 26.6.3-debian
-  - 26.6.3-debian13
+  - 26.6.4-debian
+  - 26.6.4-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2025-09-30"
 vars:
-  COMMIT_SHA: 8a67e82f8c85b35bbe69dbc9f3cd28aa26c00ebb
+  COMMIT_SHA: dc1bfc54bf1462f7e79822adb4c59aba7e25d50f
   DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "26.6"
   DEBIAN_EPOCH_MAJOR_VERSION: "26"
-  DEBIAN_EPOCH_VERSION: 26.6.3
+  DEBIAN_EPOCH_VERSION: 26.6.4
   JRE_REFERENCE: dhi/eclipse-temurin:21.0.11.10-debian13@sha256:800bdc5077c5bbb1c8bfd6fb3c6009279c6d6502b802be53f7f89b49189d8552
   JRE_VERSION: 21.0.11.10
-  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:b6f1afe18c675aa619a92c7b420b8ac3fb8adeafdd9f899c2577818be8512aab
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:8199c6479653f5e1b1d205c8dfa75cb8f311be8cd942552e2cc01d5c97b7a0e6
   MAVEN_VERSION: 3.9.16
-  VERSION: 26.6.3
+  VERSION: 26.6.4
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -44,7 +44,7 @@ contents:
     - sed
   builds:
     - name: keycloak
-      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:b6f1afe18c675aa619a92c7b420b8ac3fb8adeafdd9f899c2577818be8512aab
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:8199c6479653f5e1b1d205c8dfa75cb8f311be8cd942552e2cc01d5c97b7a0e6
       contents:
         packages:
           - coreutils
@@ -65,28 +65,49 @@ contents:
           - npm
           - yarn-classic
         files:
-          - url: git+https://github.com/keycloak/keycloak.git#26.6.3
-            checksum: 8a67e82f8c85b35bbe69dbc9f3cd28aa26c00ebb
+          - url: git+https://github.com/keycloak/keycloak.git#26.6.4
+            checksum: dc1bfc54bf1462f7e79822adb4c59aba7e25d50f
             path: ${source.dir}/keycloak
             spdx:
               name: keycloak
-              version: 26.6.3
+              version: 26.6.4
               packages:
                 - name: keycloak
-                  purl: pkg:dhi/keycloak@26.6.3
+                  purl: pkg:dhi/keycloak@26.6.4
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-x86_64.jar
+          - url: https://maven-central.storage-download.googleapis.com/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-x86_64.jar
             path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.135.Final-linux-x86_64.jar
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-aarch_64.jar
+          - url: https://maven-central.storage-download.googleapis.com/maven2/io/netty/netty-transport-native-epoll/4.1.135.Final/netty-transport-native-epoll-4.1.135.Final-linux-aarch_64.jar
             path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.135.Final-linux-aarch_64.jar
             uid: 0
             gid: 0
       pipeline:
         - uses: mvn/mirror@v1
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            # Overwrite the Cloudsmith mirror with GCS (public Maven Central
+            # read replica). Used when MAVEN_USER/MAVEN_PASSWORD are unavailable
+            # locally; mirrors the druid pattern for the same reason.
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
         - name: patch
           uses: mvn/patch@v1
           with:
@@ -151,6 +172,21 @@ contents:
             pnpm --filter @keycloak/keycloak-admin-client run generate:openapi
 
             pnpm build
+        - name: remove maven build cache extension
+          work-dir: ${source.dir}/keycloak
+          runs: |
+            set -eux -o pipefail
+
+            # maven-build-cache-extension is not in the DHI Maven mirror and
+            # provides no value in an isolated Docker build (no cache to reuse).
+            # Use local-name() so the XPath matches regardless of whether the
+            # file declares an xmlns or not.
+            ext_xml=".mvn/extensions.xml"
+            if [ -f "${ext_xml}" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='maven-build-cache-extension']" \
+                "${ext_xml}"
+            fi
         - name: build
           work-dir: ${source.dir}/keycloak
           privileged: true
@@ -170,7 +206,7 @@ contents:
             set -eux -o pipefail
 
             mkdir -p "${target.dir}/opt/keycloak"
-            tar -xzf "${source.dir}/keycloak/quarkus/dist/target/keycloak-26.6.3.tar.gz" -C "${target.dir}/opt/keycloak" --strip-components=1
+            tar -xzf "${source.dir}/keycloak/quarkus/dist/target/keycloak-26.6.4.tar.gz" -C "${target.dir}/opt/keycloak" --strip-components=1
 
             "${target.dir}/opt/keycloak/bin/kc.sh" build
 
