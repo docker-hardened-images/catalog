@@ -26,6 +26,8 @@ vars:
   MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:8199c6479653f5e1b1d205c8dfa75cb8f311be8cd942552e2cc01d5c97b7a0e6
   MAVEN_VERSION: 3.9.16
   NIFI_HOME: /opt/nifi/nifi-current
+  PYTHON_REFERENCE: dhi/python:3.13.14-debian13@sha256:f97073bcfd7f380ad2479fc49371709a345763b10687b5bb4b61bbc9a318bfd9
+  PYTHON_VERSION: 3.13.14
   SEMVER_MAJOR_MINOR_VERSION: "2.10"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.10.0
@@ -76,6 +78,7 @@ contents:
           - libstdc++6
           - tar
           - unzip
+          - xmlstarlet
         files:
           - url: git+https://github.com/apache/nifi.git#rel/nifi-2.10.0
             checksum: 2baff691128fa782983fb79bb1087adff027a4c1
@@ -126,6 +129,57 @@ contents:
             dependencies: ${source.dir}/patch/mvn-deps.json
             mvn-root: ${source.dir}/nifi
             properties: ${source.dir}/patch/mvn-properties.json
+        - name: remove develocity maven extension
+          work-dir: ${source.dir}/nifi
+          runs: |
+            set -eux -o pipefail
+
+            # Remove the Gradle Develocity extension — it's optional build analytics tooling
+            # and version 2.1 is not available on Maven Central, causing resolution failures.
+            if [ -f ".mvn/extensions.xml" ]; then
+              xmlstarlet ed -P -L \
+                -d "//*[local-name()='extension'][*[local-name()='groupId'][text()='com.gradle']]" \
+                .mvn/extensions.xml
+            fi
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
+        - name: patch nifi toolkit cli
+          work-dir: ${source.dir}/nifi/nifi-toolkit/nifi-toolkit-cli
+          runs: |
+            set -eux -o pipefail
+
+            xmlstarlet ed -P -L \
+              -N m="http://maven.apache.org/POM/4.0.0" \
+              -u "/m:project/m:properties/m:jline.version" \
+              -v "4.2.1" \
+              pom.xml
+
+            test "$(xmlstarlet sel -N m="http://maven.apache.org/POM/4.0.0" -t -v "/m:project/m:properties/m:jline.version" pom.xml)" = "4.2.1"
+        - name: patch minifi commons daemon download
+          work-dir: ${source.dir}/nifi
+          runs: |
+            set -eux -o pipefail
+
+            file="minifi/minifi-assembly/pom.xml"
+            grep -q "https://repo1.maven.org/maven2/commons-daemon/commons-daemon/" "$file"
+            sed -i 's#https://repo1.maven.org/maven2/commons-daemon/commons-daemon/#https://maven-central.storage-download.googleapis.com/maven2/commons-daemon/commons-daemon/#g' "$file"
+            grep -q "https://maven-central.storage-download.googleapis.com/maven2/commons-daemon/commons-daemon/" "$file"
         - name: build nifi web api
           work-dir: ${source.dir}/nifi/nifi-framework-bundle/nifi-framework/nifi-web/nifi-web-api
           privileged: true
