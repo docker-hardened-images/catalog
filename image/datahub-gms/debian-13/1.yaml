@@ -145,9 +145,9 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # GHSA-72hv-8253-57qq: force jackson-core 2.21.1 at resolution time.
-            # Installed as an init script so the force applies before lock refresh
-            # and is not defeated by --update-locks against the Spring Boot BOM.
+            # GHSA-72hv-8253-57qq + jackson-databind PTV bypass family: force
+            # jackson 2.x to 2.21.4 at resolution time via init script and the
+            # inline build.gradle block below. jackson-annotations is excluded.
             install -D -m 0644 \
               ${source.dir}/patch/force-cve-deps.gradle \
               /root/.gradle/init.d/force-cve-deps.gradle
@@ -188,11 +188,14 @@ contents:
             # spring-webmvc 6.2.18 fixes CVE-2026-22737, -22745, -22735,
             #   -22741.
             # spring-kafka 3.3.16 fixes CVE-2026-41726, CVE-2026-41731.
-            # jackson-core 2.21.1 fixes GHSA-72hv-8253-57qq for the unshaded
-            #   copies via force-cve-deps.gradle (init script). We tried forcing
-            #   here with `--update-locks 'com.fasterxml.jackson.core:*'` but
-            #   Gradle re-resolves the lock against the Spring Boot BOM and
-            #   writes back the BOM-managed 2.19.2, defeating the force. The
+            # jackson-core / jackson-databind 2.21.4 fix GHSA-72hv-8253-57qq
+            #   and the jackson-databind PolymorphicTypeValidator bypass family
+            #   (CVE-2026-54512, -54513, -54514, -54516, -54517, -54518) for the
+            #   unshaded copies via force-cve-deps.gradle (init script). We tried
+            #   forcing here with `--update-locks 'com.fasterxml.jackson.core:*'`
+            #   but Gradle re-resolves the lock against the Spring Boot BOM and
+            #   writes back the BOM-managed version, defeating the force.
+            #   CVE-2026-54515 (fix 2.21.5 unpublished) is handled via VEX. The
             #   shaded 2.15.2 Hazelcast copy is handled separately via VEX
             #   because Gradle cannot reach it.
             # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
@@ -234,6 +237,11 @@ contents:
                                 && req.name.startsWith('spring-kafka')) {
                             details.useVersion '3.3.16'
                             details.because 'DHI CVE remediation: CVE-2026-41726, CVE-2026-41731'
+                        }
+                        if (req.group != null && req.group.startsWith('com.fasterxml.jackson')
+                                && req.name != 'jackson-annotations') {
+                            details.useVersion '2.21.4'
+                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518'
                         }
                         if (req.group == 'org.apache.logging.log4j'
                                 && req.name.startsWith('log4j-')) {
@@ -284,21 +292,15 @@ contents:
             # --max-workers=4 this trims ~30 min off the cold build and
             # keeps us under the Docker Build Cloud 90-min cap.
             #
-            # `--update-locks` lets Gradle's dependency-locking refresh the
-            # pinned versions for the modules we bumped (and their transitive
-            # children). Without this, `gradle.lockfile` entries override our
-            # build.gradle bumps and fail with "strictly X" constraint errors.
-            #
-            # Removed com.fasterxml.jackson.core:* and
-            # com.fasterxml.jackson.dataformat:* from the update-locks list
-            # so the force-cve-deps.gradle init script force to 2.21.1
-            # (GHSA-72hv-8253-57qq) is not defeated by lock refresh against
-            # the Spring Boot BOM.
+            # `--update-locks` refreshes lockfile entries for modules we bump.
+            # Jackson groups are included so stale 2.21.3 lock pins are rewritten
+            # while the inline force above (and force-cve-deps.gradle init script)
+            # hold resolution at 2.21.4.
             ./gradlew --init-script ${source.dir}/files/init.gradle \
               :metadata-service:war:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
               --no-daemon --console=plain
         - name: stage runtime files
           runs: |
