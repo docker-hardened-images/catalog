@@ -113,6 +113,34 @@ contents:
                 buildscript.repositories.configureEach(mirrorMavenCentral)
                 repositories.configureEach(mirrorMavenCentral)
             }
+
+            // jackson-databind PolymorphicTypeValidator bypass family
+            // (CVE-2026-54512, -54513, -54514, -54516, -54517, -54518) plus
+            // GHSA-72hv-8253-57qq (jackson-core DoS). Force databind/core to
+            // 2.21.4 across all Kafka versions (4.1/4.2/4.3 use a single
+            // `jackson` catalog property, so this version-agnostic force avoids
+            // a per-version patch). Also force jackson-annotations to 2.21:
+            // annotations has no 2.21.4 artifact on Maven Central, but databind
+            // 2.21.4 requires JsonSerializeAs from annotations 2.21+ at build
+            // time (MessageGenerator / processMessages). CVE-2026-54515's fix
+            // (2.21.5) is unpublished and is documented via VEX.
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        if (details.requested.group == "com.fasterxml.jackson.core" &&
+                                (details.requested.name == "jackson-databind" ||
+                                 details.requested.name == "jackson-core")) {
+                            details.useVersion("2.21.4")
+                            details.because("CVE remediation: GHSA-72hv-8253-57qq, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518")
+                        }
+                        if (details.requested.group == "com.fasterxml.jackson.core" &&
+                                details.requested.name == "jackson-annotations") {
+                            details.useVersion("2.21")
+                            details.because("align jackson-annotations with jackson-databind 2.21.4 for MessageGenerator")
+                        }
+                    }
+                }
+            }
             EOF
         - name: build kafka distribution
           work-dir: ${source.dir}/kafka
