@@ -93,7 +93,7 @@ docker run --rm --network container:redis-for-testing \
 | Shell access    | Full shell (bash/sh) available      | No shell in runtime variants                                                |
 | Package manager | apt/apk available                   | No package manager in runtime variants                                      |
 | User            | Runs as root by default             | Runs as nonroot user for enhanced security and principle of least privilege |
-| Attack surface  | Larger due to additional utilities  | Minimal, only contains essential components                                 |
+| Attack surface  | Larger due to additional utilities  | Minimal Redis toolkit plus base runtime components                          |
 | Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting                         |
 
 ### Why no shell or package manager?
@@ -124,7 +124,7 @@ or mount debugging tools with the Image Mount feature:
 
 ```
 docker run --rm -it --pid container:my-redis \
-  --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
+  --mount=type=image,source=dhi.io/busybox:1,destination=/dbg,ro \
   dhi.io/redis:<tag> /dbg/bin/sh
 ```
 
