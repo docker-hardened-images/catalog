@@ -1,0 +1,145 @@
+# syntax=dhi.io/build:2-debian13
+
+name: stunnel 5.x (dev)
+image: dhi.io/stunnel
+variant: dev
+tags:
+  - 5-dev
+  - 5.78-dev
+  - 5-debian-dev
+  - 5-debian13-dev
+  - 5.78-debian-dev
+  - 5.78-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-09"
+vars:
+  COMMIT_SHA: 4c8a77e374ae3326a52d2f90c1e5248079aee008
+  MAJOR_VERSION: "5"
+  VERSION: "5.78"
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libssl3t64
+    - mawk
+    - perl-base
+    - sed
+    - tini
+    - util-linux
+  builds:
+    - name: stunnel
+      work-dir: ${source.dir}/stunnel-4c8a77e374ae3326a52d2f90c1e5248079aee008
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - gcc
+          - git
+          - grep
+          - libssl-dev
+          - make
+          - openssl
+          - pkg-config
+          - sed
+        files:
+          - url: git+https://github.com/mtrojnar/stunnel.git#stunnel-5.78
+            checksum: 4c8a77e374ae3326a52d2f90c1e5248079aee008
+            path: ${source.dir}/stunnel-4c8a77e374ae3326a52d2f90c1e5248079aee008
+            spdx:
+              name: stunnel
+              version: "5.78"
+              packages:
+                - name: stunnel
+                  purl: pkg:github/mtrojnar/stunnel@5.78
+                  license: GPL-2.0-or-later
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: configure and build
+          runs: |
+            set -eux -o pipefail
+
+            # The git tag ships pre-generated autotools artifacts (configure,
+            # aclocal.m4, all *.in files including doc man-page intermediates).
+            # git clone does not preserve their relative timestamps, which
+            # makes Make think they are stale and trigger regeneration via
+            # autotools/pandoc — neither of which are installed. Touch every
+            # generated file so Make uses the committed copies as-is.
+            shopt -s globstar nullglob
+            touch aclocal.m4 configure **/*.in
+
+            ./configure \
+              --prefix=/usr \
+              --sysconfdir=/etc \
+              --disable-systemd \
+              --disable-libwrap \
+              --enable-fips
+
+            make -j"$(nproc)"
+
+            make install DESTDIR="${target.dir}"
+      outputs:
+        - source: ${target.dir}/usr/bin/stunnel
+          target: /usr/bin/stunnel
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/stunnel
+          target: /opt/docker/sbom/stunnel
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /etc/stunnel
+    uid: 0
+    gid: 0
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal stunnel image
+  org.opencontainers.image.licenses: GPL-2.0-or-later
+entrypoint:
+  - /usr/bin/tini
+  - -g
+  - /usr/bin/stunnel
+  - --
+cmd:
+  - /etc/stunnel/stunnel.conf
