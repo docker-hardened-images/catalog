@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Node Problem Detector 1.35.x
+image: dhi.io/node-problem-detector
+variant: runtime
+tags:
+  - "1"
+  - "1.35"
+  - 1.35.2
+  - 1-debian
+  - 1-debian13
+  - 1.35-debian
+  - 1.35-debian13
+  - 1.35.2-debian
+  - 1.35.2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-30"
+vars:
+  COMMIT_SHA: 4fc545379946d4df24b495e77b7656c49883b77e
+  SEMVER_MAJOR_MINOR_VERSION: "1.35"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.35.2
+  VERSION: 1.35.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - libc6
+    - libsystemd0
+    - tzdata
+    - util-linux
+  builds:
+    - name: node-problem-detector
+      work-dir: /go/src/k8s.io/node-problem-detector
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - libsystemd-dev
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/kubernetes/node-problem-detector.git#v1.35.2
+            checksum: 4fc545379946d4df24b495e77b7656c49883b77e
+            path: /go/src/k8s.io/node-problem-detector
+            spdx:
+              name: node-problem-detector
+              version: 1.35.2
+              packages:
+                - name: node-problem-detector
+                  purl: pkg:golang/k8s.io/node-problem-detector@1.35.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - google.golang.org/grpc@v1.79.3
+              - go.opentelemetry.io/otel@v1.41.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -tags journald -count=1 ./pkg/...
+        - name: build node-problem-detector
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.35.2
+            output: ${target.dir}/node-problem-detector
+            packages: ./cmd/nodeproblemdetector
+            tags: journald
+        - name: build health-checker
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.35.2
+            output: ${target.dir}/home/kubernetes/bin/health-checker
+            packages: ./cmd/healthchecker/health_checker.go
+            tags: journald
+        - name: build log-counter
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.35.2
+            output: ${target.dir}/home/kubernetes/bin/log-counter
+            packages: ./cmd/logcounter/log_counter.go
+            tags: journald
+      outputs:
+        - source: ${target.dir}/node-problem-detector
+          target: /node-problem-detector
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/home/kubernetes/bin/health-checker
+          target: /home/kubernetes/bin/health-checker
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/home/kubernetes/bin/log-counter
+          target: /home/kubernetes/bin/log-counter
+          uid: 0
+          gid: 0
+        - source: /go/src/k8s.io/node-problem-detector/config
+          target: /config
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal Node Problem Detector image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /node-problem-detector
+  - --config.system-log-monitor=/config/kernel-monitor.json,/config/readonly-monitor.json
