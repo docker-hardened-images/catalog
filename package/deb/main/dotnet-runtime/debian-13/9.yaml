@@ -1,0 +1,106 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-dotnet-runtime
+variant: runtime
+tags:
+  - 9.0.17-0
+  - 9.0.17-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  DHI_REL: "0"
+  DHI_VERSION: 9.0.17-0
+  PACKAGE_NAME: dotnet-runtime-9
+  SEMVER_MAJOR_VERSION: "9"
+  VERSION: 9.0.17
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: dotnet-runtime-9
+      work-dir: ${source.dir}/dotnet-runtime-9
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - jq
+          - tar
+        files:
+          - url: https://raw.githubusercontent.com/dotnet/core/refs/heads/main/release-notes/9.0/releases.json
+            path: ${source.dir}/releases.json
+            uid: 0
+            gid: 0
+          - url: https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.17/dotnet-runtime-9.0.17-linux-${ARCH}.tar.gz
+            path: ${source.dir}/dotnet-runtime-9.tar.gz
+            spdx:
+              name: dotnet-runtime
+              version: 9.0.17
+              packages:
+                - name: dotnet-runtime
+                  purl: pkg:dhi/microsoft/dotnet-runtime@9.0.17
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify
+          runs: |
+            set -eux -o pipefail
+
+            HASH="$(jq -r --arg version "9.0.17" --arg arch "${ARCH}" \
+              '.releases[] | select(.["release-version"] == $version) | .runtime.files[] | select(.name == ("dotnet-runtime-linux-" + $arch + ".tar.gz")) | .hash' \
+              "${source.dir}/releases.json")"
+            test -n "${HASH}"
+            echo "${HASH}  ${source.dir}/dotnet-runtime-9.tar.gz" | sha512sum -c -
+        - name: setup
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf "${source.dir}/dotnet-runtime-9.tar.gz" --strip-components=1
+
+            sed -i -e "s/@PACKAGE_NAME@/dotnet-runtime-9/g" \
+              -e "s/@MAJOR_VERSION@/9/g" \
+              debian/control.in debian/changelog \
+              debian/dotnet-runtime.install.in \
+              debian/dotnet-runtime-oci-config.install.in
+            mv debian/control.in debian/control
+            mv debian/dotnet-runtime.install.in "debian/dotnet-runtime-9.install"
+            mv debian/dotnet-runtime-oci-config.install.in "debian/dotnet-runtime-9-oci-config.install"
+        - name: generate oci config
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p oci-config
+            cat > "oci-config/dotnet-runtime-9.yaml" << EOF
+            environment:
+              DOTNET_ROOT: /usr/lib/dotnet
+              DOTNET_VERSION: 9.0.17
+              PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            EOF
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 9.0.17-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/dotnet-runtime-9/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/dotnet-runtime/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
