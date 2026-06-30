@@ -1,0 +1,101 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-nvflare
+variant: runtime
+tags:
+  - 2.8.0-alpine3.24
+  - 2.8.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.8"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.8.0
+  VERSION: 2.8.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: nvflare
+      contents:
+        packages:
+          - python3
+          - py3-pip
+          - python3-dev
+          - gcc
+          - musl-dev
+          - libffi-dev
+          - openssl-dev
+          - ca-certificates
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv "${target.dir}/opt/nvflare"
+        - name: install nvflare
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/opt/nvflare/bin/pip" install --no-cache-dir \
+              "pip>=26.1.2" # CVE-2025-8869 CVE-2026-1703 CVE-2026-3219 CVE-2026-6357 CVE-2026-8643
+            "${target.dir}/opt/nvflare/bin/pip" install --no-cache-dir "nvflare[K8S]==2.8.0"
+            "${target.dir}/opt/nvflare/bin/pip" install --no-cache-dir \
+              "flask>=3.1.3" # CVE-2026-27205
+        - name: fix venv shebangs
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/nvflare/bin"/*; do
+              [ -f "$f" ] || continue
+              read -r line < "$f"
+              case "$line" in
+                "#!${target.dir}"*) sed -i "1s|#!${target.dir}|#!|" "$f" ;;
+              esac
+            done
+        - name: clean python cache
+          runs: |
+            set -eux -o pipefail
+
+            find "${target.dir}/opt/nvflare" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf /opt/nvflare/bin/nvflare "${target.dir}/usr/bin/nvflare"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python3
+            description: NVIDIA Federated Learning Application Runtime Environment
+            files:
+              - usr
+              - opt
+            formats:
+              - apk
+            license: Apache-2.0
+            name: nvflare
+            rel: 0
+            url: https://nvidia.github.io/NVFlare/
+            version: 2.8.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
