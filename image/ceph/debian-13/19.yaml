@@ -20,16 +20,27 @@ dates:
   release: "2023-12-04"
 vars:
   COMMIT_SHA: 6850bc28ae3fc583b01c56a0c95b424227ca3820
-  PYTHON_BUILD_REFERENCE: dhi/python:3.13.14-debian13-dev@sha256:9c3e8a019237e3e248cf7d1d97773a828d09b3fd53585cdb1eb1e20c00980d0f
-  PYTHON_REFERENCE: dhi/python:3.13.14-debian13@sha256:f97073bcfd7f380ad2479fc49371709a345763b10687b5bb4b61bbc9a318bfd9
   SEMVER_MAJOR_MINOR_VERSION: "19.3"
   SEMVER_MAJOR_VERSION: "19"
   SEMVER_VERSION: 19.3.0
   VERSION: 19.3.0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - '!base-files'
+    - '!libpython3-stdlib'
+    - '!libpython3.13-minimal'
+    - '!libpython3.13-stdlib'
+    - '!python3'
+    - '!python3-minimal'
+    - '!python3.13'
+    - '!python3.13-minimal'
+    - '!python3.13-stdlib'
+    - base-files
     - bash
+    - ca-certificates-bundle
     - coreutils
     - findutils
     - grep
@@ -75,7 +86,13 @@ contents:
     - libtinfo6
     - libudev1
     - logrotate
+    - python-3.13
+    - python-3.13-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
     - sed
+    - tzdata
   builds:
     - name: ceph
       work-dir: ${source.dir}/ceph
@@ -83,6 +100,20 @@ contents:
         - path: /ccache
       contents:
         packages:
+          - '!libpython3-stdlib'
+          - '!libpython3.13-minimal'
+          - '!libpython3.13-stdlib'
+          - '!python3-minimal'
+          - '!python3'
+          - '!python3.13-minimal'
+          - '!python3.13-stdlib'
+          - '!python3.13-minimal'
+          - '!python3.13'
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
           - build-essential
           - g++
           - gcc
@@ -114,6 +145,7 @@ contents:
           - socat
           - iproute2
           - jsonnet
+          - gawk
           - libaio-dev
           - libblkid-dev
           - libc-ares-dev
@@ -196,13 +228,6 @@ contents:
                   license: LGPL-2.1
             uid: 0
             gid: 0
-        artifacts:
-          - name: dhi.io/python:3.13.14-debian13-dev@sha256:9c3e8a019237e3e248cf7d1d97773a828d09b3fd53585cdb1eb1e20c00980d0f
-            includes:
-              - opt/**
-              - usr/**
-            uid: 0
-            gid: 0
       pipeline:
         - name: install Python build dependencies
           privileged: true
@@ -210,22 +235,16 @@ contents:
             set -eux -o pipefail
 
             # CMake's FindCython.cmake uses ${Python3_EXECUTABLE} -m cython --version
-            # The cython3 package installs for system Python, but we use Python artifact
-            # Install Cython for the artifact Python so CMake can find it
-            /opt/python/bin/python3 -m pip install --no-cache-dir Cython==3.2.4
+            pip install --no-cache-dir Cython==3.2.4
 
             # Install sphinx-build for documentation generation (CMake requires it)
             # CMake looks for sphinx-build executable, install sphinx which provides it
-            /opt/python/bin/python3 -m pip install --no-cache-dir sphinx
+            pip install --no-cache-dir sphinx
 
             # Install PyYAML - required by build scripts (y2c.py)
-            /opt/python/bin/python3 -m pip install --no-cache-dir PyYAML
+            pip install --no-cache-dir PyYAML
 
-            # Install setuptools - provides distutils compatibility shim for Python 3.12+
-            # Ceph's Cython build scripts use distutils.core.setup which was removed in Python 3.12
-            /opt/python/bin/python3 -m pip install --no-cache-dir setuptools
-
-            /opt/python/bin/python3 -m pip install --no-cache-dir prettytable
+            pip install --no-cache-dir prettytable
         - name: patch boost url list for ceph 19
           uses: git/patch@v1
           work-dir: ${source.dir}/ceph
@@ -268,9 +287,6 @@ contents:
             # Initialize git submodules like in https://github.com/ceph/ceph/blob/main/do_cmake.sh#L5
             git submodule update --init --recursive --recommend-shallow --progress
 
-            # Add Python artifact bin to PATH so CMake can find sphinx-build
-            export PATH="/opt/python/bin:${PATH}"
-
             # Also create a separate build dir
             mkdir -p build
 
@@ -280,7 +296,7 @@ contents:
               -GNinja
               -DCMAKE_BUILD_TYPE=Release
               -DWITH_PYTHON3=3.13
-              -DPython3_EXECUTABLE=/opt/python/bin/python3
+              -DPython3_EXECUTABLE=/usr/bin/python3
               -DWITH_CCACHE=ON
               -DCMAKE_CXX_COMPILER=g++
               -DCMAKE_C_COMPILER=gcc
@@ -300,9 +316,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Add Python artifact bin to PATH for build scripts
-            export PATH="/opt/python/bin:${PATH}"
-
             # Build with ninja using available cores.
             # Some C++ translation units (RGW, Boost.Asio templates) use 4-5 GiB each;
             # ensure the builder has sufficient memory (cloud builder recommended).
@@ -312,8 +325,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            export PATH="/opt/python/bin:${PATH}"
-
             # Install Ceph binaries and libraries
             DESTDIR="${target.dir}" ninja install
 
@@ -321,7 +332,7 @@ contents:
             # prettytable is required by ceph_daemon.py (imported by the ceph CLI).
             # It was pip-installed into the build Python during the earlier step.
             SITE_PKG="${target.dir}/usr/local/lib/python3.13/site-packages"
-            BUILD_SITE="/opt/python/lib/python3.13/site-packages"
+            BUILD_SITE="/usr/lib/python3.13/site-packages"
             cp -r "${BUILD_SITE}"/prettytable "${SITE_PKG}/"
             cp -r "${BUILD_SITE}"/prettytable-*.dist-info "${SITE_PKG}/"
             cp -r "${BUILD_SITE}"/wcwidth "${SITE_PKG}/"
@@ -334,7 +345,7 @@ contents:
             #!/bin/sh
             export PYTHONPATH="/usr/local/lib/python3.13/site-packages${PYTHONPATH:+:${PYTHONPATH}}"
             export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib/ceph${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-            exec /opt/python/bin/python3 /usr/local/bin/ceph.real "$@"
+            exec /usr/bin/python3 /usr/local/bin/ceph.real "$@"
             EOF
             install -m 0755 "${target.dir}/usr/local/bin/ceph-wrapper.sh" "${target.dir}/usr/local/bin/ceph"
             rm "${target.dir}/usr/local/bin/ceph-wrapper.sh"
@@ -400,13 +411,6 @@ contents:
           target: /opt/docker/sbom/ceph
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/python:3.13.14-debian13@sha256:f97073bcfd7f380ad2479fc49371709a345763b10687b5bb4b61bbc9a318bfd9
-      includes:
-        - opt/**
-        - usr/**
-      uid: 0
-      gid: 0
 accounts:
   run-as: ceph
   users:
@@ -428,7 +432,6 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   LD_LIBRARY_PATH: /usr/local/lib
-  PATH: /opt/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   PYTHONPATH: /usr/local/lib/python3.13/site-packages
 paths:
   - type: directory
