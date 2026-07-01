@@ -9,6 +9,9 @@ The following Docker Hardened Helm charts are used in this Helm chart:
 - `dhi/node-exporter-chart`
 - `dhi/grafana-chart`
 
+> **Note:** Unlike the upstream chart, this chart does not include the `prometheus-windows-exporter` subchart. As a
+> result, Windows monitoring cannot be enabled (`windowsMonitoring.enabled: false`).
+
 The following Docker Hardened Images are used in this Helm chart:
 
 - `dhi/busybox`

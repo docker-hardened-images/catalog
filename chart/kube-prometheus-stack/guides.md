@@ -46,6 +46,9 @@ helm install my-kube-prometheus-stack oci://dhi.io/kube-prometheus-stack-chart -
 Replace `<version>` with the chart version. Replace `dhi.io` and `helm-pull-secret` if using your own registry or
 secret.
 
+> **Note:** Windows monitoring is disabled by default (`windowsMonitoring.enabled: false`) and should not be enabled, as
+> this chart does not include the `prometheus-windows-exporter` subchart.
+
 #### Step 4: Verify the installation
 
 Check that the stack components are running:
