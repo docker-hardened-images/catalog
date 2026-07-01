@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-debian13
+
+name: OpenMetadata 1.12.x
+image: dhi.io/openmetadata
+variant: runtime
+tags:
+  - "1.12"
+  - 1.12.12
+  - 1.12-debian
+  - 1.12-debian13
+  - 1.12.12-debian
+  - 1.12.12-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-22"
+vars:
+  ANTLR_VERSION: 4.9.2
+  COMMIT_SHA: 5b4fe8c446e0e356b89f51de67178206feddb29a
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:8199c6479653f5e1b1d205c8dfa75cb8f311be8cd942552e2cc01d5c97b7a0e6
+  SEMVER_MAJOR_MINOR_VERSION: "1.12"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.12.12
+  VERSION: 1.12.12
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - tzdata
+  builds:
+    - name: openmetadata
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:8199c6479653f5e1b1d205c8dfa75cb8f311be8cd942552e2cc01d5c97b7a0e6
+      work-dir: ${source.dir}/OpenMetadata
+      environment:
+        NODE_OPTIONS: --max-old-space-size=6144
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - gzip
+          - tar
+        files:
+          - url: git+https://github.com/open-metadata/OpenMetadata.git#1.12.12-release
+            checksum: 5b4fe8c446e0e356b89f51de67178206feddb29a
+            path: ${source.dir}/OpenMetadata
+            spdx:
+              name: openmetadata
+              version: 1.12.12
+              packages:
+                - name: openmetadata
+                  purl: pkg:github/open-metadata/OpenMetadata@1.12.12
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://www.antlr.org/download/antlr-4.9.2-complete.jar
+            checksum: sha256:bb117b1476691dc2915a318efd36f8957c0ad93447fb1dac01107eb15fe137cd
+            path: ${source.dir}/antlr4.jar
+            spdx:
+              name: antlr4
+              version: 4.9.2
+              packages:
+                - name: antlr4
+                  purl: pkg:maven/org.antlr/antlr4@4.9.2
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install antlr cli
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/antlr
+            cp ${source.dir}/antlr4.jar /opt/antlr/antlr4.jar
+            printf '#!/bin/sh\nexec java -jar /opt/antlr/antlr4.jar "$@"\n' > /usr/local/bin/antlr4
+            chmod 0755 /usr/local/bin/antlr4
+        - name: patch maven properties
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/OpenMetadata
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git config --global --add safe.directory '*'
+            mvn -DskipTests -B clean package
+            mkdir -p ${target.dir}/opt/openmetadata
+            tar zxvf openmetadata-dist/target/openmetadata-*.tar.gz \
+              -C ${target.dir}/opt/openmetadata --strip-components 1
+            mkdir -p ${target.dir}/opt/openmetadata/logs
+            install -m 0755 docker/openmetadata-start.sh ${target.dir}/openmetadata-start.sh
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: image/openmetadata/patch/mvn-properties.json
+      outputs:
+        - source: ${target.dir}/opt/openmetadata
+          target: /opt/openmetadata
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/openmetadata-start.sh
+          target: /openmetadata-start.sh
+          uid: 0
+          gid: 0
+          mode: "755"
+        - source: /opt/docker/sbom/openmetadata
+          target: /opt/docker/sbom/openmetadata
+          uid: 0
+          gid: 0
+accounts:
+  run-as: openmetadata
+  users:
+    - name: openmetadata
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: openmetadata
+      gid: 1000
+      members:
+        - openmetadata
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/openmetadata
+paths:
+  - type: directory
+    path: /opt/openmetadata/logs
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: A minimal OpenMetadata image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /bin/bash
+cmd:
+  - /openmetadata-start.sh
+ports:
+  - 8585/tcp
+  - 8586/tcp
