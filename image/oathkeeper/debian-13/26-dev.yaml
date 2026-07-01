@@ -1,0 +1,173 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Ory Oathkeeper 26.x (dev)
+image: dhi.io/oathkeeper
+variant: dev
+tags:
+  - 26-dev
+  - 26.2-dev
+  - 26.2.0-dev
+  - 26-debian-dev
+  - 26-debian13-dev
+  - 26.2-debian-dev
+  - 26.2-debian13-dev
+  - 26.2.0-debian-dev
+  - 26.2.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-20"
+vars:
+  COMMIT_SHA: c84dbe07ecbf6f10154f04ec49b137a115155289
+  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:dd625ea57c53fae1bd65b3c6c1406a607035b5883edbaf0409c29aed8026e5ed
+  SEMVER_MAJOR_MINOR_VERSION: "26.2"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.2.0
+  VERSION: 26.2.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: oathkeeper
+      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:dd625ea57c53fae1bd65b3c6c1406a607035b5883edbaf0409c29aed8026e5ed
+      work-dir: /go/src/github.com/ory/oathkeeper
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates-bundle
+        files:
+          - url: git+https://github.com/ory/oathkeeper.git#v26.2.0
+            checksum: c84dbe07ecbf6f10154f04ec49b137a115155289
+            path: /go/src/github.com/ory/oathkeeper
+            spdx:
+              name: oathkeeper
+              version: 26.2.0
+              packages:
+                - name: oathkeeper
+                  purl: pkg:golang/github.com/ory/oathkeeper@26.2.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel@v1.43.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -short ./helper/... -count=1
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/ory/oathkeeper/x.Version=26.2.0
+              - -X github.com/ory/oathkeeper/x.Commit=c84dbe07ecbf6f10154f04ec49b137a115155289
+            output: ${target.dir}/usr/local/bin/oathkeeper
+            packages: .
+      outputs:
+        - source: ${target.dir}/usr/local/bin/oathkeeper
+          target: /usr/local/bin/oathkeeper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/oathkeeper
+          target: /opt/docker/sbom/oathkeeper
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+annotations:
+  org.opencontainers.image.description: A minimal Ory Oathkeeper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - oathkeeper
+cmd:
+  - serve
+ports:
+  - 4455/tcp
+  - 4456/tcp
