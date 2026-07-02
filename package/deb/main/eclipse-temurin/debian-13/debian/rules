@@ -20,23 +20,27 @@ override_dh_dwz:
 override_dh_shlibdeps:
 
 override_dh_auto_install:
-	mkdir -p debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)
-	# Stage the extracted JDK/JRE tree. Exclude debian/ and the pipeline-generated
-	# fips/ and oci-config/ staging dirs (those ship in their own packages).
+	mkdir -p debian/tmp/$(JAVA_DST_DIR)
+	# Stage the extracted JDK/JRE tree under /usr/lib/jvm/temurin-<major>. Exclude
+	# debian/ and the pipeline-generated fips/ and oci-config/ staging dirs (those
+	# ship in their own packages).
 	find . -maxdepth 1 -mindepth 1 ! -name debian ! -name fips ! -name oci-config \
-		-exec cp -a {} debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/ \;
-	# Expose the JVM tools on PATH via /usr/bin symlinks (FHS-friendly). The JRE
-	# only ships a subset, so guard each tool with a presence check.
+		-exec cp -a {} debian/tmp/$(JAVA_DST_DIR)/ \;
+	rm -f debian/tmp/$(JAVA_DST_DIR)/lib/src.zip
+	# Expose the JVM tools on PATH via /usr/bin symlinks (FHS-canonical; a package
+	# may not write /usr/local, which dh_usrlocal enforces). The JRE only ships a
+	# subset of the tools, so the glob adapts to whatever this variant provides.
 	mkdir -p debian/tmp/usr/bin
-	for tool in java javac jar jcmd jdeps jfr jimage jinfo jlink jmap jmod jps jrunscript jshell jstack jstat jstatd keytool rmiregistry; do \
-		if [ -e debian/tmp/usr/lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/bin/$$tool ]; then \
-			ln -sf ../lib/jvm/temurin-$(JAVA_MAJOR_VERSION)/bin/$$tool debian/tmp/usr/bin/$$tool; \
-		fi; \
+	for tool in debian/tmp/$(JAVA_DST_DIR)/bin/*; do \
+		[ -f "$$tool" ] || [ -L "$$tool" ] || continue; \
+		b="$$(basename "$$tool")"; \
+		ln -sf /$(JAVA_DST_DIR)/bin/$$b debian/tmp/usr/bin/$$b; \
 	done
 	# Stage the pre-generated OCI config(s) for the -oci-config / -fips-oci-config packages.
 	mkdir -p debian/tmp/opt/docker/config
 	cp oci-config/*.yaml debian/tmp/opt/docker/config/
 	# Stage the FIPS payload (BouncyCastle jars + BCFKS store + security config)
-	# for the -fips package.
+	# for the -fips package, under /usr/lib/bouncycastle (kept out of the base JVM
+	# tree so each file is owned by exactly one .deb).
 	mkdir -p debian/tmp/usr/lib/bouncycastle
 	cp -a fips/. debian/tmp/usr/lib/bouncycastle/
