@@ -59,7 +59,7 @@ spec:
         privileged: true
       env:
         - name: DRBDSETUP_LOCATION
-          value: /usr/local/sbin/drbdsetup
+          value: /usr/sbin/drbdsetup
       volumeMounts:
         - name: run-systemd-system
           mountPath: /run/systemd/system
@@ -82,9 +82,9 @@ spec:
 
 ### Environment variables
 
-| Variable             | Description                    | Default                     | Required |
-| -------------------- | ------------------------------ | --------------------------- | -------- |
-| `DRBDSETUP_LOCATION` | Path to the `drbdsetup` binary | `/usr/local/sbin/drbdsetup` | No       |
+| Variable             | Description                    | Default               | Required |
+| -------------------- | ------------------------------ | --------------------- | -------- |
+| `DRBDSETUP_LOCATION` | Path to the `drbdsetup` binary | `/usr/sbin/drbdsetup` | No       |
 
 ## Non-hardened images vs. Docker Hardened Images
 
