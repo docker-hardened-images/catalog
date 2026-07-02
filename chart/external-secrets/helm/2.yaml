@@ -1,0 +1,99 @@
+# syntax=dhi.io/build:2-helm3
+
+name: External Secrets Operator Helm chart 2.x
+image: dhi.io/external-secrets-chart
+variant: helm
+tags:
+  - 2.5.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: 121b460ff6537dac0a7522a57e595ad7085cab43
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  EXTERNAL_SECRETS_REFERENCE: dhi/external-secrets:2.5.0-debian13
+  HELM_REFERENCE: dhi/helm:3.21.0-debian13-dev@sha256:f4a916b146b07955a0f7f705854bfda3af7853e4cedb839335d4d269004cbf00
+  SEMVER_MAJOR_MINOR_VERSION: "2.5"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.5.0
+  VERSION: 2.5.0
+contents:
+  builds:
+    - name: external-secrets
+      uses: dhi.io/helm:3.21.0-debian13-dev@sha256:f4a916b146b07955a0f7f705854bfda3af7853e4cedb839335d4d269004cbf00
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - coreutils
+          - grep
+          - libc-bin
+          - sed
+        files:
+          - url: git+https://github.com/external-secrets/external-secrets.git#helm-chart-2.5.0
+            checksum: 121b460ff6537dac0a7522a57e595ad7085cab43
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts/external-secrets
+          with:
+            chart:
+              appRef: external-secrets
+              description: Docker Hardened Images Helm chart for External Secrets Operator
+              images:
+                - name: external-secrets
+                  ref: dhi/external-secrets:2.5.0-debian13
+              name: external-secrets-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/external-secrets/external-secrets
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts/external-secrets
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: blank 3rd party images
+          work-dir: ${source.dir}/helm-charts/deploy/charts/external-secrets
+          runs: |
+            set -eux -o pipefail
+
+            yq eval 'del(.dependencies)' Chart.yaml \
+              | awk '{print} END{print ""}' > tmp && mv tmp Chart.yaml
+        - name: update dependencies
+          uses: helm/cmd@v1
+          with:
+            chart: ${source.dir}/helm-charts/deploy/charts/external-secrets
+            cmd: dependency update
+        - name: generate CRDs
+          runs: |
+            set -eux -o pipefail
+
+            cd ${source.dir}/helm-charts
+
+            make helm.generate
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts
+          with:
+            chart: external-secrets
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: ${source.dir}/helm-charts/deploy/charts/external-secrets
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/external-secrets/config
