@@ -18,7 +18,10 @@ dates:
   end-of-life: "2026-10-14"
 vars:
   BASE_REFERENCE: dhi/static:20250419-glibc-debian13@sha256:c15d7b64f2933c44a0572422287bfa97eb43bfb1c5e15c1b82e997bc5a1ba16d
-  ENVOY_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch_64" }'
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 7.7.1
+  CLANG_VERSION: "18"
+  COMMIT_SHA: 57198c441a298a75097c690726d90974549a9778
   SEMVER_MAJOR_MINOR_VERSION: "1.36"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.36.9
@@ -29,29 +32,51 @@ contents:
   keyring:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - '!base-files'
+    - base-files
+    - ca-certificates-bundle
+    - libc6
+    - tzdata
   builds:
     - name: envoy
+      shell: /bin/bash
+      caches:
+        - path: /bazel-disk-cache
+        - path: /bazel-repo-cache
       contents:
         packages:
-          - coreutils
+          - autoconf
+          - automake
           - bash
+          - build-essential
+          - ca-certificates
+          - clang-18
+          - cmake
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - golang-1.26
           - grep
+          - gzip
+          - libc++-18-dev
+          - libc++abi-18-dev
+          - libclang-18-dev
+          - lld-18
+          - llvm-18-dev
+          - libtool
           - mawk
-          - dirmngr
-          - gpg
-          - gpg-agent
+          - ninja-build
+          - patch
+          - patchelf
+          - pkg-config
+          - python-3.13
+          - sed
+          - unzip
+          - zip
         files:
-          - url: https://github.com/envoyproxy/envoy/releases/download/v1.36.9/checksums.txt.asc
-            path: ${source.dir}/checksums.txt.asc
-            uid: 0
-            gid: 0
-          - url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x0AFCE836BA4D1D35763C8523D8CDC3750181F31F
-            path: ${source.dir}/envoy-maintainers.gpg
-            uid: 0
-            gid: 0
-          - url: https://github.com/envoyproxy/envoy/releases/download/v1.36.9/envoy-1.36.9-linux-${ENVOY_ARCH}
-            path: ${source.dir}/envoy-1.36.9-linux-${ENVOY_ARCH}
+          - url: git+https://github.com/envoyproxy/envoy.git#v1.36.9
+            checksum: 57198c441a298a75097c690726d90974549a9778
+            path: ${source.dir}/envoy
             spdx:
               name: envoy
               version: 1.36.9
@@ -61,33 +86,132 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/7.7.1/bazel-7.7.1-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
       pipeline:
-        - name: verify
+        - name: setup
+          work-dir: ${source.dir}/envoy
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            # GPG verification
-            gpg --batch --yes --import envoy-maintainers.gpg
-            gpg --batch --yes --output checksums.txt --decrypt checksums.txt.asc
-
-            # Extract and rewrite checksum line
-            awk "/envoy-1.36.9-linux-${ENVOY_ARCH}\$/ {
-              printf \"%s  envoy-%s-linux-%s\\n\", \$1, \"1.36.9\", \"${ENVOY_ARCH}\"
-            }" checksums.txt > checksum-single.txt
-
-            [ -s checksum-single.txt ] || {
-              echo "Error: Checksum for envoy-1.36.9-linux-${ENVOY_ARCH} not found in checksums.txt.asc"
-              exit 1
-            }
-
-            # Validate directly in ${source.dir}
-            sha256sum -c checksum-single.txt
-        - name: install
+            # Envoy <=1.36 ships bazel/setup_clang.sh and compiles against the
+            # host clang/llvm; generate clang.bazelrc so --config=clang resolves
+            # to the system toolchain. Envoy >=1.37 removed the script and uses a
+            # hermetic LLVM toolchain (downloaded by --config=clang), so this is a
+            # no-op there.
+            if [ -f bazel/setup_clang.sh ]; then
+              BAZELRC_FILE="${PWD}/clang.bazelrc" bash bazel/setup_clang.sh "/usr/lib/llvm-18"
+            fi
+        - name: build
+          work-dir: ${source.dir}/envoy
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir -p "${target.dir}/usr/local/bin"
-            cp "${source.dir}/envoy-1.36.9-linux-${ENVOY_ARCH}" "${target.dir}/usr/local/bin/envoy"
+            # Build against Debian's clang/llvm rather than Envoy's hermetic LLVM
+            # toolchain. Envoy pins hermetic LLVM 18.1.8 for every minor we track,
+            # and Debian 13 ships clang-18 (18.1.x), so the compiler
+            # versions match. Using the system toolchain avoids the hermetic
+            # toolchain's dependency on the legacy libtinfo.so.5 ABI, which Debian
+            # 13 no longer packages (it only ships libtinfo.so.6).
+            export CC="clang-18" CXX="clang++-18"
+
+            BAZEL_BUILD_OPTS=(
+              -c opt
+              --curses=no
+              --verbose_failures
+              --sandbox_debug
+              --jobs=auto
+              # The BoringSSL FIPS module is built by a genrule whose compiler
+              # output easily exceeds Bazel's 1MB default, hiding real errors
+              # behind "exceeds maximum size ... skipping". Match upstream's
+              # .bazelrc so genrule failures are fully printed.
+              # https://github.com/envoyproxy/envoy/blob/main/.bazelrc
+              --experimental_ui_max_stdouterr_bytes=11712829
+              --disk_cache=/bazel-disk-cache
+              --repository_cache=/bazel-repo-cache
+              --experimental_disk_cache_gc_max_size=5G
+              --experimental_disk_cache_gc_max_age=30d
+            )
+
+            # Select the clang toolchain config, which differs by minor:
+            #   * Envoy <=1.36 still ship bazel/setup_clang.sh, so the setup step
+            #     above generated clang.bazelrc and `--config=clang` already
+            #     resolves to the system clang.
+            #   * Envoy >=1.37 removed setup_clang.sh and ship a `clang-local`
+            #     bazelrc config. Detect it by presence in .bazelrc.
+            #
+            #     `clang-local` alone is NOT enough: Envoy registers a hermetic
+            #     LLVM toolchain unconditionally, and its exec/target constraints
+            #     match the default host platform, so `--config=clang-local` still
+            #     resolves to the downloaded external/llvm_toolchain clang (it only
+            #     adds compiler/linker flags, it does not point at or select a
+            #     system clang). That hermetic clang links against the legacy
+            #     libtinfo.so.5 ABI, which Debian 13 no longer ships (only
+            #     libtinfo.so.6), so it fails with "libtinfo.so.5: cannot open
+            #     shared object file". BAZEL_LLVM_PATH repoints @llvm_toolchain
+            #     (toolchain_roots) at the Debian clang-18 install
+            #     instead of downloading, and BAZEL_USE_HOST_SYSROOT=True makes it
+            #     use the host libc/sysroot rather than the hermetic sysroot. Both
+            #     are read by the @envoy_repo rule and must be passed via
+            #     --repo_env (upstream's recommended mechanism):
+            #     https://github.com/envoyproxy/envoy/blob/v1.36.9/bazel/repo.bzl
+            #     https://github.com/envoyproxy/envoy/blob/v1.36.9/bazel/toolchains.bzl
+            if grep -q "clang-local" .bazelrc; then
+              BAZEL_BUILD_OPTS+=(
+                --config=clang-local
+                --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18
+                --repo_env=BAZEL_USE_HOST_SYSROOT=True
+              )
+            else
+              BAZEL_BUILD_OPTS+=(--config=clang)
+            fi
+
+            # Select the BoringSSL FIPS module for FIPS targets. Envoy >=1.38
+            # ships the `boringssl-fips` bazelrc config; older minors use the
+            # legacy `--define=boringssl=fips` toggle.
+            # https://github.com/envoyproxy/envoy/blob/main/.bazelrc (SSL section)
+            # https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/ssl#fips-140-2
+            if [ "${target.fips}" = "true" ]; then
+              if grep -q "boringssl-fips" .bazelrc; then
+                BAZEL_BUILD_OPTS+=(--config=boringssl-fips)
+              else
+                BAZEL_BUILD_OPTS+=(--define=boringssl=fips)
+              fi
+            fi
+
+            test "${target.arch}" = "arm64" && BAZEL_BUILD_OPTS+=(--cpu=aarch64)
+
+            /opt/bazel/bin/bazel --batch build "${BAZEL_BUILD_OPTS[@]}" \
+              //source/exe:envoy-static.stripped
+
+            install -D -m0755 bazel-bin/source/exe/envoy-static.stripped \
+              "${target.dir}/usr/local/bin/envoy"
+        - name: envoy bazel sbom
+          work-dir: ${source.dir}/envoy
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/envoy
+            python3 "${source.dir}/bin/envoy-bazel-to-spdx.py" envoy "1.36.9" \
+              > /opt/docker/sbom/envoy/.spdx.envoy.json
+      paths:
+        - type: file
+          path: ${source.dir}/bin/envoy-bazel-to-spdx.py
+          uid: 0
+          gid: 0
+          source: image/envoy/bin/envoy-bazel-to-spdx.py
+        - type: file
+          path: ${source.dir}/patch/boringssl-fips-disable-tests.patch
+          uid: 0
+          gid: 0
+          source: image/envoy/debian-13/patch/boringssl-fips-disable-tests.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/envoy
           target: /usr/local/bin/envoy
@@ -98,26 +222,6 @@ contents:
           target: /opt/docker/sbom
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/static:20250419-glibc-debian13@sha256:c15d7b64f2933c44a0572422287bfa97eb43bfb1c5e15c1b82e997bc5a1ba16d
-      includes:
-        - bin
-        - etc
-        - home
-        - lib
-        - lib64
-        - opt
-        - sbin
-        - tmp
-        - usr
-        - var
-      excludes:
-        - etc/group
-        - etc/os-release
-        - etc/passwd
-        - var/lib/dpkg/status
-      uid: 0
-      gid: 0
 accounts:
   run-as: nonroot
   users:

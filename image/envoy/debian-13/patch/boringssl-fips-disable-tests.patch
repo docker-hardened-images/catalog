@@ -1,0 +1,35 @@
+Disable building and running BoringSSL's test suite inside the FIPS module genrule.
+
+Envoy 1.35 and 1.36 build the BoringSSL FIPS module via a genrule that leaves cmake's
+BUILD_TESTING on (so `ninja` compiles the test binaries, including the Go BoGo runner) and
+then executes the whole suite with `ninja run_tests` in validate_fips(). That test run is slow
+and is not designed to pass in a constrained build sandbox, so the @boringssl_fips//:build
+genrule fails (its >1MB of test output also trips Bazel's experimental_ui_max_stdouterr_bytes
+limit). Upstream removed this in 1.37+, where the genrule builds the module with
+-DBUILD_TESTING=off and never runs the suite. This patch brings the 1.35/1.36 genrule in line
+with that so we produce the same FIPS libcrypto/libssl without running BoringSSL's tests. The
+module's FIPS power-on self-test is compiled in by -DFIPS=1 and still runs at runtime, and the
+genrule still asserts correctness via `./bssl isfips`.
+
+Legacy genrule (runs tests):
+  https://github.com/envoyproxy/envoy/blob/v1.35.13/bazel/external/boringssl_fips.genrule_cmd
+1.37+ genrule (BUILD_TESTING=off, no run_tests):
+  https://github.com/envoyproxy/envoy/blob/v1.37.5/bazel/external/boringssl_fips.genrule_cmd
+--- a/bazel/external/boringssl_fips.genrule_cmd
++++ b/bazel/external/boringssl_fips.genrule_cmd
+@@ -80,6 +80,7 @@ build_boringssl_fips() {
+     cmake -GNinja \
+           -DCMAKE_TOOLCHAIN_FILE="${BSSL_SRC}/toolchain" \
+           -DFIPS=1 \
++          -DBUILD_TESTING=off \
+           -DCMAKE_BUILD_TYPE=Release \
+           -DCMAKE_C_FLAGS="-fPIC" \
+           -DCMAKE_CXX_FLAGS="${CXXFLAGS} -fPIC" \
+@@ -91,7 +92,6 @@ build_boringssl_fips() {
+ 
+ validate_fips() {
+     cd "$BSSL_SRC/build" || exit 1
+-    ninja run_tests
+     # Verify correctness of the FIPS build.
+     IS_FIPS="$(./bssl isfips)"
+     if [[ "${IS_FIPS}" != "1" ]]; then
