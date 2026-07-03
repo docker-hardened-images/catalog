@@ -1,0 +1,113 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-postman-mcp
+variant: runtime
+tags:
+  - 2.9.1-0
+  - 2.9.1-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-08"
+vars:
+  COMMIT_SHA: 29768058176dd13ca9ef80098aaf2483ec30b322
+  DHI_REL: "0"
+  DHI_VERSION: 2.9.1-0
+  NODEJS_MAJOR: "22"
+  NODEJS_VERSION: 22.23.0-0
+  PNPM_VERSION: 10.6.2
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.1
+  VERSION: 2.9.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: postman-mcp deb
+      work-dir: ${source.dir}/postman-mcp
+      environment:
+        CI: "true"
+        PNPM_HOME: /pnpm
+        PNPM_VERSION: 10.6.2
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - git
+          - nodejs-22=22.23.0-0
+          - node-corepack
+        files:
+          - url: git+https://github.com/postmanlabs/postman-mcp-server.git#v2.9.1
+            checksum: 29768058176dd13ca9ef80098aaf2483ec30b322
+            path: ${source.dir}/src
+            spdx:
+              name: postman-mcp
+              version: 2.9.1
+              packages:
+                - name: postman-mcp
+                  purl: pkg:github/postmanlabs/postman-mcp-server@2.9.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage source tree
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf "${source.dir}/postman-mcp/app-src"
+            mkdir -p "${source.dir}/postman-mcp/app-src"
+            cp -a "${source.dir}/src/." "${source.dir}/postman-mcp/app-src/"
+
+            cd "${source.dir}/postman-mcp/app-src"
+            node -e '
+              const fs = require("fs");
+              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              p.pnpm = p.pnpm || {};
+              Object.assign(p.pnpm.overrides = p.pnpm.overrides || {}, {
+                "handlebars": "4.7.9",       // CVE-2026-33937 (CRIT),33938,33939,33940,33941 (HIGH)
+                "node-forge": "1.4.0",       // CVE-2026-33891,33894,33895,33896,2025-12816,66031 (HIGH)
+                "flatted": "3.4.2",          // CVE-2026-32141,33228 (HIGH)
+                "fast-uri": "3.1.2",         // CVE-2026-6321,6322 (HIGH)
+                "hono": "4.12.25",           // CVE-2026-54290 (HIGH)
+                "lodash": "4.18.0",          // CVE-2026-4800 (HIGH, code injection)
+                "path-to-regexp": "8.4.0",   // CVE-2026-4926 (HIGH, ReDoS)
+                "underscore": "1.13.8",      // CVE-2026-27601 (HIGH)
+                "express-rate-limit": "8.2.2", // CVE-2026-30827 (HIGH)
+              });
+              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            '
+        - uses: dpkg/bump@v1
+          with:
+            version: 2.9.1-0
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/postman-mcp/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/postman-mcp/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

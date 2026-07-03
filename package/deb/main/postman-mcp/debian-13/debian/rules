@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+# Builds the upstream source staged at app-src by the pipeline.
+# PNPM_VERSION arrives via the build environment.
+SRC := $(CURDIR)/app-src
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+override_dh_auto_build:
+	corepack enable
+	# node-corepack ships pnpm.js non-executable; restore it so the shims run
+	chmod +x /usr/lib/nodejs/corepack/dist/*.js
+	cd $(SRC) && \
+		corepack prepare pnpm@$(PNPM_VERSION) --activate && \
+		pnpm install --no-frozen-lockfile && \
+		pnpm exec tsc
+
+override_dh_auto_install:
+	# install a pristine production-only node_modules (mirrors upstream's --prod
+	# stage); drop the build tree's dev deps entirely rather than pruning in place
+	cd $(SRC) && \
+		corepack prepare pnpm@$(PNPM_VERSION) --activate && \
+		rm -rf node_modules && \
+		pnpm install --no-frozen-lockfile --prod
+	mkdir -p debian/tmp/usr/lib/nodejs/postman-mcp
+	cp -a $(SRC)/dist $(SRC)/node_modules $(SRC)/package.json \
+		debian/tmp/usr/lib/nodejs/postman-mcp/
+
+# Prebuilt Node bundle: no compiled objects to strip and the only interpreter
+# (node) comes from the consuming image, so skip strip/shlibdeps.
+override_dh_strip:
+override_dh_shlibdeps:
+override_dh_dwz:
