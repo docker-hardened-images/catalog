@@ -139,6 +139,40 @@ contents:
               -pl flyway-commandline \
               -DoutputDirectory="${target.dir}/flyway/lib"
 
+            # Evict stale Jackson copies. mvn-dependencies.json bumps POM pins
+            # but dependency:copy-dependencies still lands older transitive
+            # jackson-databind/core/annotations jars beside the remediated
+            # versions (e.g. 2.19.1 next to 2.21.4, or 3.1.1 next to 3.1.4).
+            # Scope eviction to the three remediated artifacts only; leave
+            # jackson-dataformat-* / jackson-datatype-* jars alone (e.g. the
+            # 2.x jackson-dataformat-toml that Flyway 11's CLI loads at runtime).
+            lib="${target.dir}/flyway/lib"
+            for jar in \
+              "${lib}"/jackson-databind-*.jar \
+              "${lib}"/jackson-core-*.jar \
+              "${lib}"/jackson-annotations-*.jar; do
+              [ -e "${jar}" ] || continue
+              case "$(basename "${jar}")" in
+                jackson-annotations-2.21.jar) continue ;;
+                *-2.21.4.jar | *-3.1.4.jar) continue ;;
+                *) rm -f "${jar}" ;;
+              esac
+            done
+
+            # Ensure remediated Jackson artifacts are present at exact versions.
+            for artifact in \
+              com.fasterxml.jackson.core:jackson-databind:2.21.4 \
+              com.fasterxml.jackson.core:jackson-core:2.21.4 \
+              com.fasterxml.jackson.core:jackson-annotations:2.21 \
+              tools.jackson.core:jackson-databind:3.1.4 \
+              tools.jackson.core:jackson-core:3.1.4 \
+              tools.jackson.dataformat:jackson-dataformat-toml:3.1.4; do
+              mvn dependency:copy \
+                -Dartifact="${artifact}" \
+                -DoutputDirectory="${lib}" \
+                -q
+            done
+
             # Patch runtime JARs that Flyway's dependency copy still resolves to vulnerable versions:
             # CVE-2026-42198 (postgresql), CVE-2026-45292 (opentelemetry-api), CVE-2026-42577 (netty-transport-native-epoll).
             rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
