@@ -5,7 +5,11 @@
 
 override_dh_auto_configure:
 	./autogen.sh
-	./configure --prefix=/usr --sysconfdir=/etc --without-manual --with-keyutils
+	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --without-manual --with-keyutils \
+		--sbindir=/usr/sbin --with-udev \
+		--with-pacemaker --without-bashcompletion \
+		--with-systemdunitdir=/usr/lib/systemd/system \
+		--with-initscripttype=both
 
 override_dh_auto_build:
 	$(MAKE) -j$$(nproc)
@@ -13,8 +17,29 @@ override_dh_auto_build:
 override_dh_auto_install:
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
 
+override_dh_install:
+	dh_install
+	# Place the initscript where dh_installinit can find it
+	-mv $(CURDIR)/debian/tmp/etc/init.d/drbd $(CURDIR)/debian/drbd-utils.drbd.init
+
+# do not stop/restart/start the sysv init script;
+# no reason to reconfigure the kernel just because we install/upgrade some tools
+override_dh_installinit:
+	dh_installinit -p drbd-utils --name=drbd \
+		--no-stop-on-upgrade --no-start
+
+# systemd: do not enable drbd.service (users opt in, or use per-resource drbd@.target)
+# do not start/restart any service on install/upgrade
+# (drbd-graceful-down and drbd-graceful-disconnect are triggered by udev)
+override_dh_installsystemd:
+	dh_installsystemd -p drbd-utils --name=drbd --no-enable --no-start
+	dh_installsystemd -p drbd-utils --name=drbd-graceful-down --no-start
+	dh_installsystemd -p drbd-utils --name=drbd-graceful-disconnect --no-start
+	dh_installsystemd -p drbd-utils --no-start
+
 override_dh_auto_test:
 
 override_dh_auto_clean:
 	[ ! -f Makefile ] || $(MAKE) distclean
 	rm -rf autom4te.cache
+	rm -f debian/drbd-utils.drbd.init
