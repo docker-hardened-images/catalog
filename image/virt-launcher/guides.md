@@ -39,7 +39,8 @@ runtime stack inside a single pod, and the upstream container is correspondingly
 - `swtpm`, `swtpm-tools`: software TPM emulation.
 - `passt`: userspace VM networking.
 - `ovmf`, `seabios`, `ipxe-qemu`: UEFI / legacy / network boot firmware.
-- `dmidecode`, `ethtool`, `numactl`, `numad`: hardware introspection used by `node-labeller.sh`.
+- `dmidecode`, `numactl`, `numad`: hardware introspection (`dmidecode` is exec'd by libvirt; the rest by
+  `node-labeller.sh`).
 
 KubeVirt extends Kubernetes with virtualization capabilities. The virt-launcher is one of several KubeVirt components
 typically deployed by the KubeVirt operator. The companion images Docker Hardened Images ships are `dhi/virt-handler`,
