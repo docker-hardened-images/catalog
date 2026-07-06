@@ -1,0 +1,29 @@
+# Provenance: register runc's cgroup device-rule setters in virt-chroot.
+#
+# runc v1.2.x moved the cgroup v1/v2 device-rule setters behind a package
+# init() registration: libcontainer/cgroups/devices/devices.go sets the
+# package-level cgroups.DevicesSetV1 / cgroups.DevicesSetV2 hooks, and that
+# init only runs if the devices package is imported. virt-chroot builds an fs2
+# manager and calls Set(), but only imports cgroups/fs and cgroups/fs2 - never
+# cgroups/devices - so under the runc v1.2.8 CVE bump cgroups.DevicesSetV2 is
+# nil and every device-rule Set fails with cgroups.ErrDevicesUnsupported
+# ("cgroup manager is not configured to set device rules"). That silently
+# breaks block-volume hotplug: virt-handler cannot allow the hotplug device's
+# major:minor, so the chown to qemu (mount.go SetFileOwnership) is skipped and
+# the volume never advances past MountedToPod. KubeVirt's own v1 manager used
+# to pull the package in transitively via cgroup_devices.EmulatorFromList, but
+# runc-cgroup-devices-api-compat.patch removes that call, so nothing registers
+# the setters anymore. Blank-import the package so its init() runs.
+#
+# runc registration: https://github.com/opencontainers/runc/blob/v1.2.8/libcontainer/cgroups/devices/devices.go
+--- a/cmd/virt-chroot/cgroup.go
++++ b/cmd/virt-chroot/cgroup.go
+@@ -9,6 +9,8 @@ import (
+
+ 	runc_fs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+ 	runc_fs2 "github.com/opencontainers/runc/libcontainer/cgroups/fs2"
++	// runc >=1.2 registers device-rule setters via this package's init().
++	_ "github.com/opencontainers/runc/libcontainer/cgroups/devices"
+ 	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
+
+ 	cgroupconsts "kubevirt.io/kubevirt/pkg/virt-handler/cgroup/constants"
