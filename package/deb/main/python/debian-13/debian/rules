@@ -2,6 +2,8 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -q DEB_HOST_MULTIARCH)
+
 %:
 	dh $@
 
@@ -38,6 +40,45 @@ override_dh_auto_install:
 	ln -sf pydoc3 debian/tmp/usr/bin/pydoc
 	ln -sf python3 debian/tmp/usr/bin/python
 	ln -sf python3-config debian/tmp/usr/bin/python-config
+	# Relocate the shared library and pkg-config files into the multiarch
+	# libdir so this package is a drop-in for Debian's python3.x: Debian ships
+	# libpython3.x.so.1.0/.so.1 under /usr/lib/<triplet>, not the flat /usr/lib
+	# that upstream "make install" uses. Only the .so payload and pkgconfig
+	# move; lib-dynload, config-3.x-<triplet>, and headers stay where upstream
+	# (and Debian) place them under /usr/lib/python3.x and /usr/include.
+	install -d debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)
+	mv debian/tmp/usr/lib/libpython$(PYTHON_MAJOR_MINOR_VERSION).so.1.0 \
+		debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libpython$(PYTHON_MAJOR_MINOR_VERSION).so.1.0
+	rm -f debian/tmp/usr/lib/libpython$(PYTHON_MAJOR_MINOR_VERSION).so
+	ln -sf libpython$(PYTHON_MAJOR_MINOR_VERSION).so.1.0 \
+		debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libpython$(PYTHON_MAJOR_MINOR_VERSION).so.1
+	ln -sf libpython$(PYTHON_MAJOR_MINOR_VERSION).so.1 \
+		debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libpython$(PYTHON_MAJOR_MINOR_VERSION).so
+	mv debian/tmp/usr/lib/libpython3.so \
+		debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libpython3.so
+	mv debian/tmp/usr/lib/pkgconfig debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig
+	# Split pyconfig.h the way Debian does: the arch-specific header moves to
+	# /usr/include/<triplet>/python3.x/pyconfig.h and a small dispatch stub is
+	# left at /usr/include/python3.x/pyconfig.h. This keeps the header shipped
+	# by libpython-3.x-dev byte-identical across architectures so the package
+	# is valid as Multi-Arch: same (and a drop-in for Debian's layout). Only
+	# the platforms DHI builds (linux/amd64, linux/arm64) are dispatched.
+	install -d debian/tmp/usr/include/$(DEB_HOST_MULTIARCH)/python$(PYTHON_MAJOR_MINOR_VERSION)
+	mv debian/tmp/usr/include/python$(PYTHON_MAJOR_MINOR_VERSION)/pyconfig.h \
+		debian/tmp/usr/include/$(DEB_HOST_MULTIARCH)/python$(PYTHON_MAJOR_MINOR_VERSION)/pyconfig.h
+	printf '%s\n' \
+		'#if defined(__linux__)' \
+		'# if defined(__x86_64__) && defined(__LP64__)' \
+		'#  include <x86_64-linux-gnu/python$(PYTHON_MAJOR_MINOR_VERSION)/pyconfig.h>' \
+		'# elif defined(__aarch64__) && defined(__AARCH64EL__)' \
+		'#  include <aarch64-linux-gnu/python$(PYTHON_MAJOR_MINOR_VERSION)/pyconfig.h>' \
+		'# else' \
+		'#  error unknown multiarch location for pyconfig.h' \
+		'# endif' \
+		'#else' \
+		'# error unknown multiarch location for pyconfig.h' \
+		'#endif' \
+		> debian/tmp/usr/include/python$(PYTHON_MAJOR_MINOR_VERSION)/pyconfig.h
 	find debian/tmp/usr -depth \
 		\( \
 			\( -type d -a \( -name test -o -name tests -o -name idle_test \) \) \
