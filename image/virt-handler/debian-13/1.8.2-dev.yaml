@@ -1,0 +1,253 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Virt Handler 1.8.x (dev)
+image: dhi.io/virt-handler
+variant: dev
+tags:
+  - 1.8.2-dev
+  - 1.8.2-debian-dev
+  - 1.8.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-18"
+vars:
+  COMMIT_SHA: 3203e9d1ce77af32f6a9ce72b9f954830666f72c
+  SEMVER_MAJOR_MINOR_VERSION: "1.8"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.8.2
+  VERSION: 1.8.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - iproute2
+    - iptables
+    - libc-bin
+    - libc6
+    - mawk
+    - mount
+    - nftables
+    - passt
+    - perl-base
+    - procps
+    - qemu-utils
+    - sed
+    - selinux-utils
+    - tzdata
+    - util-linux
+    - xorriso
+  builds:
+    - name: virt-handler
+      work-dir: /go/src/kubevirt.io/kubevirt
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - libnbd-dev
+          - pkg-config
+          - libvirt-dev
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/kubevirt/kubevirt.git#v1.8.2
+            checksum: 3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            path: /go/src/kubevirt.io/kubevirt
+            spdx:
+              name: virt-handler
+              version: 1.8.2
+              packages:
+                - name: virt-handler
+                  purl: pkg:golang/kubevirt.io/kubevirt@1.8.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/containers/common@v0.60.4
+              - github.com/opencontainers/runc@v1.2.8
+              - github.com/cilium/ebpf@v0.16.0
+              - golang.org/x/oauth2@v0.36.0
+              - google.golang.org/grpc@v1.79.3
+            downgrade: true
+            download: true
+        - name: patch runc cgroup devices API compat
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/runc-cgroup-devices-api-compat.patch
+        - name: register runc cgroup device setters in virt-chroot
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/virt-chroot-register-cgroup-devices.patch
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # -vet=off: virt-handler v1.5.x has non-constant format strings caught by Go 1.26's linting
+            # CGO_ENABLED=1: upstream requires libvirt C bindings (libvirt-dev)
+            CGO_ENABLED=1 go test -vet=off ./cmd/virt-handler/... ./pkg/virt-handler/...
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X kubevirt.io/client-go/version.gitVersion=v1.8.2
+              - -X kubevirt.io/client-go/version.gitCommit=3203e9d1ce77af32f6a9ce72b9f954830666f72c
+            output: ${target.dir}/usr/local/bin/virt-handler
+            packages: ./cmd/virt-handler
+        - name: build virt-chroot
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            output: ${target.dir}/usr/local/bin/virt-chroot
+            packages: ./cmd/virt-chroot
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: image/virt-handler/patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/virt-handler
+          target: /usr/local/bin/virt-handler
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/virt-chroot
+          target: /usr/local/bin/virt-chroot
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/virt-handler
+          target: /opt/docker/sbom/virt-handler
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: qemu
+      uid: 107
+      gid: 107
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: qemu
+      gid: 107
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /usr/bin/virt-handler
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/virt-handler
+  - type: symlink
+    path: /usr/bin/virt-chroot
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/virt-chroot
+  - type: symlink
+    path: /usr/sbin/iptables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-nft
+  - type: symlink
+    path: /usr/sbin/iptables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-nft-restore
+  - type: symlink
+    path: /usr/sbin/iptables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/iptables-nft-save
+  - type: symlink
+    path: /usr/sbin/ip6tables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ip6tables-nft
+  - type: symlink
+    path: /usr/sbin/ip6tables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ip6tables-nft-restore
+  - type: symlink
+    path: /usr/sbin/ip6tables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ip6tables-nft-save
+  - type: symlink
+    path: /usr/sbin/arptables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/arptables-nft
+  - type: symlink
+    path: /usr/sbin/arptables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/arptables-nft-restore
+  - type: symlink
+    path: /usr/sbin/arptables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/arptables-nft-save
+  - type: symlink
+    path: /usr/sbin/ebtables
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ebtables-nft
+  - type: symlink
+    path: /usr/sbin/ebtables-restore
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ebtables-nft-restore
+  - type: symlink
+    path: /usr/sbin/ebtables-save
+    uid: 0
+    gid: 0
+    source: /usr/sbin/ebtables-nft-save
+annotations:
+  org.opencontainers.image.description: A minimal Virt Handler image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/virt-handler
+ports:
+  - 8185/tcp
