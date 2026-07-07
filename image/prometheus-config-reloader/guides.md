@@ -1,4 +1,4 @@
-## Prerequisites
+## How to use this image
 
 All examples in this guide use the public image. If you've mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
@@ -10,7 +10,7 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-## What's included in this Prometheus Config Reloader Hardened image
+### What's included in this Prometheus Config Reloader Hardened image
 
 Prometheus Config Reloader is a lightweight sidecar utility from the Prometheus Operator project that watches a
 configuration file (and optional directories) for changes, then triggers a reload on the target process. It is typically
@@ -28,7 +28,7 @@ all behavior is controlled by command-line flags.
 For the following examples, replace `<tag>` with the image variant you want to run. To confirm the correct namespace and
 repository name of the mirrored repository, select **View in repository**.
 
-# Start a Prometheus Config Reloader instance
+## Start a Prometheus Config Reloader instance
 
 Run the following command to see the binary's flags and defaults:
 
@@ -62,9 +62,9 @@ The reloader watches the config file and any directories passed with `--watched-
 a change, it waits `--delay-interval` (default 1s) and then issues the configured reload. The full watch cycle runs
 every `--watch-interval` (default 3m0s).
 
-# Common Prometheus Config Reloader use cases
+## Common Prometheus Config Reloader use cases
 
-## Reload Prometheus on config change
+### Reload Prometheus on config change
 
 The defaults of `prometheus-config-reloader` target a Prometheus instance on `localhost:9090`. When Prometheus and the
 reloader share a network namespace (for example, running both in the same Docker network with aliases, or as sidecar
@@ -74,7 +74,7 @@ containers in a single pod), the reloader POSTs to `http://127.0.0.1:9090/-/relo
 Prometheus must be started with `--web.enable-lifecycle` for the `/-/reload` endpoint to accept POST requests. Without
 this flag, the reloader receives `404 Not Found` and retries on the next tick.
 
-## Reload Alertmanager on config change
+### Reload Alertmanager on config change
 
 To use the reloader with Alertmanager, override `--reload-url` to point at the Alertmanager reload endpoint:
 
@@ -86,7 +86,7 @@ $ docker run -d --name alertmanager-reloader \
   --reload-url=http://alertmanager:9093/-/reload
 ```
 
-## Reload via signal instead of HTTP
+### Reload via signal instead of HTTP
 
 When the target process's HTTP reload endpoint is disabled (for example, a Prometheus started without
 `--web.enable-lifecycle`), use `--reload-method=signal`. The reloader sends SIGHUP to a process named in
@@ -117,7 +117,7 @@ Signal reload has three strict requirements that differ from HTTP reload:
   `failed to send SIGHUP to pid N: operation not permitted`. Run the target with `--user 65532:65532` or configure a
   matching `securityContext.runAsUser: 65532` in Kubernetes.
 
-## Use with the Prometheus Operator
+### Use with the Prometheus Operator
 
 The Prometheus Operator deploys `prometheus-config-reloader` as a sidecar automatically in the pods it manages. To tell
 the operator to use a specific reloader image (for example, the Docker Hardened Image), pass
@@ -127,11 +127,14 @@ the operator to use a specific reloader image (for example, the Docker Hardened 
 --prometheus-config-reloader=dhi.io/prometheus-config-reloader:<tag>
 ```
 
+For FIPS-compliant clusters, use a tag that includes `fips`, for example
+`dhi.io/prometheus-config-reloader:<version>-debian13-fips`.
+
 The operator then references this image in the `Prometheus` and `Alertmanager` CRD pod specs it creates. This flag only
 takes effect when the operator runs inside a Kubernetes cluster with access to the API server — it cannot be tested
 standalone with `docker run`.
 
-## Enable metrics
+### Enable metrics
 
 The reloader's own metrics endpoint is disabled by default. To enable it, set `--listen-address`:
 
@@ -153,9 +156,9 @@ include:
 - `prometheus_config_reloader_build_info` — gauge labeled with the reloader's version, revision, branch, and Go version
   for fleet inventory
 
-# Non-hardened images vs Docker Hardened Images
+## Non-hardened images vs. Docker Hardened Images
 
-## Key differences
+### Key differences
 
 | Feature         | Docker Official Prometheus Config Reloader | Docker Hardened Prometheus Config Reloader          |
 | --------------- | ------------------------------------------ | --------------------------------------------------- |
@@ -165,10 +168,10 @@ include:
 | User            | Runs as root by default                    | Runs as nonroot user (UID 65532)                    |
 | Attack surface  | Larger due to additional utilities         | Minimal — binary only, no other tools               |
 | Debugging       | Traditional shell debugging                | Use Docker Debug or Image Mount for troubleshooting |
-| Compliance      | None                                       | CIS                                                 |
+| Compliance      | None                                       | CIS; FIPS variants available                        |
 | Attestations    | None                                       | SBOM, provenance, VEX metadata                      |
 
-## Why no shell or package manager?
+### Why no shell or package manager?
 
 Docker Hardened Images prioritize security through minimalism:
 
@@ -202,31 +205,36 @@ $ docker run --rm -it --pid container:config-reloader \
 For operational visibility without attaching a debugger, enable the reloader's metrics endpoint with `--listen-address`
 (see [Enable metrics](#enable-metrics)).
 
-# Image variants
+## Image variants
 
-Docker Hardened Images come in different variants depending on their intended use.
+Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
+their tag.
 
-Runtime variants are designed to run your application in production. These images are intended to be used either
-directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+- Runtime variants are designed to run your application in production. These images are intended to be used either
+  directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
 
-- Run as the nonroot user (UID 65532)
-- Do not include a shell or a package manager
-- Contain only the minimal set of libraries needed to run the app
+  - Run as the nonroot user
+  - Do not include a shell or a package manager
+  - Contain only the minimal set of libraries needed to run the app
 
-Build-time variants include `dev` in the variant name and are intended for use in the first stage of a multi-stage
-Dockerfile. These images typically:
+- Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a
+  multi-stage Dockerfile. These images typically:
 
-- Run as the root user
-- Include a shell and package manager
-- Are used to build or compile applications
+  - Run as the root user
+  - Include a shell and package manager
+  - Are used to build or compile applications
 
-The Prometheus Config Reloader image is published as a runtime variant only. Because the binary is a statically-linked
-Go executable that requires no build-time dependencies, no `dev` variant is published for this image. Available tags
-follow the pattern `<version>` or `<version>-debian13`, for example `0.86` or `0.86-debian13`.
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
-To view all published tags and get more information about each variant, select the Tags tab for this repository.
+To view the image variants and get more information about them, select the **Tags** tab for this repository, and then
+select a tag.
 
-# Migrate to a Docker Hardened Image
+For debugging minimal runtime containers without a shell, you can use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to running containers.
+
+## Migrate to a Docker Hardened Image
 
 To migrate your application to a Docker Hardened Image, you must update your Dockerfile. At minimum, you must update the
 base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
@@ -240,26 +248,28 @@ following table of migration notes.
 | Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime. For binary executables, use a `static` image for runtime.                                                                                                                                                                                   |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                                                           |
 | Ports              | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues, configure your application to listen on port 1025 or higher inside the container. |
-| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. The entry point for this image is `/usr/local/bin/prometheus-config-reloader` with no default CMD — you must pass flags explicitly.                                                                                       |
+| Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                                  |
 | No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use `dev` images in build stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                                                |
 
 The following steps outline the general migration process.
 
-1. **Find hardened images for your app.**
+1. Find hardened images for your app.
 
    A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
 
-1. **Update the base image in your Dockerfile.**
+1. Update the base image in your Dockerfile.
 
-   Update the base image in your application's Dockerfile to the hardened image you found in the previous step.
+   Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
+   framework images, this is typically going to be an image tagged as `dev` because it has the tools needed to install
+   packages and dependencies.
 
-1. **For multi-stage Dockerfiles, update the runtime image in your Dockerfile.**
+1. For multi-stage Dockerfiles, update the runtime image in your Dockerfile.
 
    To ensure that your final image is as minimal as possible, you should use a multi-stage build. All stages in your
    Dockerfile should use a hardened image. While intermediary stages will typically use images tagged as `dev`, your
    final runtime stage should use a non-dev image variant.
 
-1. **Install additional packages.**
+1. Install additional packages
 
    Docker Hardened Images contain minimal packages in order to reduce the potential attack surface. You may need to
    install additional packages in your Dockerfile. Inspect the image variants to identify which packages are already
@@ -272,11 +282,11 @@ The following steps outline the general migration process.
    For Alpine-based images, you can use `apk` to install packages. For Debian-based images, you can use `apt-get` to
    install packages.
 
-# Troubleshoot migration
+## Troubleshooting migration
 
 The following are common issues that you may encounter during migration.
 
-## General debugging
+### General debugging
 
 The hardened images intended for runtime don't contain a shell nor any tools for debugging. The recommended method for
 debugging applications built with Docker Hardened Images is to use
@@ -288,7 +298,7 @@ For the reloader specifically, most operational debugging can be done through lo
 Use `--log-level=debug` for verbose reload activity, and enable `--listen-address=:8080` to expose reload counters at
 `/metrics`.
 
-## Permissions
+### Permissions
 
 By default image variants intended for runtime, run as the nonroot user. Ensure that necessary files and directories are
 accessible to the nonroot user. You may need to copy files to different directories or change permissions so your
@@ -297,20 +307,24 @@ application running as the nonroot user can access them.
 The reloader reads the file passed to `--config-file` and any directories passed to `--watched-dir`. These must be
 readable by UID 65532. If `--config-envsubst-file` is set, the output path must be writable by the same UID.
 
-## Privileged ports
+### Privileged ports
 
 Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to
-privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. The reloader
-does not listen on any ports by default. When `--listen-address` is set for metrics, use a port above 1024, for example
-`:8080`.
+privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. To avoid issues,
+configure your application to listen on port 1025 or higher inside the container, even if you map it to a lower port on
+the host. For example, `docker run -p 80:8080 my-image` will work because the port inside the container is 8080, and
+`docker run -p 80:81 my-image` won't work because the port inside the container is 81.
 
-## No shell
+The reloader does not listen on any ports by default. When `--listen-address` is set for metrics, use a port above 1024,
+for example `:8080`.
+
+### No shell
 
 By default, image variants intended for runtime don't contain a shell. Use `dev` images in build stages to run shell
 commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
 with no shell.
 
-## Entry point
+### Entry point
 
 Docker Hardened Images may have different entry points than images such as Docker Official Images. Use `docker inspect`
 to inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.
