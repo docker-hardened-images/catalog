@@ -1,4 +1,4 @@
-## About Kubernetes VPA Admission Controller
+## About Vertical Pod Autoscaler Admission Controller
 
 The Kubernetes Vertical Pod Autoscaler (VPA) Admission Controller is a critical component of the VPA system that runs as
 a mutating webhook in Kubernetes clusters. It intercepts pod creation and update requests to automatically set or modify
