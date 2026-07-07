@@ -16,6 +16,8 @@ platforms:
 dates:
   release: "2025-07-29"
 vars:
+  CILLIUM_ENVOY_REFERENCE: dhi/cilium-envoy:1.18.11-debian13@sha256:4e86757e64e7577be91f15cc77331d8937a80eea16642eb353e5db904bd65395
+  CLANG_VERSION: "18"
   COMMIT_SHA: 617b6b49b57901ea2671e5468b11ac7341e4beb8
   SEMVER_MAJOR_MINOR_VERSION: "1.18"
   SEMVER_MAJOR_VERSION: "1"
@@ -29,6 +31,7 @@ contents:
   packages:
     - base-files
     - bash
+    - bpftool
     - ca-certificates
     - ca-certificates-bundle
     - coreutils
@@ -36,7 +39,13 @@ contents:
     - ipset
     - iptables
     - kmod
+    - libatomic1
+    - libc++1-18
+    - libc++abi1-18
     - libc6
+    - libclang-cpp18
+    - libllvm18
+    - mount
     - tzdata
     - util-linux
   builds:
@@ -156,10 +165,7 @@ contents:
             make install-bpf \
               DESTDIR=${target.dir}
 
-            # Copy clang for BPF compilation at runtime.
-            # clang-18 is used here rather than the clang meta-package to avoid pulling
-            # libobjc-14-dev, which has a strict gcc-14-base = 14.2.0-19 constraint that
-            # conflicts with DHI's patched 14.2.0-19+dhi2 package.
+            # Copy clang-18 binary for BPF alignchecker compilation at runtime
             install -D -m 755 /usr/bin/clang-18 ${target.dir}/usr/bin/clang
 
             # Wrap iptables for compat
@@ -169,6 +175,7 @@ contents:
 
             # Container entrypoints
             install -m 755 images/cilium/init-container.sh ${target.dir}/init-container.sh
+            install -m 755 plugins/cilium-cni/install-plugin.sh ${target.dir}/install-plugin.sh
             install -m 755 plugins/cilium-cni/cni-uninstall.sh ${target.dir}/cni-uninstall.sh
       outputs:
         - source: /usr/sbin/iptables
@@ -185,6 +192,10 @@ contents:
           gid: 0
         - source: ${target.dir}/init-container.sh
           target: /init-container.sh
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/install-plugin.sh
+          target: /install-plugin.sh
           uid: 0
           gid: 0
         - source: ${target.dir}/cni-uninstall.sh
@@ -207,6 +218,13 @@ contents:
           target: /opt/docker/sbom/cilium
           uid: 0
           gid: 0
+  artifacts:
+    - name: dhi.io/cilium-envoy:1.18.11-debian13@sha256:4e86757e64e7577be91f15cc77331d8937a80eea16642eb353e5db904bd65395
+      includes:
+        - usr/bin/cilium-envoy
+        - usr/bin/cilium-envoy-starter
+      uid: 0
+      gid: 0
 accounts:
   run-as: nonroot
   users:
