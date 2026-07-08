@@ -1,36 +1,32 @@
-Patch telegraf remotefile output plugin for rclone v1.74.x compatibility.
+Compatibility shim for building telegraf against the rclone v1.74.3
+release tag, which the go/bump step pins for CVE-2026-49980.
 
-rclone v1.74.x introduced breaking API changes:
-- https://github.com/rclone/rclone/commit/c6f2b08 (vfs.New added context.Context parameter)
-- https://github.com/rclone/rclone/pull/8329 (logging rewrite: fs.LogOutput removed, logrus replaced with log/slog)
-
-The vfs.New() function signature changed from:
-  func New(f fs.Fs, opt *vfscommon.Options) *VFS
-to:
-  func New(ctx context.Context, f fs.Fs, opt *vfscommon.Options) *VFS
-
-The fs.LogOutput variable was removed when rclone migrated from logrus to log/slog.
+Telegraf v1.39.1 upstream depends on an rclone master pseudo-version
+(v1.74.1-0.20260628215305-6bbc28cf02dc) that already contains the
+log/slog rewrite from https://github.com/rclone/rclone/pull/8329, and
+routes rclone logging into the plugin logger via fs.SetLogger. No tagged
+rclone release ships fs.SetLogger yet (v1.74.3 is the newest tag), so
+after pinning the release tag that call does not compile. Drop the
+logging hook (same approach the previous revision of this shim used for
+the removed fs.LogOutput) until an rclone release exposes fs.SetLogger.
 
 diff --git a/plugins/outputs/remotefile/remotefile.go b/plugins/outputs/remotefile/remotefile.go
 --- a/plugins/outputs/remotefile/remotefile.go
 +++ b/plugins/outputs/remotefile/remotefile.go
-@@ -83,10 +83,6 @@
- 	if f.MaxCacheSize > 0 {
+@@ -21,7 +21,6 @@
+ 	"github.com/influxdata/telegraf"
+ 	"github.com/influxdata/telegraf/config"
+ 	"github.com/influxdata/telegraf/internal"
+-	"github.com/influxdata/telegraf/plugins/common/slog"
+ 	"github.com/influxdata/telegraf/plugins/outputs"
+ )
+
+@@ -85,8 +84,5 @@
  		f.vfsopts.CacheMaxSize = fs.SizeSuffix(f.MaxCacheSize)
  	}
+
+-	// Route rclone's internal logging through the plugin logger
+-	fs.SetLogger(slog.NewLogger(f.Log).Handler())
 -
--	fs.LogOutput = func(level fs.LogLevel, text string) {
--		f.Log.Tracef("[%s] %s", level.String(), text)
--	}
- 
  	// Setup custom template functions
  	funcs := template.FuncMap{"now": time.Now}
-@@ -144,7 +140,7 @@
- 		return fmt.Errorf("creating remote failed: %w", err)
- 	}
- 	f.fscancel = cancel
--	f.root = vfs.New(rootfs, &f.vfsopts)
-+	f.root = vfs.New(ctx, rootfs, &f.vfsopts)
- 
- 	// Force connection to make sure we actually can connect
- 	if _, err := f.root.Fs().List(ctx, "/"); err != nil {
