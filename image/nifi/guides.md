@@ -16,8 +16,8 @@ This Docker Hardened NiFi image includes :
 
 - `nifi`: The Apache NiFi application, built from source for secure data flow automation and processing.
 - `nifi-toolkit`: Administrative utilities for NiFi management and configuration.
-- Java Runtime Environment: OpenJDK 21 JRE, required runtime for NiFi operation. Java runtime located at
-  `/opt/java/openjdk/21-jre`.
+- Java Runtime Environment: Eclipse Temurin 21 JRE, required runtime for NiFi operation. Java runtime located at
+  `/usr/lib/jvm/temurin-21`.
 - Python 3: Runtime support for Python-based NiFi processors.
 
 ### Start a NiFi image
