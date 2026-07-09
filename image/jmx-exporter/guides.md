@@ -16,7 +16,7 @@ This image includes:
 
 - JMX Prometheus Standalone JAR (`jmx_prometheus_standalone.jar`) at `/opt/jmx-exporter/`
 - JMX Prometheus Java Agent JAR (`jmx_prometheus_javaagent.jar`) for in-process metric collection
-- Eclipse Temurin JRE 21 at `/opt/java/openjdk/21-jre`
+- Eclipse Temurin JRE 21 at `/usr/lib/jvm/temurin-21`
 - Example configuration files at `/opt/jmx-exporter/examples/` for Kafka, Cassandra, Zookeeper, Tomcat, Spark, ActiveMQ,
   Flink, Hazelcast, Presto, WildFly, and WebLogic
 - Default entrypoint: `java -jar jmx_prometheus_standalone.jar 5556 examples/standalone_sample_config.yml`
