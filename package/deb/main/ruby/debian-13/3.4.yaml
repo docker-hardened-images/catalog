@@ -1,0 +1,210 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-ruby
+variant: runtime
+tags:
+  - 3.4.10-0
+  - 3.4.10-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DHI_REL: "0"
+  DHI_VERSION: 3.4.10-0
+  PACKAGE_NAME: ruby-3.4
+  RUBY_REFERENCE: dhi/ruby:3.4.10-debian13-dev@sha256:3c4bbbc513a39e0c467dc81fe98cf18281bcf707127cbb3b7ef33908d5599f2f
+  SEMVER_MAJOR_MINOR_VERSION: "3.4"
+  SHA256: 6f32ad662baafc228d12030dbcd284f83b034dd4337b300dc84ac74d11a1eb68
+  VERSION: 3.4.10
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: ruby-3.4 deb
+      uses: dhi.io/ruby:3.4.10-debian13-dev@sha256:3c4bbbc513a39e0c467dc81fe98cf18281bcf707127cbb3b7ef33908d5599f2f
+      work-dir: ${source.dir}/ruby-3.4.10
+      contents:
+        packages:
+          - autoconf
+          - bash
+          - bison
+          - build-essential
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - g++
+          - gawk
+          - gcc
+          - grep
+          - libc6-dev
+          - libffi-dev
+          - libgdbm-dev
+          - libgmp-dev
+          - libjemalloc-dev
+          - libncurses-dev
+          - libreadline-dev
+          - libssl-dev
+          - libyaml-dev
+          - make
+          - openssl
+          - rustc
+          - sed
+          - zlib1g-dev
+        files:
+          - url: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.10.tar.xz
+            checksum: sha256:6f32ad662baafc228d12030dbcd284f83b034dd4337b300dc84ac74d11a1eb68
+            path: ${source.dir}/ruby.tar.xz
+            spdx:
+              name: ruby
+              version: 3.4.10
+              packages:
+                - name: ruby
+                  purl: pkg:dhi/ruby@3.4.10
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/net-imap-0.5.15.gem
+            checksum: sha256:f64dc7f0b456d6a1b62007ead055994034f039f4aa6ff614e35f0b93395c0614
+            path: ${source.dir}/net-imap-0.5.15.gem
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/net-imap-0.6.4.1.gem
+            checksum: sha256:29f0360d75a7efd3539f16ac1957dea5c0a51ddeceb348db4553c3120914ea0d
+            path: ${source.dir}/net-imap-0.6.4.1.gem
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ruby/erb.git#v4.0.4.1
+            checksum: 6a2e4a76d352127135359e3420d5f42b767a0600
+            path: /ruby/erb
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ruby/json.git#v2.19.2
+            checksum: 54f8a878aebee090476a53c851c943128894be62
+            path: /ruby/json
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: unpack
+          runs: |
+            set -eux -o pipefail
+
+            tar -xaf "${source.dir}/ruby.tar.xz" --strip-components=1
+
+            # tool/sync_default_gems.rb restores Ruby's build glue with
+            # `git checkout <path>`, so the source tree must be a git work tree.
+            git init -q
+            git config user.email dhi@docker.com
+            git config user.name "Docker Hardened Images"
+            git add -A
+            git commit -qm "ruby 3.4.10 pristine source" > /dev/null
+        - name: apply test recursion patch
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/test_insns-lower-recursion-depth.patch
+        - name: patch sync_default_gems for hermetic build
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/sync-default-gems-no-prerelease-check-3.4.patch
+        - name: patch sync_default_gems erb recipe
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/sync-default-gems-erb-copy-lib-dir.patch
+        - name: backport net-imap bundled gem (CVE-2025-43857)
+          runs: |
+            set -eux -o pipefail
+
+            current="$(sed -n 's/^net-imap[[:space:]]\+\([^[:space:]]\+\).*/\1/p' gems/bundled_gems)"
+            test -n "${current}"
+            case "${current}" in
+              0.4.* | 0.5.*) target=0.5.15 ;;
+              0.6.*) target=0.6.4.1 ;;
+              *)
+                echo "net-imap ${current} not on a known 0.X line" >&2
+                exit 1
+                ;;
+            esac
+
+            if dpkg --compare-versions "${current}" ge "${target}"; then
+              echo "net-imap ${current} already >= ${target}, skipping"
+            else
+              echo "Backporting bundled net-imap ${current} -> ${target}"
+              # Point the manifest at the fixed version and stage its .gem so the
+              # names line up with what `make extract-gems` expects.
+              sed -i "s|^net-imap[[:space:]].*|net-imap            ${target}|" gems/bundled_gems
+              cp "${source.dir}/net-imap-${target}.gem" "gems/net-imap-${target}.gem"
+              rm -rf ".bundle/gems/net-imap-${current}" \
+                ".bundle/specifications/net-imap-${current}.gemspec"
+              # BundledGem.unpack writes both .bundle/gems/<full-name>/ and the
+              # matching .bundle/specifications/<full-name>.gemspec.
+              ruby -Itool/lib -rbundled_gem \
+                -e 'BundledGem.unpack("gems/net-imap-'"${target}"'.gem", ".bundle")'
+              test -d ".bundle/gems/net-imap-${target}"
+              test -f ".bundle/specifications/net-imap-${target}.gemspec"
+            fi
+        - name: backport erb default gem (CVE-2026-41316)
+          runs: |
+            set -eux -o pipefail
+
+            # Guard against downgrading: only sync if the tree ships an erb older
+            # than the fixed release we sync from. If a future Ruby on this line
+            # already ships erb >= the fix, skip so we never replace it with the
+            # older pinned source (which could reintroduce the CVE).
+            fixed=4.0.4.1
+            current="$(sed -nE "s/^[[:space:]]*VERSION[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" lib/erb/version.rb | head -1)"
+            test -n "${current}"
+            if dpkg --compare-versions "${current}" ge "${fixed}"; then
+              echo "erb ${current} already >= ${fixed}, skipping sync"
+            else
+              # The erb recipe fix (patched into sync_default_gems.rb above) makes
+              # the sync copy lib/erb/ too, so both the def_method fix (lib/erb.rb)
+              # and the version bump (lib/erb/version.rb) come straight from the
+              # synced gem.
+              ruby tool/sync_default_gems.rb erb
+              grep -q "@_init.equal?(self.class.singleton_class)" lib/erb.rb
+              grep -q "VERSION = '${fixed}'" lib/erb/version.rb
+            fi
+        - name: prepare debian metadata
+          runs: |
+            set -eux -o pipefail
+
+            sed -i \
+              -e "s/@PACKAGE_NAME@/ruby-3.4/g" \
+              -e "s/@MAJOR_MINOR@/3.4/g" \
+              -e "s/@VERSION@/3.4.10/g" \
+              debian/control.in debian/changelog \
+              debian/ruby.install.in debian/ruby-dev.install.in
+            mv debian/control.in debian/control
+            mv debian/ruby.install.in "debian/ruby-3.4.install"
+            mv debian/ruby-dev.install.in "debian/ruby-3.4-dev.install"
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Upgrade bundled net-imap default gem to fix CVE-2025-43857
+              - Backport erb default gem def_method fix for CVE-2026-41316 (3.3, 3.4)
+              - Backport json default gem 2.19.2 to fix CVE-2026-33210 (4.0)
+            version: 3.4.10-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/ruby-3.4.10/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/ruby/debian-13/debian
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/ruby/patch
+          recursive: true
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
