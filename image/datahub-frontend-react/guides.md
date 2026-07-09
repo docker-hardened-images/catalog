@@ -195,8 +195,8 @@ docker run --rm -p 9002:9002 \
 
 The `*-fips` and `*-fips-dev` tags use the Docker Hardened Eclipse Temurin 17 FIPS JRE as their runtime base. That JRE
 is preconfigured with BouncyCastle FIPS as `security.provider.1` in `java.security`, with the BC JARs at
-`/opt/bouncycastle/`. The Play application inherits FIPS-validated cryptography through the standard JSSE/JCE plumbing —
-no application-level configuration changes are required.
+`/usr/lib/bouncycastle/`. The Play application inherits FIPS-validated cryptography through the standard JSSE/JCE
+plumbing — no application-level configuration changes are required.
 
 ```bash
 docker run --rm -p 9002:9002 \
