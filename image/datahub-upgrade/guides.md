@@ -192,14 +192,14 @@ services:
 
 The FIPS variant (`dhi.io/datahub-upgrade:<tag>-fips`) enables FIPS 140-validated cryptography for the Java workload:
 
-- The image is built on `dhi/eclipse-temurin:17-debian13-fips`, the FIPS-validated Temurin JRE.
+- The image installs the FIPS-validated Temurin JRE from the `eclipse-temurin-21-jre-fips` Debian package.
 - BouncyCastle FIPS jars (`bc-fips`, `bctls-fips`, `bcutil-fips`, `bcpkix-fips`, `bc-rng-jent`) are bundled under
-  `/opt/bouncycastle/` and wired in at JVM bootstrap via
+  `/usr/lib/bouncycastle/` and wired in at JVM bootstrap via
   `JDK_JAVA_OPTIONS=@/datahub/datahub-upgrade/scripts/datahub-fips.properties`. The properties file prepends the
   BouncyCastle jars to the boot classpath (`-Xbootclasspath/a:`), enables `org.bouncycastle.fips.approved_only=true`,
-  and sets the JVM trust store to the BCFKS store shipped by the FIPS Temurin
-  (`/opt/java/openjdk/21-jre/lib/security/cacerts.bcfks`). The net effect is that all Java TLS and JCE operations —
-  JDBC, Kafka client TLS, Elasticsearch HTTPS — go through BouncyCastle FIPS rather than the default SunJCE provider.
+  and sets the JVM trust store to the BCFKS store shipped by the FIPS Temurin package
+  (`/usr/lib/bouncycastle/cacerts.bcfks`). The net effect is that all Java TLS and JCE operations — JDBC, Kafka client
+  TLS, Elasticsearch HTTPS — go through BouncyCastle FIPS rather than the default SunJCE provider.
 - The environment variable `DATAHUB_FIPS=true` is set automatically in this variant so operators can branch on it at
   runtime without inspecting image labels.
 
