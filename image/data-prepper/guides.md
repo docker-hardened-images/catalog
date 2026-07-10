@@ -334,8 +334,8 @@ standard runtime variant:
 
 - **Java crypto provider**: BC FIPS JARs (`bc-fips`, `bctls-fips`, `bcutil-fips`, `bcpkix-fips`) are symlinked into Data
   Prepper's `lib/` directory so they appear on the classpath.
-- **JRE trust store**: The BCFKS-format trust store at `/opt/java/openjdk/17-jre/lib/security/cacerts.bcfks` replaces
-  the standard JKS `cacerts`. The JVM is pointed at this store via `JDK_JAVA_OPTIONS`.
+- **JRE trust store**: The BCFKS-format trust store at `/usr/lib/bouncycastle/cacerts.bcfks` replaces the standard JKS
+  `cacerts`. The JVM is pointed at this store via `JDK_JAVA_OPTIONS`.
 - **OpenSSL FIPS Provider**: The OpenSSL FIPS module is included for OS-level operations.
 - **Approved-only mode**: The environment variable `JDK_JAVA_OPTIONS` includes
   `-Dorg.bouncycastle.fips.approved_only=false`, so the BC FIPS provider is registered but does not block
