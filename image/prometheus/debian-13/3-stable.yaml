@@ -4,23 +4,23 @@ name: Prometheus 3.x
 image: dhi.io/prometheus
 variant: runtime
 tags:
-  - "3.12"
-  - 3.12.0
-  - 3.12-debian
-  - 3.12-debian13
-  - 3.12.0-debian
-  - 3.12.0-debian13
+  - "3.13"
+  - 3.13.0
+  - 3.13-debian
+  - 3.13-debian13
+  - 3.13.0-debian
+  - 3.13.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: 9f27dffc1f93ca23287972f632025879f2d1c658
-  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "3.12"
+  COMMIT_SHA: 40af9c2cdc0eda00f3622e867a27f6359f7295f3
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "3.13"
   DEBIAN_EPOCH_MAJOR_VERSION: "3"
-  DEBIAN_EPOCH_VERSION: 3.12.0
-  PROMETHEUS_GO_MODULE_VERSION: 0.312.0
+  DEBIAN_EPOCH_VERSION: 3.13.0
+  PROMETHEUS_GO_MODULE_VERSION: 0.313.0
   RELEASE_TYPE: stable
-  VERSION: 3.12.0
+  VERSION: 3.13.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -59,16 +59,17 @@ contents:
           - npm
           - yarn-classic
           - tar
+          - yq
         files:
-          - url: git+https://github.com/prometheus/prometheus.git#v3.12.0
-            checksum: 9f27dffc1f93ca23287972f632025879f2d1c658
+          - url: git+https://github.com/prometheus/prometheus.git#v3.13.0
+            checksum: 40af9c2cdc0eda00f3622e867a27f6359f7295f3
             path: /go/src/github.com/prometheus/prometheus
             spdx:
               name: prometheus
-              version: 3.12.0
+              version: 3.13.0
               packages:
                 - name: prometheus
-                  purl: pkg:dhi/prometheus@3.12.0
+                  purl: pkg:dhi/prometheus@3.13.0
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -78,29 +79,39 @@ contents:
           with:
             license: Apache-2.0
             name: prometheus-go
-            purl: pkg:golang/github.com/prometheus/prometheus@0.312.0
-            version: 0.312.0
-        - name: bump ui dependencies
-          uses: npm/bump@v1
+            purl: pkg:golang/github.com/prometheus/prometheus@0.313.0
+            version: 0.313.0
+        - name: bump ui dependencies (3-stable only)
           work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
           privileged: true
-          with:
-            bumps: ${source.dir}/patch/npm-bumps.json
-            npm-root: /go/src/github.com/prometheus/prometheus/web/ui/react-app
-        - name: create SBOM for static assests
-          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
           runs: |
             set -eux -o pipefail
 
-            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx > /opt/docker/sbom/prometheus/.prometheus-reactapp.spdx.json
-        - name: compile static assets
+            corepack enable pnpm
+
+            yq -yi '.overrides."http-proxy-middleware" = "3.0.7"' pnpm-workspace.yaml # CVE-2026-55602
+            pnpm install --lockfile-only
+        - name: install react-app dependencies for SBOM
+          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --prod --frozen-lockfile
+        - name: create SBOM for static assests
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: prometheus
+            source: /go/src/github.com/prometheus/prometheus/web/ui/react-app/node_modules
+        - name: compile static assets (3-stable only)
           work-dir: /go/src/github.com/prometheus/prometheus
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            make assets npm_licenses assets-compress
-        - name: update go dependencies (3 only)
+            make assets assets-compress
+        - name: update go dependencies (3-stable only)
           uses: go/bump@v1
           work-dir: /go/src/github.com/prometheus/prometheus
           with:
@@ -118,12 +129,12 @@ contents:
             make plugins
 
             # Manually set version information used in "prometheus --version" output
-            GOLDFLAGS="-X github.com/prometheus/common/version.Version=3.12.0
-              -X github.com/prometheus/common/version.Revision=9f27dffc1f93ca23287972f632025879f2d1c658
+            GOLDFLAGS="-X github.com/prometheus/common/version.Version=3.13.0
+              -X github.com/prometheus/common/version.Revision=40af9c2cdc0eda00f3622e867a27f6359f7295f3
               -X github.com/prometheus/common/version.Branch=HEAD
               -X github.com/prometheus/common/version.BuildUser=$USER@$HOSTNAME
               -X github.com/prometheus/common/version.BuildDate=$(date -u "+%Y%m%d-%H:%M:%S" ${SOURCE_DATE_EPOCH:+-d @$SOURCE_DATE_EPOCH})
-              -X github.com/prometheus/prometheus/version.Version=3.12.0
+              -X github.com/prometheus/prometheus/version.Version=3.13.0
             "
 
             # Prometheus does use their own build tool, published separately at https://github.com/prometheus/promu,
