@@ -1,0 +1,208 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Miniconda3 26.x (dev)
+image: dhi.io/miniconda3
+variant: dev
+tags:
+  - 26-dev
+  - 26.3-dev
+  - 26.3.2-dev
+  - 26-debian-dev
+  - 26-debian13-dev
+  - 26.3-debian-dev
+  - 26.3-debian13-dev
+  - 26.3.2-debian-dev
+  - 26.3.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-06"
+vars:
+  COMMIT_SHA: 692d64b8418ea9434f4359de9c71222c301759be
+  INSTALLER_SHA256_AMD64: 2284bafb7863a23411b19874d216e237964d4b32dd9beb6807fa8b2d84570961
+  INSTALLER_SHA256_ARM64: 81a5e828724478a7a036027a74356ceff0206147d3b1243c8ba32e0cfa187967
+  INSTALLER_URL_AMD64: https://repo.anaconda.com/miniconda/Miniconda3-py313_26.3.2-2-Linux-x86_64.sh
+  INSTALLER_URL_ARM64: https://repo.anaconda.com/miniconda/Miniconda3-py313_26.3.2-2-Linux-aarch64.sh
+  SEMVER_MAJOR_MINOR_VERSION: "26.3"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.3.2
+  VERSION: 26.3.2-2
+contents:
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - git
+    - grep
+    - libc-bin
+    - libglib2.0-0t64
+    - libsm6
+    - libxext6
+    - libxrender1
+    - mawk
+    - mercurial
+    - openssh-client
+    - perl-base
+    - procps
+    - sed
+    - subversion
+    - util-linux
+    - wget
+  builds:
+    - name: miniconda3
+      contents:
+        packages:
+          - bash
+          - bzip2
+          - ca-certificates
+          - coreutils
+          - findutils
+          - grep
+          - libc-bin
+          - sed
+        files:
+          - url: https://repo.anaconda.com/miniconda/Miniconda3-py313_26.3.2-2-Linux-x86_64.sh
+            checksum: sha256:2284bafb7863a23411b19874d216e237964d4b32dd9beb6807fa8b2d84570961
+            path: ${source.dir}/miniconda-installer-amd64.sh
+            spdx:
+              name: miniconda3
+              version: 26.3.2-2
+              packages:
+                - name: miniconda3
+                  purl: pkg:generic/miniconda3@26.3.2-2
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+            mode: "0755"
+          - url: https://repo.anaconda.com/miniconda/Miniconda3-py313_26.3.2-2-Linux-aarch64.sh
+            checksum: sha256:81a5e828724478a7a036027a74356ceff0206147d3b1243c8ba32e0cfa187967
+            path: ${source.dir}/miniconda-installer-arm64.sh
+            spdx:
+              name: miniconda3
+              version: 26.3.2-2
+              packages:
+                - name: miniconda3
+                  purl: pkg:generic/miniconda3@26.3.2-2
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: install miniconda
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            case "$(uname -m)" in
+              x86_64) INSTALLER="${source.dir}/miniconda-installer-amd64.sh" ;;
+              aarch64) INSTALLER="${source.dir}/miniconda-installer-arm64.sh" ;;
+              *)
+                echo "unsupported architecture: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+
+            bash "${INSTALLER}" -b -p /opt/conda
+
+            printf 'channels:\n  - conda-forge\nchannel_priority: strict\n' > /opt/conda/.condarc
+
+            /opt/conda/bin/conda update -n base -y urllib3 cryptography pyjwt pip idna python-dotenv msgpack-python pydantic-settings
+
+            /opt/conda/bin/conda clean --all --yes
+            find /opt/conda -type d -name '__pycache__' -prune -exec rm -rf {} +
+            find /opt/conda -type d -name 'tests' -prune -exec rm -rf {} + || true
+            find /opt/conda -name '*.pyc' -delete
+        - name: conda packages sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: miniconda3-packages
+            source: /opt/conda
+      outputs:
+        - source: /opt/conda
+          target: /opt/conda
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/miniconda3-packages
+          target: /opt/docker/sbom/miniconda3-packages
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /opt/conda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    content: |
+      #!/bin/bash
+      exec "$@"
+    uid: 0
+    gid: 0
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Miniconda3 image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+cmd:
+  - /bin/bash
