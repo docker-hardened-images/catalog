@@ -18,6 +18,7 @@ platforms:
   - linux/arm64
 vars:
   COMMIT_SHA: 94766f42c013a6b115ca9b17669da178e7d24cb9
+  JACKSON_CORE_3_VERSION: 3.1.4
   JACKSON_DATABIND_2_VERSION: 2.21.4
   JACKSON_DATABIND_3_VERSION: 3.1.4
   JAVA_HOME_PATH: /usr/lib/jvm/temurin-21
@@ -173,6 +174,10 @@ contents:
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar
             path: ${source.dir}/patch/deps/postgresql-42.7.11.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/tools/jackson/core/jackson-core/3.1.4/jackson-core-3.1.4.jar
+            path: ${source.dir}/patch/deps/jackson-core-3.1.4.jar
             uid: 0
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar
@@ -337,6 +342,55 @@ contents:
             fi
 
             echo "Patched ${patched_count} bundled jackson-databind JARs"
+        - name: patch bundled jackson core
+          runs: |
+            set -eux -o pipefail
+
+            shopt -s nullglob
+
+            app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
+            if [[ -z "${app_jar}" ]]; then
+              echo "ERROR: sonar-application jar not found" >&2
+              exit 1
+            fi
+
+            metadata_dir="META-INF/maven/tools.jackson.core/jackson-core"
+            patch_dir="$(mktemp -d)"
+            repack_dir="${patch_dir}/repack"
+            overlay_dir="${patch_dir}/overlay"
+            trap 'rm -rf "${patch_dir}"' EXIT
+            mkdir -p "${repack_dir}" "${overlay_dir}"
+
+            (cd "${repack_dir}" && jar xf "${app_jar}")
+
+            if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              echo "ERROR: tools.jackson.core:jackson-core not found in $(basename "${app_jar}")" >&2
+              exit 1
+            fi
+
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/jackson-core-3.1.4.jar")
+
+            rm -rf "${repack_dir:?}/tools/jackson/core" "${repack_dir:?}/${metadata_dir}"
+            for vdir in "${repack_dir}"/META-INF/versions/*/tools/jackson/core; do
+              rm -rf "${vdir}"
+            done
+
+            mkdir -p "${repack_dir}/tools/jackson" "${repack_dir}/META-INF/maven/tools.jackson.core"
+            cp -a "${overlay_dir}/tools/jackson/core" "${repack_dir}/tools/jackson/core"
+            cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+            for vdir in "${overlay_dir}"/META-INF/versions/*/tools/jackson/core; do
+              rel="${vdir#${overlay_dir}/}"
+              mkdir -p "${repack_dir}/$(dirname "${rel}")"
+              cp -a "${vdir}" "${repack_dir}/${rel}"
+            done
+
+            grep -q "version=3.1.4" "${repack_dir}/${metadata_dir}/pom.properties"
+
+            app_new="${patch_dir}/app-repacked.jar"
+            (cd "${repack_dir}" && jar --create --file "${app_new}" --manifest META-INF/MANIFEST.MF .)
+            mv "${app_new}" "${app_jar}"
+
+            unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=3.1.4"
       paths:
         - type: file
           path: ${source.dir}/patch/dhi-patch-config.json
