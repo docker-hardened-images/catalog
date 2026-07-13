@@ -1,0 +1,133 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-rustc
+variant: runtime
+tags:
+  - 1.96.0-0
+  - 1.96.0-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96
+  DHI_REL: "0"
+  DHI_VERSION: 1.96.0-0
+  PACKAGE_NAME: rustc-1.96
+  SEMVER_MAJOR_MINOR_VERSION: "1.96"
+  VERSION: 1.96.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: rustc
+      work-dir: ${source.dir}/rustc
+      environment:
+        ARCH: ${ARCH}
+        VERSION: 1.96.0
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - binutils
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - grep
+          - sed
+          - python3
+          - git
+          - gcc
+          - pkg-config
+          - libc6
+          - libc-bin
+          - cmake
+          - curl
+        files:
+          - url: git+https://github.com/rust-lang/rust.git#1.96.0
+            checksum: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96
+            path: ${source.dir}/rustc
+            spdx:
+              name: rustc
+              version: 1.96.0
+              packages:
+                - name: rustc
+                  purl: pkg:dhi/rust@1.96.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: configure bootstrapping
+          runs: |
+            set -eux -o pipefail
+
+            cat > bootstrap.toml << EOF
+            change-id = 154508
+
+            [build]
+            build-stage = 2
+            test-stage = 2
+            doc-stage = 2
+            target = [ "${ARCH}-unknown-linux-gnu" ]
+            extended = false
+
+            [llvm]
+            download-ci-llvm = true
+
+            [gcc]
+            download-ci-gcc = false
+
+            [rust]
+            channel = "auto-detect"
+            download-rustc = false
+            llvm-bitcode-linker = true
+            remap-debuginfo = true
+
+            [dist]
+            compression-profile = "balanced"
+
+            [install]
+            prefix = "/usr"
+            sysconfdir = "/etc"
+            EOF
+        - name: setup
+          runs: |
+            set -eux -o pipefail
+
+            RUST_TARGET="${ARCH}-unknown-linux-gnu"
+            sed -i -e "s/@PACKAGE_NAME@/rustc-1.96/g" \
+              -e "s/@MAJOR_MINOR_VERSION@/1.96/g" \
+              -e "s/@RUST_TARGET@/${RUST_TARGET}/g" \
+              debian/control.in debian/changelog debian/rustc.install.in
+            mv debian/control.in debian/control
+            mv debian/rustc.install.in "debian/rustc-1.96.install"
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 1.96.0-0
+        - uses: dpkg/build@v1
+          privileged: true
+          environment:
+            SRC: ${source.dir}
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/rustc/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/rustc/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
