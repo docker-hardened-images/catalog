@@ -18,7 +18,7 @@ This Docker Hardened ASP.NET Core image includes the ASP.NET Core runtime in a m
 - **dotnet CLI**: Command-line interface for running .NET applications (not building)
 - **TLS certificates**: Pre-installed CA certificates for secure connections
 - **Container optimizations**: Pre-configured for non-root execution on port 8080
-- **Security hardening**: No shell, no package manager, minimal attack surface
+- **Security hardening**: Runtime variants have no shell or package manager for a minimal attack surface
 
 ## Start an ASP.NET Core instance
 
@@ -41,7 +41,8 @@ docker run -p 8080:8080 dhi.io/aspnetcore:<tag> dotnet /app/myapp.dll
 
 ### Build and run a simple web API
 
-Since DHI runtime images don't include build tools, use a multi-stage approach:
+Since DHI ASP.NET Core images include the runtime but not the .NET SDK, use `dhi.io/dotnet:<version>-sdk` to build or
+publish applications and `dhi.io/aspnetcore:<version>` to run them:
 
 ```bash
 # Create a new web API project using DHI's SDK
@@ -55,6 +56,35 @@ docker run -v $(pwd):/app -w /app dhi.io/dotnet:8-sdk \
 # Run with DHI runtime (note: this is a web API, so it needs proper setup)
 docker run -v $(pwd)/published:/app -p 8080:8080 dhi.io/aspnetcore:8 \
   dotnet /app/MyApi.dll
+```
+
+### Customize the ASP.NET Core runtime root
+
+Use `dhi.io/aspnetcore:<version>-dev` when you need the ASP.NET Core runtime image family with a package manager, shell,
+and root user. This is useful for installing extra OS packages in an intermediate stage while keeping the final image on
+the matching ASP.NET Core runtime base.
+
+The ASP.NET Core dev variant is not a replacement for the .NET SDK image. Use `dhi.io/dotnet:<version>-sdk` to compile
+or publish .NET applications, and use `dhi.io/aspnetcore:<version>-dev` when you need package-manager access against the
+same runtime family as the final ASP.NET Core image.
+
+For example:
+
+```docker
+FROM dhi.io/aspnetcore:8-dev AS aspnet-runtime-root
+RUN apt-get update && apt-get install -y --no-install-recommends <package>
+
+FROM dhi.io/dotnet:8-sdk AS builder
+WORKDIR /src
+COPY . .
+RUN dotnet publish -c Release -o /app/publish
+
+FROM dhi.io/aspnetcore:8
+WORKDIR /app
+COPY --from=builder /app/publish .
+COPY --from=aspnet-runtime-root /usr/lib/<library> /usr/lib/<library>
+USER 1001
+ENTRYPOINT ["dotnet", "MyApp.dll"]
 ```
 
 ### Multi-stage build for production
@@ -82,15 +112,15 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 
 ### Key differences
 
-| Feature         | Docker Official ASP.NET Core        | Docker Hardened ASP.NET Core                        |
-| --------------- | ----------------------------------- | --------------------------------------------------- |
-| Security        | Standard base with common utilities | Minimal, hardened base with security patches        |
-| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants                        |
-| Package manager | apt/apk available                   | No package manager in runtime variants              |
-| User            | Runs as root by default             | Runs as nonroot user                                |
-| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                  |
-| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting |
-| Base OS         | Various Alpine/Debian versions      | Hardened Alpine 3.22 or Debian 13 base              |
+| Feature         | Docker Official ASP.NET Core        | Docker Hardened ASP.NET Core                                      |
+| --------------- | ----------------------------------- | ----------------------------------------------------------------- |
+| Security        | Standard base with common utilities | Minimal, hardened base with security patches                      |
+| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants; shell in dev variants               |
+| Package manager | apt/apk available                   | No package manager in runtime variants; available in dev variants |
+| User            | Runs as root by default             | Runs as nonroot user                                              |
+| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                                |
+| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting               |
+| Base OS         | Various Alpine/Debian versions      | Hardened Alpine 3.22 or Debian 13 base                            |
 
 ### Why no shell or package manager?
 
@@ -135,12 +165,20 @@ directly or as the `FROM` image in the final stage of a multi-stage build. These
 - Do not include a shell or a package manager
 - Contain only the minimal set of libraries needed to run the app
 
-Build-time variants typically include `dev` in the variant name and are intended for use in the first stage of a
-multi-stage Dockerfile. These images typically:
+Dev variants include `dev` in the tag and are intended for package installation or other preparation work in an
+intermediate stage of a multi-stage Dockerfile. These images typically:
 
 - Run as the root user
 - Include a shell and package manager
-- Are used to build or compile applications
+- Are used to install packages against the matching runtime image family
+
+For ASP.NET Core specifically, use `dhi.io/dotnet:<version>-sdk` to build or compile applications. Use
+`dhi.io/aspnetcore:<version>-dev` when you need shell or package-manager access for the ASP.NET Core runtime image
+family.
+
+FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 
@@ -153,11 +191,11 @@ following table of migration notes:
 | Base image            | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                                                                                                                                     |
 | Package management    | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a dev tag.                                                                                                                                                                                     |
 | Non-root user         | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                                                                                                                                    |
-| Multi-stage build     | Utilize images with a dev tag for build stages and non-dev images for runtime. For binary executables, use a static image for runtime.                                                                                                                                                                        |
+| Multi-stage build     | Use `dotnet:<version>-sdk` to build ASP.NET Core applications, `aspnetcore:<version>-dev` for package installation against the runtime image family, and non-dev `aspnetcore:<version>` images for runtime.                                                                                                   |
 | TLS certificates      | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                                            |
 | Ports                 | Non-dev hardened images run as a nonroot user by default. As a result, applications in these images can't bind to privileged ports (below 1024) when running in Kubernetes or in Docker Engine versions older than 20.10. Configure your [ASP.NET](http://asp.net/) Core application to use ports above 1024. |
 | Entry point           | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.                                                                                                                   |
-| No shell              | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in build stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                                   |
+| No shell              | By default, non-dev images, intended for runtime, don't contain a shell. Use dev images in intermediate stages to run shell commands and then copy artifacts to the runtime stage.                                                                                                                            |
 | ASPNETCORE_HTTP_PORTS | The default HTTP port is set to 8080 via the ASPNETCORE_HTTP_PORTS environment variable. Adjust your application configuration if it expects port 80.                                                                                                                                                         |
 
 The following steps outline the general migration process.
@@ -165,19 +203,18 @@ The following steps outline the general migration process.
 1. **Find hardened images for your app.**
 
    A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
-   [ASP.NET](http://asp.net/) Core images are available in versions 6, 8, and 9.
+   [ASP.NET](http://asp.net/) Core images are available in versions 8, 9, and 10.
 
 1. **Update the base image in your Dockerfile.**
 
    Update the base image in your application's Dockerfile to the hardened image you found in the previous step. For
-   framework images, this is typically going to be an image tagged as dev because it has the tools needed to install
-   packages and dependencies.
+   framework images, this may be an image tagged as dev when you need to install OS packages or dependencies.
 
 1. **For multi-stage Dockerfiles, update the runtime image in your Dockerfile.**
 
    To ensure that your final image is as minimal as possible, you should use a multi-stage build. All stages in your
-   Dockerfile should use a hardened image. While intermediary stages will typically use images tagged as dev, your final
-   runtime stage should use a non-dev image variant.
+   Dockerfile should use a hardened image. Use the DHI .NET SDK image for build stages, use ASP.NET Core dev variants
+   for runtime-family package installation, and use non-dev ASP.NET Core variants for the final runtime stage.
 
 1. **Install additional packages**
 
@@ -186,8 +223,8 @@ The following steps outline the general migration process.
    installed.
 
    Only images tagged as dev typically have package managers. You should use a multi-stage Dockerfile to install the
-   packages. Install the packages in the build stage that uses a dev image. Then, if needed, copy any necessary
-   artifacts to the runtime stage that uses a non-dev image.
+   packages. For ASP.NET Core, use `aspnetcore:<version>-dev` to install OS packages against the matching ASP.NET Core
+   runtime image family, then copy any necessary artifacts to the runtime stage that uses a non-dev image.
 
    For Alpine-based images, you can use apk to install packages. For Debian-based images, you can use apt-get to install
    packages.
@@ -216,9 +253,9 @@ privileged ports (below 1024) when running in Kubernetes or in Docker Engine ver
 
 ### No shell
 
-By default, image variants intended for runtime don't contain a shell. Use dev images in build stages to run shell
-commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug containers
-with no shell.
+By default, image variants intended for runtime don't contain a shell. Use dev images in intermediate stages to run
+shell commands and then copy any necessary artifacts into the runtime stage. In addition, use Docker Debug to debug
+containers with no shell.
 
 ### Entry point
 
