@@ -157,10 +157,10 @@ Cipher count: 26
 
 #### Recompiling Python dependencies with the FIPS OpenSSL provider
 
-When importing Python packages that have binaries pre-built it can happen that those binaries might have been statically
-linked to a non-FIPS compliant OpenSSL implementation. Therefore the recommended approach to install those dependencies
-is to build them from source. This makes sure that they are statically linked against our FIPS compliant provider. The
-following is an example:
+When importing Python packages that have binaries pre-built, those binaries might bundle or link to a non-FIPS OpenSSL
+implementation. For packages such as `cryptography`, build them from source and disable vendored OpenSSL so they link
+against the FIPS OpenSSL in the image. The FIPS dev image already includes `libssl-dev` and `libzstd-dev`, so install
+only the remaining build tools before running `pip`.
 
 ```Dockerfile
 # syntax=docker/dockerfile:1
@@ -170,9 +170,16 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/.venv/bin:$PATH"
 
 RUN python -m venv /.venv
-# Rebuild the cryptography binary linking it with OpenSSL
-RUN apk add --no-cache openssl-dev
-RUN pip install --no-cache-dir --no-binary cryptography cryptography boto3
+# Rebuild cryptography against the image's OpenSSL instead of the vendored wheel.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cargo \
+    gcc \
+    libffi-dev \
+    pkg-config \
+    rustc \
+    && rm -rf /var/lib/apt/lists/*
+RUN OPENSSL_NO_VENDOR=1 OPENSSL_STATIC=0 \
+    pip install --no-cache-dir --no-binary cryptography cryptography
 
 FROM dhi.io/python:<tag>-fips AS build-stage
 ENV PYTHONDONTWRITEBYTECODE=1
