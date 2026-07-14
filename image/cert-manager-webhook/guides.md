@@ -80,7 +80,7 @@ admission rules before they are persisted to etcd. This prevents misconfigured C
 resources from being accepted by the cluster.
 
 The `ValidatingWebhookConfiguration` is created and managed automatically by cert-manager when you install it. You do
-not apply it manually. The following shows the actual configuration deployed by cert-manager v1.19.4, retrieved with
+not apply it manually. The following shows the actual configuration deployed by cert-manager v1.20.4, retrieved with
 `kubectl get validatingwebhookconfiguration cert-manager-webhook -o yaml`:
 
 ```yaml
@@ -150,7 +150,7 @@ specifically the `username`, `groups`, and `extra` fields. This allows cert-mana
 policies on certificate requests.
 
 The `MutatingWebhookConfiguration` is created and managed automatically by cert-manager when you install it. You do not
-apply it manually. The following shows the actual configuration deployed by cert-manager v1.19.4, retrieved with
+apply it manually. The following shows the actual configuration deployed by cert-manager v1.20.4, retrieved with
 `kubectl get mutatingwebhookconfiguration cert-manager-webhook -o yaml`:
 
 ```yaml
@@ -197,7 +197,7 @@ system:serviceaccount:cert-manager:cert-manager
 
 ### End-to-end webhook deployment walkthrough
 
-The following steps demonstrate a complete cert-manager-webhook deployment, validated against cert-manager v1.19.4 and
+The following steps demonstrate a complete cert-manager-webhook deployment, validated against cert-manager v1.20.4 and
 `dhi.io/cert-manager-webhook:1-debian13`.
 
 **Prerequisites**: A running Kubernetes cluster with `kubectl` and `helm` access. All cert-manager components must use
@@ -241,7 +241,7 @@ kubectl get pods -n cert-manager -o jsonpath='{range .items[*]}{.metadata.name}{
 
 ```bash
 kubectl logs -n cert-manager deployment/my-cert-manager-webhook | grep -E "Starting|listening|ready"
-# I0312 07:10:35  "starting cert-manager webhook" version="1.19.4"
+# I0312 07:10:35  "starting cert-manager webhook" version="1.20.4"
 # I0312 07:10:35  "listening for requests" address=":6443"
 ```
 
@@ -356,7 +356,7 @@ Each component may be available as a separate Docker Hardened Image for deployme
 
 ### FIPS variants considerations
 
-FIPS variants (`1-fips`, `1-debian13-fips`, `1.19-fips`, `1.19.4-fips`, `1.19.4-debian13-fips`) are available on Docker
+FIPS variants (`1-fips`, `1-debian13-fips`, `1.20-fips`, `1.20.4-fips`, `1.20.4-debian13-fips`) are available on Docker
 Hub and carry CIS, FIPS, and STIG compliance badges with 0 vulnerabilities. Pulling FIPS variants requires a Docker
 subscription — the tags return 401 without one.
 
@@ -406,7 +406,7 @@ When using FIPS variants, be aware of the following cert-manager behaviours invo
 
 1. **PKCS#12 legacy profiles** (DES and RC2) — cert-manager supports `LegacyDESPKCS12Profile` and
    `LegacyRC2PKCS12Profile` for backward compatibility. Use the
-   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.19.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
+   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.20.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
    Certificate profile as a FIPS-compliant alternative, or avoid keystores entirely.
 
 1. **CHACHA20_POLY1305 cipher** — If the client supports `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`, the application will
