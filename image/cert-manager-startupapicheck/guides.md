@@ -163,7 +163,7 @@ chart, no extra configuration is required — the hook is pre-configured to use 
 `helm install` command from returning until cert-manager is confirmed ready:
 
 ```bash
-helm install my-cert-manager oci://dhi.io/cert-manager-chart --version 1.19.4 \
+helm install my-cert-manager oci://dhi.io/cert-manager-chart --version 1.20.4 \
   --namespace cert-manager \
   --set "global.imagePullSecrets[0].name=helm-pull-secret" \
   --set "installCRDs=true"
@@ -188,7 +188,7 @@ kubectl apply -f my-certificate.yaml
 
 ## End-to-end startupapicheck deployment walkthrough
 
-The following steps demonstrate a complete deployment and verification, validated against cert-manager v1.19.4 and
+The following steps demonstrate a complete deployment and verification, validated against cert-manager v1.20.4 and
 `dhi.io/cert-manager-startupapicheck:1-debian13`.
 
 **Prerequisites:** A running Kubernetes cluster with `kubectl` and `helm` access. All cert-manager components must use
@@ -207,7 +207,7 @@ kubectl create secret docker-registry helm-pull-secret \
   -n cert-manager
 
 # Install all cert-manager components using the DHI Helm chart
-helm install my-cert-manager oci://dhi.io/cert-manager-chart --version 1.19.4 \
+helm install my-cert-manager oci://dhi.io/cert-manager-chart --version 1.20.4 \
   --namespace cert-manager \
   --set "global.imagePullSecrets[0].name=helm-pull-secret" \
   --set "installCRDs=true"
@@ -344,7 +344,7 @@ select a tag.
 
 ## FIPS variants considerations
 
-FIPS variants (`1-fips`, `1-debian13-fips`, `1.19-fips`, `1.19.4-fips`, `1.19.4-debian13-fips`) are available on Docker
+FIPS variants (`1-fips`, `1-debian13-fips`, `1.20-fips`, `1.20.4-fips`, `1.20.4-debian13-fips`) are available on Docker
 Hub and carry CIS, FIPS, and STIG compliance badges with 0 vulnerabilities. Pulling FIPS variants requires a Docker
 subscription — the tags return 401 without one.
 
@@ -392,7 +392,7 @@ When using FIPS variants, be aware of the following cert-manager behaviours invo
 
 1. **PKCS#12 legacy profiles** (DES and RC2) — cert-manager supports `LegacyDESPKCS12Profile` and
    `LegacyRC2PKCS12Profile` for backward compatibility. Use the
-   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.19.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
+   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.20.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
    Certificate profile as a FIPS-compliant alternative, or avoid keystores entirely.
 
 1. **CHACHA20_POLY1305 cipher** — If the client supports `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`, the application will
