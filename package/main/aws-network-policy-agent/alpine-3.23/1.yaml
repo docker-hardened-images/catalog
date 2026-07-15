@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-aws-network-policy-agent
+variant: runtime
+tags:
+  - 1.3.7-alpine3.23
+  - 1.3.7-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-19"
+vars:
+  COMMIT_SHA: 04b6d31884743fe33c58792ac3f1a07086335c20
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.3"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.3.7
+  VERSION: 1.3.7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: aws-network-policy-agent
+      work-dir: /go/src/github.com/aws/aws-network-policy-agent
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - bpftool
+          - clang
+          - libbpf-dev
+          - llvm
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/aws/aws-network-policy-agent.git#v1.3.7
+            checksum: 04b6d31884743fe33c58792ac3f1a07086335c20
+            path: /go/src/github.com/aws/aws-network-policy-agent
+            spdx:
+              name: aws-network-policy-agent
+              version: 1.3.7
+              packages:
+                - name: aws-network-policy-agent
+                  purl: pkg:golang/github.com/aws/aws-network-policy-agent@1.3.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+              - github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs@v1.65.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: run go tests
+          runs: |
+            set -eux -o pipefail
+
+            go test $(go list ./... | grep -v 'test/integration')
+        - name: generate vmlinux.h
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            bpftool btf dump file /sys/kernel/btf/vmlinux format c > pkg/ebpf/c/vmlinux.h
+        - name: build BPF programs
+          runs: |
+            set -eux -o pipefail
+
+            ARCH=$(uname -m | sed 's/x86_64/amd64/g; s/aarch64/arm64/g')
+            EBPF_DIR=./pkg/ebpf/c
+            CLANG_INCLUDE="-I../../."
+            CLANG_FLAGS="${CLANG_INCLUDE} -g -O2 -Wall -fpie -target bpf -DCORE -D__BPF_TRACING__"
+
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v4events.bpf.c -o ${EBPF_DIR}/v4events.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v6events.bpf.c -o ${EBPF_DIR}/v6events.bpf.o
+
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4ingress.bpf.c -o ${EBPF_DIR}/tc.v4ingress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4egress.bpf.c -o ${EBPF_DIR}/tc.v4egress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6ingress.bpf.c -o ${EBPF_DIR}/tc.v6ingress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6egress.bpf.c -o ${EBPF_DIR}/tc.v6egress.bpf.o
+        - name: build aws-network-policy-agent
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/aws-network-policy-agent
+            packages: .
+        - name: build aws-network-policy-agent dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/aws-network-policy-agent-dev
+            packages: .
+            strip: false
+        - name: build cliv6
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cliv6
+            packages: ./cmd/cliv6
+        - name: build cliv6 dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cliv6-dev
+            packages: ./cmd/cliv6
+            strip: false
+        - name: build cli
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cli
+            packages: ./cmd/cli
+        - name: build cli dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/aws-network-policy-agent
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/cli-dev
+            packages: ./cmd/cli
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Aws-network-policy-agent binaries
+            files:
+              - usr/bin/aws-network-policy-agent
+            license: Apache-2.0
+            name: aws-network-policy-agent
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/cliv6
+                name: cliv6
+              - files:
+                  - path: usr/bin/cli
+                name: cli
+              - files:
+                  - path: usr/bin/aws-network-policy-agent
+                    source: usr/bin/aws-network-policy-agent-dev
+                name: aws-network-policy-agent-dev
+              - files:
+                  - path: usr/bin/cliv6
+                    source: usr/bin/cliv6-dev
+                name: cliv6-dev
+              - files:
+                  - path: usr/bin/cli
+                    source: usr/bin/cli-dev
+                name: cli-dev
+            url: https://github.com/aws/aws-network-policy-agent
+            version: 1.3.7
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
