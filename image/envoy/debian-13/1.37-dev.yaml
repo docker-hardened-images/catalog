@@ -115,11 +115,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Envoy <=1.36 ships bazel/setup_clang.sh and compiles against the
-            # host clang/llvm; generate clang.bazelrc so --config=clang resolves
-            # to the system toolchain. Envoy >=1.37 removed the script and uses a
-            # hermetic LLVM toolchain (downloaded by --config=clang), so this is a
-            # no-op there.
             if [ -f bazel/setup_clang.sh ]; then
               BAZELRC_FILE="${PWD}/clang.bazelrc" bash bazel/setup_clang.sh "/usr/lib/llvm-18"
             fi
@@ -129,12 +124,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Build against Debian's clang/llvm rather than Envoy's hermetic LLVM
-            # toolchain. Envoy pins hermetic LLVM 18.1.8 for every minor we track,
-            # and Debian 13 ships clang-18 (18.1.x), so the compiler
-            # versions match. Using the system toolchain avoids the hermetic
-            # toolchain's dependency on the legacy libtinfo.so.5 ABI, which Debian
-            # 13 no longer packages (it only ships libtinfo.so.6).
             export CC="clang-18" CXX="clang++-18"
 
             BAZEL_BUILD_OPTS=(
@@ -143,11 +132,6 @@ contents:
               --verbose_failures
               --sandbox_debug
               --jobs=auto
-              # The BoringSSL FIPS module is built by a genrule whose compiler
-              # output easily exceeds Bazel's 1MB default, hiding real errors
-              # behind "exceeds maximum size ... skipping". Match upstream's
-              # .bazelrc so genrule failures are fully printed.
-              # https://github.com/envoyproxy/envoy/blob/main/.bazelrc
               --experimental_ui_max_stdouterr_bytes=11712829
               --disk_cache=/bazel-disk-cache
               --repository_cache=/bazel-repo-cache
@@ -155,29 +139,6 @@ contents:
               --experimental_disk_cache_gc_max_age=30d
             )
 
-            # Select the clang toolchain config, which differs by minor:
-            #   * Envoy <=1.36 still ship bazel/setup_clang.sh, so the setup step
-            #     above generated clang.bazelrc and `--config=clang` already
-            #     resolves to the system clang.
-            #   * Envoy >=1.37 removed setup_clang.sh and ship a `clang-local`
-            #     bazelrc config. Detect it by presence in .bazelrc.
-            #
-            #     `clang-local` alone is NOT enough: Envoy registers a hermetic
-            #     LLVM toolchain unconditionally, and its exec/target constraints
-            #     match the default host platform, so `--config=clang-local` still
-            #     resolves to the downloaded external/llvm_toolchain clang (it only
-            #     adds compiler/linker flags, it does not point at or select a
-            #     system clang). That hermetic clang links against the legacy
-            #     libtinfo.so.5 ABI, which Debian 13 no longer ships (only
-            #     libtinfo.so.6), so it fails with "libtinfo.so.5: cannot open
-            #     shared object file". BAZEL_LLVM_PATH repoints @llvm_toolchain
-            #     (toolchain_roots) at the Debian clang-18 install
-            #     instead of downloading, and BAZEL_USE_HOST_SYSROOT=True makes it
-            #     use the host libc/sysroot rather than the hermetic sysroot. Both
-            #     are read by the @envoy_repo rule and must be passed via
-            #     --repo_env (upstream's recommended mechanism):
-            #     https://github.com/envoyproxy/envoy/blob/v1.37.5/bazel/repo.bzl
-            #     https://github.com/envoyproxy/envoy/blob/v1.37.5/bazel/toolchains.bzl
             if grep -q "clang-local" .bazelrc; then
               BAZEL_BUILD_OPTS+=(
                 --config=clang-local
@@ -188,11 +149,6 @@ contents:
               BAZEL_BUILD_OPTS+=(--config=clang)
             fi
 
-            # Select the BoringSSL FIPS module for FIPS targets. Envoy >=1.38
-            # ships the `boringssl-fips` bazelrc config; older minors use the
-            # legacy `--define=boringssl=fips` toggle.
-            # https://github.com/envoyproxy/envoy/blob/main/.bazelrc (SSL section)
-            # https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/ssl#fips-140-2
             if [ "${target.fips}" = "true" ]; then
               if grep -q "boringssl-fips" .bazelrc; then
                 BAZEL_BUILD_OPTS+=(--config=boringssl-fips)
