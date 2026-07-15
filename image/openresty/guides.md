@@ -16,6 +16,7 @@ This Docker Hardened openresty image includes:
 
 - OpenResty (NGINX + LuaJIT) installed at /opt/openresty
 - nginx and openresty binaries for running the HTTP server
+- NGINX auth request, gzip static, real IP, stub status, and HTTP/2 modules
 - LuaJIT runtime, luarocks and opm for managing Lua/OpenResty packages
 - Default nginx config directory at /opt/openresty/nginx/conf (replaceable via volumes)
 - Logs are symlinked to stdout/stderr for container logging; temporary files are placed in /var/run/openresty/
