@@ -28,7 +28,7 @@ security-hardened package:
 > **Note:** The cert-manager-controller image is primarily designed to run inside a Kubernetes cluster as part of a full
 > cert-manager deployment. The standalone Docker command below displays the available configuration options.
 
-Run the following command and replace `<tag>` with the image variant you want to run (for example, `1.19.3-debian13`).
+Run the following command and replace `<tag>` with the image variant you want to run (for example, `1.20.3-debian13`).
 
 ```console
 $ docker run --rm dhi.io/cert-manager-controller:<tag> --help
@@ -159,7 +159,7 @@ $ helm install cert-manager oci://registry-1.docker.io/dhi/cert-manager-chart \
   -n cert-manager --create-namespace \
   --set crds.enabled=true \
   --set image.registry=dhi.io \
-  --set image.tag=1.19.3-debian13 \
+  --set image.tag=1.20.3-debian13 \
   --set securityContext.runAsUser=65532 \
   --set "global.imagePullSecrets[0].name"=helm-pull-secret
 ```
