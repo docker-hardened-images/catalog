@@ -1,0 +1,121 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-caddy
+variant: runtime
+tags:
+  - 2.11.4-alpine3.23
+  - 2.11.4-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-05-04"
+vars:
+  COMMIT_SHA: e2eee6a7fce366321294c9c2a79f3146891dcbdf
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.11"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.11.4
+  VERSION: 2.11.4
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: caddy
+      work-dir: /go/src/github.com/caddyserver/caddy
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/caddyserver/caddy.git#v2.11.4
+            checksum: e2eee6a7fce366321294c9c2a79f3146891dcbdf
+            path: /go/src/github.com/caddyserver/caddy
+            spdx:
+              name: caddy
+              version: 2.11.4
+              packages:
+                - name: caddy
+                  purl: pkg:golang/caddyserver/caddy@v2.11.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch (2 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            downgrade: true
+            download: true
+            tidy: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test $(go list ./... | grep -v caddytest/integration)
+        - name: build caddy
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/caddyserver/caddy/v2.CustomVersion=e2eee6a7fce366321294c9c2a79f3146891dcbdf
+            output: ${target.dir}/usr/bin/caddy
+            packages: ./cmd/caddy
+            tags:
+              - nobadger
+              - nomysql
+              - nopgx
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/caddyserver/caddy
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/caddy-dev
+            packages: ./cmd/caddy
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Caddy
+            files:
+              - usr/bin/caddy
+            license: Apache-2.0
+            name: caddy
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/caddy
+                    source: usr/bin/caddy-dev
+                name: caddy-dev
+            url: https://github.com/caddyserver/caddy
+            version: 2.11.4
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
