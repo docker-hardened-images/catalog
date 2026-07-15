@@ -158,7 +158,7 @@ Expected output:
 
 ### End-to-end CA injection walkthrough
 
-The following steps demonstrate a complete CA injection workflow, validated against cert-manager v1.19.4 and
+The following steps demonstrate a complete CA injection workflow, validated against cert-manager v1.20.4 and
 `dhi.io/cert-manager-cainjector:1-debian13`.
 
 **Prerequisites**: cert-manager must be installed and all three pods (cert-manager, cert-manager-cainjector,
@@ -167,7 +167,7 @@ cert-manager-webhook) must be `Ready` before proceeding.
 **Step 1: Install cert-manager**
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.4/cert-cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.4/cert-cert-manager.yaml
 ```
 
 Wait for all pods to be ready:
@@ -276,7 +276,7 @@ automatically.
 
 ```bash
 kubectl logs -n cert-manager -l app=cainjector --tail=20 | grep "Updated object"
-# I0311 20:46:41.193241  1 reconciler.go:141] "Updated object" ... kind="validatingwebhookconfiguration" name="my-webhook"
+# I0311 20:46:41.203241  1 reconciler.go:141] "Updated object" ... kind="validatingwebhookconfiguration" name="my-webhook"
 ```
 
 **Step 7: Clean up**
@@ -290,7 +290,7 @@ kubectl delete namespace webhook-ns
 
 ### End-to-end inject-ca-from-secret walkthrough
 
-The following steps demonstrate CA injection directly from a Secret resource, validated against cert-manager v1.19.4.
+The following steps demonstrate CA injection directly from a Secret resource, validated against cert-manager v1.20.4.
 This approach is useful when you manage certificates outside of cert-manager.
 
 **Step 1: Create namespace and generate a CA certificate**
@@ -494,7 +494,7 @@ kubectl get pods -n cert-manager
 # cert-manager-cainjector-xxx             1/1     Running   0          20s
 
 kubectl logs -n cert-manager deployment/cert-manager-cainjector | grep -E "Starting|Updated|leader"
-# I0312 07:10:35  "starting cert-manager ca-injector" version="1.19.4"
+# I0312 07:10:35  "starting cert-manager ca-injector" version="1.20.4"
 # I0312 07:10:35  became leader
 # I0312 07:10:35  "Starting Controller" controller="validatingwebhookconfiguration"
 # I0312 07:10:35  "Starting Controller" controller="mutatingwebhookconfiguration"
@@ -529,7 +529,7 @@ Each component may be available as a separate Docker Hardened Image for deployme
 
 ### FIPS variants considerations
 
-FIPS variants (`1-fips`, `1-debian13-fips`, `1.19-fips`, `1.19.4-fips`, `1.19.4-debian13-fips`) are available on Docker
+FIPS variants (`1-fips`, `1-debian13-fips`, `1.20-fips`, `1.20.4-fips`, `1.20.4-debian13-fips`) are available on Docker
 Hub and carry CIS, FIPS, and STIG compliance badges with 0 vulnerabilities. Pulling FIPS variants requires a Docker
 subscription — the tags return 401 without one.
 
@@ -567,7 +567,7 @@ When using FIPS variants, be aware of the following cert-manager behaviours invo
 
 1. **PKCS#12 legacy profiles** (DES and RC2) — cert-manager supports `LegacyDESPKCS12Profile` and
    `LegacyRC2PKCS12Profile` for backward compatibility. Use the
-   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.19.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
+   [Modern 2023](https://github.com/cert-manager/cert-manager/blob/v1.20.1/pkg/apis/certmanager/v1/types_certificate.go#L536)
    Certificate profile as a FIPS-compliant alternative, or avoid keystores entirely.
 
 1. **CHACHA20_POLY1305 cipher** — If the client supports `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`, the application will
