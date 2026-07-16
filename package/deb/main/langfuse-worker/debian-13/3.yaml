@@ -3,8 +3,8 @@
 image: dhi.io/pkg-langfuse-worker
 variant: runtime
 tags:
-  - 3.216.0-0
-  - 3.216.0-0-debian13
+  - 3.216.0-1
+  - 3.216.0-1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,8 +12,8 @@ dates:
   release: "2024-12-09"
 vars:
   COMMIT_SHA: 706f1bb4231ba4433c8fc101b85167471693180a
-  DHI_REL: "0"
-  DHI_VERSION: 3.216.0-0
+  DHI_REL: "1"
+  DHI_VERSION: 3.216.0-1
   NODEJS_MAJOR: "24"
   NODEJS_VERSION: 24.18.0-0
   PNPM_VERSION: 11.4.0
@@ -53,6 +53,7 @@ contents:
           - nodejs-24=24.18.0-0
           - npm
           - node-corepack
+          - yq-go
         files:
           - url: git+https://github.com/langfuse/langfuse.git#v3.216.0
             checksum: 706f1bb4231ba4433c8fc101b85167471693180a
@@ -100,12 +101,20 @@ contents:
                 "nodemailer": "7.0.11", // CVE-2025-14874 (HIGH)
                 "path-to-regexp@8": "8.4.0", // CVE-2026-4926 (HIGH, ReDoS), CVE-2026-4923
                 "js-yaml@4": "4.2.0", // CVE-2026-53550 (ReDoS)
-                "uuid@13": "13.0.1", // CVE-2026-41907
+                "uuid@>=13.0.0 <13.0.1": "13.0.1", // CVE-2026-41907
                 "@opentelemetry/core@2": "2.8.0", // CVE-2026-54285 (DoS)
                 "protobufjs@7": "7.6.3", // CVE-2026-54269 (uncontrolled recursion)
                 "lodash": "4.18.1", // CVE-2025-13465, CVE-2026-2950 (MEDIUM, prototype pollution)
                 "postcss@8": "8.5.10", // CVE-2026-41305 (MEDIUM, XSS)
                 "@babel/runtime@7": "7.26.10", // CVE-2025-27789 (MEDIUM, ReDoS)
+                "cookie@<0.7.0": "0.7.0", // CVE-2024-47764 (LOW, CRLF injection)
+                "qs@<6.15.2": "6.15.2", // CVE-2025-15284, CVE-2026-2391, CVE-2026-8723 (MEDIUM, DoS)
+                "fast-xml-parser@>=4.0.0 <4.5.5": "4.5.5", // CVE-2026-27942, CVE-2026-33349
+                "fast-xml-parser@>=5.0.0 <5.7.0": "5.7.0", // CVE-2026-27942, CVE-2026-33349, CVE-2026-41650
+                "yaml@>=1.0.0 <1.10.3": "1.10.3", // CVE-2026-33532 (MEDIUM, stack overflow)
+                "yaml@>=2.0.0 <2.8.3": "2.8.3", // CVE-2026-33532 (MEDIUM, stack overflow)
+                "dd-trace@>=5.0.0 <=5.100.0": "5.101.0", // CVE-2026-50272 (HIGH, DoS)
+                "@smithy/config-resolver@>=4.0.0 <4.4.0": "4.4.0", // GHSA-6475-r3vj-m8vf (LOW)
               });
               fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
             '
@@ -114,22 +123,17 @@ contents:
             # package.json -- it reads overrides from pnpm-workspace.yaml. Mirror the
             # same map into the workspace file so the CVE pins apply on the v3 line too;
             # the v2 line (pnpm 9) keeps reading them from package.json above.
-            node -e '
-              const fs = require("fs");
-              const ws = "pnpm-workspace.yaml";
-              if (!fs.existsSync(ws)) process.exit(0);
-              const ov = (JSON.parse(fs.readFileSync("package.json", "utf8")).pnpm || {}).overrides || {};
-              const lines = Object.entries(ov)
-                .map(([k, v]) => "  " + JSON.stringify(k) + ": " + JSON.stringify(String(v)))
-                .join("\n");
-              let s = fs.readFileSync(ws, "utf8");
-              if (/^overrides:[ \t]*$/m.test(s)) {
-                s = s.replace(/^overrides:[ \t]*$/m, "overrides:\n" + lines);
-              } else {
-                s = s.replace(/\s*$/, "") + "\noverrides:\n" + lines + "\n";
-              }
-              fs.writeFileSync(ws, s);
-            '
+            PNPM_OVERRIDES="$(
+              node -e '
+                const fs = require("fs");
+                const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+                process.stdout.write(JSON.stringify((p.pnpm || {}).overrides || {}));
+              '
+            )"
+            export PNPM_OVERRIDES
+            yq -i \
+              '.overrides = ((.overrides // {}) * (strenv(PNPM_OVERRIDES) | from_json)) | .overrides style=""' \
+              pnpm-workspace.yaml
 
             # stage pruned workspace as the deb source tree
             rm -rf "${source.dir}/langfuse-worker/worker-src"
@@ -147,7 +151,7 @@ contents:
             mv debian/langfuse-worker.install "debian/langfuse-worker-3.install"
         - uses: dpkg/bump@v1
           with:
-            version: 3.216.0-0
+            version: 3.216.0-1
         - uses: dpkg/build@v1
           privileged: true
           with:
