@@ -1,0 +1,726 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-calico
+variant: runtime
+tags:
+  - 3.32.1-alpine3.23
+  - 3.32.1-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CALICO_HAS_WEBHOOKS: "true"
+  CNI_PLUGINS_COMMIT_SHA: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+  CNI_PLUGINS_VERSION: v1.9.1
+  COMMIT_SHA: 0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+  GOLANG_VERSION: 1.26.5-r0
+  PACKAGE_NAME: calico-3.32
+  PACKAGE_SUFFIX: "3.32"
+  REGISTRAR_COMMIT_SHA: 2d18e12bc5077c36cbd564be7eab9ea94c0c85fb
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.1
+  VERSION: 3.32.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: calico-3.32
+      work-dir: /go/src/github.com/projectcalico/calico
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.1
+            checksum: 0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico
+              version: 3.32.1
+              packages:
+                - name: calico
+                  purl: pkg:golang/github.com/projectcalico/calico@3.32.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/containernetworking/plugins.git#v1.9.1
+            checksum: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+            path: /go/src/github.com/containernetworking/plugins
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/kubernetes-csi/node-driver-registrar.git#2d18e12bc5077c36cbd564be7eab9ea94c0c85fb
+            checksum: 2d18e12bc5077c36cbd564be7eab9ea94c0c85fb
+            path: /go/src/github.com/kubernetes-csi/node-driver-registrar
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update calico go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.53.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+              - github.com/containernetworking/plugins@v1.9.0
+            download: true
+        - name: remove cni plugins vendor directory
+          work-dir: /go/src/github.com/containernetworking/plugins
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf vendor
+        - name: update cni plugins dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            deps:
+              - golang.org/x/crypto@v0.53.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: update node-driver-registrar dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/kubernetes-csi/node-driver-registrar
+          with:
+            deps:
+              - golang.org/x/net@v0.56.0
+              - golang.org/x/sys@v0.46.0
+              - golang.org/x/text@v0.38.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test calico-apiserver
+          runs: |
+            set -eux -o pipefail
+
+            # Unit tests only
+            CGO_ENABLED=0 go test \
+              ./apiserver/cmd/apiserver/server/... \
+              ./apiserver/pkg/apiserver/... \
+              ./apiserver/pkg/printers/projectcalico/... \
+              ./apiserver/pkg/rbac/...
+        - name: test calicoctl
+          work-dir: /go/src/github.com/projectcalico/calico/calicoctl
+          runs: |
+            set -eux -o pipefail
+
+            # Unit tests only; skip fv/integration tests that require etcd/kubernetes.
+            CGO_ENABLED=0 go test \
+              $(go list ./... | grep -v -E '(tests/fv|tests/st)')
+        - name: test calico-kube-controllers
+          work-dir: /go/src/github.com/projectcalico/calico/kube-controllers
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only, skip packages with Functional or Integration tests that require Docker
+            CGO_ENABLED=0 go test ./pkg/cache/... ./pkg/converter/... ./pkg/status/... ./pkg/controllers/utils/...
+        - name: test calico-typha
+          work-dir: /go/src/github.com/projectcalico/calico/typha
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only;
+            CGO_ENABLED=0 go test \
+              ./pkg/calc/... \
+              ./pkg/config/... \
+              ./pkg/jitter/... \
+              ./pkg/snapcache/... \
+              ./pkg/syncproto/... \
+              ./pkg/tlsutils/...
+        - name: test calico-webhooks
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./webhooks/... -count=1
+        - name: test calico-goldmane
+          work-dir: /go/src/github.com/projectcalico/calico/goldmane
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only; skip fv packages that require a running daemon.
+            CGO_ENABLED=0 go test $(go list ./... | grep -v -E '/fv$')
+        - name: test calico-whisker-backend
+          work-dir: /go/src/github.com/projectcalico/calico/whisker-backend
+          runs: |
+            set -eux -o pipefail
+
+            # Run unit tests only; skip fv packages that require a running Goldmane daemon.
+            CGO_ENABLED=0 go test $(go list ./... | grep -v -E '/fv$')
+        - name: test calico-pod2daemon-flexvol
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./pod2daemon/flexvol/...
+        - name: test calico-cni
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          runs: |
+            set -eux -o pipefail
+
+            # Run tests excluding packages that require external environment setup
+            CGO_ENABLED=0 go test \
+              $(go list ./... | grep -v -E '(pkg/install|tests)')
+        - name: install packaged config and scripts
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/share/calico"
+            install -m 0644 \
+              /go/src/github.com/projectcalico/calico/typha/docker-image/typha.cfg \
+              "${target.dir}/usr/share/calico/typha.cfg"
+
+            install -d "${target.dir}/usr/bin"
+            install -m 0755 \
+              /go/src/github.com/projectcalico/calico/pod2daemon/flexvol/docker-image/flexvol.sh \
+              "${target.dir}/usr/bin/flexvol.sh"
+        - name: build calico-apiserver
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-apiserver
+            packages: ./apiserver/cmd/apiserver
+        - name: build calico-apiserver dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-apiserver-dev
+            packages: ./apiserver/cmd/apiserver
+            strip: false
+        - name: build calicoctl
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calicoctl
+            packages: ./calicoctl/calicoctl
+        - name: build calicoctl dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calicoctl-dev
+            packages: ./calicoctl/calicoctl
+            strip: false
+        - name: build calico-kube-controllers
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/kube-controllers
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-kube-controllers
+            packages: ./cmd/kube-controllers
+        - name: build calico-kube-controllers dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/kube-controllers
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-kube-controllers-dev
+            packages: ./cmd/kube-controllers
+            strip: false
+        - name: build check-status
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/kube-controllers
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/check-status
+            packages: ./cmd/check-status
+        - name: build check-status dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/kube-controllers
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/check-status-dev
+            packages: ./cmd/check-status
+            strip: false
+        - name: build calico-typha
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/typha
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-typha
+            packages: ./cmd/calico-typha
+        - name: build calico-typha dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/typha
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/calico-typha-dev
+            packages: ./cmd/calico-typha
+            strip: false
+        - name: build calico-webhook
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/webhook
+            packages: ./webhooks/cmd/
+        - name: build calico-webhook dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/webhook-dev
+            packages: ./webhooks/cmd/
+            strip: false
+        - name: build goldmane
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/goldmane
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/goldmane
+            packages: ./cmd
+        - name: build goldmane dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/goldmane
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/goldmane-dev
+            packages: ./cmd
+            strip: false
+        - name: build goldmane-health
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/goldmane
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/health
+            packages: ./cmd/health
+        - name: build goldmane-health dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/goldmane
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/health-dev
+            packages: ./cmd/health
+            strip: false
+        - name: build whisker-backend
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/whisker-backend
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/whisker-backend
+            packages: ./cmd
+        - name: build whisker-backend dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/whisker-backend
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/whisker-backend-dev
+            packages: ./cmd
+            strip: false
+        - name: build flexvol
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/pod2daemon/flexvol
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/flexvol
+            packages: .
+        - name: build flexvol dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/pod2daemon/flexvol
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/usr/bin/flexvol-dev
+            packages: .
+            strip: false
+        - name: build calico-cni install
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/opt/cni/bin/install
+            packages: ./cmd/install
+        - name: build calico-cni install dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/opt/cni/bin/install-dev
+            packages: ./cmd/install
+            strip: false
+        - name: build calico-cni plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/opt/cni/bin/calico
+            packages: ./cmd/calico
+        - name: build calico-cni plugin dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.32.1
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            output: ${target.dir}/opt/cni/bin/calico-dev
+            packages: ./cmd/calico
+            strip: false
+        - name: build node-driver-registrar
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-csi/node-driver-registrar
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=3.32.1
+            output: ${target.dir}/usr/bin/node-driver-registrar
+            packages: ./cmd/csi-node-driver-registrar
+        - name: build node-driver-registrar dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-csi/node-driver-registrar
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=3.32.1
+            output: ${target.dir}/usr/bin/node-driver-registrar-dev
+            packages: ./cmd/csi-node-driver-registrar
+            strip: false
+        - name: build cni host-local
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/host-local
+            packages: ./plugins/ipam/host-local
+        - name: build cni host-local dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/host-local-dev
+            packages: ./plugins/ipam/host-local
+            strip: false
+        - name: build cni loopback
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/loopback
+            packages: ./plugins/main/loopback
+        - name: build cni loopback dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/loopback-dev
+            packages: ./plugins/main/loopback
+            strip: false
+        - name: build cni portmap
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/portmap
+            packages: ./plugins/meta/portmap
+        - name: build cni portmap dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/portmap-dev
+            packages: ./plugins/meta/portmap
+            strip: false
+        - name: build cni tuning
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/tuning
+            packages: ./plugins/meta/tuning
+        - name: build cni tuning dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1
+            output: ${target.dir}/opt/cni/bin/tuning-dev
+            packages: ./plugins/meta/tuning
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Calico component binaries from projectcalico/calico
+            files:
+              - opt/cni/bin/install
+              - opt/cni/bin/calico
+            license: Apache-2.0
+            name: calico-3.32
+            provides: calico=$pkg_full_version
+            rel: 0
+            replaces: calico
+            subpackages:
+              - files:
+                  - path: usr/bin/calico-apiserver
+                name: calico-apiserver-3.32
+              - files:
+                  - path: usr/bin/calicoctl
+                name: calico-ctl-3.32
+              - files:
+                  - path: usr/bin/calico-kube-controllers
+                  - path: usr/bin/check-status
+                name: calico-kube-controllers-3.32
+              - files:
+                  - path: usr/bin/calico-typha
+                  - path: usr/share/calico/typha.cfg
+                name: calico-typha-3.32
+              - files:
+                  - path: usr/bin/goldmane
+                  - path: usr/bin/health
+                name: calico-goldmane-3.32
+              - files:
+                  - path: usr/bin/whisker-backend
+                name: calico-whisker-backend-3.32
+              - files:
+                  - path: usr/bin/flexvol
+                  - path: usr/bin/flexvol.sh
+                name: calico-pod2daemon-flexvol-3.32
+              - files:
+                  - path: opt/cni/bin/host-local
+                  - path: opt/cni/bin/loopback
+                  - path: opt/cni/bin/portmap
+                  - path: opt/cni/bin/tuning
+                name: cni-plugins-3.32
+              - files:
+                  - path: usr/bin/node-driver-registrar
+                name: calico-node-driver-registrar-3.32
+              - files:
+                  - path: opt/cni/bin/install
+                    source: opt/cni/bin/install-dev
+                  - path: opt/cni/bin/calico
+                    source: opt/cni/bin/calico-dev
+                name: calico-3.32-dev
+              - files:
+                  - path: usr/bin/calico-apiserver
+                    source: usr/bin/calico-apiserver-dev
+                name: calico-apiserver-3.32-dev
+              - files:
+                  - path: usr/bin/calicoctl
+                    source: usr/bin/calicoctl-dev
+                name: calico-ctl-3.32-dev
+              - files:
+                  - path: usr/bin/calico-kube-controllers
+                    source: usr/bin/calico-kube-controllers-dev
+                  - path: usr/bin/check-status
+                    source: usr/bin/check-status-dev
+                name: calico-kube-controllers-3.32-dev
+              - files:
+                  - path: usr/bin/calico-typha
+                    source: usr/bin/calico-typha-dev
+                name: calico-typha-3.32-dev
+              - files:
+                  - path: usr/bin/goldmane
+                    source: usr/bin/goldmane-dev
+                  - path: usr/bin/health
+                    source: usr/bin/health-dev
+                name: calico-goldmane-3.32-dev
+              - files:
+                  - path: usr/bin/whisker-backend
+                    source: usr/bin/whisker-backend-dev
+                name: calico-whisker-backend-3.32-dev
+              - files:
+                  - path: usr/bin/flexvol
+                    source: usr/bin/flexvol-dev
+                name: calico-pod2daemon-flexvol-3.32-dev
+              - files:
+                  - path: opt/cni/bin/host-local
+                    source: opt/cni/bin/host-local-dev
+                  - path: opt/cni/bin/loopback
+                    source: opt/cni/bin/loopback-dev
+                  - path: opt/cni/bin/portmap
+                    source: opt/cni/bin/portmap-dev
+                  - path: opt/cni/bin/tuning
+                    source: opt/cni/bin/tuning-dev
+                name: cni-plugins-3.32-dev
+              - files:
+                  - path: usr/bin/node-driver-registrar
+                    source: usr/bin/node-driver-registrar-dev
+                name: calico-node-driver-registrar-3.32-dev
+            url: https://github.com/projectcalico/calico
+            version: 3.32.1
+        - uses: dhi/build-pkg:0
+          with:
+            description: Calico admission webhooks from projectcalico/calico
+            files:
+              - usr/bin/webhook
+            license: Apache-2.0
+            name: calico-webhooks-3.32
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/webhook
+                    source: usr/bin/webhook-dev
+                name: calico-webhooks-3.32-dev
+            url: https://github.com/projectcalico/calico
+            version: 3.32.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
