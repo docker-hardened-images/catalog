@@ -1,0 +1,140 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-ceph-csi
+variant: runtime
+tags:
+  - 3.17.0
+  - 3.17.0-r1
+  - 3.17.0-debian13
+  - 3.17.0-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-07-27"
+vars:
+  COMMIT_SHA: 9d08300466de72d7b99dffd81e9c23883b1cf87b
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "3.17"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.17.0
+  VERSION: 3.17.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: ceph-csi
+      work-dir: /go/src/github.com/ceph/ceph-csi
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - libc6-dev
+          - libcephfs-dev
+          - librados-dev
+          - librbd-dev
+          - make
+          - mawk
+          - pkg-config
+          - sed
+          - golang-1.26=1.26.5-0
+          - golang-1.26-oci-config=1.26.5-0
+        files:
+          - url: git+https://github.com/ceph/ceph-csi.git#v3.17.0
+            checksum: 9d08300466de72d7b99dffd81e9c23883b1cf87b
+            path: /go/src/github.com/ceph/ceph-csi
+            spdx:
+              name: ceph-csi
+              version: 3.17.0
+              packages:
+                - name: ceph-csi
+                  purl: pkg:golang/github.com/ceph/ceph-csi@3.17.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: Update go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+            download: true
+        - name: run targeted go tests
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          environment:
+            GOFLAGS: -mod=vendor -buildvcs=false
+          runs: |
+            set -eux -o pipefail
+
+            go test -tags=ceph_preview ./cmd/...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X github.com/ceph/ceph-csi/internal/util.GitCommit=9d08300466de72d7b99dffd81e9c23883b1cf87b
+              - -X github.com/ceph/ceph-csi/internal/util.DriverVersion=3.17.0
+            output: ${target.dir}/usr/bin/cephcsi
+            packages: ./cmd
+            tags: ceph_preview
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/ceph/ceph-csi
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X github.com/ceph/ceph-csi/internal/util.GitCommit=9d08300466de72d7b99dffd81e9c23883b1cf87b
+              - -X github.com/ceph/ceph-csi/internal/util.DriverVersion=3.17.0
+            output: ${target.dir}/usr/bin/cephcsi-dev
+            packages: ./cmd
+            strip: false
+            tags: ceph_preview
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - librados2
+              - librbd1
+              - libcephfs2
+            description: Ceph-csi
+            files:
+              - usr/bin/cephcsi
+            formats:
+              - deb
+            license: Apache-2.0
+            name: cephcsi
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/cephcsi
+                    source: usr/bin/cephcsi-dev
+                name: cephcsi-dev
+            url: https://github.com/ceph/ceph-csi
+            version: 3.17.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
