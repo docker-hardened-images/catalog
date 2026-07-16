@@ -1,0 +1,211 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-datadog-agent
+variant: runtime
+tags:
+  - 7.80.2
+  - 7.80.2-r0
+  - 7.80.2-debian13
+  - 7.80.2-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2019-11-22"
+vars:
+  COMMIT_SHA: 4de14e5061b9615e40bb33edeeeef10a4510d984
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "7.80"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.80.2
+  VERSION: 7.80.2
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: datadog-agent
+      work-dir: /go/src/github.com/DataDog/datadog-agent
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - libc6-dev
+          - libseccomp-dev
+          - mawk
+          - pkg-config
+          - sed
+          - golang-1.26=1.26.5-0
+          - golang-1.26-oci-config=1.26.5-0
+        files:
+          - url: git+https://github.com/DataDog/datadog-agent.git#7.80.2
+            checksum: 4de14e5061b9615e40bb33edeeeef10a4510d984
+            path: /go/src/github.com/DataDog/datadog-agent
+            spdx:
+              name: datadog-agent
+              version: 7.80.2
+              packages:
+                - name: datadog-agent
+                  purl: pkg:golang/github.com/DataDog/datadog-agent@7.80.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - go.mongodb.org/mongo-driver@v1.17.7
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=1 go test -short -count=1 \
+              -ldflags "-X github.com/DataDog/datadog-agent/pkg/version.AgentVersion=7.80.2 -X github.com/DataDog/datadog-agent/pkg/version.Commit=4de14e5061b9615e40bb33edeeeef10a4510d984" \
+              -tags clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,zstd,ec2,cel \
+              ./pkg/version/...
+        - name: generate datadog-cluster.yaml
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go run ./pkg/config/render_config/render_config.go dca \
+              ./pkg/config/config_template.yaml \
+              ./Dockerfiles/cluster-agent/datadog-cluster.yaml
+        - name: build secret-generic-connector
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 0
+            extra-args: -gcflags=all=-l
+            fips: false
+            ldflags:
+              - -X main.appVersion=7.80.2
+            output: ${target.dir}/usr/bin/secret-generic-connector
+            packages: ./cmd/secret-generic-connector
+            strip: true
+        - name: build secret-generic-connector dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 0
+            extra-args: -gcflags=all=-l
+            fips: false
+            ldflags:
+              - -X main.appVersion=7.80.2
+            output: ${target.dir}/usr/bin/secret-generic-connector-dev
+            packages: ./cmd/secret-generic-connector
+            strip: false
+        - name: build cws-instrumentation
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X main.Version=7.80.2
+              - -X main.GitCommit=4de14e5061b9615e40bb33edeeeef10a4510d984
+            output: ${target.dir}/usr/bin/cws-instrumentation
+            packages: ./cmd/cws-instrumentation
+            strip: true
+            tags: netgo,osusergo
+        - name: build cws-instrumentation dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X main.Version=7.80.2
+              - -X main.GitCommit=4de14e5061b9615e40bb33edeeeef10a4510d984
+            output: ${target.dir}/usr/bin/cws-instrumentation-dev
+            packages: ./cmd/cws-instrumentation
+            strip: false
+            tags: netgo,osusergo
+        - name: build datadog-cluster-agent
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X github.com/DataDog/datadog-agent/pkg/version.AgentVersion=7.80.2
+              - -X github.com/DataDog/datadog-agent/pkg/version.Commit=4de14e5061b9615e40bb33edeeeef10a4510d984
+            output: ${target.dir}/usr/bin/datadog-cluster-agent
+            packages: ./cmd/cluster-agent
+            tags: clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,zstd,ec2,cel
+        - name: build datadog-cluster-agent dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/DataDog/datadog-agent
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X github.com/DataDog/datadog-agent/pkg/version.AgentVersion=7.80.2
+              - -X github.com/DataDog/datadog-agent/pkg/version.Commit=4de14e5061b9615e40bb33edeeeef10a4510d984
+            output: ${target.dir}/usr/bin/datadog-cluster-agent-dev
+            packages: ./cmd/cluster-agent
+            strip: false
+            tags: clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,zstd,ec2,cel
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - libseccomp2
+            description: Datadog-agent binaries
+            files:
+              - usr/bin/secret-generic-connector
+            formats:
+              - deb
+            license: Apache-2.0
+            name: datadog-agent
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/cws-instrumentation
+                name: cws-instrumentation
+              - files:
+                  - path: usr/bin/datadog-cluster-agent
+                name: datadog-cluster-agent
+              - files:
+                  - path: usr/bin/secret-generic-connector
+                    source: usr/bin/secret-generic-connector-dev
+                name: datadog-agent-dev
+              - files:
+                  - path: usr/bin/cws-instrumentation
+                    source: usr/bin/cws-instrumentation-dev
+                name: cws-instrumentation-dev
+              - files:
+                  - path: usr/bin/datadog-cluster-agent
+                    source: usr/bin/datadog-cluster-agent-dev
+                name: datadog-cluster-agent-dev
+            url: https://github.com/DataDog/datadog-agent
+            version: 7.80.2
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
