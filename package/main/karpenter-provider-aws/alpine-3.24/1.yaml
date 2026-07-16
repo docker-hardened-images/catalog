@@ -1,0 +1,115 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-karpenter-provider-aws
+variant: runtime
+tags:
+  - 1.13.0-alpine3.24
+  - 1.13.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-11"
+vars:
+  COMMIT_SHA: 2be95547983a8948b7172aa66bf92c905fbbf001
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.13"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.13.0
+  VERSION: 1.13.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: karpenter-provider-aws
+      work-dir: /go/src/github.com/aws/karpenter-provider-aws
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/aws/karpenter-provider-aws#v1.13.0
+            checksum: 2be95547983a8948b7172aa66bf92c905fbbf001
+            path: /go/src/github.com/aws/karpenter-provider-aws
+            spdx:
+              name: karpenter
+              version: 1.13.0
+              packages:
+                - name: karpenter
+                  purl: pkg:golang/aws/karpenter-provider-aws@1.13.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            PKGS=$(go list ./... | grep -vE '/(test|tests|integration|e2e|fuzz)(/|$)|/pkg/(controllers|cloudprovider|apis/v1)|/pkg/operator$|/pkg/providers/[^/]+$')
+            go test -short $PKGS -count=1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.Version=1.13.0
+              - -X main.GitSHA=2be95547983a8948b7172aa66bf92c905fbbf001
+              - -X main.BuiltAt=$(date -u -d @${SOURCE_DATE_EPOCH} +'%F-%T')
+            output: ${target.dir}/usr/bin/controller
+            packages: ./cmd/controller
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/aws/karpenter-provider-aws
+          with:
+            fips: false
+            ldflags:
+              - -X main.Version=1.13.0
+              - -X main.GitSHA=2be95547983a8948b7172aa66bf92c905fbbf001
+              - -X main.BuiltAt=$(date -u -d @${SOURCE_DATE_EPOCH} +'%F-%T')
+            output: ${target.dir}/usr/bin/controller-dev
+            packages: ./cmd/controller
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Karpenter-provider-aws
+            files:
+              - usr/bin/controller
+            license: Apache-2.0
+            name: controller
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/controller
+                    source: usr/bin/controller-dev
+                name: controller-dev
+            url: https://github.com/aws/karpenter-provider-aws
+            version: 1.13.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
