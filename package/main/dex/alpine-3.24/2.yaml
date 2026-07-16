@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-dex
+variant: runtime
+tags:
+  - 2.45.1-alpine3.24
+  - 2.45.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 11d2eeb52b42e1980e14cb91e69dd9e3faab2076
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.45"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.45.1
+  VERSION: 2.45.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: dex
+      work-dir: /go/src/github.com/dexidp/dex
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - build-base
+          - gcc
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - sqlite-dev
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/dexidp/dex.git#v2.45.1
+            checksum: 11d2eeb52b42e1980e14cb91e69dd9e3faab2076
+            path: /go/src/github.com/dexidp/dex
+            spdx:
+              name: dex
+              version: 2.45.1
+              packages:
+                - name: dex
+                  purl: pkg:golang/github.com/dexidp/dex@2.45.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/dexidp/dex
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/russellhaering/goxmldsig@v1.6.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: build docker-entrypoint
+          uses: go/build@v1
+          work-dir: /go/src/github.com/dexidp/dex
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/docker-entrypoint
+            packages: ./cmd/docker-entrypoint
+        - name: build docker-entrypoint dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/dexidp/dex
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/docker-entrypoint-dev
+            packages: ./cmd/docker-entrypoint
+            strip: false
+        - name: build dex
+          uses: go/build@v1
+          work-dir: /go/src/github.com/dexidp/dex
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X main.version=2.45.1
+            output: ${target.dir}/usr/bin/dex
+            packages: ./cmd/dex
+            tags: libsqlite3
+        - name: build dex dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/dexidp/dex
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X main.version=2.45.1
+            output: ${target.dir}/usr/bin/dex-dev
+            packages: ./cmd/dex
+            strip: false
+            tags: libsqlite3
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - sqlite-libs
+            description: Dex binaries
+            files:
+              - usr/bin/docker-entrypoint
+            formats:
+              - apk
+            license: Apache-2.0
+            name: docker-entrypoint
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/dex
+                name: dex
+              - files:
+                  - path: usr/bin/docker-entrypoint
+                    source: usr/bin/docker-entrypoint-dev
+                name: docker-entrypoint-dev
+              - files:
+                  - path: usr/bin/dex
+                    source: usr/bin/dex-dev
+                name: dex-dev
+            url: https://github.com/dexidp/dex
+            version: 2.45.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
