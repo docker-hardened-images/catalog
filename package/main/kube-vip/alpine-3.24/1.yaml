@@ -1,0 +1,119 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kube-vip
+variant: runtime
+tags:
+  - 1.2.1-alpine3.24
+  - 1.2.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 4708b07343dd9209f9b56cfa52dc53a85d8d3166
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.2"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.2.1
+  VERSION: 1.2.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kube-vip
+      work-dir: /go/src/github.com/kube-vip/kube-vip
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - libcap-utils
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/kube-vip/kube-vip.git#v1.2.1
+            checksum: 4708b07343dd9209f9b56cfa52dc53a85d8d3166
+            path: /go/src/github.com/kube-vip/kube-vip
+            spdx:
+              name: kube-vip
+              version: 1.2.1
+              packages:
+                - name: kube-vip
+                  purl: pkg:golang/github.com/kube-vip/kube-vip@1.2.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/kube-vip/kube-vip
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+              - github.com/osrg/gobgp/v4@v4.7.0
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/kube-vip/kube-vip
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -v ./...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kube-vip/kube-vip
+          with:
+            fips: false
+            ldflags:
+              - -X main.Version=v1.2.1
+              - -X main.Build=4708b07343dd9209f9b56cfa52dc53a85d8d3166
+            output: ${target.dir}/usr/bin/kube-vip
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap 'cap_net_admin,cap_net_raw+ep' "${target.dir}/usr/bin/kube-vip"
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kube-vip/kube-vip
+          with:
+            fips: false
+            ldflags:
+              - -X main.Version=v1.2.1
+              - -X main.Build=4708b07343dd9209f9b56cfa52dc53a85d8d3166
+            output: ${target.dir}/usr/bin/kube-vip-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kube-vip
+            files:
+              - usr/bin/kube-vip
+            license: Apache-2.0
+            name: kube-vip
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/kube-vip
+                    source: usr/bin/kube-vip-dev
+                name: kube-vip-dev
+            url: https://github.com/kube-vip/kube-vip
+            version: 1.2.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
