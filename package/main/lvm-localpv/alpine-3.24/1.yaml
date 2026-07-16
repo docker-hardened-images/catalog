@@ -1,0 +1,115 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-lvm-localpv
+variant: runtime
+tags:
+  - 1.9.1-alpine3.24
+  - 1.9.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 66b59b997db7dd428f9b6fc874c21e87755e0caa
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.9.1
+  VERSION: 1.9.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: lvm-localpv
+      work-dir: /go/src/github.com/openebs/lvm-localpv
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/openebs/lvm-localpv.git#v1.9.1
+            checksum: 66b59b997db7dd428f9b6fc874c21e87755e0caa
+            path: /go/src/github.com/openebs/lvm-localpv
+            spdx:
+              name: openebs-lvm-driver
+              version: 1.9.1
+              packages:
+                - name: openebs-lvm-driver
+                  purl: pkg:golang/github.com/openebs/lvm-localpv@1.9.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/openebs/lvm-localpv
+          with:
+            deps:
+              - golang.org/x/net@v0.45.0
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/openebs/lvm-localpv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test ./pkg/...
+        - name: build lvm-driver
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openebs/lvm-localpv
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/openebs/lvm-localpv/pkg/version.GitCommit=66b59b997db7dd428f9b6fc874c21e87755e0caa
+              - -X github.com/openebs/lvm-localpv/pkg/version.Version=1.9.1
+            output: ${target.dir}/usr/bin/lvm-driver
+            packages: ./cmd
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openebs/lvm-localpv
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/openebs/lvm-localpv/pkg/version.GitCommit=66b59b997db7dd428f9b6fc874c21e87755e0caa
+              - -X github.com/openebs/lvm-localpv/pkg/version.Version=1.9.1
+            output: ${target.dir}/usr/bin/lvm-driver-dev
+            packages: ./cmd
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Lvm-localpv
+            files:
+              - usr/bin/lvm-driver
+            license: Apache-2.0
+            name: lvm-driver
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/lvm-driver
+                    source: usr/bin/lvm-driver-dev
+                name: lvm-driver-dev
+            url: https://github.com/openebs/lvm-localpv
+            version: 1.9.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
