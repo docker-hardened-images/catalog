@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-karma
+variant: runtime
+tags:
+  - 0.131-alpine3.24
+  - 0.131-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-18"
+vars:
+  COMMIT_SHA: dc3f23a69797745d0869d833f3c162a07a8793fa
+  PACKAGE_NAME: karma
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.131"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: "0.131"
+  VERSION: "0.131"
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: karma
+      work-dir: /go/src/github.com/prymitive/karma
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26
+          - golang-1.26-oci-config
+          - mawk
+          - nodejs-22
+          - npm
+          - sed
+        files:
+          - url: git+https://github.com/prymitive/karma.git#v0.131
+            checksum: dc3f23a69797745d0869d833f3c162a07a8793fa
+            path: /go/src/github.com/prymitive/karma
+            spdx:
+              name: karma
+              version: "0.131"
+              packages:
+                - name: karma
+                  purl: pkg:golang/github.com/prymitive/karma@0.131
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+            download: true
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: build ui
+          work-dir: /go/src/github.com/prymitive/karma/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci
+            npm run build
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: karma-ui
+            source: /go/src/github.com/prymitive/karma/ui/node_modules
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test ./internal/... -count=1
+        - name: build karma
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.131
+            output: ${target.dir}/usr/bin/karma
+            packages: ./cmd/karma
+            strip: true
+        - name: build karma dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.131
+            output: ${target.dir}/usr/bin/karma-dev
+            packages: ./cmd/karma
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Alert dashboard for Prometheus Alertmanager
+            files:
+              - usr/bin/karma
+            license: Apache-2.0
+            name: karma
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/karma
+                    source: usr/bin/karma-dev
+                name: karma-dev
+            url: https://karma-dashboard.io/
+            version: 0.131
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
