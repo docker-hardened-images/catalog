@@ -1,0 +1,198 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-actions-runner-controller
+variant: runtime
+tags:
+  - 0.14.2-alpine3.23
+  - 0.14.2-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-03-14"
+vars:
+  COMMIT_SHA: 9bb16ae49d0ce585d8e682aa7e2668a6e832d5d8
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.14"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.14.2
+  VERSION: 0.14.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: actions-runner-controller
+      work-dir: /go/src/github.com/actions/actions-runner-controller
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/actions/actions-runner-controller.git#gha-runner-scale-set-0.14.2
+            checksum: 9bb16ae49d0ce585d8e682aa7e2668a6e832d5d8
+            path: /go/src/github.com/actions/actions-runner-controller
+            spdx:
+              name: gha-runner-scale-set-controller
+              version: 0.14.2
+              packages:
+                - name: gha-runner-scale-set-controller
+                  purl: pkg:golang/github.com/actions/actions-runner-controller@0.14.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            PKGS=$(go list ./... | grep -vE '/(controllers|test|test_e2e_arc|charts|simulator|github|vault|acceptance|testing)(/|$)')
+            CGO_ENABLED=0 go test -short $PKGS -count=1
+        - name: build actions-metrics-server
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/actions-metrics-server
+            packages: ./cmd/actionsmetricsserver
+        - name: build actions-metrics-server dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/actions-metrics-server-dev
+            packages: ./cmd/actionsmetricsserver
+            strip: false
+        - name: build github-webhook-server
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/github-webhook-server
+            packages: ./cmd/githubwebhookserver
+        - name: build github-webhook-server dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/github-webhook-server-dev
+            packages: ./cmd/githubwebhookserver
+            strip: false
+        - name: build ghalistener
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/ghalistener
+            packages: ./cmd/ghalistener
+        - name: build ghalistener dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/ghalistener-dev
+            packages: ./cmd/ghalistener
+            strip: false
+        - name: build manager
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/manager
+            packages: .
+        - name: build manager dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/manager-dev
+            packages: .
+            strip: false
+        - name: build sleep
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/sleep
+            packages: ./cmd/sleep
+        - name: build sleep dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/actions/actions-runner-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/sleep-dev
+            packages: ./cmd/sleep
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Actions-runner-controller binaries
+            files:
+              - usr/bin/actions-metrics-server
+            license: Apache-2.0
+            name: actions-runner-controller
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/github-webhook-server
+                name: github-webhook-server
+              - files:
+                  - path: usr/bin/ghalistener
+                name: ghalistener
+              - files:
+                  - path: usr/bin/manager
+                name: manager
+              - files:
+                  - path: usr/bin/sleep
+                name: sleep
+              - files:
+                  - path: usr/bin/actions-metrics-server
+                    source: usr/bin/actions-metrics-server-dev
+                name: actions-runner-controller-dev
+              - files:
+                  - path: usr/bin/github-webhook-server
+                    source: usr/bin/github-webhook-server-dev
+                name: github-webhook-server-dev
+              - files:
+                  - path: usr/bin/ghalistener
+                    source: usr/bin/ghalistener-dev
+                name: ghalistener-dev
+              - files:
+                  - path: usr/bin/manager
+                    source: usr/bin/manager-dev
+                name: manager-dev
+              - files:
+                  - path: usr/bin/sleep
+                    source: usr/bin/sleep-dev
+                name: sleep-dev
+            url: https://github.com/actions/actions-runner-controller
+            version: 0.14.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
