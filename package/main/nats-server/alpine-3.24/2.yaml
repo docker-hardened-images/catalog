@@ -1,0 +1,118 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-nats-server
+variant: runtime
+tags:
+  - 2.14.3-alpine3.24
+  - 2.14.3-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-22"
+  end-of-life: "2026-09-22"
+vars:
+  COMMIT_SHA: 9b17a586be69c9ff36e4c84a421ca47da410b561
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.14"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.14.3
+  VERSION: 2.14.3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: nats-server
+      work-dir: /go/src/github.com/nats-io/nats-server/v2
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/nats-io/nats-server.git#v2.14.3
+            checksum: 9b17a586be69c9ff36e4c84a421ca47da410b561
+            path: /go/src/github.com/nats-io/nats-server/v2
+            spdx:
+              name: nats-server
+              version: 2.14.3
+              packages:
+                - name: nats-server
+                  purl: pkg:golang/nats-io/nats-server@2.14.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          with:
+            deps: []
+            download: true
+        - name: unit test
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test -v -p=1 $(go list ./... | grep -v "/server") -skip 'TestQueueDistributionAcrossRoutes|TestSysLogger|TestOCSPMust|TestOCSPAlways|TestOCSPPeerBadDelegatedCAResponseSigner|TestOCSPPeerUnknownAndRevokedIntermediate|TestOCSPPeerAllowWhenCAUnreachableOption|TestOCSPPeerNextUpdateUnset|TestTLSGateway|TestGatewayTLS|TestTLSPinned|TestStress' -count=1 -vet=off -timeout=30m -failfast
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X server.serverVersion=2.14.3
+              - -X server.gitCommit=9b17a586be69c9ff36e4c84a421ca47da410b561
+            output: ${target.dir}/usr/bin/nats-server
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/nats-io/nats-server/v2
+          with:
+            fips: false
+            ldflags:
+              - -X server.serverVersion=2.14.3
+              - -X server.gitCommit=9b17a586be69c9ff36e4c84a421ca47da410b561
+            output: ${target.dir}/usr/bin/nats-server-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Nats-server
+            files:
+              - usr/bin/nats-server
+            license: Apache-2.0
+            name: nats-server
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/nats-server
+                    source: usr/bin/nats-server-dev
+                name: nats-server-dev
+            url: https://github.com/nats-io/nats-server
+            version: 2.14.3
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
