@@ -1,0 +1,118 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-seaweedfs
+variant: runtime
+tags:
+  - 4.39-alpine3.24
+  - 4.39-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: db42bb49757b459551607939807017d7a9d5a94a
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.39"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: "4.39"
+  VERSION: "4.39"
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: seaweedfs
+      work-dir: /go/src/github.com/seaweedfs/seaweedfs
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - git
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/seaweedfs/seaweedfs.git#4.39
+            checksum: db42bb49757b459551607939807017d7a9d5a94a
+            path: /go/src/github.com/seaweedfs/seaweedfs
+            spdx:
+              name: seaweedfs
+              version: "4.39"
+              packages:
+                - name: seaweedfs
+                  purl: pkg:golang/github.com/seaweedfs/seaweedfs@4.39
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/image@v0.43.0
+              - github.com/go-git/go-billy/v5@v5.9.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+            download: true
+            replaces:
+              - github.com/apache/thrift=github.com/apache/thrift@v0.23.0
+        - name: test
+          work-dir: /go/src/github.com/seaweedfs/seaweedfs/weed
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            EXCLUSIONS='/(s3|logstore|kafka|client|mq|command|cluster)'
+
+            CGO_ENABLED=0 go test $(go list ./... | egrep -v "$EXCLUSIONS")
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/seaweedfs/seaweedfs/weed
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=db42bb49757b459551607939807017d7a9d5a94a
+            output: ${target.dir}/usr/bin/weed
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/seaweedfs/seaweedfs/weed
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=db42bb49757b459551607939807017d7a9d5a94a
+            output: ${target.dir}/usr/bin/weed-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Seaweedfs
+            files:
+              - usr/bin/weed
+            license: Apache-2.0
+            name: seaweedfs
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/weed
+                    source: usr/bin/weed-dev
+                name: seaweedfs-dev
+            url: https://github.com/seaweedfs/seaweedfs
+            version: 4.39
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
