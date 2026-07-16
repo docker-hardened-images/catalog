@@ -1,0 +1,393 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cassandra Reaper 5.x (dev)
+image: dhi.io/cassandra-reaper
+variant: dev
+tags:
+  - 5-dev
+  - 5.0-dev
+  - 5.0.0-dev
+  - 5-debian-dev
+  - 5-debian13-dev
+  - 5.0-debian-dev
+  - 5.0-debian13-dev
+  - 5.0.0-debian-dev
+  - 5.0.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-08"
+vars:
+  COMMIT_SHA: 7441194f68b8332574f59ac83670279bae7ac6b7
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_VARIANT: jdk
+  JDK_MAJOR_VERSION: "17"
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:d5345690e9a38322275e734fcd87854e2bed7b0be9e4150137019480c56d28fc
+  MAVEN_VERSION: 3.9.16
+  SEMVER_MAJOR_MINOR_VERSION: "5.0"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.0.0
+  VERSION: 5.0.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-17-jdk
+    - eclipse-temurin-17-jdk-oci-config
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libstdc++6
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: cassandra-reaper
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:d5345690e9a38322275e734fcd87854e2bed7b0be9e4150137019480c56d28fc
+      work-dir: ${source.dir}/cassandra-reaper
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+        - path: /src/cassandra-reaper/src/ui/node_modules
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - tar
+          - base-files
+          - ca-certificates
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - yarn-classic
+        files:
+          - url: git+https://github.com/thelastpickle/cassandra-reaper.git#5.0.0
+            checksum: 7441194f68b8332574f59ac83670279bae7ac6b7
+            path: ${source.dir}/cassandra-reaper
+            spdx:
+              name: cassandra-reaper
+              version: 5.0.0
+              packages:
+                - name: cassandra-reaper
+                  purl: pkg:dhi/cassandra-reaper@5.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/cassandra-reaper
+        - name: build ui
+          work-dir: ${source.dir}/cassandra-reaper/src/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Reaper's UI is webpack 4 / Babel 6 / Bower 1.8 / React 16,
+            # built for Node 10–14. Node 18+ disables MD4 (and other
+            # legacy crypto) by default in OpenSSL3, which webpack 4's
+            # asset hashing relies on. The legacy-provider escape hatch
+            # is the documented workaround for webpack 4 on modern Node.
+            export NODE_OPTIONS=--openssl-legacy-provider
+
+            # CVE-2026-53550: js-yaml <=4.1.1 vulnerable to algorithmic complexity DoS
+            # CVE-2026-48801: linkify-it <=5.0.0 vulnerable to inefficient regex complexity
+            # Use Node.js to modify package.json directly since npm pkg set can fail
+            # with certain package.json structures or npm versions.
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              if (!pkg.overrides) pkg.overrides = {};
+              pkg.overrides['js-yaml'] = '4.2.0';
+              pkg.overrides['linkify-it'] = '5.0.1';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+
+            npm install
+            # `npm run navbar` runs build-navbar.sh which expands the
+            # navbar template (version + git SHA + build date) and
+            # writes app/jsx/navbar.jsx. Upstream uses this file as a
+            # build-time artifact; without it webpack fails to resolve
+            # `jsx/navbar`.
+            npm run navbar
+            npm run bower
+            npm run minimize
+        - name: build jar
+          work-dir: ${source.dir}/cassandra-reaper
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn package -B -pl src/server -am -DskipTests \
+              -Daether.connector.http.retryHandler.count=10 \
+              -Daether.connector.http.retryHandler.requestSentEnabled=true \
+              -Dmaven.javadoc.skip=true \
+              -Dcheckstyle.skip=true \
+              -Dspotbugs.skip=true \
+              -Dspotless.check.skip=true \
+              -Dspotless.apply.skip=true \
+              -Dspotless.skip=true \
+              -Denforcer.skip=true \
+              -Djacoco.skip=true \
+              -Dexec.skip=true \
+              -Drat.skip=true
+        - name: prepare for sbom
+          work-dir: ${source.dir}/cassandra-reaper/src/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Keep the build cache's full node_modules intact for webpack.
+            # The SBOM only needs the production dependency tree.
+            sbom_dir="${source.dir}/cassandra-reaper/src/ui-sbom"
+            rm -rf "${sbom_dir}"
+            mkdir -p "${sbom_dir}"
+            cp package.json "${sbom_dir}/"
+            if [ -f package-lock.json ]; then
+              cp package-lock.json "${sbom_dir}/"
+            fi
+
+            cd "${sbom_dir}"
+
+            # CVE-2026-53550: js-yaml <=4.1.1 vulnerable to algorithmic complexity DoS
+            # CVE-2026-48801: linkify-it <=5.0.0 vulnerable to inefficient regex complexity
+            # The package.json was already modified in the build ui step, so the
+            # overrides are already present in the copied file.
+
+            npm install --prefix "${sbom_dir}" --omit=dev --ignore-scripts
+        - name: sbom ui
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: cassandra-reaper-ui
+            source: ${source.dir}/cassandra-reaper/src/ui-sbom/node_modules
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 \
+              "${source.dir}/cassandra-reaper/src/server/target/cassandra-reaper-5.0.0.jar" \
+              "${target.dir}/usr/local/share/cassandra-reaper/cassandra-reaper.jar"
+
+            # Config templates from the upstream source tree
+            # (src/packaging/resource/, same files the release tarball
+            # ships under resource/). Three patches per template, each
+            # followed by an assertion so a future upstream rename or
+            # whitespace tweak fails the build instead of silently
+            # producing a wrong runtime config:
+            #   (a) add empty defaults on four Dropwizard env-var
+            #       references (DHI strips empty-string values from
+            #       `environment:`, so unset vars are otherwise
+            #       rejected at startup);
+            #   (b) flip REAPER_AUTH_ENABLED's built-in default from
+            #       true to false so the image boots out-of-the-box
+            #       (Dropwizard rejects auth-enabled with no users);
+            #   (c) inject persistenceStoragePath after `storageType:
+            #       memory` (required by 4.x for the in-memory backend).
+            for f in cassandra-reaper.yaml \
+              cassandra-reaper-memory.yaml \
+              cassandra-reaper-cassandra.yaml; do
+              dst="${target.dir}/etc/cassandra-reaper/$f"
+              install -D -m 0644 \
+                "${source.dir}/cassandra-reaper/src/packaging/resource/$f" \
+                "$dst"
+
+              # Patches (a) and (b) apply to every template — the auth
+              # block is shared across backends.
+              sed -E -i \
+                -e 's/\$\{(REAPER_AUTH_USER|REAPER_AUTH_PASSWORD|REAPER_READ_USER|REAPER_READ_USER_PASSWORD)\}/${\1:-}/g' \
+                -e 's/\$\{REAPER_AUTH_ENABLED:-true\}/\${REAPER_AUTH_ENABLED:-false}/g' \
+                "$dst"
+              grep -q '${REAPER_AUTH_USER:-}' "$dst" \
+                || (
+                  echo "FATAL: REAPER_AUTH_USER patch missed in $f" >&2
+                  exit 1
+                )
+              grep -q '${REAPER_AUTH_ENABLED:-false}' "$dst" \
+                || (
+                  echo "FATAL: REAPER_AUTH_ENABLED default-flip missed in $f" >&2
+                  exit 1
+                )
+
+              # Patch (c) only applies to memory-backed templates.
+              if grep -q '^storageType: memory$' "$dst"; then
+                sed -i \
+                  '/^storageType: memory$/a persistenceStoragePath: /var/lib/cassandra-reaper/storage' \
+                  "$dst"
+                grep -q '^persistenceStoragePath: /var/lib/cassandra-reaper/storage$' "$dst" \
+                  || (
+                    echo "FATAL: persistenceStoragePath inject missed in $f" >&2
+                    exit 1
+                  )
+              fi
+            done
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: image/cassandra-reaper/patch/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-server.json
+          uid: 0
+          gid: 0
+          source: image/cassandra-reaper/patch/mvn-properties-server.json
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies-server.json
+          uid: 0
+          gid: 0
+          source: image/cassandra-reaper/patch/mvn-dependencies-server.json
+      outputs:
+        - source: ${target.dir}/usr/local/share/cassandra-reaper/cassandra-reaper.jar
+          target: /usr/local/share/cassandra-reaper/cassandra-reaper.jar
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper-memory.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper-memory.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: ${target.dir}/etc/cassandra-reaper/cassandra-reaper-cassandra.yaml
+          target: /etc/cassandra-reaper/cassandra-reaper-cassandra.yaml
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/cassandra-reaper
+          target: /opt/docker/sbom/cassandra-reaper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cassandra-reaper-ui
+          target: /opt/docker/sbom/cassandra-reaper-ui
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-17
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /usr/lib/jvm/temurin-17/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /var/lib/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/tmp/cassandra-reaper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Cassandra Reaper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - java
+  - -jar
+  - /usr/local/share/cassandra-reaper/cassandra-reaper.jar
+cmd:
+  - server
+  - /etc/cassandra-reaper/cassandra-reaper.yaml
+ports:
+  - 8080/tcp
+  - 8081/tcp
