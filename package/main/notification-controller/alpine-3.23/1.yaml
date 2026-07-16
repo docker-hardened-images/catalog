@@ -1,0 +1,106 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-notification-controller
+variant: runtime
+tags:
+  - 1.9.2-alpine3.23
+  - 1.9.2-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-19"
+vars:
+  COMMIT_SHA: 8d2ed585e37c72177bb773867f40fa7d887bdcef
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.9.2
+  VERSION: 1.9.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: notification-controller
+      work-dir: /go/src/github.com/fluxcd/notification-controller
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/fluxcd/notification-controller#v1.9.2
+            checksum: 8d2ed585e37c72177bb773867f40fa7d887bdcef
+            path: /go/src/github.com/fluxcd/notification-controller
+            spdx:
+              name: fluxcd-notification-controller
+              version: 1.9.2
+              packages:
+                - name: fluxcd-notification-controller
+                  purl: pkg:golang/github.com/fluxcd/notification-controller@1.9.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch (1.9 only)
+          uses: go/bump@v2
+          with:
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test \
+              -skip 'TestNewAzureEventHub/Default_Azure_Credential' \
+              $(go list ./internal/... | grep -vE '/internal/(controller|server)')
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/fluxcd-notification-controller
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/fluxcd/notification-controller
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/fluxcd-notification-controller-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Notification-controller
+            files:
+              - usr/bin/fluxcd-notification-controller
+            license: Apache-2.0
+            name: fluxcd-notification-controller
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/fluxcd-notification-controller
+                    source: usr/bin/fluxcd-notification-controller-dev
+                name: fluxcd-notification-controller-dev
+            url: https://github.com/fluxcd/notification-controller
+            version: 1.9.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
