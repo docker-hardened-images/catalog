@@ -1,0 +1,137 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-zot
+variant: runtime
+tags:
+  - 2.1.18-alpine3.24
+  - 2.1.18-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-08"
+vars:
+  COMMIT_SHA: 7bb211bcd4352b90f3e99752607fbd1f050bf7ca
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.1"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.1.18
+  VERSION: 2.1.18
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: zot
+      work-dir: /go/src/github.com/project-zot/zot
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/project-zot/zot.git#v2.1.18
+            checksum: 7bb211bcd4352b90f3e99752607fbd1f050bf7ca
+            path: /go/src/github.com/project-zot/zot
+            spdx:
+              name: zot
+              version: 2.1.18
+              packages:
+                - name: zot
+                  purl: pkg:golang/github.com/project-zot/zot/v2@2.1.18
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/go-git/go-git/v5@v5.19.1
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/in-toto/in-toto-golang@v0.11.0
+              - github.com/regclient/regclient@v0.11.5
+              - go.opentelemetry.io/otel/sdk@v1.44.0
+              - github.com/hashicorp/go-getter@v1.8.6
+              - github.com/sigstore/rekor@v1.5.2
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.20.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.44.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
+              - github.com/distribution/distribution/v3@v3.1.1
+              - oras.land/oras-go/v2@v2.6.1
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # Skip tests that assume non-root (TLS permission checks) or flake in CI (scheduler timing, htpasswd watcher race)
+            # Exclude packages that need external infra (trivy, redis) or root-sensitive file ops
+            go test -v -count=1 -short \
+              -skip 'TestTSLFailedReadingOfCACert|TestHTTPClient|TestCommon|TestScheduler|TestHTPasswdWatcherOriginal' \
+              $(go list ./... | grep -v -E '(extensions/search|pkg/test/(image-utils|common)$|pkg/storage)')
+        - name: build zot
+          uses: go/build@v1
+          with:
+            experiments: jsonv2
+            fips: false
+            ldflags:
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.ReleaseTag=2.1.18
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.Commit=v2.1.18-7bb211bcd4352b90f3e99752607fbd1f050bf7ca
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.BinaryType=full
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/zot
+            packages: ./cmd/zot
+            tags: sync,search,scrub,metrics,lint,mgmt,profile,userprefs,imagetrust,events
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/project-zot/zot
+          with:
+            fips: false
+            ldflags:
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.ReleaseTag=2.1.18
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.Commit=v2.1.18-7bb211bcd4352b90f3e99752607fbd1f050bf7ca
+              - -X zotregistry.dev/zot/v2/pkg/buildinfo.BinaryType=full
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/zot-dev
+            packages: ./cmd/zot
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Zot
+            files:
+              - usr/bin/zot
+            license: Apache-2.0
+            name: zot
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/zot
+                    source: usr/bin/zot-dev
+                name: zot-dev
+            url: https://github.com/project-zot/zot
+            version: 2.1.18
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
