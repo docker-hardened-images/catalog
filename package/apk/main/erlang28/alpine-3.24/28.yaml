@@ -4,7 +4,7 @@ image: dhi.io/pkg-erlang28
 variant: runtime
 tags:
   - 28.5.0-alpine3.24
-  - 28.5.0-r1-alpine3.24
+  - 28.5.0-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,7 +13,7 @@ vars:
   COMMIT_SHA: 3bfde1cb1bd6724850514088646c2df89c87024c
   PACKAGE_NAME: community/erlang28
   PKG_NAME: erlang28
-  REL: "1"
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "28.5"
   SEMVER_MAJOR_VERSION: "28"
   SEMVER_VERSION: 28.5.0
@@ -62,9 +62,33 @@ contents:
         - uses: git/patch@v1
           with:
             patch: ${source.dir}/patch/move-tools-to-subpackages.patch
+        - name: fix musl alternate signal stack size
+          runs: |
+            set -eux -o pipefail
+
+            cp ${source.dir}/patch/fix-musl-sigaltstack.patch .
+            chown abuild:abuild fix-musl-sigaltstack.patch
+            chmod 644 fix-musl-sigaltstack.patch
+            if ! grep -q '^fix-musl-sigaltstack.patch"$' APKBUILD; then
+              sed -i 's|^source="\(.*\)"$|source="\1|' APKBUILD
+              sed -i '/^source="/a fix-musl-sigaltstack.patch"' APKBUILD
+              hash=$(sha512sum fix-musl-sigaltstack.patch | awk '{print $1}')
+              sed -i "/^[0-9a-f]\{128\}  .*\\.tar\\.gz\$/a ${hash}  fix-musl-sigaltstack.patch" APKBUILD
+            fi
+
+            grep -qx 'fix-musl-sigaltstack.patch"' APKBUILD \
+              || {
+                echo "ERROR: sigaltstack patch not registered in APKBUILD source="
+                exit 1
+              }
+            grep -qE "^[0-9a-f]{128}  fix-musl-sigaltstack\.patch\$" APKBUILD \
+              || {
+                echo "ERROR: sigaltstack patch checksum not registered in APKBUILD"
+                exit 1
+              }
         - uses: abuild/bump@v1
           with:
-            rel: 1
+            rel: 2
         - uses: abuild/build@v1
       paths:
         - type: file
@@ -72,6 +96,11 @@ contents:
           uid: 0
           gid: 0
           source: package/apk/main/erlang28/alpine-3.24/patch/move-tools-to-subpackages.patch
+        - type: file
+          path: ${source.dir}/patch/fix-musl-sigaltstack.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/erlang28/alpine-3.24/patch/fix-musl-sigaltstack.patch
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
