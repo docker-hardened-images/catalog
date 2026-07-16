@@ -1,0 +1,152 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-policy-reporter-ui
+variant: runtime
+tags:
+  - 2.6.1-alpine3.24
+  - 2.6.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-29"
+vars:
+  COMMIT_SHA: ef5ecce0d60f15d29fd77569b721ed50c7ee9db2
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.6"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.6.1
+  VERSION: 2.6.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: policy-reporter-ui
+      work-dir: /go/src/github.com/kyverno/policy-reporter-ui/frontend
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - jq
+          - bun
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/kyverno/policy-reporter-ui.git#v2.6.1
+            checksum: ef5ecce0d60f15d29fd77569b721ed50c7ee9db2
+            path: /go/src/github.com/kyverno/policy-reporter-ui
+            spdx:
+              name: kyverno-policy-reporter-ui
+              version: 2.6.1
+              packages:
+                - name: kyverno-policy-reporter-ui
+                  purl: pkg:golang/github.com/kyverno/policy-reporter-ui@2.6.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build-frontend
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            bun pm pkg set overrides.form-data="4.0.6" # CVE-2026-12143
+
+            # Move nuxt to devDependencies since it's needed for build-time only.
+            jq '.devDependencies.nuxt = .dependencies.nuxt | del(.dependencies.nuxt)' package.json > package.json.tmp
+            mv package.json.tmp package.json
+
+            bun install
+            bun run generate
+
+            mkdir ${target.dir}/kodata
+            cp -r dist ${target.dir}/kodata/ui
+        - name: prepare ui for sbom
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+
+            # --ignore-scripts skips the frontend "postinstall" nuxt script
+            bun install --production --ignore-scripts
+
+            # Remove esbuild from node modules to avoid phantom golang vulnerabilities in sbom
+            rm -rf node_modules/@esbuild
+            find node_modules -type d -name esbuild -exec rm -rf {} + 2> /dev/null || true
+        - name: ui-sbom
+          uses: sbom@v1
+          with:
+            prefix: kyverno-policy-reporter-ui-frontend
+            source: /go/src/github.com/kyverno/policy-reporter-ui/frontend
+        - name: copy-templates
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
+          runs: |
+            set -eux -o pipefail
+
+            cp -r templates ${target.dir}/kodata/templates
+        - name: download backend dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
+          with:
+            deps: []
+        - name: test
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go test $(go list ./... | grep -v '/util')
+        - name: build-backend
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
+          privileged: true
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kyverno-policy-reporter-ui
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kyverno-policy-reporter-ui-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Policy-reporter-ui
+            files:
+              - usr/bin/kyverno-policy-reporter-ui
+            license: Apache-2.0
+            name: kyverno-policy-reporter-ui
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/kyverno-policy-reporter-ui
+                    source: usr/bin/kyverno-policy-reporter-ui-dev
+                name: kyverno-policy-reporter-ui-dev
+            url: https://github.com/kyverno/policy-reporter-ui
+            version: 2.6.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
