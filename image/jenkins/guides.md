@@ -79,7 +79,7 @@ Jenkins supports configuration through environment variables and system properti
 | -------------------------- | ------------------------------------------- | ----------------------------------------- | -------- |
 | `JENKINS_HOME`             | Jenkins data directory inside container     | `/var/jenkins_home`                       | No       |
 | `JENKINS_SLAVE_AGENT_PORT` | Port for agent communication                | `50000`                                   | No       |
-| `JAVA_HOME`                | Java installation directory                 | `/opt/java/openjdk`                       | No       |
+| `JAVA_HOME`                | Java installation directory                 | `/usr/lib/jvm/temurin-21`                 | No       |
 | `JENKINS_UC`               | Jenkins updates center URL                  | `https://updates.jenkins.io`              | No       |
 | `JENKINS_UC_EXPERIMENTAL`  | Experimental updates center URL             | `https://updates.jenkins.io/experimental` | No       |
 | `JENKINS_OPTS`             | Additional Java options for Jenkins startup | (empty)                                   | No       |
