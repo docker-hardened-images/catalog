@@ -20,23 +20,26 @@ vars:
   IMAGEMAGICK_VERSION: 7.1.2-27
   IMAGICK_COMMIT_SHA: 70087bab33eab913e99ac77d64d04d1a2fd0b7b0
   IMAGICK_VERSION: 3.8.1
-  PHP_DEV_REFERENCE: dhi/php:8.5.8-debian13-dev@sha256:8a2a176b8a4ca5a394a42ea63f352ec7a98f03e35ae97ab0966aed89f071cf0f
-  PHP_FPM_REFERENCE: dhi/php:8.5.8-debian13-fpm@sha256:eaf2efceebd2a7a9f42dffd7d6187ad1d019390d96c478e84df588f0cd54c22b
-  PHP_INI_DIR: /opt/php-8.5/etc/php
+  PHP_INI_DIR: /etc/php-8.5
   PHP_MAJOR_MINOR: "8.5"
-  PHP_PREFIX: /opt/php-8.5
-  PHP_SRC_DIR: /opt/php-8.5/src
+  PHP_SRC_CHECKSUM: 58910198d19e873048fe87cdfe16bc790025417ede3d1651bfa1c4b533d573f2
+  PHP_SRC_VERSION: 8.5.8
   PHP_VERSION: "8.5"
   VERSION: 6.9.4
   WORDPRESS_DOCKER_COMMIT_SHA: ecc7cdbdf47591bfa14954933fa2ab4fcce46428
   WORDPRESS_DOCKER_DEFAULT_CONFIG_CHECKSUM: sha256:1513f88b7252f29790f0acad201b1ef0d442f0d80e88c33e4a6d473615084162
   WORDPRESS_DOCKER_ENTRYPOINT_CHECKSUM: sha256:4e925e60ccc324f3f5df8da39d518c88a6d2e1b228113811493c5a975ae9137b
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - bash
     - coreutils
     - findutils
     - fontconfig-config
+    - gawk
     - grep
     - libargon2-1
     - libcurl4t64
@@ -58,6 +61,9 @@ contents:
     - libwebp7
     - libxml2
     - libzip5
+    - php-8.5
+    - php-8.5-fpm
+    - php-8.5-oci-config
     - sed
     - tar
     - util-linux
@@ -77,12 +83,22 @@ contents:
       mode: "0644"
   builds:
     - name: build php extensions
-      uses: dhi.io/php:8.5.8-debian13-dev@sha256:8a2a176b8a4ca5a394a42ea63f352ec7a98f03e35ae97ab0966aed89f071cf0f
       shell: bash
       contents:
         packages:
           - bash
           - build-essential
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - php-8.5
+          - php-8.5-dev
+          - php-8.5-oci-config
+          - sed
+          - tar
+          - xz-utils
           - fontconfig-config
           - libfontconfig1-dev
           - libfreetype-dev
@@ -102,6 +118,11 @@ contents:
           - pkg-config
           - zlib1g-dev
         files:
+          - url: https://www.php.net/distributions/php-8.5.8.tar.xz
+            checksum: sha256:58910198d19e873048fe87cdfe16bc790025417ede3d1651bfa1c4b533d573f2
+            path: ${source.dir}/php-8.5.8.tar.xz
+            uid: 0
+            gid: 0
           - url: git+https://github.com/ImageMagick/ImageMagick.git#7.1.2-27
             checksum: b661ac969aa3a0d326690f95830aab246569f090
             path: ${source.dir}/imagemagick
@@ -127,6 +148,14 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: extract php source
+          runs: |
+            set -eux -o pipefail
+
+            PHP_SRC_DIR="${source.dir}/php-src"
+            mkdir -p "$PHP_SRC_DIR"
+            tar xf "${source.dir}/php-8.5.8.tar.xz" -C "${source.dir}"
+            cp -a "${source.dir}/php-8.5.8/." "$PHP_SRC_DIR"
         - name: build imagemagick
           work-dir: ${source.dir}/imagemagick
           runs: |
@@ -160,7 +189,7 @@ contents:
             build_ext() {
               local ext=$1
               shift
-              cd /opt/php-8.5/src/ext/$ext
+              cd "${source.dir}/php-src/ext/$ext"
               phpize
               ./configure "$@"
               make -j$(nproc)
@@ -192,8 +221,8 @@ contents:
             make -j$(nproc)
             make install
       outputs:
-        - source: /opt/php-8.5/lib/php/extensions
-          target: /opt/php-8.5/lib/php/extensions
+        - source: /usr/lib/php/extensions
+          target: /usr/lib/php/extensions
           uid: 0
           gid: 0
         - source: ${target.dir}/opt/imagemagick
@@ -248,13 +277,6 @@ contents:
           target: /opt/docker/sbom/wordpress
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/php:8.5.8-debian13-fpm@sha256:eaf2efceebd2a7a9f42dffd7d6187ad1d019390d96c478e84df588f0cd54c22b
-      includes:
-        - opt/docker/sbom/php
-        - opt/php-8.5
-      uid: 0
-      gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -279,9 +301,8 @@ stop-signal: SIGQUIT
 environment:
   LD_LIBRARY_PATH: /opt/imagemagick/lib
   MAGICK_HOME: /opt/imagemagick
-  PATH: /opt/imagemagick/bin:/opt/php-8.5/bin:/opt/php-8.5/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  PHP_INI_DIR: /opt/php-8.5/etc/php
-  PHP_PREFIX: /opt/php-8.5
+  PATH: /opt/imagemagick/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PHP_INI_DIR: /etc/php-8.5
   PHP_VERSION: "8.5"
   WORDPRESS_VERSION: 6.9.4
 paths:
@@ -316,61 +337,61 @@ paths:
     gid: 65532
     mode: "1777"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/opcache-recommended.ini
+    path: /etc/php-8.5/conf.d/opcache-recommended.ini
     uid: 0
     gid: 0
     mode: "0644"
     source: image/wordpress/config/opcache-recommended.ini
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/error-logging.ini
+    path: /etc/php-8.5/conf.d/error-logging.ini
     uid: 0
     gid: 0
     mode: "0644"
     source: image/wordpress/config/error-logging.ini
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-gd.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-gd.ini
     content: extension=gd.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-mysqli.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-mysqli.ini
     content: extension=mysqli.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-pdo_mysql.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-pdo_mysql.ini
     content: extension=pdo_mysql.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-zip.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-zip.ini
     content: extension=zip.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-exif.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-exif.ini
     content: extension=exif.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-bcmath.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-bcmath.ini
     content: extension=bcmath.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php/conf.d/docker-php-ext-imagick.ini
+    path: /etc/php-8.5/conf.d/docker-php-ext-imagick.ini
     content: extension=imagick.so
     uid: 0
     gid: 0
     mode: "0644"
   - type: file
-    path: /opt/php-8.5/etc/php-fpm.d/zz-wordpress.conf
+    path: /etc/php-8.5/php-fpm.d/zz-wordpress.conf
     content: |
       [www]
       user = nonroot
