@@ -8,8 +8,9 @@ through message passing, making it straightforward to write programs that take f
 Elixir's standard library and tooling — including the `mix` build tool and the `iex` interactive shell — provide a
 productive development experience for projects ranging from simple scripts to large distributed systems. The language is
 widely used for web development (via the Phoenix framework), real-time data pipelines, embedded systems (Nerves), and
-any domain that benefits from Erlang/OTP's reliability guarantees. Elixir code runs on `dhi/erlang-otp` as its runtime
-foundation, so all BEAM semantics, OTP behaviours, and standard Erlang libraries are available natively.
+any domain that benefits from Erlang/OTP's reliability guarantees. Elixir code runs on the Erlang/OTP BEAM runtime
+shipped in this image — Debian tags use the `dhi/erlang-otp` artifact; Alpine tags use the `erlang28` package — so all
+BEAM semantics, OTP behaviours, and standard Erlang libraries are available natively.
 
 ## About Docker Hardened Images
 

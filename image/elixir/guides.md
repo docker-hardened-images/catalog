@@ -19,7 +19,8 @@ This Docker Hardened elixir image includes:
 - `iex` — interactive Elixir shell (REPL).
 - `mix` — Elixir build tool.
 
-The Erlang/OTP runtime (`erl`, `erlc`, `escript`) is layered in from the `dhi/erlang-otp` base.
+The Erlang/OTP runtime (`erl`, `erlc`, `escript`) is included with every tag. On Debian tags it comes from the
+`dhi/erlang-otp` artifact; on Alpine tags it comes from the `erlang28` package (`erlang28-fips` on FIPS tags).
 
 For language usage beyond running it in a container, see the [Elixir documentation](https://elixir-lang.org/docs.html)
 and [HexDocs](https://hexdocs.pm/).
@@ -36,10 +37,10 @@ $ docker run -it --rm dhi.io/elixir:<tag>-dev
 
 ### Environment variables
 
-| Variable  | Description                                                | Default   | Required |
-| --------- | ---------------------------------------------------------- | --------- | -------- |
-| `LANG`    | Locale for Elixir's Unicode and string handling            | `C.UTF-8` | No       |
-| `MIX_ENV` | Mix environment (`dev`, `test`, `prod`) for `mix` commands | `dev`     | No       |
+| Variable  | Description                                                | Default                         | Required |
+| --------- | ---------------------------------------------------------- | ------------------------------- | -------- |
+| `LANG`    | Locale for Elixir's Unicode and string handling            | `C.UTF-8`                       | No       |
+| `MIX_ENV` | Mix environment (`dev`, `test`, `prod`) for `mix` commands | Not set (Mix defaults to `dev`) | No       |
 
 ## Common elixir use cases
 
@@ -86,9 +87,11 @@ For Mix release configuration and project layout, see the
 
 ### Compiling native dependencies (NIFs)
 
-The `-dev` variant ships `bash`, `apt`, `mix`, and the Elixir compiler, but it does **not** include a C/C++ toolchain.
-Hex packages that include NIFs (for example `bcrypt_elixir`, `argon2_elixir`, `rustler`, `cowlib`'s native parser) need
-to install the toolchain in the build stage:
+The `-dev` variant ships `bash`, the system package manager (`apt` on Debian, `apk` on Alpine), `mix`, and the Elixir
+compiler, but it does **not** include a C/C++ toolchain. Hex packages that include NIFs (for example `bcrypt_elixir`,
+`argon2_elixir`, `rustler`, `cowlib`'s native parser) need to install the toolchain in the build stage.
+
+On a Debian `-dev` tag:
 
 ```dockerfile
 FROM dhi.io/elixir:<tag>-dev AS build
@@ -99,8 +102,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-Add `libssl-dev` for crypto NIFs, `libncurses-dev` for terminal libraries, or `cargo` for Rustler-based projects as
-needed.
+On an Alpine `-dev` tag:
+
+```dockerfile
+FROM dhi.io/elixir:<tag>-dev AS build
+
+RUN apk add --no-cache build-base git
+```
+
+Add `libssl-dev`/`openssl-dev` for crypto NIFs, `libncurses-dev`/`ncurses-dev` for terminal libraries, or `cargo` for
+Rustler-based projects as needed.
 
 ## Image variants
 
