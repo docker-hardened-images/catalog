@@ -6,4 +6,4 @@
 # Since we're using a newer version of rust than upstream libflux, there are new warnings they have not accounted for. These stop the build with the strict feature on.
 # By using this cargo shim, we can disable the strict feature but still enable the required cffi feature.
 
-exec /usr/local/bin/cargo "$@" --no-default-features --features=cffi
+exec /usr/bin/cargo "$@" --no-default-features --features=cffi
