@@ -21,9 +21,7 @@ This Docker Hardened Trino image includes:
 Note: By default, only the `server-core` plugin set is included in the runtime and dev variants. The compat variant
 includes the full set of optional Trino plugins. See [Image variants](#image-variants) for details.
 
-The `ranger` plugin is currently not present in this image as it cannot be properly hardened. Additionally, the Redshift
-JDBC driver has been upgraded as part of hardening; users with extremely long (>127 characters) table names may
-experience [a known issue](https://github.com/aws/amazon-redshift-jdbc-driver/issues/148).
+The `ranger` plugin is currently not present in this image as it cannot be properly hardened.
 
 ## Prerequisites
 
