@@ -1,0 +1,114 @@
+DHI provenance header (not part of the upstream commit below).
+
+Purpose: guest-kernel vsock multi-transport datagram support needed by the
+  containerd nerdbox microVM guest kernel. Makes the vsock bind path reusable
+  so datagram sockets can share the bind logic.
+Upstream series: https://lore.kernel.org/netdev/?q=vsock+dgram+multi-transport
+Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/0006-vsock-make-vsock-bind-reusable.patch
+Applied to Linux v6.12.46 with `patch -p1`.
+
+From d630fab95098c9125978d1043551a5f7b7dc6954 Mon Sep 17 00:00:00 2001
+From: Bobby Eshleman <bobby.eshleman () bytedance ! com>
+Date: Sat, 10 Jun 2023 00:58:31 +0000
+Subject: [PATCH 06/21] vsock: make vsock bind reusable
+
+This commit makes the bind table management functions in vsock usable
+for different bind tables. For use by datagrams in a future patch.
+
+Signed-off-by: Bobby Eshleman <bobby.eshleman@bytedance.com>
+---
+ net/vmw_vsock/af_vsock.c | 33 ++++++++++++++++++++++++++-------
+ 1 file changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/net/vmw_vsock/af_vsock.c b/net/vmw_vsock/af_vsock.c
+index 9d853e1c1824..b0bdb9d1f816 100644
+--- a/net/vmw_vsock/af_vsock.c
++++ b/net/vmw_vsock/af_vsock.c
+@@ -235,11 +235,12 @@ static void __vsock_remove_connected(struct vsock_sock *vsk)
+ 	sock_put(&vsk->sk);
+ }
+
+-static struct sock *__vsock_find_bound_socket(struct sockaddr_vm *addr)
++struct sock *vsock_find_bound_socket_common(struct sockaddr_vm *addr,
++					    struct list_head *bind_table)
+ {
+ 	struct vsock_sock *vsk;
+
+-	list_for_each_entry(vsk, vsock_bound_sockets(addr), bound_table) {
++	list_for_each_entry(vsk, bind_table, bound_table) {
+ 		if (vsock_addr_equals_addr(addr, &vsk->local_addr))
+ 			return sk_vsock(vsk);
+
+@@ -252,6 +253,11 @@ static struct sock *__vsock_find_bound_socket(struct sockaddr_vm *addr)
+ 	return NULL;
+ }
+
++static struct sock *__vsock_find_bound_socket(struct sockaddr_vm *addr)
++{
++	return vsock_find_bound_socket_common(addr, vsock_bound_sockets(addr));
++}
++
+ static struct sock *__vsock_find_connected_socket(struct sockaddr_vm *src,
+ 						  struct sockaddr_vm *dst)
+ {
+@@ -697,12 +703,17 @@ static void vsock_pending_work(struct work_struct *work)
+
+ /**** SOCKET OPERATIONS ****/
+
+-static int __vsock_bind_connectible(struct vsock_sock *vsk,
+-				    struct sockaddr_vm *addr)
++static int vsock_bind_common(struct vsock_sock *vsk,
++			     struct sockaddr_vm *addr,
++			     struct list_head *bind_table,
++			     size_t table_size)
+ {
+ 	static u32 port;
+ 	struct sockaddr_vm new_addr;
+
++	if (table_size < VSOCK_HASH_SIZE)
++		return -1;
++
+ 	if (!port)
+ 		port = get_random_u32_above(LAST_RESERVED_PORT);
+
+@@ -719,7 +730,8 @@ static int __vsock_bind_connectible(struct vsock_sock *vsk,
+
+ 			new_addr.svm_port = port++;
+
+-			if (!__vsock_find_bound_socket(&new_addr)) {
++			if (!vsock_find_bound_socket_common(&new_addr,
++							    &bind_table[VSOCK_HASH(addr)])) {
+ 				found = true;
+ 				break;
+ 			}
+@@ -736,7 +748,8 @@ static int __vsock_bind_connectible(struct vsock_sock *vsk,
+ 			return -EACCES;
+ 		}
+
+-		if (__vsock_find_bound_socket(&new_addr))
++		if (vsock_find_bound_socket_common(&new_addr,
++						   &bind_table[VSOCK_HASH(addr)]))
+ 			return -EADDRINUSE;
+ 	}
+
+@@ -748,11 +761,17 @@ static int __vsock_bind_connectible(struct vsock_sock *vsk,
+ 	 * by AF_UNIX.
+ 	 */
+ 	__vsock_remove_bound(vsk);
+-	__vsock_insert_bound(vsock_bound_sockets(&vsk->local_addr), vsk);
++	__vsock_insert_bound(&bind_table[VSOCK_HASH(&vsk->local_addr)], vsk);
+
+ 	return 0;
+ }
+
++static int __vsock_bind_connectible(struct vsock_sock *vsk,
++				    struct sockaddr_vm *addr)
++{
++	return vsock_bind_common(vsk, addr, vsock_bind_table, VSOCK_HASH_SIZE + 1);
++}
++
+ static int __vsock_bind_dgram(struct vsock_sock *vsk,
+ 			      struct sockaddr_vm *addr)
+ {
+--
+2.50.0

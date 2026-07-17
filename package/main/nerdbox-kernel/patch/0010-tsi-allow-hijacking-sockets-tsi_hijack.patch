@@ -1,0 +1,81 @@
+DHI provenance header (not part of the upstream commit below).
+
+Purpose: Transparent Socket Impersonation (TSI) for the containerd nerdbox
+  microVM guest kernel. Adds the tsi_hijack mechanism that opts individual
+  sockets into TSI proxying over vsock. Depends on patch 0009.
+Reference: https://github.com/containers/libkrun
+Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/0010-tsi-allow-hijacking-sockets-tsi_hijack.patch
+Applied to Linux v6.12.46 with `patch -p1`.
+
+From 0935e6b153ffeecfbe5509971805ad2bf5b53bb0 Mon Sep 17 00:00:00 2001
+From: Sergio Lopez <slp@redhat.com>
+Date: Thu, 19 May 2022 22:42:01 +0200
+Subject: [PATCH 10/21] tsi: allow hijacking sockets (tsi_hijack)
+
+Add a kernel command line option (tsi_hijack) enabling users to
+request the kernel to hijack AF_INET(SOCK_STREAM || SOCK_DGRAM)
+sockets to turn them into TSI sockets.
+
+Signed-off-by: Sergio Lopez <slp@redhat.com>
+---
+ net/socket.c     | 17 +++++++++++++++++
+ net/tsi/af_tsi.c |  2 +-
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/net/socket.c b/net/socket.c
+index 5ad75d15e1ad..bf8818423454 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -115,6 +115,10 @@ unsigned int sysctl_net_busy_read __read_mostly;
+ unsigned int sysctl_net_busy_poll __read_mostly;
+ #endif
+
++#ifdef CONFIG_TSI
++bool tsi_hijack = false;
++#endif
++
+ static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to);
+ static ssize_t sock_write_iter(struct kiocb *iocb, struct iov_iter *from);
+ static int sock_mmap(struct file *file, struct vm_area_struct *vma);
+@@ -1488,6 +1492,10 @@ int sock_wake_async(struct socket_wq *wq, int how, int band)
+ }
+ EXPORT_SYMBOL(sock_wake_async);
+
++#ifdef CONFIG_TSI
++core_param(tsi_hijack, tsi_hijack, bool, 0644);
++#endif
++
+ /**
+  *	__sock_create - creates a socket
+  *	@net: net namespace
+@@ -1558,6 +1566,15 @@ int __sock_create(struct net *net, int family, int type, int protocol,
+ 		request_module("net-pf-%d", family);
+ #endif
+
++#ifdef CONFIG_TSI
++	if (tsi_hijack && !kern && family == AF_INET &&
++	    (type == SOCK_STREAM || type == SOCK_DGRAM)) {
++		pr_debug("%s - tsi: hijacking AF_INET socket\n",
++			current->comm);
++		family = AF_TSI;
++	}
++#endif
++
+ 	rcu_read_lock();
+ 	pf = rcu_dereference(net_families[family]);
+ 	err = -EAFNOSUPPORT;
+diff --git a/net/tsi/af_tsi.c b/net/tsi/af_tsi.c
+index f43a17cff3a3..ef1552862253 100644
+--- a/net/tsi/af_tsi.c
++++ b/net/tsi/af_tsi.c
+@@ -474,7 +474,7 @@ static int tsi_accept(struct socket *sock, struct socket *newsock,
+ 	struct socket *csocket;
+ 	struct tsi_sock *tsk;
+ 	struct tsi_sock *newtsk;
+-	struct socket *nsock;
++	struct socket *nsock = NULL;
+ 	struct sock *sk;
+ 	int err;
+
+--
+2.50.0

@@ -1,0 +1,69 @@
+DHI provenance header (not part of the upstream commit below).
+
+Purpose: guest-kernel vsock multi-transport datagram support needed by the
+  containerd nerdbox microVM guest kernel. Refactors the vsock transport
+  lookup code so datagrams can select a transport independently of streams.
+Upstream series: https://lore.kernel.org/netdev/?q=vsock+dgram+multi-transport
+Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/0004-vsock-refactor-transport-lookup-code.patch
+Applied to Linux v6.12.46 with `patch -p1`.
+
+From 2348e42ca6ee84a172e40b155bc3839fb35753f9 Mon Sep 17 00:00:00 2001
+From: Bobby Eshleman <bobby.eshleman () bytedance ! com>
+Date: Sat, 10 Jun 2023 00:58:29 +0000
+Subject: [PATCH 04/21] vsock: refactor transport lookup code
+
+Introduce new reusable function vsock_connectible_lookup_transport()
+that performs the transport lookup logic.
+
+No functional change intended.
+
+Signed-off-by: Bobby Eshleman <bobby.eshleman@bytedance.com>
+---
+ net/vmw_vsock/af_vsock.c | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/net/vmw_vsock/af_vsock.c b/net/vmw_vsock/af_vsock.c
+index 784139c2717d..e6222a505390 100644
+--- a/net/vmw_vsock/af_vsock.c
++++ b/net/vmw_vsock/af_vsock.c
+@@ -432,6 +432,22 @@ static void vsock_deassign_transport(struct vsock_sock *vsk)
+ 	vsk->transport = NULL;
+ }
+
++static const struct vsock_transport *
++vsock_connectible_lookup_transport(unsigned int cid, __u8 flags)
++{
++	const struct vsock_transport *transport;
++
++	if (vsock_use_local_transport(cid))
++		transport = transport_local;
++	else if (cid <= VMADDR_CID_HOST || !transport_h2g ||
++		 (flags & VMADDR_FLAG_TO_HOST))
++		transport = transport_g2h;
++	else
++		transport = transport_h2g;
++
++	return transport;
++}
++
+ /* Assign a transport to a socket and call the .init transport callback.
+  *
+  * Note: for connection oriented socket this must be called when vsk->remote_addr
+@@ -474,13 +490,8 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
+ 		break;
+ 	case SOCK_STREAM:
+ 	case SOCK_SEQPACKET:
+-		if (vsock_use_local_transport(remote_cid))
+-			new_transport = transport_local;
+-		else if (remote_cid <= VMADDR_CID_HOST || !transport_h2g ||
+-			 (remote_flags & VMADDR_FLAG_TO_HOST))
+-			new_transport = transport_g2h;
+-		else
+-			new_transport = transport_h2g;
++		new_transport = vsock_connectible_lookup_transport(remote_cid,
++								   remote_flags);
+ 		break;
+ 	default:
+ 		ret = -ESOCKTNOSUPPORT;
+--
+2.50.0

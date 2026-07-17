@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-nerdbox-kernel
+variant: runtime
+tags:
+  - 6.12.46
+  - 6.12.46-r0
+  - 6.12.46-debian13
+  - 6.12.46-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: d497f0738df9504721852225eb5b162d7c8d4a46
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "6.12"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.12.46
+  VERSION: 6.12.46
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: nerdbox-kernel
+      work-dir: ${source.dir}/linux
+      shell: /bin/bash
+      contents:
+        packages:
+          - bash
+          - bc
+          - bison
+          - build-essential
+          - coreutils
+          - cpio
+          - diffutils
+          - findutils
+          - flex
+          - grep
+          - gzip
+          - kmod
+          - libelf-dev
+          - libncurses-dev
+          - libssl-dev
+          - patch
+          - perl
+          - rsync
+          - sed
+          - xz-utils
+        files:
+          - url: git+https://github.com/gregkh/linux.git#v6.12.46
+            checksum: d497f0738df9504721852225eb5b162d7c8d4a46
+            path: ${source.dir}/linux
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/gregkh/linux/v6.12.46/scripts/extract-ikconfig
+            path: /usr/bin/eik
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: apply nerdbox guest-kernel patches
+          runs: |
+            set -eux -o pipefail
+
+            # bash sorts glob expansion, so 0003..0010 apply in order.
+            for patch in ${source.dir}/patch/*.patch; do
+              patch -p1 < "${patch}"
+            done
+        - name: configure and compile kernel
+          runs: |
+            set -eux -o pipefail
+
+            case "$(dpkg --print-architecture)" in
+              amd64)
+                config_arch=x86_64
+                kimage=vmlinux
+                ;;
+              arm64)
+                config_arch=arm64
+                kimage=arch/arm64/boot/Image
+                ;;
+              *)
+                echo "unsupported architecture: $(dpkg --print-architecture)" >&2
+                exit 1
+                ;;
+            esac
+
+            cp "${source.dir}/config/config-6.12.46-${config_arch}" .config
+
+            make -j"$(nproc)" "$(basename "${kimage}")"
+
+            LC_ALL=C sh eik "${kimage}" | grep -E 'NFT_REDIRECT|NFT_COUNTER|NFT_FIB_INET|NF_TABLES_IPV6'
+
+            install -D -m 0644 "${kimage}" "${target.dir}/usr/lib/nerdbox/kernel"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Linux guest kernel for containerd nerdbox microVMs
+            files:
+              - usr/lib/nerdbox/kernel
+            formats:
+              - deb
+            license: GPL-2.0-only
+            name: nerdbox-kernel
+            rel: 0
+            url: https://github.com/containerd/nerdbox
+            version: 6.12.46
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          source: package/main/nerdbox-kernel/config
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/nerdbox-kernel/patch
+      outputs:
+        - source: ${target.dir}/usr/lib/nerdbox/kernel
+          target: /usr/lib/nerdbox/kernel
+          uid: 0
+          gid: 0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
