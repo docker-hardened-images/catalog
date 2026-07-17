@@ -1,0 +1,100 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-webflow-mcp
+variant: runtime
+tags:
+  - 1.0.0-alpine3.24
+  - 1.0.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-17"
+vars:
+  COMMIT_SHA: ca01e120d915daae39e761a657f8eb6c9372d8ad
+  NODEJS_VERSION: 24.18.0-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.0
+  VERSION: 1.0.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: webflow-mcp
+      work-dir: ${source.dir}/app-src
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - nodejs-24=24.18.0-r0
+          - npm
+        files:
+          - url: git+https://github.com/webflow/mcp-server.git#1.0.0
+            checksum: ca01e120d915daae39e761a657f8eb6c9372d8ad
+            path: ${source.dir}/app-src
+            spdx:
+              name: webflow-mcp
+              version: 1.0.0
+              packages:
+                - name: webflow-mcp-server
+                  purl: pkg:npm/webflow-mcp-server@1.0.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build and stage payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/app-src"
+
+            npm pkg delete dependencies.agents
+            npm pkg set 'dependencies[@modelcontextprotocol/sdk]=1.29.0'
+            npm pkg set \
+              'overrides[pbkdf2]=3.1.3' \
+              'overrides[form-data]=4.0.6' \
+              'overrides[sha.js]=2.4.12' \
+              'overrides[ws]=8.21.0' \
+              'overrides[path-to-regexp]=8.4.0' \
+              'overrides[socket.io-parser]=4.2.6' \
+              'overrides[qs]=6.15.2' \
+              'overrides[bn.js@4]=4.12.3' \
+              'overrides[bn.js@5]=5.2.3'
+            rm -f package-lock.json
+
+            npm install --ignore-scripts
+            npx tsup src/index.ts --clean
+            npm prune --omit=dev
+            npm pkg delete devDependencies
+
+            mkdir -p "${target.dir}/usr/lib/nodejs/webflow-mcp"
+            cp -a dist node_modules package.json "${target.dir}/usr/lib/nodejs/webflow-mcp/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Webflow MCP server (Model Context Protocol server for the Webflow Data API)
+            files:
+              - usr/lib/nodejs/webflow-mcp
+            license: MIT
+            name: webflow-mcp
+            rel: 0
+            url: https://github.com/webflow/mcp-server
+            version: 1.0.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
