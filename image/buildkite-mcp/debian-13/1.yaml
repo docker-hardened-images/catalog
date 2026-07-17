@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Buildkite MCP Server 1.x
+image: dhi.io/buildkite-mcp
+variant: runtime
+tags:
+  - "1"
+  - "1.10"
+  - 1.10.0
+  - 1-debian
+  - 1-debian13
+  - 1.10-debian
+  - 1.10-debian13
+  - 1.10.0-debian
+  - 1.10.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-17"
+vars:
+  COMMIT_SHA: f75e5b7d17d4a647d88cbf729bbc248e4e1ba296
+  SEMVER_MAJOR_MINOR_VERSION: "1.10"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.10.0
+  VERSION: 1.10.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: buildkite-mcp
+      work-dir: /go/src/github.com/buildkite/buildkite-mcp-server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.25
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/buildkite/buildkite-mcp-server.git#v1.10.0
+            checksum: f75e5b7d17d4a647d88cbf729bbc248e4e1ba296
+            path: /go/src/github.com/buildkite/buildkite-mcp-server
+            spdx:
+              name: buildkite-mcp
+              version: 1.10.0
+              packages:
+                - name: buildkite-mcp
+                  purl: pkg:golang/github.com/buildkite/buildkite-mcp-server@1.10.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.version=1.10.0
+            output: ${target.dir}/server/buildkite-mcp-server
+            packages: cmd/buildkite-mcp-server/main.go
+            strip: true
+      outputs:
+        - source: ${target.dir}/server/buildkite-mcp-server
+          target: /server/buildkite-mcp-server
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/buildkite-mcp
+          target: /opt/docker/sbom/buildkite-mcp
+          uid: 0
+          gid: 0
+    - name: server.json
+      contents:
+        packages:
+          - bash
+          - sed
+      pipeline:
+        - runs: |
+            set -eux -o pipefail
+
+            sed -i "s/_VERSION_/1.10.0/g" "${source.dir}/config/server.json"
+      paths:
+        - type: file
+          path: ${source.dir}/config/server.json
+          uid: 0
+          gid: 0
+          source: image/buildkite-mcp/config/server.json
+      attestations:
+        - predicate-type: https://modelcontextprotocol.io/server.json/v1
+          source: ${source.dir}/config/server.json
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /ko-app
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /ko-app/buildkite-mcp-server
+    uid: 0
+    gid: 0
+    source: /server/buildkite-mcp-server
+annotations:
+  org.opencontainers.image.description: Buildkite MCP Server - connects AI tools to the Buildkite API
+  org.opencontainers.image.licenses: MIT
+labels:
+  io.modelcontextprotocol.server.name: io.github.buildkite/buildkite-mcp-server
+entrypoint:
+  - /server/buildkite-mcp-server
+cmd:
+  - stdio
