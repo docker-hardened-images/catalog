@@ -1,0 +1,320 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NetBox 4.x (dev)
+image: dhi.io/netbox
+variant: dev
+tags:
+  - 4-dev
+  - 4.6-dev
+  - 4.6.4-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.6-debian-dev
+  - 4.6-debian13-dev
+  - 4.6.4-debian-dev
+  - 4.6.4-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-05-06"
+vars:
+  COMMIT_SHA: 3d73b2a1669ad03c9f0ccb1332fe201d60cbce9e
+  NETBOX_DOCKER_COMMIT_SHA: 55edb986b22c12b69ec89c79c8ccc7fdea88c5b5
+  NETBOX_DOCKER_VERSION: 5.0.1
+  PYTHON_MAJOR_MINOR_VERSION: "3.12"
+  SEMVER_MAJOR_MINOR_VERSION: "4.6"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.6.4
+  VERSION: 4.6.4
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libldap-common
+    - libpq5
+    - libstdc++6
+    - libxmlsec1t64-openssl
+    - libxslt1.1
+    - mawk
+    - perl-base
+    - python-3.12
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - sed
+    - tini
+    - tzdata
+    - util-linux
+  builds:
+    - name: install netbox
+      work-dir: /opt/netbox
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - git
+          - grep
+          - sed
+          - build-essential
+          - libldap2-dev
+          - libpq-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libstdc++6
+          - libxml2-dev
+          - libxmlsec1-dev
+          - libxslt1-dev
+          - pkg-config
+          - python-3.12
+          - python-3.12-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+        files:
+          - url: git+https://github.com/netbox-community/netbox.git#v4.6.4
+            checksum: 3d73b2a1669ad03c9f0ccb1332fe201d60cbce9e
+            path: /opt/netbox/netbox-src
+            spdx:
+              name: netbox
+              version: 4.6.4
+              packages:
+                - name: netbox
+                  purl: pkg:github/netbox-community/netbox@v4.6.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/netbox-community/netbox-docker.git#5.0.1
+            checksum: 55edb986b22c12b69ec89c79c8ccc7fdea88c5b5
+            path: /opt/netbox/netbox-docker-src
+            spdx:
+              name: netbox-docker
+              version: 5.0.1
+              packages:
+                - name: netbox-docker
+                  purl: pkg:github/netbox-community/netbox-docker@5.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install uv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install --no-cache-dir --upgrade uv
+        - name: install netbox
+          work-dir: /opt/netbox/netbox-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            uv venv /opt/netbox/venv
+            uv pip install --python /opt/netbox/venv/bin/python \
+              --override /opt/netbox/overrides.txt \
+              -r requirements.txt \
+              -r /opt/netbox/requirements-container.txt
+
+            mv /opt/netbox/netbox-src/netbox /opt/netbox/netbox
+        - name: install netbox-docker glue
+          work-dir: /opt/netbox/netbox-docker-src
+          runs: |
+            set -eux -o pipefail
+
+            install -m 0755 docker/docker-entrypoint.sh /opt/netbox/docker-entrypoint.sh
+            install -m 0755 docker/launch-netbox.sh /opt/netbox/launch-netbox.sh
+            install -m 0644 docker/super_user.py /opt/netbox/super_user.py
+            install -m 0644 docker/granian.py /opt/netbox/netbox/netbox/granian.py
+            install -m 0644 docker/configuration.docker.py /opt/netbox/netbox/netbox/configuration.py
+            install -m 0644 docker/ldap_config.docker.py /opt/netbox/netbox/netbox/ldap_config.py
+            install -d -m 0755 /etc/netbox/config/ldap
+            install -m 0644 -t /etc/netbox/config \
+              configuration/configuration.py configuration/extra.py \
+              configuration/logging.py configuration/plugins.py
+            install -m 0644 -t /etc/netbox/config/ldap \
+              configuration/ldap/ldap_config.py configuration/ldap/extra.py
+        - name: collectstatic
+          work-dir: /opt/netbox/netbox
+          privileged: true
+          environment:
+            ALLOWED_HOSTS: '*'
+            DB_HOST: localhost
+            DB_NAME: netbox
+            DB_PASSWORD: netbox
+            DB_USER: netbox
+            DEBUG: "true"
+            PYTHONDONTWRITEBYTECODE: "1"
+            REDIS_CACHE_HOST: localhost
+            REDIS_HOST: localhost
+            SECRET_KEY: build-time-dummy-key-padded-to-fifty-plus-characters
+          runs: |
+            set -eux -o pipefail
+
+            /opt/netbox/venv/bin/python manage.py collectstatic --no-input
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: netbox-venv
+            source: /opt/netbox/venv
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find /opt/netbox/venv \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+      paths:
+        - type: file
+          path: /opt/netbox/requirements-container.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: image/netbox/files/requirements-container.txt
+        - type: file
+          path: /opt/netbox/overrides.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: image/netbox/files/overrides.txt
+      outputs:
+        - source: /opt/netbox/venv
+          target: /opt/netbox/venv
+          uid: 0
+          gid: 0
+        - source: /opt/netbox/netbox
+          target: /opt/netbox/netbox
+          uid: 0
+          gid: 0
+        - source: /opt/netbox/docker-entrypoint.sh
+          target: /opt/netbox/docker-entrypoint.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/netbox/launch-netbox.sh
+          target: /opt/netbox/launch-netbox.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/netbox/super_user.py
+          target: /opt/netbox/super_user.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /etc/netbox/config
+          target: /etc/netbox/config
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/netbox
+          target: /opt/docker/sbom/netbox
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/netbox-venv
+          target: /opt/docker/sbom/netbox-venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/netbox-docker
+          target: /opt/docker/sbom/netbox-docker
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/netbox/netbox
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  GRANIAN_WORKERS: "4"
+  HOME: /home/nonroot
+  PATH: /opt/netbox/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONPATH: /opt/netbox/netbox
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /opt/netbox/netbox/media
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /opt/netbox/netbox/scripts
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /opt/netbox/netbox/reports
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /opt/netbox/netbox
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /opt/netbox
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal NetBox image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - /opt/netbox/docker-entrypoint.sh
+  - /opt/netbox/launch-netbox.sh
+ports:
+  - 8080/tcp
