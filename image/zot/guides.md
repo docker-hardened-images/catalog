@@ -92,6 +92,38 @@ The image ships with a minimal configuration:
 - The registry listens on all interfaces (`0.0.0.0`) on port `5000`.
 - No authentication is configured by default. Add access control settings for production.
 
+## Web UI
+
+The default runtime and FIPS variants ship a minimal `zot` binary built **without** the embedded web UI, keeping the
+runtime image as small as possible. To use the web UI (the same UI served by the upstream `ghcr.io/project-zot/zot`
+image), use a `-ui` variant, for example `dhi.io/zot:<tag>-ui` (also available as `-ui-fips`, `-ui-dev`, and
+`-ui-fips-dev`).
+
+The UI is only served when the `search` and `ui` extensions are enabled in your configuration:
+
+```json
+{
+    "distSpecVersion": "1.1.1",
+    "storage": { "rootDirectory": "/var/lib/registry" },
+    "http": { "address": "0.0.0.0", "port": "5000" },
+    "log": { "level": "info" },
+    "extensions": {
+        "search": { "enable": true },
+        "ui": { "enable": true }
+    }
+}
+```
+
+Start the ui variant with that configuration:
+
+```bash
+$ docker run -d --name zot -p 5000:5000 \
+  -v /path/to/config.json:/etc/zot/config.json:ro \
+  dhi.io/zot:<tag>-ui
+```
+
+The UI is served at the server root. Open `http://localhost:5000/` in a browser.
+
 ## Pushing and pulling images
 
 Use Docker or Skopeo to interact with the registry:
