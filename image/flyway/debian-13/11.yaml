@@ -95,7 +95,7 @@ contents:
       pipeline:
         - uses: mvn/mirror@v1
           environment:
-            MAVEN_MIRROR_OF: external:*
+            MAVEN_MIRROR_OF: external:*,!flyway-community-db-support
         - name: patch properties
           uses: mvn/patch@v1
           with:
@@ -120,6 +120,8 @@ contents:
             - id: maven_password
               env: MAVEN_PASSWORD
               optional: true
+            - id: github_token
+              env: GITHUB_TOKEN
           runs: |
             set -eux -o pipefail
 
@@ -130,11 +132,29 @@ contents:
             mkdir -p "${target.dir}/flyway"
             cd "${source.dir}/src/flyway"
 
+            # flyway-commandline resolves its community DB-support modules (flyway-database-*)
+            # from flyway's GitHub Packages repo, which requires auth.
+            # Write a settings file holding that server's
+            # credentials and pass it to Maven via --global-settings below; Maven merges it with
+            # the Cloudsmith mirror settings that mvn/mirror@v1 wrote to ~/.m2/settings.xml.
+            cat > "${source.dir}/gpr-settings.xml" << EOF
+            <settings>
+              <servers>
+                <server>
+                  <id>flyway-community-db-support</id>
+                  <username>docker-hardened-images</username>
+                  <password>${GITHUB_TOKEN}</password>
+                </server>
+              </servers>
+            </settings>
+            EOF
+
             # Run Maven
             mvn clean install \
               -DskipTests \
               -pl flyway-commandline,flyway-core \
-              -am
+              -am \
+              --global-settings "${source.dir}/gpr-settings.xml"
 
             # Copy main JAR
             cp "flyway-commandline/target/flyway-commandline-11.20.3.jar" "${target.dir}/flyway/flyway.jar"
@@ -142,59 +162,63 @@ contents:
             # Copy runtime dependencies
             mvn dependency:copy-dependencies \
               -pl flyway-commandline \
-              -DoutputDirectory="${target.dir}/flyway/lib"
+              -DoutputDirectory="${target.dir}/flyway/lib" \
+              --global-settings "${source.dir}/gpr-settings.xml"
 
-            # Evict stale Jackson copies. mvn-dependencies.json bumps POM pins
-            # but dependency:copy-dependencies still lands older transitive
-            # jackson-databind/core/annotations jars beside the remediated
-            # versions (e.g. 2.19.1 next to 2.21.4, or 3.1.1 next to 3.1.4).
-            # Scope eviction to the three remediated artifacts only; leave
-            # jackson-dataformat-* / jackson-datatype-* jars alone (e.g. the
-            # 2.x jackson-dataformat-toml that Flyway 11's CLI loads at runtime).
-            lib="${target.dir}/flyway/lib"
-            for jar in \
-              "${lib}"/jackson-databind-*.jar \
-              "${lib}"/jackson-core-*.jar \
-              "${lib}"/jackson-annotations-*.jar; do
-              [ -e "${jar}" ] || continue
-              case "$(basename "${jar}")" in
-                jackson-annotations-2.21.jar) continue ;;
-                *-2.21.4.jar | *-3.1.4.jar) continue ;;
-                *) rm -f "${jar}" ;;
-              esac
-            done
+            # Only needed for 11.x line
+            if [ "11" = "11" ]; then
+              # Evict stale Jackson copies. mvn-dependencies.json bumps POM pins
+              # but dependency:copy-dependencies still lands older transitive
+              # jackson-databind/core/annotations jars beside the remediated
+              # versions (e.g. 2.19.1 next to 2.21.4, or 3.1.1 next to 3.1.4).
+              # Scope eviction to the three remediated artifacts only; leave
+              # jackson-dataformat-* / jackson-datatype-* jars alone (e.g. the
+              # 2.x jackson-dataformat-toml that Flyway 11's CLI loads at runtime).
+              lib="${target.dir}/flyway/lib"
+              for jar in \
+                "${lib}"/jackson-databind-*.jar \
+                "${lib}"/jackson-core-*.jar \
+                "${lib}"/jackson-annotations-*.jar; do
+                [ -e "${jar}" ] || continue
+                case "$(basename "${jar}")" in
+                  jackson-annotations-2.21.jar) continue ;;
+                  *-2.21.4.jar | *-3.1.4.jar) continue ;;
+                  *) rm -f "${jar}" ;;
+                esac
+              done
 
-            # Ensure remediated Jackson artifacts are present at exact versions.
-            for artifact in \
-              com.fasterxml.jackson.core:jackson-databind:2.21.4 \
-              com.fasterxml.jackson.core:jackson-core:2.21.4 \
-              com.fasterxml.jackson.core:jackson-annotations:2.21 \
-              tools.jackson.core:jackson-databind:3.1.4 \
-              tools.jackson.core:jackson-core:3.1.4 \
-              tools.jackson.dataformat:jackson-dataformat-toml:3.1.4; do
-              mvn dependency:copy \
-                -Dartifact="${artifact}" \
-                -DoutputDirectory="${lib}" \
-                -q
-            done
+              # Ensure remediated Jackson artifacts are present at exact versions.
+              for artifact in \
+                com.fasterxml.jackson.core:jackson-databind:2.21.4 \
+                com.fasterxml.jackson.core:jackson-core:2.21.4 \
+                com.fasterxml.jackson.core:jackson-annotations:2.21 \
+                tools.jackson.core:jackson-databind:3.1.4 \
+                tools.jackson.core:jackson-core:3.1.4 \
+                tools.jackson.dataformat:jackson-dataformat-toml:3.1.4; do
+                mvn dependency:copy \
+                  -Dartifact="${artifact}" \
+                  -DoutputDirectory="${lib}" \
+                  -q
+              done
 
-            # Patch runtime JARs that Flyway's dependency copy still resolves to vulnerable versions:
-            # CVE-2026-42198 (postgresql), CVE-2026-45292 (opentelemetry-api), CVE-2026-42577 (netty-transport-native-epoll).
-            rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
-            install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.11.jar" "${target.dir}/flyway/lib/postgresql-42.7.11.jar"
+              # Patch runtime JARs that Flyway's dependency copy still resolves to vulnerable versions:
+              # CVE-2026-42198 (postgresql), CVE-2026-45292 (opentelemetry-api), CVE-2026-42577 (netty-transport-native-epoll).
+              rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
+              install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.11.jar" "${target.dir}/flyway/lib/postgresql-42.7.11.jar"
 
-            rm -f "${target.dir}/flyway/lib/opentelemetry-api-1.52.0.jar"
-            install -m 0644 "${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar" "${target.dir}/flyway/lib/opentelemetry-api-1.62.0.jar"
+              rm -f "${target.dir}/flyway/lib/opentelemetry-api-1.52.0.jar"
+              install -m 0644 "${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar" "${target.dir}/flyway/lib/opentelemetry-api-1.62.0.jar"
 
-            for arch in x86_64 aarch_64; do
-              old_epoll="${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.9.Final-linux-${arch}.jar"
-              if [ -f "${old_epoll}" ]; then
-                rm -f "${old_epoll}"
-                install -m 0644 \
-                  "${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar" \
-                  "${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar"
-              fi
-            done
+              for arch in x86_64 aarch_64; do
+                old_epoll="${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.9.Final-linux-${arch}.jar"
+                if [ -f "${old_epoll}" ]; then
+                  rm -f "${old_epoll}"
+                  install -m 0644 \
+                    "${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar" \
+                    "${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar"
+                fi
+              done
+            fi
 
             # Strip embedded netty from shaded core-io JAR (CVE-2026-33870, CVE-2026-33871)
             # The fixed standalone netty JARs already in lib/ will be used instead
