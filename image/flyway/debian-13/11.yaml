@@ -16,6 +16,8 @@ tags:
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2026-01-26"
 vars:
   COMMIT_SHA: 6aa438ea6f9905ac34e95caacfa8357f4b479439
   GITHUB_USERNAME: docker-hardened-images
@@ -66,18 +68,46 @@ contents:
             gid: 0
           - url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar
             path: ${source.dir}/patch/deps/postgresql-42.7.11.jar
+            spdx:
+              name: postgresql
+              version: 42.7.11
+              packages:
+                - name: postgresql
+                  purl: pkg:maven/org.postgresql/postgresql@42.7.11
+                  license: BSD-2-Clause
             uid: 0
             gid: 0
           - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.15.Final/netty-transport-native-epoll-4.2.15.Final-linux-x86_64.jar
             path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-x86_64.jar
+            spdx:
+              name: netty-transport-native-epoll
+              version: 4.2.15.Final
+              packages:
+                - name: netty-transport-native-epoll
+                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final
+                  license: Apache-2.0
             uid: 0
             gid: 0
           - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.15.Final/netty-transport-native-epoll-4.2.15.Final-linux-aarch_64.jar
             path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-aarch_64.jar
+            spdx:
+              name: netty-transport-native-epoll
+              version: 4.2.15.Final
+              packages:
+                - name: netty-transport-native-epoll
+                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final
+                  license: Apache-2.0
             uid: 0
             gid: 0
           - url: https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar
             path: ${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar
+            spdx:
+              name: opentelemetry-api
+              version: 1.62.0
+              packages:
+                - name: opentelemetry-api
+                  purl: pkg:maven/io.opentelemetry/opentelemetry-api@1.62.0
+                  license: Apache-2.0
             uid: 0
             gid: 0
         artifacts:
@@ -132,11 +162,6 @@ contents:
             mkdir -p "${target.dir}/flyway"
             cd "${source.dir}/src/flyway"
 
-            # flyway-commandline resolves its community DB-support modules (flyway-database-*)
-            # from flyway's GitHub Packages repo, which requires auth.
-            # Write a settings file holding that server's
-            # credentials and pass it to Maven via --global-settings below; Maven merges it with
-            # the Cloudsmith mirror settings that mvn/mirror@v1 wrote to ~/.m2/settings.xml.
             cat > "${source.dir}/gpr-settings.xml" << EOF
             <settings>
               <servers>
@@ -149,31 +174,20 @@ contents:
             </settings>
             EOF
 
-            # Run Maven
             mvn clean install \
               -DskipTests \
               -pl flyway-commandline,flyway-core \
               -am \
               --global-settings "${source.dir}/gpr-settings.xml"
 
-            # Copy main JAR
             cp "flyway-commandline/target/flyway-commandline-11.20.3.jar" "${target.dir}/flyway/flyway.jar"
 
-            # Copy runtime dependencies
             mvn dependency:copy-dependencies \
               -pl flyway-commandline \
               -DoutputDirectory="${target.dir}/flyway/lib" \
               --global-settings "${source.dir}/gpr-settings.xml"
 
-            # Only needed for 11.x line
             if [ "11" = "11" ]; then
-              # Evict stale Jackson copies. mvn-dependencies.json bumps POM pins
-              # but dependency:copy-dependencies still lands older transitive
-              # jackson-databind/core/annotations jars beside the remediated
-              # versions (e.g. 2.19.1 next to 2.21.4, or 3.1.1 next to 3.1.4).
-              # Scope eviction to the three remediated artifacts only; leave
-              # jackson-dataformat-* / jackson-datatype-* jars alone (e.g. the
-              # 2.x jackson-dataformat-toml that Flyway 11's CLI loads at runtime).
               lib="${target.dir}/flyway/lib"
               for jar in \
                 "${lib}"/jackson-databind-*.jar \
@@ -187,7 +201,6 @@ contents:
                 esac
               done
 
-              # Ensure remediated Jackson artifacts are present at exact versions.
               for artifact in \
                 com.fasterxml.jackson.core:jackson-databind:2.21.4 \
                 com.fasterxml.jackson.core:jackson-core:2.21.4 \
@@ -201,8 +214,6 @@ contents:
                   -q
               done
 
-              # Patch runtime JARs that Flyway's dependency copy still resolves to vulnerable versions:
-              # CVE-2026-42198 (postgresql), CVE-2026-45292 (opentelemetry-api), CVE-2026-42577 (netty-transport-native-epoll).
               rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
               install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.11.jar" "${target.dir}/flyway/lib/postgresql-42.7.11.jar"
 
@@ -220,8 +231,6 @@ contents:
               done
             fi
 
-            # Strip embedded netty from shaded core-io JAR (CVE-2026-33870, CVE-2026-33871)
-            # The fixed standalone netty JARs already in lib/ will be used instead
             core_io_jar=$(find "${target.dir}/flyway/lib" -name 'core-io-*.jar' | head -1)
             if [ -n "${core_io_jar}" ]; then
               echo "Stripping embedded netty classes from ${core_io_jar}..."
@@ -233,7 +242,6 @@ contents:
               rm -f "${netty_entries}"
             fi
 
-            # Create wrapper script
             cat > "${target.dir}/flyway/flyway" << EOF
             #!/bin/sh
             exec java -cp "/opt/flyway/flyway.jar:/opt/flyway/lib/*" org.flywaydb.commandline.Main "\$@"
