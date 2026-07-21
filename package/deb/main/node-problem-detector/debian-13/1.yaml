@@ -1,0 +1,161 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-node-problem-detector
+variant: runtime
+tags:
+  - 1.36.0
+  - 1.36.0-r0
+  - 1.36.0-debian13
+  - 1.36.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-30"
+vars:
+  COMMIT_SHA: 19d58b0eded3a60a999ad0ffa8d69deed0bc94d0
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.36"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.36.0
+  VERSION: 1.36.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: node-problem-detector
+      work-dir: /go/src/k8s.io/node-problem-detector
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - libc6-dev
+          - libsystemd-dev
+          - mawk
+          - sed
+          - golang-1.26=1.26.5-0
+          - golang-1.26-oci-config=1.26.5-0
+        files:
+          - url: git+https://github.com/kubernetes/node-problem-detector.git#v1.36.0
+            checksum: 19d58b0eded3a60a999ad0ffa8d69deed0bc94d0
+            path: /go/src/k8s.io/node-problem-detector
+            spdx:
+              name: node-problem-detector
+              version: 1.36.0
+              packages:
+                - name: node-problem-detector
+                  purl: pkg:golang/k8s.io/node-problem-detector@1.36.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.79.3
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -tags journald -count=1 ./pkg/...
+        - name: build node-problem-detector
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.36.0
+            output: ${target.dir}/usr/bin/node-problem-detector
+            packages: ./cmd/nodeproblemdetector
+            tags: journald
+        - name: build health-checker
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.36.0
+            output: ${target.dir}/usr/bin/health-checker
+            packages: ./cmd/healthchecker/health_checker.go
+            tags: journald
+        - name: build log-counter
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.36.0
+            output: ${target.dir}/usr/bin/log-counter
+            packages: ./cmd/logcounter/log_counter.go
+            tags: journald
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/k8s.io/node-problem-detector
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X k8s.io/node-problem-detector/pkg/version.version=v1.36.0
+            output: ${target.dir}/usr/bin/node-problem-detector-dev
+            packages: ./cmd/nodeproblemdetector
+            strip: false
+            tags: journald
+        - name: stage config
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/node-problem-detector"
+            cp -a /go/src/k8s.io/node-problem-detector/config "${target.dir}/usr/share/node-problem-detector/config"
+
+            cp -a "${target.dir}/usr/bin/health-checker" "${target.dir}/usr/bin/health-checker.devpkg"
+            cp -a "${target.dir}/usr/bin/log-counter" "${target.dir}/usr/bin/log-counter.devpkg"
+            cp -a "${target.dir}/usr/share/node-problem-detector" "${target.dir}/usr/share/node-problem-detector.devpkg"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - libsystemd0
+            description: Node-problem-detector
+            files:
+              - usr/bin/node-problem-detector
+              - usr/bin/health-checker
+              - usr/bin/log-counter
+              - path: usr/share/node-problem-detector
+            formats:
+              - deb
+            license: Apache-2.0
+            name: node-problem-detector
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/node-problem-detector
+                    source: usr/bin/node-problem-detector-dev
+                  - path: usr/bin/health-checker
+                    source: usr/bin/health-checker.devpkg
+                  - path: usr/bin/log-counter
+                    source: usr/bin/log-counter.devpkg
+                  - path: usr/share/node-problem-detector
+                    source: usr/share/node-problem-detector.devpkg
+                name: node-problem-detector-dev
+            url: https://github.com/kubernetes/node-problem-detector
+            version: 1.36.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
