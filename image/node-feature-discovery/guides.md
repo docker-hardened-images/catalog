@@ -36,7 +36,7 @@ Use `--entrypoint` to run an individual binary:
 
 ```bash
 $ docker run --rm --entrypoint nfd-worker dhi.io/node-feature-discovery:<tag> -version
-nfd-worker v0.18.3
+nfd-worker v0.19.0
 ```
 
 ## Deploy to Kubernetes
@@ -68,7 +68,8 @@ Docker Hardened Images publish multiple variants where applicable:
 - Runtime variants contain only the application and its runtime dependencies.
 - Dev variants include package managers and common debugging tools for development and multi-stage builds.
 
-This image currently publishes Debian 13 runtime and dev variants. It does not currently publish FIPS variants.
+This image currently publishes Debian 13 and Alpine (3.23 / 3.24) runtime and dev variants. It does not currently
+publish FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 
