@@ -1,0 +1,284 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Selenium Node Chromium 4.x (dev)
+image: dhi.io/selenium-node-chromium
+variant: dev
+tags:
+  - 4-dev
+  - 4.44-dev
+  - 4.44.0-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.44-debian-dev
+  - 4.44-debian13-dev
+  - 4.44.0-debian-dev
+  - 4.44.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-10-13"
+vars:
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 9.0.1
+  COMMIT_SHA: da2039bd1456a161d0c284de16f9f4f179f1e8ca
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_VARIANT: jdk
+  JDK_MAJOR_VERSION: "21"
+  JRE_PATH: /usr/lib/jvm/temurin-21
+  SEMVER_MAJOR_MINOR_VERSION: "4.44"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.44.0
+  VERSION: 4.44.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - chromium
+    - chromium-common
+    - chromium-driver
+    - chromium-l10n
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jdk
+    - eclipse-temurin-21-jdk-oci-config
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tini
+    - tzdata
+    - util-linux
+  builds:
+    - name: selenium-server
+      work-dir: ${source.dir}/selenium
+      caches:
+        - path: /bazel-disk-cache
+        - path: /bazel-repo-cache
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - python3
+          - unzip
+          - zip
+        files:
+          - url: git+https://github.com/SeleniumHQ/selenium.git#selenium-4.44.0
+            checksum: da2039bd1456a161d0c284de16f9f4f179f1e8ca
+            path: ${source.dir}/selenium
+            spdx:
+              name: selenium
+              version: 4.44.0
+              packages:
+                - name: selenium-server
+                  purl: pkg:maven/org.seleniumhq.selenium/selenium-server@4.44.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/9.0.1/bazel-9.0.1-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/9.0.1/bazel-9.0.1-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: bump bundled netty in the maven lockfile
+          work-dir: ${source.dir}/selenium
+          runs: |
+            set -eux -o pipefail
+
+            python3 - "${source.dir}/patch/netty-bump.json" java/maven_install.json << 'PY'
+            import json, sys
+
+            spec_path, lock_path = sys.argv[1], sys.argv[2]
+            spec = json.load(open(spec_path))
+            lock = json.load(open(lock_path))
+
+            for artifact, pin in spec.items():
+                entry = lock["artifacts"][artifact]
+                entry["version"] = pin["version"]
+                entry["shasums"]["jar"] = pin["shasums"]["jar"]
+                if "sources" in entry["shasums"] and pin["shasums"].get("sources"):
+                    entry["shasums"]["sources"] = pin["shasums"]["sources"]
+
+            json.dump(lock, open(lock_path, "w"), indent=2, sort_keys=False)
+            print(f"bumped {len(spec)} io.netty artifacts")
+
+            mod = open("MODULE.bazel").read()
+            flipped = mod.replace("fail_if_repin_required = True", "fail_if_repin_required = False")
+            assert flipped != mod, "fail_if_repin_required flag not found in MODULE.bazel"
+            open("MODULE.bazel", "w").write(flipped)
+            print("relaxed fail_if_repin_required for the netty bump")
+            PY
+        - name: build selenium-server
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat > /tmp/bazel-downloader.cfg << 'CFG'
+            rewrite .*repo1\.maven\.org/maven2/(.*) maven-central.storage-download.googleapis.com/maven2/$1
+            CFG
+
+            /opt/bazel/bin/bazel \
+              build \
+              --disk_cache=/bazel-disk-cache \
+              --repository_cache=/bazel-repo-cache \
+              --downloader_config=/tmp/bazel-downloader.cfg \
+              --curses=no \
+              --color=no \
+              --repo_env=RULES_JVM_EXTERNAL_FETCH_SOURCES=false \
+              //java/src/org/openqa/selenium/grid:selenium_server_deploy.jar
+
+            mkdir -p "${target.dir}/opt/selenium"
+            cp -a \
+              bazel-bin/java/src/org/openqa/selenium/grid/selenium_server_deploy.jar \
+              "${target.dir}/opt/selenium/selenium-server.jar"
+      paths:
+        - type: file
+          path: ${source.dir}/patch/netty-bump.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: image/selenium-node-chromium/patch/netty-bump.json
+      outputs:
+        - source: ${target.dir}/opt/selenium/selenium-server.jar
+          target: /opt/selenium/selenium-server.jar
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /opt/docker/sbom/selenium
+          target: /opt/docker/sbom/selenium
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  CONFIG_FILE: /opt/selenium/config.toml
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  SE_BIND_HOST: "false"
+  SE_DRAIN_AFTER_SESSION_COUNT: "0"
+  SE_ENABLE_TLS: "false"
+  SE_ENABLE_TRACING: "true"
+  SE_HTTPS_CERTIFICATE: /opt/selenium/secrets/tls.crt
+  SE_HTTPS_PRIVATE_KEY: /opt/selenium/secrets/tls.key
+  SE_HUB_HOST: selenium-hub
+  SE_HUB_PORT: "4444"
+  SE_JAVA_DISABLE_HOSTNAME_VERIFICATION: "true"
+  SE_JAVA_HTTPCLIENT_VERSION: HTTP_1_1
+  SE_JAVA_SSL_TRUST_STORE: /opt/selenium/secrets/server.jks
+  SE_JAVA_SSL_TRUST_STORE_PASSWORD: /opt/selenium/secrets/server.pass
+  SE_LOG_LEVEL: INFO
+  SE_NODE_BROWSER_VERSION: stable
+  SE_NODE_DETECT_DRIVERS: "true"
+  SE_NODE_GRID_URL: ""
+  SE_NODE_MAX_SESSIONS: "1"
+  SE_NODE_PORT: "5555"
+  SE_NODE_REGISTER_CYCLE: "10"
+  SE_NODE_REGISTER_PERIOD: "120"
+  SE_NODE_SESSION_TIMEOUT: "300"
+  SE_OTEL_JAVA_GLOBAL_AUTOCONFIGURE_ENABLED: "true"
+  SE_OTEL_SERVICE_NAME: selenium-node-chromium
+  SE_OTEL_TRACES_EXPORTER: otlp
+paths:
+  - type: file
+    path: /usr/local/bin/selenium-node
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/selenium-node-chromium/bin/selenium-node.sh
+  - type: file
+    path: /usr/bin/chromium
+    content: |
+      #!/bin/bash
+      exec /usr/lib/chromium/chromium "$@"
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /opt/selenium/secrets
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /opt/selenium/logs
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Selenium Grid Chromium node image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/selenium-node
+ports:
+  - 5555/tcp
+  - 4442/tcp
+  - 4443/tcp
