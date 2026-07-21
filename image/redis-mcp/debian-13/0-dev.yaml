@@ -1,0 +1,183 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Redis MCP Server 0.x (dev)
+image: dhi.io/redis-mcp
+variant: dev
+tags:
+  - 0-dev
+  - 0.5-dev
+  - 0.5.0-dev
+  - 0-debian-dev
+  - 0-debian13-dev
+  - 0.5-debian-dev
+  - 0.5-debian13-dev
+  - 0.5.0-debian-dev
+  - 0.5.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-23"
+vars:
+  COMMIT_SHA: d82bfe1a2ca1e521d3d2c78ecbdf3d628a97ca19
+  SEMVER_MAJOR_MINOR_VERSION: "0.5"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.5.0
+  VERSION: 0.5.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - python-3.14
+    - sed
+    - util-linux
+  builds:
+    - name: redis-mcp
+      work-dir: /app
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      contents:
+        packages:
+          - coreutils
+          - dash
+          - gzip
+          - python-3.14
+          - tar
+          - uv
+        files:
+          - url: git+https://github.com/redis/mcp-redis.git#0.5.0
+            checksum: d82bfe1a2ca1e521d3d2c78ecbdf3d628a97ca19
+            path: /app
+            spdx:
+              name: redis-mcp-server
+              version: 0.5.0
+              packages:
+                - name: redis-mcp-server
+                  purl: pkg:pypi/redis-mcp-server@0.5.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build python package
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /app/.git /app/tests
+
+            python3 - << 'PY'
+            from pathlib import Path
+
+            pyproject = Path("pyproject.toml")
+            data = pyproject.read_text()
+            if "[tool.uv]" in data:
+                raise SystemExit("pyproject.toml already defines [tool.uv]; merge constraint-dependencies manually")
+            constraints = [
+                "aiohttp>=3.14.1",
+                "cryptography>=48.0.1",
+                "idna>=3.15",
+                "pygments>=2.20.0",
+                "pyjwt>=2.13.0",
+                "python-dotenv>=1.2.2",
+                "python-multipart>=0.0.31",
+                "requests>=2.33.0",
+                "starlette>=1.3.1",
+                "urllib3>=2.7.0",
+            ]
+            constraint_lines = "\n".join(f'    "{constraint}",' for constraint in constraints)
+            pyproject.write_text(
+                data.rstrip()
+                + f'\n\n[tool.uv]\nconstraint-dependencies = [\n{constraint_lines}\n]\n'
+            )
+
+            main = Path("src/main.py")
+            data = main.read_text()
+            if "from src.version import __version__" not in data:
+                data = data.replace(
+                    "from src.common.logging_utils import configure_logging\n",
+                    "from src.common.logging_utils import configure_logging\nfrom src.version import __version__\n",
+                )
+            if "@click.version_option(__version__)" not in data:
+                data = data.replace("@click.command()\n", "@click.command()\n@click.version_option(__version__)\n")
+            main.write_text(data)
+            PY
+
+            uv lock --upgrade
+            uv sync --locked --no-dev --no-editable
+      outputs:
+        - source: /app/.venv
+          target: /app/.venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/redis-mcp-server
+          target: /opt/docker/sbom/redis-mcp-server
+          uid: 0
+          gid: 0
+    - name: server.json
+      contents:
+        packages:
+          - bash
+          - dash
+          - sed
+      pipeline:
+        - runs: |
+            set -eux -o pipefail
+
+            sed -i "s/_VERSION_/0.5.0/g" "${source.dir}/config/server.json"
+      paths:
+        - type: file
+          path: ${source.dir}/config/server.json
+          uid: 0
+          gid: 0
+          source: image/redis-mcp/config/server.json
+      attestations:
+        - predicate-type: https://modelcontextprotocol.io/server.json/v1
+          source: ${source.dir}/config/server.json
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+annotations:
+  org.opencontainers.image.description: A minimal Redis MCP Server image
+  org.opencontainers.image.licenses: MIT
+labels:
+  io.modelcontextprotocol.server.name: io.github.redis/mcp-redis
+entrypoint:
+  - redis-mcp-server
