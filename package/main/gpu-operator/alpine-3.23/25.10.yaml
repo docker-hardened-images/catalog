@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-gpu-operator
+variant: runtime
+tags:
+  - 25.10.1-alpine3.23
+  - 25.10.1-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-28"
+vars:
+  COMMIT_SHA: 846018752b8a34d4039feb6f18629b4c64210e32
+  GOLANG_VERSION: 1.26.5-r0
+  PACKAGE_NAME: gpu-operator-25.10
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "25.10"
+  SEMVER_MAJOR_VERSION: "25"
+  SEMVER_VERSION: 25.10.1
+  VERSION: 25.10.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: gpu-operator-25.10
+      work-dir: /go/src/github.com/NVIDIA/gpu-operator
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: https://github.com/NVIDIA/gpu-operator/archive/refs/tags/v25.10.1.tar.gz
+            checksum: sha256:98db1ef2d25cd33bc8f559b57b3a19ad5d264c907f7aa27c99daacf0ba77dfc2
+            path: ${source.dir}/gpu-operator.tar.gz
+            spdx:
+              name: gpu-operator
+              version: 25.10.1
+              packages:
+                - name: gpu-operator
+                  purl: pkg:golang/github.com/NVIDIA/gpu-operator@25.10.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract source
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /go/src/github.com/NVIDIA/gpu-operator
+            tar xzf "${source.dir}/gpu-operator.tar.gz" \
+              -C /go/src/github.com/NVIDIA/gpu-operator --strip-components=1
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.54.0
+              - golang.org/x/net@v0.57.0
+            download: true
+        - name: pin transitive dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go mod edit \
+              -replace github.com/moby/spdystream=github.com/moby/spdystream@v0.5.1 \
+              -replace github.com/regclient/regclient=github.com/regclient/regclient@v0.11.5
+            go mod tidy
+            go mod vendor
+        - name: build gpu-operator
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/NVIDIA/gpu-operator/internal/info.version=25.10.1
+              - -X github.com/NVIDIA/gpu-operator/internal/info.gitCommit=846018752b8a34d4039feb6f18629b4c64210e32
+            output: ${target.dir}/usr/bin/gpu-operator
+            packages: ./cmd/gpu-operator
+        - name: build gpu-operator dev
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/NVIDIA/gpu-operator/internal/info.version=25.10.1
+              - -X github.com/NVIDIA/gpu-operator/internal/info.gitCommit=846018752b8a34d4039feb6f18629b4c64210e32
+            output: ${target.dir}/usr/bin/gpu-operator-dev
+            packages: ./cmd/gpu-operator
+            strip: false
+        - name: build nvidia-validator
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/NVIDIA/gpu-operator/internal/info.version=25.10.1
+              - -X github.com/NVIDIA/gpu-operator/internal/info.gitCommit=846018752b8a34d4039feb6f18629b4c64210e32
+            output: ${target.dir}/usr/bin/nvidia-validator
+            packages: ./cmd/nvidia-validator
+        - name: build nvidia-validator dev
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/NVIDIA/gpu-operator/internal/info.version=25.10.1
+              - -X github.com/NVIDIA/gpu-operator/internal/info.gitCommit=846018752b8a34d4039feb6f18629b4c64210e32
+            output: ${target.dir}/usr/bin/nvidia-validator-dev
+            packages: ./cmd/nvidia-validator
+            strip: false
+        - name: stage operator assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/gpu-operator/manifests" \
+              "${target.dir}/opt/validator/manifests" \
+              "${target.dir}/usr/bin"
+
+            cp -a assets/. "${target.dir}/opt/gpu-operator/"
+            cp -a manifests/. "${target.dir}/opt/gpu-operator/manifests/"
+            cp -a validator/manifests/. "${target.dir}/opt/validator/manifests/"
+            cp -a deployments/gpu-operator/crds/nvidia.com_clusterpolicies.yaml \
+              deployments/gpu-operator/crds/nvidia.com_nvidiadrivers.yaml \
+              "${target.dir}/opt/gpu-operator/"
+            cp -a deployments/gpu-operator/charts/node-feature-discovery/crds/nfd-api-crds.yaml \
+              "${target.dir}/opt/gpu-operator/nfd-api-crds.yaml"
+            cp -a hack/must-gather.sh "${target.dir}/usr/bin/gather"
+            chmod 0755 "${target.dir}/usr/bin/gather"
+        - uses: dhi/build-pkg:0
+          with:
+            description: NVIDIA GPU Operator controller and rendered operand assets
+            files:
+              - usr/bin/gpu-operator
+              - opt/gpu-operator
+              - opt/validator/manifests
+            license: Apache-2.0
+            name: gpu-operator-25.10
+            priority: optional
+            rel: 0
+            section: admin
+            subpackages:
+              - files:
+                  - path: usr/bin/nvidia-validator
+                name: nvidia-validator-25.10
+              - files:
+                  - path: usr/bin/gpu-operator
+                    source: usr/bin/gpu-operator-dev
+                  - path: usr/bin/gather
+                name: gpu-operator-25.10-dev
+              - files:
+                  - path: usr/bin/nvidia-validator
+                    source: usr/bin/nvidia-validator-dev
+                name: nvidia-validator-25.10-dev
+            url: https://github.com/NVIDIA/gpu-operator
+            version: 25.10.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
