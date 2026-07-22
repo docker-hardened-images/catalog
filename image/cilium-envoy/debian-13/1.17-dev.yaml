@@ -5,11 +5,11 @@ image: dhi.io/cilium-envoy
 variant: dev
 tags:
   - 1.17-dev
-  - 1.17.17-dev
+  - 1.17.18-dev
   - 1.17-debian-dev
   - 1.17-debian13-dev
-  - 1.17.17-debian-dev
-  - 1.17.17-debian13-dev
+  - 1.17.18-debian-dev
+  - 1.17.18-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
@@ -20,17 +20,19 @@ vars:
   BASE_TAG: 20250419-debian13
   BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
   BAZEL_VERSION: 7.7.1
-  CILIUM_COMMIT_SHA: 0db95967f554c95ee21a1fb7268bb5785e563d9d
-  CILIUM_ENVOY_COMMIT_SHA: a7f42a3390781539911b5b9107881b35ecc4e752
-  CILIUM_ENVOY_VERSION: 1.36.8
+  CILIUM_COMMIT_SHA: e5796ad1eb6003acf44d8f6a7dc726699a37c1c0
+  CILIUM_ENVOY_COMMIT_SHA: edeb3f2af56c37c407efa1f63f0b32f595399bbc
+  CILIUM_ENVOY_VERSION: 1.36.9
   CLANG_VERSION: "18"
-  GOLANG_REFERENCE: dhi/golang:1.26.4-debian13-dev@sha256:dd625ea57c53fae1bd65b3c6c1406a607035b5883edbaf0409c29aed8026e5ed
-  PYTHON_REFERENCE: dhi/python:3.12.13-debian13@sha256:9e6358be318241b63e48a063c59e195bec5f7d9488c9c164b6944e3fdc416666
   SEMVER_MAJOR_MINOR_VERSION: "1.17"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.17.17
-  VERSION: 1.17.17
+  SEMVER_VERSION: 1.17.18
+  VERSION: 1.17.18
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!base-files'
     - '!gawk'
@@ -54,9 +56,8 @@ contents:
     - util-linux
   builds:
     - name: cilium-envoy
-      uses: dhi.io/golang:1.26.4-debian13-dev@sha256:dd625ea57c53fae1bd65b3c6c1406a607035b5883edbaf0409c29aed8026e5ed
       environment:
-        PATH: /opt/bazel/bin:/opt/python/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        PATH: /opt/bazel/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       caches:
         - path: /bazel-disk-cache
         - path: /bazel-repo-cache
@@ -76,6 +77,8 @@ contents:
           - cmake
           - coreutils
           - curl
+          - git
+          - golang-1.26
           - gzip
           - libatomic1
           - libc++-18-dev
@@ -87,15 +90,28 @@ contents:
           - ninja-build
           - patch
           - patchelf
+          - python-3.12
+          - python-3.12-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - bash
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - sed
+          - make
         files:
-          - url: git+https://github.com/cilium/proxy.git#a7f42a3390781539911b5b9107881b35ecc4e752
+          - url: git+https://github.com/cilium/proxy.git#edeb3f2af56c37c407efa1f63f0b32f595399bbc
             path: /go/src/github.com/cilium/proxy
             spdx:
               name: cilium-envoy
-              version: 1.36.8
+              version: 1.36.9
               packages:
                 - name: proxy
-                  purl: pkg:golang/github.com/cilium/proxy@a7f42a3390781539911b5b9107881b35ecc4e752
+                  purl: pkg:golang/github.com/cilium/proxy@edeb3f2af56c37c407efa1f63f0b32f595399bbc
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -105,12 +121,6 @@ contents:
             uid: 0
             gid: 0
             mode: "0755"
-        artifacts:
-          - name: dhi.io/python:3.12.13-debian13@sha256:9e6358be318241b63e48a063c59e195bec5f7d9488c9c164b6944e3fdc416666
-            includes:
-              - opt/**
-            uid: 0
-            gid: 0
       pipeline:
         - name: update go dependencies (1.17 only)
           uses: go/bump@v2
@@ -128,7 +138,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            echo a7f42a3390781539911b5b9107881b35ecc4e752 > SOURCE_VERSION
+            echo edeb3f2af56c37c407efa1f63f0b32f595399bbc > SOURCE_VERSION
 
             # Match upstream's builder image for cilium/proxy@2437d2e:
             # unversioned LLVM tool names resolve to clang/llvm 18.
@@ -157,6 +167,13 @@ contents:
           privileged: true
           runs: |
             set -eux -o pipefail
+
+            # Build the Go proxylib against the FIPS Go Cryptographic Module for
+            # FIPS targets. GOFIPS140 is a build-time module selector and must be
+            # scoped to this step rather than the image environment (DHI-FIPS-016).
+            if [ "${target.fips}" = "true" ]; then
+              export GOFIPS140=v1.0.0
+            fi
 
             make test all
 
@@ -190,8 +207,6 @@ contents:
                 --linkopt=-lc++
                 --linkopt=-lc++abi
               )
-              # FIPS build triggers bazelrc configs that restrict PATH; symlink python to /usr/bin
-              ln -sf /opt/python/bin/python3 /usr/bin/python3
             fi
 
             # Configure architecture-specific build flags
@@ -206,7 +221,7 @@ contents:
             set -eux -o pipefail
 
             mkdir -p /opt/docker/sbom/envoy
-            python ${source.dir}/bin/envoy-bazel-to-spdx.py cilium-envoy 1.36.8 > /opt/docker/sbom/envoy/.spdx.envoy.json
+            python ${source.dir}/bin/envoy-bazel-to-spdx.py cilium-envoy 1.36.9 > /opt/docker/sbom/envoy/.spdx.envoy.json
         - name: test-proxy
           work-dir: /go/src/github.com/cilium/proxy
           privileged: true
