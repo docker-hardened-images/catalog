@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+# Builds the upstream project (staged at src/) from source into a self-contained
+# venv at the final install path. The app is built with pip (PEP 517); its
+# dependencies resolve as wheels (pydantic-core/cryptography are never compiled
+# from source in the catalog). The venv is bound to the system python3, which
+# the consuming image also provides via the python3 dependency.
+SRC  := $(CURDIR)/src
+VENV := /opt/zscaler-mcp
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+override_dh_auto_build:
+	python3 -m venv $(VENV)
+	# build the app from source; the `gcp` extra matches the upstream image
+	$(VENV)/bin/pip install --no-cache-dir "$(SRC)[gcp]"
+	# strip build tooling: an MCP server never calls pip/setuptools/wheel at
+	# runtime, and not shipping them retires the pip CVE class
+	$(VENV)/bin/python -m pip uninstall -y pip setuptools wheel || true
+	rm -f $(VENV)/bin/pip*
+	# drop caches/tests from the shipped venv
+	find $(VENV) \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
+
+override_dh_auto_install:
+	mkdir -p debian/tmp/opt
+	cp -a $(VENV) debian/tmp/opt/zscaler-mcp
+
+# Prebuilt venv: the compiled wheels are self-contained manylinux artifacts and
+# the only interpreter (python3) comes from the consuming image, so skip
+# strip/shlibdeps/dwz on the venv payload.
+override_dh_strip:
+override_dh_shlibdeps:
+override_dh_dwz:

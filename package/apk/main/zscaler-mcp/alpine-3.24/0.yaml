@@ -1,0 +1,118 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-zscaler-mcp
+variant: runtime
+tags:
+  - 0.13.1-alpine3.24
+  - 0.13.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 23912913f8588c650b104d3bd30c0c755d6962cd
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.13"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.13.1
+  VERSION: 0.13.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: zscaler-mcp
+      contents:
+        packages:
+          - python3
+          - py3-pip
+          - python3-dev
+          - gcc
+          - musl-dev
+          - libffi-dev
+          - openssl-dev
+          - ca-certificates
+        files:
+          - url: git+https://github.com/zscaler/zscaler-mcp-server.git#v0.13.1
+            checksum: 23912913f8588c650b104d3bd30c0c755d6962cd
+            path: ${source.dir}/src
+            spdx:
+              name: zscaler-mcp
+              version: 0.13.1
+              packages:
+                - name: zscaler-mcp
+                  purl: pkg:github/zscaler/zscaler-mcp-server@0.13.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv "${target.dir}/opt/zscaler-mcp"
+        - name: build and install zscaler-mcp from source
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/opt/zscaler-mcp/bin/pip" install --no-cache-dir \
+              "${source.dir}/src[gcp]"
+        - name: strip build tooling from the venv
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/opt/zscaler-mcp/bin/python" -m pip uninstall -y pip setuptools wheel || true
+            rm -f "${target.dir}/opt/zscaler-mcp/bin/"pip*
+        - name: fix venv shebangs
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/zscaler-mcp/bin"/*; do
+              [ -f "$f" ] || continue
+              read -r line < "$f"
+              case "$line" in
+                "#!${target.dir}"*) sed -i "1s|#!${target.dir}|#!|" "$f" ;;
+              esac
+            done
+        - name: clean python cache
+          runs: |
+            set -eux -o pipefail
+
+            find "${target.dir}/opt/zscaler-mcp" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf /opt/zscaler-mcp/bin/zscaler-mcp "${target.dir}/usr/bin/zscaler-mcp"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python3
+            description: Zscaler MCP server - Model Context Protocol server for the Zscaler Zero Trust Exchange
+            files:
+              - usr
+              - opt
+            formats:
+              - apk
+            license: MIT
+            name: zscaler-mcp
+            rel: 0
+            url: https://github.com/zscaler/zscaler-mcp-server
+            version: 0.13.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
