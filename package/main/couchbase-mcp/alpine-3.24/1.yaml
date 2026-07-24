@@ -1,0 +1,122 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-couchbase-mcp
+variant: runtime
+tags:
+  - 1.0.0-alpine3.24
+  - 1.0.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-26"
+vars:
+  COMMIT_SHA: 02e488a45380b16595ff48aee4dd8eacf2704c7f
+  PYTHON_VERSION: 3.14.6-r11
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.0
+  UPSTREAM_VERSION: 1.0.0.post1
+  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.11.31
+  VERSION: 1.0.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: couchbase-mcp
+      work-dir: ${source.dir}
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - git
+          - libffi-dev
+          - openssl-dev
+          - python-3.14=3.14.6-r11
+          - python-3.14-dev=3.14.6-r11
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.11.31/uv-${UV_ARCH}.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.11.31/uv-${UV_ARCH}.tar.gz.sha256
+            path: ${source.dir}/uv.tar.gz
+            spdx:
+              name: uv-binary
+              version: 0.11.31
+              packages:
+                - name: uv
+                  purl: pkg:github/astral-sh/uv@0.11.31
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/couchbase/mcp-server-couchbase.git#v1.0.0.post1
+            checksum: 02e488a45380b16595ff48aee4dd8eacf2704c7f
+            path: ${source.dir}/source
+            spdx:
+              name: couchbase-mcp
+              version: 1.0.0.post1
+              packages:
+                - name: couchbase-mcp
+                  purl: pkg:github/couchbase/mcp-server-couchbase@1.0.0.post1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.14
+            bash "${source.dir}/build-venv.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Couchbase MCP server (Model Context Protocol server for Couchbase)
+            files:
+              - opt/couchbase-mcp
+              - usr/bin/couchbase-mcp-server
+            formats:
+              - apk
+            license: Apache-2.0
+            name: couchbase-mcp
+            rel: 0
+            url: https://github.com/couchbase/mcp-server-couchbase
+            version: 1.0.0
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/couchbase-mcp/build-venv.sh
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
