@@ -102,6 +102,26 @@ Run with Docker Compose:
 $ docker compose up -d
 ```
 
+### Run Valkey in Sentinel mode (high availability)
+
+The `-sentinel` image variant (for example, `dhi.io/valkey:<tag>-sentinel`, and `-sentinel-fips` for the FIPS build)
+starts Valkey in Sentinel mode rather than as a standalone server. Sentinel monitors your Valkey primary and replicas,
+performs automatic failover, and acts as a discovery service for clients. It starts with the `valkey-sentinel` entry
+point using `/etc/valkey/sentinel.conf` and listens on port `26379`:
+
+```console
+$ docker run --name valkey-sentinel -d -p 26379:26379 dhi.io/valkey:<tag>-sentinel
+```
+
+The image ships a writable `/etc/valkey/sentinel.conf` owned by the nonroot user (uid/gid `65532`), and Sentinel
+rewrites this file at runtime (`CONFIG REWRITE`) as it records the primary it monitors, the replicas it discovers, and
+failover state. Add your `sentinel monitor <name> <ip> <port> <quorum>` directive to that config, for example by baking
+it into your own image layer or mounting a replacement config into `/etc/valkey`.
+
+Because Sentinel must rewrite its own configuration, the config file and the `/etc/valkey` directory must stay writable
+by the nonroot user. A read-only or root-owned Sentinel config is the most common reason a Sentinel container fails
+under the hardened image, as Sentinel exits when it cannot persist its state.
+
 ### Use Valkey in Kubernetes
 
 To use the Valkey hardened image in Kubernetes, [set up authentication](https://docs.docker.com/dhi/how-to/k8s/) and
@@ -180,9 +200,12 @@ docker run --rm -it --pid container:my-container \
 
 ## Image variants
 
-Docker Hardened Images come in different variants depending on their intended use. The Valkey image contains only the
-runtime variant. Runtime variants are designed to run your application in production. These images are intended to be
-used either directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
+Docker Hardened Images come in different variants depending on their intended use. The Valkey image ships the runtime
+variant, plus a `-sentinel` flavor (tags `dhi.io/valkey:<tag>-sentinel` and `-sentinel-fips`) that starts in Sentinel
+mode for high-availability deployments (see
+[Run Valkey in Sentinel mode](#run-valkey-in-sentinel-mode-high-availability) above). Runtime variants are designed to
+run your application in production. These images are intended to be used either directly or as the `FROM` image in the
+final stage of a multi-stage build. These images typically:
 
 - Run as the nonroot user
 - Do not include a shell or a package manager
