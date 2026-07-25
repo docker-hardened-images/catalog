@@ -1,0 +1,172 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Prowler MCP Server 5.x
+image: dhi.io/prowler-mcp
+variant: runtime
+tags:
+  - "5"
+  - "5.36"
+  - 5.36.0
+  - 5-debian
+  - 5-debian13
+  - 5.36-debian
+  - 5.36-debian13
+  - 5.36.0-debian
+  - 5.36.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-24"
+vars:
+  COMMIT_SHA: 685d24dfee4616981e017b1745e3b8f2633d499d
+  MCP_VERSION: 0.8.0
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  SEMVER_MAJOR_MINOR_VERSION: "5.36"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.36.0
+  VERSION: 5.36.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - python-3.13
+    - tzdata
+  builds:
+    - name: prowler-mcp
+      work-dir: ${source.dir}/prowler/mcp_server
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PROJECT_ENVIRONMENT: /opt/prowler-mcp/venv
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - ca-certificates
+          - coreutils
+          - git
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - uv
+        files:
+          - url: git+https://github.com/prowler-cloud/prowler.git#5.36.0
+            checksum: 685d24dfee4616981e017b1745e3b8f2633d499d
+            path: ${source.dir}/prowler
+            spdx:
+              name: prowler-mcp
+              version: 5.36.0
+              packages:
+                - name: prowler-mcp
+                  purl: pkg:github/prowler-cloud/prowler@5.36.0#mcp_server
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install locked Python application
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            uv venv /opt/prowler-mcp/venv --python /usr/bin/python3.13
+            uv sync --locked --no-dev --no-editable
+        - name: build checks
+          runs: |
+            set -eux -o pipefail
+
+            /opt/prowler-mcp/venv/bin/python -c \
+              'from prowler_mcp_server import __version__; from prowler_mcp_server.server import app; assert __version__ == "0.8.0"; print(__version__)'
+            /opt/prowler-mcp/venv/bin/prowler-mcp --help
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: prowler-mcp-venv
+            source: /opt/prowler-mcp/venv
+        - name: remove Python caches
+          runs: |
+            set -eux -o pipefail
+
+            find /opt/prowler-mcp/venv \
+              \( -type d -a -name __pycache__ \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+      outputs:
+        - source: /opt/prowler-mcp/venv
+          target: /opt/prowler-mcp/venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/prowler-mcp
+          target: /opt/docker/sbom/prowler-mcp
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/prowler-mcp-venv
+          target: /opt/docker/sbom/prowler-mcp-venv
+          uid: 0
+          gid: 0
+    - name: server.json
+      contents:
+        packages:
+          - bash
+          - sed
+      pipeline:
+        - runs: |
+            set -eux -o pipefail
+
+            sed -i "s/_VERSION_/5.36.0/g" "${source.dir}/config/server.json"
+      paths:
+        - type: file
+          path: ${source.dir}/config/server.json
+          uid: 0
+          gid: 0
+          source: image/prowler-mcp/config/server.json
+      attestations:
+        - predicate-type: https://modelcontextprotocol.io/server.json/v1
+          source: ${source.dir}/config/server.json
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  HOME: /home/nonroot
+  PATH: /opt/prowler-mcp/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: Prowler MCP Server for security findings, scans, compliance, Hub, and documentation
+  org.opencontainers.image.licenses: Apache-2.0
+labels:
+  io.modelcontextprotocol.server.name: io.github.prowler-cloud/prowler-mcp
+entrypoint:
+  - /opt/prowler-mcp/venv/bin/prowler-mcp
+ports:
+  - 8000/tcp

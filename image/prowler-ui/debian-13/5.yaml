@@ -1,0 +1,160 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Prowler UI 5.x
+image: dhi.io/prowler-ui
+variant: runtime
+tags:
+  - "5"
+  - "5.36"
+  - 5.36.0
+  - 5-debian
+  - 5-debian13
+  - 5.36-debian
+  - 5.36-debian13
+  - 5.36.0-debian
+  - 5.36.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-24"
+vars:
+  COMMIT_SHA: 685d24dfee4616981e017b1745e3b8f2633d499d
+  NODE_MAJOR_VERSION: "24"
+  PNPM_VERSION: 11.1.3
+  SEMVER_MAJOR_MINOR_VERSION: "5.36"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.36.0
+  VERSION: 5.36.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates
+    - ca-certificates-bundle
+    - dash
+    - dumb-init
+    - libc6
+    - libgomp1
+    - libstdc++6
+    - netbase
+    - nodejs-24
+    - tzdata
+  builds:
+    - name: prowler-ui
+      work-dir: ${source.dir}/prowler/ui
+      environment:
+        NEXT_PUBLIC_PROWLER_RELEASE_VERSION: 5.36.0
+        NEXT_TELEMETRY_DISABLED: "1"
+        NODE_OPTIONS: --max-old-space-size=4096
+        PNPM_HOME: /pnpm
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - node-corepack
+          - nodejs-24
+          - sed
+        files:
+          - url: git+https://github.com/prowler-cloud/prowler.git#5.36.0
+            checksum: 685d24dfee4616981e017b1745e3b8f2633d499d
+            path: ${source.dir}/prowler
+            spdx:
+              name: prowler-ui
+              version: 5.36.0
+              packages:
+                - name: prowler-ui
+                  purl: pkg:github/prowler-cloud/prowler@5.36.0#ui
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install locked dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack install
+            pnpm install --frozen-lockfile
+        - name: type check and build standalone application
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm run typecheck
+            unset CI
+            NODE_ENV=production pnpm run build
+            test -f .next/standalone/server.js
+        - name: stage standalone application
+          runs: |
+            set -eux -o pipefail
+
+            install -d -m 0755 "${target.dir}/app/.next"
+            cp -a .next/standalone/. "${target.dir}/app/"
+            cp -a .next/static "${target.dir}/app/.next/static"
+            cp -a public "${target.dir}/app/public"
+        - name: javascript dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: prowler-ui-node
+            source: ${source.dir}/prowler/ui/node_modules
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 65532
+          gid: 65532
+        - source: /opt/docker/sbom/prowler-ui
+          target: /opt/docker/sbom/prowler-ui
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/prowler-ui-node
+          target: /opt/docker/sbom/prowler-ui-node
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  HOSTNAME: 0.0.0.0
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: production
+  PORT: "3000"
+annotations:
+  org.opencontainers.image.description: A minimal Prowler web UI image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/dumb-init
+  - --
+cmd:
+  - node
+  - server.js
+ports:
+  - 3000/tcp
