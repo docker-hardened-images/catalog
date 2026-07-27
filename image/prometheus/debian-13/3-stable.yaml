@@ -90,6 +90,8 @@ contents:
             corepack enable pnpm
 
             yq -yi '.overrides."http-proxy-middleware" = "3.0.7"' pnpm-workspace.yaml # CVE-2026-55602
+            yq -yi '.overrides."immutable" = "5.1.8"' pnpm-workspace.yaml             # CVE-2026-59879, CVE-2026-59880
+            yq -yi '.overrides."postcss" = "8.5.18"' pnpm-workspace.yaml              # GHSA-r28c-9q8g-f849
             pnpm install --lockfile-only
         - name: install react-app dependencies for SBOM
           work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
@@ -110,6 +112,12 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            # Install dependencies without running build scripts, then approve and rebuild
+            cd web/ui && pnpm install --ignore-scripts && cd -
+            cd web/ui/react-app && pnpm install --ignore-scripts && cd -
+            cd web/ui/react-app && pnpm approve-builds unrs-resolver && cd -
+            cd web/ui/react-app && pnpm rebuild && cd -
+
             make assets assets-compress
         - name: update go dependencies (3-stable only)
           uses: go/bump@v1
@@ -118,6 +126,9 @@ contents:
             deps:
               - golang.org/x/crypto@v0.52.0
               - github.com/buger/jsonparser@v1.1.2
+              - golang.org/x/net@v0.56.0
+              - golang.org/x/text@v0.39.0
+              - google.golang.org/grpc@v1.82.1
             download: true
         - name: go build
           work-dir: /go/src/github.com/prometheus/prometheus
@@ -128,7 +139,6 @@ contents:
 
             make plugins
 
-            # Manually set version information used in "prometheus --version" output
             GOLDFLAGS="-X github.com/prometheus/common/version.Version=3.13.1
               -X github.com/prometheus/common/version.Revision=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
               -X github.com/prometheus/common/version.Branch=HEAD
@@ -137,9 +147,6 @@ contents:
               -X github.com/prometheus/prometheus/version.Version=3.13.1
             "
 
-            # Prometheus does use their own build tool, published separately at https://github.com/prometheus/promu,
-            # but it's easy enough to build directly with go and set build metadata. If this becomes an issue,
-            # `make common-build` will do the job.
             CGO_ENABLED=0 go build \
               -mod=readonly \
               -ldflags "$GOLDFLAGS" \
