@@ -120,15 +120,15 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.10.1/lz4-java-1.10.1.jar
-            checksum: sha256:a58a84c4271e50df4c96ed916ccb7e48a869f8ed9cdcda1ad5d3d4c33b0214a3
-            path: ${source.dir}/patch/deps/lz4-java-1.10.1.jar
+          - url: https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar
+            checksum: https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar.sha256
+            path: ${source.dir}/patch/deps/lz4-java-1.11.1.jar
             spdx:
               name: lz4-java
-              version: 1.10.1
+              version: 1.11.1
               packages:
                 - name: lz4-java
-                  purl: pkg:maven/at.yawk.lz4/lz4-java@1.10.1
+                  purl: pkg:maven/at.yawk.lz4/lz4-java@1.11.1
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -180,27 +180,27 @@ contents:
                   license: MIT
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-codec/4.1.133.Final/netty-codec-4.1.133.Final.jar
-            checksum: sha256:65d9fd0b5ae80ddda532b3a98bf5adbd4f34ec6ae19ba2439eab2ed3d6d79c5a
-            path: ${source.dir}/patch/deps/netty-codec-4.1.133.Final.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar
+            checksum: sha256:2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
+            path: ${source.dir}/patch/deps/netty-codec-4.1.136.Final.jar
             spdx:
               name: netty-codec
-              version: 4.1.133.Final
+              version: 4.1.136.Final
               packages:
                 - name: netty-codec
-                  purl: pkg:maven/io.netty/netty-codec@4.1.133.Final
+                  purl: pkg:maven/io.netty/netty-codec@4.1.136.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.1.135.Final/netty-codec-http-4.1.135.Final.jar
-            checksum: sha256:4018529d3d6aecf4044b98c75d9a90c91839ddf49c7aa484c5ac81c90a15da02
-            path: ${source.dir}/patch/deps/netty-codec-http-4.1.135.Final.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.1.136.Final/netty-codec-http-4.1.136.Final.jar
+            checksum: sha256:ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
+            path: ${source.dir}/patch/deps/netty-codec-http-4.1.136.Final.jar
             spdx:
               name: netty-codec-http
-              version: 4.1.135.Final
+              version: 4.1.136.Final
               packages:
                 - name: netty-codec-http
-                  purl: pkg:maven/io.netty/netty-codec-http@4.1.135.Final
+                  purl: pkg:maven/io.netty/netty-codec-http@4.1.136.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -507,6 +507,44 @@ contents:
             rm -rf "/usr/share/logstash-8.19.17"-SNAPSHOT/jdk
 
             cp -r "/usr/share/logstash-8.19.17"-SNAPSHOT/* "${target.dir}/usr/share/logstash"
+        - name: replace vulnerable lz4-java jar
+          runs: |
+            set -eux -o pipefail
+
+            # CVE-2026-59949 - lz4-java 1.10.1 -> 1.11.1
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
+            lz4_fixed="${source.dir}/patch/deps/lz4-java-1.11.1.jar"
+
+            # Find all lz4-java JARs older than 1.11.1
+            lz4_old_count=$(find "$base" -type f -name 'lz4-java-*.jar' ! -name 'lz4-java-1.11.1.jar' | wc -l | tr -d ' ')
+
+            if [ "${lz4_old_count:-0}" -eq 0 ]; then
+              echo "No lz4-java JAR older than 1.11.1 found; skipping CVE-2026-59949 shim."
+              exit 0
+            fi
+
+            for old_lz4_jar in $(find "$base" -type f -name 'lz4-java-*.jar' ! -name 'lz4-java-1.11.1.jar'); do
+              version_dir=$(dirname "$old_lz4_jar")
+              lz4_root=$(dirname "$version_dir")
+
+              if [ "$(basename "$lz4_root")" = "lz4-java" ]; then
+                rm "$old_lz4_jar"
+                rmdir "$version_dir" 2> /dev/null || true
+                mkdir -p "$lz4_root/1.11.1"
+                cp "$lz4_fixed" "$lz4_root/1.11.1/lz4-java-1.11.1.jar"
+              else
+                echo "lz4-java CVE shim: non-maven layout; replacing $old_lz4_jar"
+                jar_dir=$(dirname "$old_lz4_jar")
+                rm "$old_lz4_jar"
+                cp "$lz4_fixed" "$jar_dir/lz4-java-1.11.1.jar"
+              fi
+            done
+
+            lz4_remain=$(find "$base" -type f -name 'lz4-java-*.jar' ! -name 'lz4-java-1.11.1.jar' | wc -l | tr -d ' ')
+            if [ "${lz4_remain:-0}" -gt 0 ]; then
+              echo "ERROR: lz4-java CVE shim left ${lz4_remain} vulnerable jar(s)"
+              exit 1
+            fi
         - name: replace vulnerable maven jars
           runs: |
             set -eux -o pipefail
@@ -522,9 +560,9 @@ contents:
               done
             }
 
-            replace_jars "*/io/netty/netty-codec/*/netty-codec-*.jar" "${source.dir}/patch/deps/netty-codec-4.1.133.Final.jar"
-            # CVE-2026-50020 - netty-codec-http 4.1.133 -> 4.1.135
-            replace_jars "*/io/netty/netty-codec-http/*/netty-codec-http-*.jar" "${source.dir}/patch/deps/netty-codec-http-4.1.135.Final.jar"
+            replace_jars "*/io/netty/netty-codec/*/netty-codec-*.jar" "${source.dir}/patch/deps/netty-codec-4.1.136.Final.jar"
+            # CVE-2026-50020 - netty-codec-http 4.1.133 -> 4.1.136
+            replace_jars "*/io/netty/netty-codec-http/*/netty-codec-http-*.jar" "${source.dir}/patch/deps/netty-codec-http-4.1.136.Final.jar"
             # CVE-2026-44249, CVE-2026-45416, CVE-2026-50010 - netty-handler 4.1.134 -> 4.1.135
             replace_jars "*/io/netty/netty-handler/*/netty-handler-*.jar" "${source.dir}/patch/deps/netty-handler-4.1.135.Final.jar"
             replace_jars "*/org/bouncycastle/bcprov-jdk18on/*/bcprov-jdk18on-*.jar" "${source.dir}/patch/deps/bcprov-jdk18on-1.84.jar"
@@ -536,6 +574,14 @@ contents:
             replace_jars "*/com/fasterxml/jackson/core/jackson-databind/2.1[56].*/jackson-databind-*.jar" "${source.dir}/patch/deps/jackson-databind-2.18.8.jar"
             replace_jars "*/com/fasterxml/jackson/core/jackson-databind/2.21.*/jackson-databind-*.jar" "${source.dir}/patch/deps/jackson-databind-2.21.4.jar"
             replace_jars "*/tools/jackson/core/jackson-databind/3.1.*/jackson-databind-*.jar" "${source.dir}/patch/deps/tools-jackson-databind-3.1.4.jar"
+
+            # CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518
+            # CVE-2026-59888, CVE-2026-59889, GHSA-MHM7-754M-9P8W
+            # Also replace jackson-databind in logstash-core/lib/jars (not in maven-style directory structure)
+            if [ -f "${base}/logstash-core/lib/jars/jackson-databind-2.21.2.jar" ]; then
+              echo "Replacing ${base}/logstash-core/lib/jars/jackson-databind-2.21.2.jar with 2.21.4"
+              cp "${source.dir}/patch/deps/jackson-databind-2.21.4.jar" "${base}/logstash-core/lib/jars/jackson-databind-2.21.2.jar"
+            fi
         - name: replace vulnerable jackson-core jars
           runs: |
             set -eux -o pipefail
