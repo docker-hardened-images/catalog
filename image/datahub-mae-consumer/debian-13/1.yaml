@@ -191,15 +191,15 @@ contents:
             #   namespace migration) which fails resolution. Left as a
             #   follow-up; those CVEs are MEDIUM/LOW/UNSPECIFIED.
             # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
-            # jackson-databind/core 2.21.4 fixes CVE-2026-54512,
-            # CVE-2026-54513, CVE-2026-54514, CVE-2026-54516,
-            # CVE-2026-54517, and CVE-2026-54518. CVE-2026-54515 is fixed
-            # only in unpublished 2.21.5 or the 2.22.x minor line, so it is
-            # tracked via VEX rather than a minor bump. Only databind/core
-            # publish a 2.21.4 patch; jackson-annotations tracks the bare
-            # 2.21 line, so do not force the whole group.
-            # jackson-core 2.15.2 shaded inside Hazelcast remains unreachable
-            # by resolutionStrategy and is covered by VEX.
+            # jackson-databind/core 2.21.5 fixes CVE-2026-54512,
+            # CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516,
+            # CVE-2026-54517, CVE-2026-54518, CVE-2026-59889,
+            # GHSA-mhm7-754m-9p8w. Only databind/core publish a 2.21.5 patch;
+            # jackson-annotations tracks the bare 2.21 line, so do not force
+            # the whole group.
+            # jackson-core 2.19.2 shaded inside Hazelcast 5.6.0 remains
+            # unreachable by resolutionStrategy and is covered by VEX.
+            # lz4-java 1.11.1 fixes CVE-2026-59949.
             # commons-lang3 3.18.0 fixes CVE-2025-48924.
             # avro 1.11.5 fixes CVE-2025-33042 (avro-compiler).
             # jakarta.mail 1.6.8 fixes CVE-2025-7962.
@@ -213,7 +213,9 @@ contents:
             // upstream Spring Boot BOM, to remediate HIGH/CRITICAL/MEDIUM CVEs.
             allprojects {
                 configurations.configureEach {
-                    resolutionStrategy.eachDependency { details ->
+                    resolutionStrategy {
+                        force 'at.yawk.lz4:lz4-java:1.11.1'
+                        eachDependency { details ->
                         def req = details.requested
                         if (req.group == 'io.netty'
                                 && req.name.startsWith('netty-')
@@ -235,8 +237,13 @@ contents:
                         if (req.group == 'com.fasterxml.jackson.core'
                                 && (req.name == 'jackson-databind'
                                     || req.name == 'jackson-core')) {
-                            details.useVersion '2.21.4'
-                            details.because 'DHI CVE remediation: jackson CVE-2026-54512/54513/54514/54516/54517/54518'
+                            details.useVersion '2.21.5'
+                            details.because 'DHI CVE remediation: CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59889, GHSA-mhm7-754m-9p8w'
+                        }
+                        if (req.group == 'at.yawk.lz4'
+                                && req.name == 'lz4-java') {
+                            details.useVersion '1.11.1'
+                            details.because 'DHI CVE remediation: CVE-2026-59949'
                         }
                         if (req.group == 'org.eclipse.jetty'
                                 && req.name.startsWith('jetty-')) {
@@ -271,6 +278,7 @@ contents:
                     }
                 }
             }
+            }
             GRADLE
         - name: build jar
           privileged: true
@@ -280,6 +288,11 @@ contents:
             export GRADLE_HOME="/usr/share/java/gradle"
             export JAVA_HOME="/usr/lib/jvm/temurin-17"
             export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
+
+            # Remove any existing Gradle lockfiles to ensure --update-locks
+            # can refresh all pinned versions, including lz4-java 1.11.1
+            # for CVE-2026-59949.
+            find . -name 'gradle.lockfile' -delete || true
 
             # `:assemble` (vs `:build`) skips the `:check` task graph entirely
             # - no Spotless, no static analysis. Combined with --parallel +
@@ -298,7 +311,7 @@ contents:
               :metadata-jobs:mae-consumer-job:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'io.netty:*,io.airlift:*,org.eclipse.jetty:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,org.springframework.kafka:*' \
+              --update-locks 'io.netty:*,io.airlift:*,org.eclipse.jetty:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,org.springframework.kafka:*,at.yawk.lz4:*' \
               --no-daemon --console=plain
         - name: stage runtime files
           runs: |
