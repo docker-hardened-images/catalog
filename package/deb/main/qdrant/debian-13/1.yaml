@@ -1,0 +1,168 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-qdrant
+variant: runtime
+tags:
+  - 1.18.3-0
+  - 1.18.3-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-02-08"
+vars:
+  COMMIT_SHA: db8fa43fcb6aedec1e739487e17a99731b74590a
+  DHI_REL: "0"
+  DHI_VERSION: 1.18.3-0
+  NODE_REFERENCE: dhi/pkg-node:24.18.0-debian13@sha256:f1617b19b6e3b6459c88b5bc3591bfbc0a5e71a318a0bc4ed1cac6d416e63c52
+  RUST_REFERENCE: dhi/rust:1.97.1-debian13-dev@sha256:59caba4dadaa9d9c85034b1947c89c64edb079bcfde26b4ca3806062b2e0f8ef
+  RUST_VERSION: 1.97.1
+  VERSION: 1.18.3
+  WEB_UI_COMMIT_SHA: 4a211d6dbbf1a60f0bc7035a49336df166a8dcd8
+  WEB_UI_VERSION: 0.2.15
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: qdrant
+      uses: dhi.io/rust:1.97.1-debian13-dev@sha256:59caba4dadaa9d9c85034b1947c89c64edb079bcfde26b4ca3806062b2e0f8ef
+      work-dir: ${source.dir}/qdrant-deb
+      environment:
+        GIT_COMMIT_ID: db8fa43fcb6aedec1e739487e17a99731b74590a
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - cargo-auditable
+          - ca-certificates
+          - clang
+          - cmake
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - git
+          - libprotobuf-dev
+          - libunwind-dev
+          - lld
+          - pkg-config
+          - protobuf-compiler
+          - sed
+        files:
+          - url: git+https://github.com/qdrant/qdrant.git#v1.18.3
+            checksum: db8fa43fcb6aedec1e739487e17a99731b74590a
+            path: ${source.dir}/qdrant-src
+            spdx:
+              name: qdrant
+              version: 1.18.3
+              packages:
+                - name: qdrant
+                  purl: pkg:cargo/qdrant@1.18.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/qdrant/qdrant-web-ui.git#v0.2.15
+            checksum: 4a211d6dbbf1a60f0bc7035a49336df166a8dcd8
+            path: ${source.dir}/qdrant-web-ui
+            spdx:
+              name: qdrant-web-ui
+              version: 0.2.15
+              packages:
+                - name: qdrant-web-ui
+                  purl: pkg:github/qdrant/qdrant-web-ui@0.2.15
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/pkg-node:24.18.0-debian13@sha256:f1617b19b6e3b6459c88b5bc3591bfbc0a5e71a318a0bc4ed1cac6d416e63c52
+            includes:
+              - opt/nodejs
+              - opt/npm
+              - usr/local/bin/node
+              - usr/local/bin/npm
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch cargo CVEs
+          uses: patch@v1
+          work-dir: ${source.dir}/qdrant-src
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/quinn-proto-RUSTSEC-2026-0185.patch
+        - name: build web ui dashboard
+          work-dir: ${source.dir}/qdrant-web-ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm pkg set dependencies.axios=^1.18.0
+            npm pkg set \
+              'overrides[tar]=7.5.19' \
+              'overrides[js-yaml]=4.3.0'
+            rm -f package-lock.json
+            npm install --ignore-scripts
+            npm run build-qdrant
+
+            rm -rf node_modules
+        - name: web ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-lock-cataloger
+            prefix: qdrant-web-ui
+            source: ${source.dir}/qdrant-web-ui
+        - name: build
+          work-dir: ${source.dir}/qdrant-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo auditable build --release --locked --bin qdrant --features deb,stacktrace
+
+            install -D -m 0755 target/release/qdrant \
+              '${source.dir}/qdrant-deb/payload/usr/bin/qdrant'
+        - name: stage config
+          work-dir: ${source.dir}/qdrant-src
+          runs: |
+            set -eux -o pipefail
+
+            install -d '${source.dir}/qdrant-deb/payload/usr/share/qdrant/config'
+            cp config/config.yaml '${source.dir}/qdrant-deb/payload/usr/share/qdrant/config/'
+            cp config/production.yaml '${source.dir}/qdrant-deb/payload/usr/share/qdrant/config/'
+        - name: vendor web ui dashboard
+          runs: |
+            set -eux -o pipefail
+
+            install -d '${source.dir}/qdrant-deb/payload/usr/share/qdrant/static'
+            cp -r '${source.dir}/qdrant-web-ui/dist/'* '${source.dir}/qdrant-deb/payload/usr/share/qdrant/static/'
+            cp '${source.dir}/qdrant-src/docs/redoc/master/openapi.json' \
+              '${source.dir}/qdrant-deb/payload/usr/share/qdrant/static/openapi.json'
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 1.18.3-0
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/qdrant-deb/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/qdrant/debian-13/debian
+        - type: file
+          path: ${source.dir}/patch/quinn-proto-RUSTSEC-2026-0185.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/qdrant/patch/quinn-proto-RUSTSEC-2026-0185.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
