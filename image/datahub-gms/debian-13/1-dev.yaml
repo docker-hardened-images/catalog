@@ -186,6 +186,15 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            # Upstream DataHub pins at.yawk.lz4:lz4-java:1.10.1 via
+            # resolutionStrategy.force and eachDependency useTarget in
+            # build.gradle (and gradle.lockfile). Appending another force
+            # does not override that pin — rewrite it to 1.11.1 for
+            # CVE-2026-59949 before Gradle resolves.
+            find . \( -name '*.gradle' -o -name '*.gradle.kts' -o -name 'gradle.lockfile' \) -print0 \
+              | xargs -0 sed -i \
+                -e 's|at\.yawk\.lz4:lz4-java:1\.10\.1|at.yawk.lz4:lz4-java:1.11.1|g'
+
             # Force versions of transitive deps the upstream BOM does not
             # cover. These ride in via Pegasus/Kafka/etc., not via Spring
             # Boot, so bumping springBootVersion alone is not enough.
@@ -218,6 +227,8 @@ contents:
             #   line used by upstream DataHub.
             # postgresql 42.7.12 fixes CVE-2026-54291.
             # jetty 12.0.36 fixes CVE-2026-10050, -10051, -6790, -8384.
+            # lz4-java 1.11.1 fixes CVE-2026-59949 (also sed-rewrites upstream
+            #   1.10.1 force/useTarget/lockfile pins above).
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -226,7 +237,11 @@ contents:
             // upstream Spring Boot BOM, to remediate HIGH/CRITICAL CVEs.
             allprojects {
                 configurations.configureEach {
-                    resolutionStrategy.eachDependency { details ->
+                    resolutionStrategy {
+                        // Belt-and-suspenders with the sed rewrite of upstream's
+                        // hardcoded 1.10.1 pin (CVE-2026-59949).
+                        force 'at.yawk.lz4:lz4-java:1.11.1'
+                        eachDependency { details ->
                         def req = details.requested
                         if (req.group == 'io.netty'
                                 && req.name.startsWith('netty-')
@@ -300,6 +315,12 @@ contents:
                             details.useVersion '12.0.36'
                             details.because 'DHI CVE remediation: CVE-2026-10050, CVE-2026-10051, CVE-2026-6790, CVE-2026-8384'
                         }
+                        if (req.group == 'at.yawk.lz4'
+                                && req.name == 'lz4-java') {
+                            details.useVersion '1.11.1'
+                            details.because 'DHI CVE remediation: CVE-2026-59949'
+                        }
+                        }
                     }
                 }
             }
@@ -312,6 +333,11 @@ contents:
             export GRADLE_HOME="/usr/share/java/gradle"
             export JAVA_HOME="/usr/lib/jvm/temurin-17"
             export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
+
+            # Remove any existing Gradle lockfiles to ensure --update-locks
+            # can refresh all pinned versions, including lz4-java 1.11.1
+            # for CVE-2026-59949.
+            find . -name 'gradle.lockfile' -delete || true
 
             # `:assemble` (vs `:build`) skips the `:check` task graph entirely
             # — no Spotless, no static analysis. Combined with --parallel +
@@ -326,7 +352,7 @@ contents:
               :metadata-service:war:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,io.opentelemetry:*,ch.qos.logback:*,org.mozilla:*,at.yawk.lz4:*' \
               --no-daemon --console=plain
         - name: stage runtime files
           runs: |
