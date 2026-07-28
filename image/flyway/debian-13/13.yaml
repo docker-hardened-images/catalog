@@ -66,36 +66,36 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar
-            path: ${source.dir}/patch/deps/postgresql-42.7.11.jar
+          - url: https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.12/postgresql-42.7.12.jar
+            path: ${source.dir}/patch/deps/postgresql-42.7.12.jar
             spdx:
               name: postgresql
-              version: 42.7.11
+              version: 42.7.12
               packages:
                 - name: postgresql
-                  purl: pkg:maven/org.postgresql/postgresql@42.7.11
+                  purl: pkg:maven/org.postgresql/postgresql@42.7.12
                   license: BSD-2-Clause
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.15.Final/netty-transport-native-epoll-4.2.15.Final-linux-x86_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-x86_64.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar
             spdx:
               name: netty-transport-native-epoll
-              version: 4.2.15.Final
+              version: 4.2.16.Final
               packages:
                 - name: netty-transport-native-epoll
-                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final
+                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.16.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.15.Final/netty-transport-native-epoll-4.2.15.Final-linux-aarch_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-aarch_64.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.16.Final/netty-transport-native-epoll-4.2.16.Final-linux-aarch_64.jar
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.2.16.Final-linux-aarch_64.jar
             spdx:
               name: netty-transport-native-epoll
-              version: 4.2.15.Final
+              version: 4.2.16.Final
               packages:
                 - name: netty-transport-native-epoll
-                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.15.Final
+                  purl: pkg:maven/io.netty/netty-transport-native-epoll@4.2.16.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -126,6 +126,21 @@ contents:
         - uses: mvn/mirror@v1
           environment:
             MAVEN_MIRROR_OF: external:*,!flyway-community-db-support
+        - name: patch properties
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/src/flyway
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: patch
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            mvn-root: ${source.dir}/src/flyway
+        - name: patch
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies-jackson-12x.json
+            mvn-root: ${source.dir}/src/flyway
         - name: install
           privileged: true
           secrets:
@@ -172,35 +187,51 @@ contents:
               -DoutputDirectory="${target.dir}/flyway/lib" \
               --global-settings "${source.dir}/gpr-settings.xml"
 
-            if [ "13" = "11" ]; then
-              lib="${target.dir}/flyway/lib"
-              for jar in \
-                "${lib}"/jackson-databind-*.jar \
-                "${lib}"/jackson-core-*.jar \
-                "${lib}"/jackson-annotations-*.jar; do
-                [ -e "${jar}" ] || continue
-                case "$(basename "${jar}")" in
-                  jackson-annotations-2.21.jar) continue ;;
-                  *-2.21.4.jar | *-3.1.4.jar) continue ;;
-                  *) rm -f "${jar}" ;;
-                esac
-              done
+            # Clean up stale Jackson JARs and ensure remediated versions are present.
+            # Flyway 11.x uses jackson 2.21.x/3.1.x; flyway 12.x uses 2.21.x/2.22.x/3.1.x.
+            lib="${target.dir}/flyway/lib"
+            for jar in \
+              "${lib}"/jackson-databind-*.jar \
+              "${lib}"/jackson-core-*.jar \
+              "${lib}"/jackson-annotations-*.jar; do
+              [ -e "${jar}" ] || continue
+              case "$(basename "${jar}")" in
+                jackson-annotations-2.21.jar | jackson-annotations-2.22.jar) continue ;;
+                *-2.21.5.jar | *-2.22.1.jar | *-3.1.5.jar) continue ;;
+                *) rm -f "${jar}" ;;
+              esac
+            done
 
+            for artifact in \
+              com.fasterxml.jackson.core:jackson-databind:2.21.5 \
+              com.fasterxml.jackson.core:jackson-core:2.21.5 \
+              com.fasterxml.jackson.core:jackson-annotations:2.21 \
+              tools.jackson.core:jackson-databind:3.1.5 \
+              tools.jackson.core:jackson-core:3.1.5 \
+              tools.jackson.dataformat:jackson-dataformat-toml:3.1.5; do
+              mvn dependency:copy \
+                -Dartifact="${artifact}" \
+                -DoutputDirectory="${lib}" \
+                -q
+            done
+
+            # Flyway 12.x also needs jackson 2.22.1 line
+            if [ "13" = "12" ] || [ "13" = "13" ]; then
               for artifact in \
-                com.fasterxml.jackson.core:jackson-databind:2.21.4 \
-                com.fasterxml.jackson.core:jackson-core:2.21.4 \
-                com.fasterxml.jackson.core:jackson-annotations:2.21 \
-                tools.jackson.core:jackson-databind:3.1.4 \
-                tools.jackson.core:jackson-core:3.1.4 \
-                tools.jackson.dataformat:jackson-dataformat-toml:3.1.4; do
+                com.fasterxml.jackson.core:jackson-databind:2.22.1 \
+                com.fasterxml.jackson.core:jackson-core:2.22.1 \
+                com.fasterxml.jackson.core:jackson-annotations:2.22; do
                 mvn dependency:copy \
                   -Dartifact="${artifact}" \
                   -DoutputDirectory="${lib}" \
                   -q
               done
+            fi
+
+            if [ "13" = "11" ]; then
 
               rm -f "${target.dir}/flyway/lib/postgresql-42.7.2.jar"
-              install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.11.jar" "${target.dir}/flyway/lib/postgresql-42.7.11.jar"
+              install -m 0644 "${source.dir}/patch/deps/postgresql-42.7.12.jar" "${target.dir}/flyway/lib/postgresql-42.7.12.jar"
 
               rm -f "${target.dir}/flyway/lib/opentelemetry-api-1.52.0.jar"
               install -m 0644 "${source.dir}/patch/deps/opentelemetry-api-1.62.0.jar" "${target.dir}/flyway/lib/opentelemetry-api-1.62.0.jar"
@@ -210,8 +241,8 @@ contents:
                 if [ -f "${old_epoll}" ]; then
                   rm -f "${old_epoll}"
                   install -m 0644 \
-                    "${source.dir}/patch/deps/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar" \
-                    "${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.15.Final-linux-${arch}.jar"
+                    "${source.dir}/patch/deps/netty-transport-native-epoll-4.2.16.Final-linux-${arch}.jar" \
+                    "${target.dir}/flyway/lib/netty-transport-native-epoll-4.2.16.Final-linux-${arch}.jar"
                 fi
               done
             fi
