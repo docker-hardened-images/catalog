@@ -238,49 +238,59 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # DataHub v1.5.0.7 already pins remediated versions for all the
-            # deps we used to force on v1.4 (spring-boot 3.5.14, jetty 12.0.34,
-            # netty 4.2.13.Final, jackson 2.21.3, log4j 2.25.4, logback 1.5.32,
-            # aircompressor 2.0.3, openTelemetry 1.62.0, etc.). The previous
-            # build.gradle sed/resolutionStrategy block is removed — most
-            # forces would now be downgrades, and the rest are no-ops. If a
-            # future CVE scan flags something upstream hasn't fixed yet, add
-            # it back here as a targeted force.
-            #
-            # logback-core 1.5.32 -> 1.5.33 fixes CVE-2026-9828 (Deserialization
-            # of Untrusted Data, CVSS 1.2).
-            # logback-core 1.5.33 -> 1.5.35 fixes CVE-2026-10532 (Deserialization
-            # of Untrusted Data, CVSS 2.9).
-            #
-            # The only mutation we still need is to disable the
-            # @codecov/vite-plugin bundle-analysis upload in datahub-web-react:
-            # we have no CODECOV_TOKEN at build time, so the plugin retries
-            # `get-pre-signed-url`, fails, and spams the logs — pure waste in
-            # an offline build.
+            # Disable the @codecov/vite-plugin bundle-analysis upload in
+            # datahub-web-react: we have no CODECOV_TOKEN at build time, so the
+            # plugin retries `get-pre-signed-url`, fails, and spams the logs.
             sed -i \
               "s|enableBundleAnalysis: true|enableBundleAnalysis: false|" \
               datahub-web-react/vite.config.ts
             grep -q 'enableBundleAnalysis: false' datahub-web-react/vite.config.ts
 
-            # Force narrowly-scoped transitive CVE fixes not yet covered by
-            # upstream's dependency management.
+            # Upstream root build.gradle owns Jackson / lz4 via
+            # ext.jacksonVersion + resolutionStrategy.force (and an
+            # eachDependency that useTarget()s the same pin). Appending a
+            # later eachDependency.useVersion cannot override those forces,
+            # which is why prior PR attempts left jackson at 2.21.2/2.21.3
+            # and lz4 at 1.10.1 in the staged image.
             #
-            # hazelcast 5.7.0 fixes GHSA-72hv-8253-57qq by updating its
-            # shaded jackson-core copy to a fixed version.
-            # akka-http 10.5.3 fixes CVE-2023-44487 by adding HTTP/2 reset
-            # frame rate limiting; it requires Akka core modules at 2.7.0+.
-            # netty 4.2.13.Final -> 4.2.15.Final fixes CVE-2026-44249,
-            # CVE-2026-44250, CVE-2026-44890, CVE-2026-44892, CVE-2026-44893,
-            # CVE-2026-44894, CVE-2026-45416, CVE-2026-45536, CVE-2026-45673,
-            # CVE-2026-45674, CVE-2026-46340, CVE-2026-47244, CVE-2026-47691,
-            # CVE-2026-48006, CVE-2026-48043, CVE-2026-48059.
-            # netty 4.2.15.Final -> 4.2.16.Final fixes CVE-2026-44891.
-            # shiro-core 2.2.1 fixes CVE-2026-49268 (LDAP DN injection).
-            # jackson-core group 2.21.3 -> 2.21.4 fixes CVE-2026-54512,
-            # CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517,
-            # and CVE-2026-54518. CVE-2026-54515 is fixed only in 2.21.5
-            # (unpublished on Maven Central) or the 2.22.x minor line, so it is
-            # tracked via VEX rather than a minor bump.
+            # jacksonVersion 2.21.3 -> 2.21.5 remediates GHSA-r7wm-3cxj-wff9,
+            # CVE-2026-59888, CVE-2026-59889, GHSA-mhm7-754m-9p8w (and the
+            # earlier 545xx jackson-databind family) for unshaded copies.
+            # buildSrc must stay in sync (upstream comment on both files).
+            # jackson-annotations stays on the minor-only 2.21 line via
+            # jacksonMinorRelease derived from jacksonVersion.
+            sed -i "s|ext.jacksonVersion = '2.21.3'|ext.jacksonVersion = '2.21.5'|" \
+              build.gradle buildSrc/build.gradle
+            grep -q "ext.jacksonVersion = '2.21.5'" build.gradle
+            grep -q "ext.jacksonVersion = '2.21.5'" buildSrc/build.gradle
+
+            # lz4-java 1.10.1 -> 1.11.1 fixes CVE-2026-59949. Upstream pins
+            # this both via eachDependency useTarget and resolutionStrategy.force.
+            sed -i \
+              -e "s|at.yawk.lz4:lz4-java:1.10.1|at.yawk.lz4:lz4-java:1.11.1|g" \
+              build.gradle
+            grep -q 'at.yawk.lz4:lz4-java:1.11.1' build.gradle
+            if grep -q 'at.yawk.lz4:lz4-java:1.10.1' build.gradle; then
+              echo "lz4-java 1.10.1 pin still present after sed" >&2
+              exit 1
+            fi
+
+            # Force narrowly-scoped transitive CVE fixes not covered by the
+            # jacksonVersion / lz4 sed above. eachDependency is sufficient for
+            # these (upstream does not resolutionStrategy.force them to an
+            # older pin the way it does jackson/lz4).
+            #
+            # hazelcast 5.7.0 is still required for other findings, but its
+            # shaded jackson copies remain unreachable by Gradle and are
+            # covered by vex/datahub-frontend-react/jackson-*.vex.json.
+            # akka-http 10.5.3 fixes CVE-2023-44487; Akka core modules must
+            # stay aligned at 2.7.0+.
+            # netty 4.2.16.Final covers the 2026 Netty CVE batch.
+            # shiro-core 2.2.1 fixes CVE-2026-49268.
+            # tools.jackson 3.1.4/3.1.5 covers unshaded Jackson 3.x copies
+            # for GHSA-r7wm-3cxj-wff9 / CVE-2026-59888 / CVE-2026-59889.
+            # jetty 12.0.36 fixes CVE-2026-10050.
+            # logback 1.5.35 fixes CVE-2026-9828, CVE-2026-10532.
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -292,48 +302,37 @@ contents:
                             details.useVersion '5.7.0'
                             details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq'
                         }
-                        if (req.group == 'com.typesafe.akka'
-                                && (req.name.startsWith('akka-http')
-                                    || req.name.startsWith('akka-parsing'))) {
-                            details.useVersion '10.5.3'
-                            details.because 'DHI CVE remediation: CVE-2023-44487'
-                        } else if (req.group == 'com.typesafe.akka'
-                                && req.name.startsWith('akka-')) {
-                            details.useVersion '2.7.0'
-                            details.because 'Align Akka modules with akka-http 10.5.3'
+                        if (req.group == 'com.typesafe.akka' && req.name.startsWith('akka-')) {
+                            if (req.name == 'akka-http_2.13' || req.name == 'akka-http-core_2.13' || req.name == 'akka-parsing_2.13') {
+                                details.useVersion '10.5.3'
+                                details.because 'DHI CVE remediation: CVE-2023-44487'
+                            } else {
+                                details.useVersion '2.7.0'
+                                details.because 'DHI CVE remediation: Akka version alignment for akka-http 10.5.3'
+                            }
                         }
-                        if (req.group == 'io.netty'
-                                && req.name.startsWith('netty-')
-                                && !req.name.startsWith('netty-tcnative')) {
+                        if (req.group == 'io.netty' && req.name.startsWith('netty-') && !req.name.startsWith('netty-tcnative')) {
                             details.useVersion '4.2.16.Final'
-                            details.because 'DHI CVE remediation: multiple Netty CVEs'
+                            details.because 'DHI CVE remediation: CVE-2026-44249, CVE-2026-44250, CVE-2026-44890, CVE-2026-44891, CVE-2026-44892, CVE-2026-44893, CVE-2026-44894, CVE-2026-45416, CVE-2026-45536, CVE-2026-45673, CVE-2026-45674, CVE-2026-46340, CVE-2026-47244, CVE-2026-47691, CVE-2026-48006, CVE-2026-48043, CVE-2026-48059'
                         }
                         if (req.group == 'org.apache.shiro' && req.name == 'shiro-core') {
                             details.useVersion '2.2.1'
                             details.because 'DHI CVE remediation: CVE-2026-49268'
                         }
-                        // Only jackson-databind and jackson-core publish a
-                        // 2.21.4 patch; jackson-annotations tracks the bare
-                        // 2.21 line (no .4), so forcing the whole group breaks
-                        // resolution. Leave annotations to resolve via the BOM.
-                        if (req.group == 'com.fasterxml.jackson.core'
-                                && (req.name == 'jackson-databind'
-                                    || req.name == 'jackson-core')) {
-                            details.useVersion '2.21.4'
-                            details.because 'DHI CVE remediation: jackson CVE-2026-54512/54513/54514/54516/54517/54518'
+                        if (req.group == 'tools.jackson.core') {
+                            if (req.name == 'jackson-core') {
+                                details.useVersion '3.1.4'
+                                details.because 'DHI CVE remediation: GHSA-r7wm-3cxj-wff9'
+                            } else if (req.name == 'jackson-databind') {
+                                details.useVersion '3.1.5'
+                                details.because 'DHI CVE remediation: CVE-2026-59888, CVE-2026-59889'
+                            }
                         }
-                        if (req.group != null && req.group.startsWith('tools.jackson')) {
-                            details.useVersion '3.1.4'
-                            details.because 'DHI CVE remediation: GHSA-r7wm-3cxj-wff9, CVE-2026-54512, CVE-2026-54513'
-                        }
-                        if (req.group == 'org.eclipse.jetty'
-                                && req.name.startsWith('jetty-')) {
+                        if (req.group == 'org.eclipse.jetty' && req.name.startsWith('jetty-')) {
                             details.useVersion '12.0.36'
                             details.because 'DHI CVE remediation: CVE-2026-10050'
                         }
-                        if (req.group == 'ch.qos.logback'
-                                && (req.name == 'logback-core'
-                                    || req.name == 'logback-classic')) {
+                        if (req.group == 'ch.qos.logback' && req.name.startsWith('logback-')) {
                             details.useVersion '1.5.35'
                             details.because 'DHI CVE remediation: CVE-2026-9828, CVE-2026-10532'
                         }
@@ -373,11 +372,10 @@ contents:
             # (placed by the `configure gradle maven mirror` step above) is
             # auto-loaded by Gradle from the user init.d directory — no
             # `--init-script` flag needed.
-            # `--update-locks` lets Gradle's dependency-locking refresh the
-            # pinned versions when upstream BOMs (Spring Boot, etc.) move,
-            # so the gradle.lockfile doesn't block resolution with "strictly
-            # X" constraint errors. Matches the scope used by sibling
-            # #258 (datahub-mce-consumer) on the same v1.5 base.
+            # `--update-locks` refreshes lock lines for the groups we sed/force
+            # above. jacksonVersion is now 2.21.5 and lz4 is forced to 1.11.1
+            # in upstream build.gradle, so lock refresh writes those pins
+            # instead of fighting them.
             ./gradlew \
               --no-daemon \
               --no-watch-fs \
@@ -385,7 +383,7 @@ contents:
               --warning-mode=summary \
               --parallel \
               --max-workers=4 \
-              --update-locks 'org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,io.netty:*,io.airlift:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,com.hazelcast:*,com.typesafe.akka:*,org.apache.shiro:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,com.fasterxml.jackson:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,at.yawk.lz4:*,org.eclipse.jetty:*,io.netty:*,ch.qos.logback:*,com.hazelcast:*,com.typesafe.akka:*,org.apache.shiro:*' \
               :datahub-frontend:stage \
               -x test \
               -x check
