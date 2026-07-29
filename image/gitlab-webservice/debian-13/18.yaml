@@ -137,6 +137,12 @@ contents:
             rm -rf /srv/gitlab/.git
 
             chown -R git:git /srv/gitlab
+        - name: widen GitLab 18 gem constraints for security fixes
+          uses: patch@v1
+          work-dir: /srv/gitlab
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/gem-constraints-18.patch
         - name: bump vulnerable gem versions in lockfile
           privileged: true
           runs: |
@@ -144,27 +150,13 @@ contents:
 
             cd /srv/gitlab
 
-            # Upstream pins these tighter than the fixed release, so the
-            # lockfile update below cannot reach it. Bump the requirement
-            # within the same minor; the grep guards fail the build when a
-            # version bump changes the pin.
-            grep -q "gem 'graphql', '2.5.11'" Gemfile
-            sed --in-place "s/gem 'graphql', '2.5.11'/gem 'graphql', '~> 2.5.26'/" Gemfile
-            grep -q "gem 'sidekiq-cron', '~> 2.3.0'" Gemfile
-            sed --in-place "s/gem 'sidekiq-cron', '~> 2.3.0'/gem 'sidekiq-cron', '2.4.0'/" Gemfile
-
-            # The cron poller patch refuses to load against any other
-            # sidekiq-cron version, so it moves with the pin above.
-            grep -q "Gem::Version.new('2.3.1')" lib/gitlab/patch/sidekiq_cron_poller.rb
-            sed --in-place "s/Gem::Version.new('2.3.1')/Gem::Version.new('2.4.0')/" lib/gitlab/patch/sidekiq_cron_poller.rb
-
             # Update lockfile only (no install) — bumps Rails security patch,
             # addressable, and faraday (CVE-2026-25765, allowed by ~> 2 pin).
             # Also bumps gems with CVEs that stay within the same major:
             #   net-imap        0.5.9  -> 0.5.14 (CVE-2026-42245/42246/42256/42257/42258)
             #   nokogiri        1.19.1 -> 1.19.3 (GHSA-c4rq-3m3g-8wgx, GHSA-v2fc-qm4h-8hqv)
-            #   sidekiq-cron    2.3.1  -> 2.4.0  (CVE-2025-67202)
-            #   graphql         2.5.11 -> 2.5.26 (GHSA-3h96-34p3-xm76)
+            #   sidekiq-cron    2.3.1  -> 2.4.0  (CVE-2025-67202, GitLab 18 and 19)
+            #   graphql         2.5.11 -> 2.5.26 (GHSA-3h96-34p3-xm76, GitLab 18)
             #   puma            7.2.0  -> 7.2.1  (CVE-2026-47736, CVE-2026-47737)
             #   concurrent-ruby 1.3.6  -> 1.3.7  (CVE-2026-54904, CVE-2026-54905, CVE-2026-54906)
             #   websocket-driver 0.8.0 -> 0.8.2  (CVE-2026-61666, CVE-2026-54463, CVE-2026-54464, CVE-2026-54465)
@@ -399,6 +391,12 @@ contents:
           gid: 0
           mode: "0644"
           source: image/gitlab-webservice/scripts/puma.rb
+        - type: file
+          path: ${source.dir}/patch/gem-constraints-18.patch
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: image/gitlab-webservice/patch/gem-constraints-18.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/erb
           target: /usr/local/bin/erb
