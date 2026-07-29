@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-vault
+variant: runtime
+tags:
+  - 2.0.3-alpine3.24
+  - 2.0.3-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-13"
+vars:
+  COMMIT_SHA: 7193f9a48ff6093ca61b3b627a8671e770428ba6
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-r0
+  PACKAGE_NAME: vault
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.0"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.0.3
+  VERSION: 2.0.3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: vault
+      work-dir: /go/src/github.com/hashicorp/vault
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - binutils
+          - libcap-utils
+          - golang-1.26=1.26.5-r0
+          - golang-1.26-oci-config=1.26.5-r0
+        files:
+          - url: git+https://github.com/hashicorp/vault.git#v2.0.3
+            checksum: 7193f9a48ff6093ca61b3b627a8671e770428ba6
+            path: /go/src/github.com/hashicorp/vault
+            spdx:
+              name: vault
+              version: 2.0.3
+              packages:
+                - name: vault
+                  purl: pkg:golang/github.com/hashicorp/vault@2.0.3
+                  license: BUSL-1.1
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/image@v0.5.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+              - github.com/docker/cli@v29.2.0
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.18.7
+              - github.com/microsoft/kiota-http-go@v1.5.5
+              - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            unset VAULT_ADDR VAULT_TOKEN VAULT_DEV_ROOT_TOKEN_ID VAULT_ACC || true
+            GOMAXPROCS=1 CGO_ENABLED=0 go test -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+              -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|Logger_SetupLoggerWithInValidLogPathPermission|PubKeyFilesFlagSetKeybase|FetchKeybasePubkeys|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+              ./shamir \
+              ./internal/observability/event \
+              ./internalshared/... \
+              ./vault/diagnose \
+              ./builtin/logical/pki/parsing \
+              ./helper/dhutil \
+              ./helper/fairshare \
+              ./helper/flag-kv \
+              ./helper/flag-slice \
+              ./helper/forwarding \
+              ./helper/hostutil \
+              ./helper/locking \
+              ./helper/logging \
+              ./helper/metricsutil \
+              ./helper/monitor \
+              ./helper/namespace \
+              ./helper/osutil \
+              ./helper/parseip \
+              ./helper/pgpkeys \
+              ./helper/policies \
+              ./helper/random \
+              ./helper/syncmap \
+              ./helper/testhelpers \
+              ./helper/timeutil \
+              ./helper/useragent \
+              ./helper/versions
+
+            if [ "${target.fips}" = "true" ]; then
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'TestTransit_SignVerify_RSA_PSS' \
+                ./builtin/logical/transit
+            else
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./builtin/logical/transit \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+            fi
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault/version.fullVersion=2.0.3
+              - -X github.com/hashicorp/vault/version.GitCommit=7193f9a48ff6093ca61b3b627a8671e770428ba6
+              - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/vault
+            tags: vault
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_ipc_lock=+ep '${target.dir}/usr/bin/vault'
+        - name: build dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault/version.fullVersion=2.0.3
+              - -X github.com/hashicorp/vault/version.GitCommit=7193f9a48ff6093ca61b3b627a8671e770428ba6
+              - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/vault-dev
+            strip: false
+            tags: vault
+        - uses: dhi/build-pkg:0
+          with:
+            description: Vault
+            files:
+              - usr/bin/vault
+            license: BUSL-1.1
+            name: vault
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/vault
+                    source: usr/bin/vault-dev
+                name: vault-dev
+            url: https://github.com/hashicorp/vault
+            version: 2.0.3
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
