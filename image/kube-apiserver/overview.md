@@ -1,4 +1,4 @@
-## About kube-apiserver
+## About Kubernetes API Server (kube-apiserver)
 
 kube-apiserver is the Kubernetes API server, the front end of the Kubernetes control plane. It exposes the Kubernetes
 API over HTTP(S), validates and processes requests, persists and retrieves cluster state via etcd, and coordinates

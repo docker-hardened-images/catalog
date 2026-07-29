@@ -1,4 +1,4 @@
-## About kube-proxy
+## About Kubernetes Proxy (kube-proxy)
 
 kube-proxy implements Kubernetes Service networking on each node. It watches Service and EndpointSlice objects and
 programs the node’s packet forwarding rules (for example via iptables, IPVS, or nftables depending on configuration) to

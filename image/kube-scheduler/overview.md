@@ -1,4 +1,4 @@
-## About kube-scheduler
+## About Kubernetes Scheduler (kube-scheduler)
 
 kube-scheduler assigns newly created Pods to nodes. It watches for Pods without a scheduled node, evaluates node
 feasibility and scoring (including taints/tolerations, affinities, and resource constraints), and binds Pods to the

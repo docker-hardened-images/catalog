@@ -1,4 +1,4 @@
-## About kube-controller-manager
+## About Kubernetes Controller Manager (kube-controller-manager)
 
 kube-controller-manager runs the core Kubernetes controllers that reconcile desired state to actual state. It executes
 control loops for common cluster functionality such as node lifecycle, replication, endpoints, service accounts, and
