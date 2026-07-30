@@ -1,0 +1,110 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-cloud-sdk
+variant: runtime
+tags:
+  - 578.0.0-alpine3.24
+  - 578.0.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-24"
+vars:
+  GCLOUD_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm" }'
+  GCLOUD_SHA256: '#{ target.arch == "amd64" ? "322ac42ef7670cf2e16d46a1c3f827b36e55a865d2e26f34c64c914869e400f0" : "6a1f0dd3dc22a1a9cd8a37578bb0455f04644f56e1f6fd67680ab73e59106c33" }'
+  GCLOUD_SHA256_AMD64: 322ac42ef7670cf2e16d46a1c3f827b36e55a865d2e26f34c64c914869e400f0
+  GCLOUD_SHA256_ARM64: 6a1f0dd3dc22a1a9cd8a37578bb0455f04644f56e1f6fd67680ab73e59106c33
+  PYTHON_DEB_VERSION: 3.13.13-0
+  PYTHON_VERSION: 3.13.13-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "578.0"
+  SEMVER_MAJOR_VERSION: "578"
+  SEMVER_VERSION: 578.0.0
+  VERSION: 578.0.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cloud-sdk
+      work-dir: /work
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gzip
+          - tar
+        files:
+          - url: https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-578.0.0-linux-${GCLOUD_ARCH}.tar.gz
+            checksum: sha256:${GCLOUD_SHA256}
+            path: ${source.dir}/google-cloud-cli.tar.gz
+            spdx:
+              name: google-cloud-cli
+              version: 578.0.0
+              packages:
+                - name: google-cloud-cli
+                  purl: pkg:generic/google-cloud-cli@578.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract SDK (FHS /usr/lib)
+          runs: |
+            set -eux -o pipefail
+
+            install -d ${target.dir}/usr/lib
+            tar -xzf ${source.dir}/google-cloud-cli.tar.gz -C ${target.dir}/usr/lib
+        - name: offline config + symlinks + slim
+          runs: |
+            set -eux -o pipefail
+
+            SDK=${target.dir}/usr/lib/google-cloud-sdk
+            cat > "$SDK/properties" << 'EOF'
+            [component_manager]
+            disable_update_check = true
+            [core]
+            disable_usage_reporting = true
+            EOF
+            install -d ${target.dir}/usr/bin
+            for b in gcloud gsutil bq; do
+              ln -sf ../lib/google-cloud-sdk/bin/$b ${target.dir}/usr/bin/$b
+            done
+            rm -rf "$SDK/platform/bundledpythonunix"
+            find "$SDK" -name '*.pyc' -delete 2> /dev/null || true
+            find "$SDK" -type d -name '__pycache__' -prune -exec rm -rf {} + 2> /dev/null || true
+            find "$SDK" -type f \( -name '*requirements*.txt' -o -name 'constraints*.txt' -o -name 'Pipfile' -o -name 'Pipfile.lock' \) -delete 2> /dev/null || true
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.13
+              - bash
+              - coreutils
+              - sed
+              - grep
+            description: Google Cloud CLI (gcloud, gsutil, bq)
+            files:
+              - usr/lib/google-cloud-sdk
+              - usr/bin/gcloud
+              - usr/bin/gsutil
+              - usr/bin/bq
+            license: Apache-2.0
+            name: cloud-sdk
+            rel: 0
+            url: https://cloud.google.com/sdk
+            version: 578.0.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
