@@ -1,0 +1,147 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Cilium Clustermesh API Server 1.20.x
+image: dhi.io/cilium-clustermesh-apiserver
+variant: runtime
+tags:
+  - "1.20"
+  - 1.20.0
+  - 1.20-debian
+  - 1.20-debian13
+  - 1.20.0-debian
+  - 1.20.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  COMMIT_SHA: 450c53145dc0a872ae20dfb05598c94ef55a71e2
+  ETCD_REFERENCE: dhi/etcd:3.7.1-debian13-dev@sha256:64c1ed7ec3275dbd0ccbaea8ad66c1f7b6818b3bd10bb30a2b5afb0638ecc22e
+  GOPS_REFERENCE: dhi/pkg-gops:0.3.29-debian13@sha256:f9dce98f6538b2005bdc44632d5306d8432bd3aaf8f80bd18a68cc628e65fcd4
+  SEMVER_MAJOR_MINOR_VERSION: "1.20"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.20.0
+  VERSION: 1.20.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: cilium clustermesh apiserver
+      work-dir: /go/src/github.com/cilium/cilium
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.20.0
+            checksum: 450c53145dc0a872ae20dfb05598c94ef55a71e2
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: cilium-clustermesh-apiserver
+              version: 1.20.0
+              packages:
+                - name: cilium-clustermesh-apiserver
+                  purl: pkg:golang/github.com/cilium/cilium@1.20.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.20 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/text@v0.39.0
+              - github.com/klauspost/compress@v1.18.7
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=vendor -v ./clustermesh-apiserver/...
+        - name: build
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.0
+            output: ${target.dir}/usr/local/bin/clustermesh-apiserver
+            packages: ./clustermesh-apiserver
+      outputs:
+        - source: ${target.dir}/usr/local/bin/clustermesh-apiserver
+          target: /usr/local/bin/clustermesh-apiserver
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/cilium/cilium/clustermesh-apiserver/etcd-config.yaml
+          target: /var/lib/cilium/etcd-config.yaml
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cilium-clustermesh-apiserver
+          target: /opt/docker/sbom/cilium-clustermesh-apiserver
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/pkg-gops:0.3.29-debian13@sha256:f9dce98f6538b2005bdc44632d5306d8432bd3aaf8f80bd18a68cc628e65fcd4
+      includes:
+        - opt/**
+        - usr/local/**
+      uid: 0
+      gid: 0
+    - name: dhi.io/etcd:3.7.1-debian13-dev@sha256:64c1ed7ec3275dbd0ccbaea8ad66c1f7b6818b3bd10bb30a2b5afb0638ecc22e
+      includes:
+        - usr/local/bin/etcd
+      uid: 0
+      gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /run/cilium
+    uid: 0
+    gid: 0
+    mode: "0777"
+  - type: symlink
+    path: /usr/bin/etcd
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/etcd
+  - type: symlink
+    path: /usr/bin/clustermesh-apiserver
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/clustermesh-apiserver
+annotations:
+  org.opencontainers.image.description: A minimal Cilium Clustermesh API Server image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/clustermesh-apiserver
