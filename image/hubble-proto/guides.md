@@ -24,17 +24,17 @@ Included tools in this image:
 Plugin versions are pinned to match those used in upstream Cilium's build tooling, ensuring compatibility with Hubble's
 proto definitions.
 
-The image layout places these binaries under `/usr/local/bin/hubble-proto/`, suitable for use in multi-stage builds or
-as a tooling container during CI.
+The image layout places these binaries under `/usr/bin/hubble-proto/`, suitable for use in multi-stage builds or as a
+tooling container during CI.
 
 ## Usage examples
 
 Example: Check versions of the included plugins
 
 ```bash
-docker run --rm dhi.io/hubble-proto:<tag> /usr/local/bin/hubble-proto/protoc-gen-go --version
-docker run --rm dhi.io/hubble-proto:<tag> /usr/local/bin/hubble-proto/protoc-gen-go-grpc --version
-docker run --rm dhi.io/hubble-proto:<tag> /usr/local/bin/hubble-proto/protoc-gen-go-json --version
+docker run --rm dhi.io/hubble-proto:<tag> /usr/bin/hubble-proto/protoc-gen-go --version
+docker run --rm dhi.io/hubble-proto:<tag> /usr/bin/hubble-proto/protoc-gen-go-grpc --version
+docker run --rm dhi.io/hubble-proto:<tag> /usr/bin/hubble-proto/protoc-gen-go-json --version
 ```
 
 Note: This image contains only the protoc plugins, not `protoc` itself. You need to install `protoc` separately or use

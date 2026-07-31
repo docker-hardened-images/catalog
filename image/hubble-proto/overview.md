@@ -1,4 +1,4 @@
-## About Hubble Proto
+## About Cilium Hubble Proto
 
 The Hubble Proto hardened image provides Protocol Buffer compiler plugins for generating Go code from proto definitions.
 Hubble is the observability platform for Cilium, a cloud-native networking and security solution for Kubernetes.
