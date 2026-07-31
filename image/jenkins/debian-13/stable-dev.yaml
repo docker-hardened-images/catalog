@@ -122,6 +122,30 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar
+            checksum: sha256:507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+            path: ${source.dir}/patch/deps/jackson-databind-2.21.5.jar
+            spdx:
+              name: jackson-databind
+              version: 2.21.5
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar
+            checksum: sha256:b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+            path: ${source.dir}/patch/deps/jackson-core-2.21.5.jar
+            spdx:
+              name: jackson-core
+              version: 2.21.5
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - uses: mvn/mirror@v1
         - name: remove git-changelist-maven-extension
@@ -168,19 +192,6 @@ contents:
             set -eux -o pipefail
 
             mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
-        - name: download jackson-databind jars
-          work-dir: ${source.dir}/jenkins
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${source.dir}/patch/deps
-
-            # Download jackson-databind 2.21.4 for jackson2-api plugin
-            mvn dependency:get \
-              -Dartifact=com.fasterxml.jackson.core:jackson-databind:2.21.4 \
-              -Dtransitive=false
-            cp ~/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar \
-              ${source.dir}/patch/deps/jackson-databind-2.21.4.jar
         - name: patch bundled jackson-databind in jackson2-api
           work-dir: ${source.dir}/jenkins
           runs: |
@@ -191,34 +202,59 @@ contents:
 
             war_file="war/target/jenkins.war"
             hpi_path="WEB-INF/detached-plugins/jackson2-api.hpi"
-            old_jackson_path="WEB-INF/lib/jackson-databind-2.21.2.jar"
-            new_jackson_path="WEB-INF/lib/jackson-databind-2.21.4.jar"
+            old_jackson_databind_path="WEB-INF/lib/jackson-databind-2.21.2.jar"
+            new_jackson_databind_path="WEB-INF/lib/jackson-databind-2.21.5.jar"
+            old_jackson_core_path="WEB-INF/lib/jackson-core-2.21.2.jar"
+            new_jackson_core_path="WEB-INF/lib/jackson-core-2.21.5.jar"
 
             unzip -q "${war_file}" "${hpi_path}" -d "${patch_dir}"
             hpi_file="${patch_dir}/${hpi_path}"
 
-            if jar tf "${hpi_file}" | grep -q "${old_jackson_path}"; then
-              zip -q -d "${hpi_file}" "${old_jackson_path}"
+            # Remove old jackson-databind versions
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_databind_path}"; then
+              zip -q -d "${hpi_file}" "${old_jackson_databind_path}"
+            fi
+            if jar tf "${hpi_file}" | grep -q "WEB-INF/lib/jackson-databind-2.21.4.jar"; then
+              zip -q -d "${hpi_file}" "WEB-INF/lib/jackson-databind-2.21.4.jar"
             fi
 
-            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/lib"
-            cp "${source.dir}/patch/deps/jackson-databind-2.21.4.jar" "${patch_dir}/hpi-overlay/${new_jackson_path}"
-            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_jackson_path}")
+            # Remove old jackson-core versions
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_core_path}"; then
+              zip -q -d "${hpi_file}" "${old_jackson_core_path}"
+            fi
 
-            if jar tf "${hpi_file}" | grep -q "${old_jackson_path}"; then
-              echo "ERROR: ${old_jackson_path} is still present in ${hpi_path}" >&2
+            # Add new jackson-databind and jackson-core
+            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/lib"
+            cp "${source.dir}/patch/deps/jackson-databind-2.21.5.jar" "${patch_dir}/hpi-overlay/${new_jackson_databind_path}"
+            cp "${source.dir}/patch/deps/jackson-core-2.21.5.jar" "${patch_dir}/hpi-overlay/${new_jackson_core_path}"
+            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_jackson_databind_path}" "${new_jackson_core_path}")
+
+            # Verify old versions removed and new versions present
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_databind_path}"; then
+              echo "ERROR: ${old_jackson_databind_path} is still present in ${hpi_path}" >&2
               exit 1
             fi
-            jar tf "${hpi_file}" | grep -q "${new_jackson_path}"
+            if jar tf "${hpi_file}" | grep -q "${old_jackson_core_path}"; then
+              echo "ERROR: ${old_jackson_core_path} is still present in ${hpi_path}" >&2
+              exit 1
+            fi
+            jar tf "${hpi_file}" | grep -q "${new_jackson_databind_path}"
+            jar tf "${hpi_file}" | grep -q "${new_jackson_core_path}"
 
             (cd "${patch_dir}" && jar --update --file "${source.dir}/jenkins/${war_file}" "${hpi_path}")
 
+            # Final verification in repacked war
             unzip -p "${war_file}" "${hpi_path}" > "${patch_dir}/verified-jackson2-api.hpi"
-            if jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${old_jackson_path}"; then
-              echo "ERROR: ${old_jackson_path} is still present in repacked ${war_file}" >&2
+            if jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${old_jackson_databind_path}"; then
+              echo "ERROR: ${old_jackson_databind_path} is still present in repacked ${war_file}" >&2
               exit 1
             fi
-            jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${new_jackson_path}"
+            if jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${old_jackson_core_path}"; then
+              echo "ERROR: ${old_jackson_core_path} is still present in repacked ${war_file}" >&2
+              exit 1
+            fi
+            jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${new_jackson_databind_path}"
+            jar tf "${patch_dir}/verified-jackson2-api.hpi" | grep -q "${new_jackson_core_path}"
         - name: patch bundled mina-core
           work-dir: ${source.dir}/jenkins
           runs: |
