@@ -33,6 +33,7 @@ vars:
   VERSION: 4.3.1
 contents:
   packages:
+    - '!gawk'
     - base-files
     - bash
     - ca-certificates
@@ -146,6 +147,21 @@ contents:
             # Using dependency:copy because dependency:get -Ddest does not copy artifacts
             # to the destination directory.
 
+            replace_maven_jar() {
+              group="$1"
+              artifact="$2"
+              version="$3"
+              jar="$(find libs -maxdepth 1 -type f -name "${artifact}-[0-9]*.jar")"
+              if [ -z "$jar" ]; then
+                echo "Expected ${artifact} JAR was not found"
+                exit 1
+              fi
+              rm "$jar"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy \
+                -Dartifact="${group}:${artifact}:${version}" \
+                -DoutputDirectory=./libs
+            }
+
             # Fixes CVE-2025-48734 (commons-beanutils)
             cb="$(find libs -maxdepth 1 \( -name 'commons-beanutils-1.9.*.jar' -o -name 'commons-beanutils-1.10.*.jar' \))"
             if [ -n "$cb" ]; then
@@ -160,22 +176,18 @@ contents:
               mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.commons:commons-lang3:3.18.0 -DoutputDirectory=./libs
             fi
 
-            # Fixes CVE-2026-1605 (jetty)
-            if [ "4.3" = "4.2" ]; then
-              jetty_old="12.0.22"
-            else
-              jetty_old="12.0.25"
-            fi
-            jt="$(find libs -maxdepth 1 -type f -name "jetty-server-${jetty_old}.jar")"
-            if [ -n "$jt" ]; then
-              rm "$jt"
-              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.eclipse.jetty:jetty-server:12.0.33 -DoutputDirectory=./libs
-            fi
-            jt="$(find libs -maxdepth 1 -type f -name "jetty-http-${jetty_old}.jar")"
-            if [ -n "$jt" ]; then
-              rm "$jt"
-              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.eclipse.jetty:jetty-http:12.0.33 -DoutputDirectory=./libs
-            fi
+            # Fixes CVE-2026-1605, CVE-2026-10050, CVE-2026-10051,
+            # CVE-2026-6790, and CVE-2026-8384 (jetty)
+            replace_maven_jar org.eclipse.jetty.ee10 jetty-ee10-servlet 12.0.36
+            replace_maven_jar org.eclipse.jetty.ee10 jetty-ee10-servlets 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-alpn-client 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-client 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-http 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-io 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-security 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-server 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-session 12.0.36
+            replace_maven_jar org.eclipse.jetty jetty-util 12.0.36
 
             # Fixes GHSA-2r2c-cx56-8933 and GHSA-47qp-hqvx-6r3f (jline-remote-telnet)
             jl="$(find libs -maxdepth 1 -type f -name 'jline-3.*.jar')"
@@ -206,24 +218,15 @@ contents:
               mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.logging.log4j:log4j-slf4j-impl:2.25.4 -DoutputDirectory=./libs
             fi
 
-            # Fixes CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54516,
-            # CVE-2026-54517, CVE-2026-54518 (jackson-databind/core). CVE-2026-54515
-            # needs 2.21.5, which is not yet on the GCS Maven Central mirror.
-            jd="$(find libs -maxdepth 1 -type f -name 'jackson-databind-*.jar')"
-            if [ -n "$jd" ]; then
-              rm "$jd"
-              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=com.fasterxml.jackson.core:jackson-databind:2.21.4 -DoutputDirectory=./libs
-            fi
-            jc="$(find libs -maxdepth 1 -type f -name 'jackson-core-*.jar')"
-            if [ -n "$jc" ]; then
-              rm "$jc"
-              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=com.fasterxml.jackson.core:jackson-core:2.21.4 -DoutputDirectory=./libs
-            fi
-            ja="$(find libs -maxdepth 1 -type f -name 'jackson-annotations-*.jar')"
-            if [ -n "$ja" ]; then
-              rm "$ja"
-              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=com.fasterxml.jackson.core:jackson-annotations:2.21 -DoutputDirectory=./libs
-            fi
+            # Fixes CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515,
+            # CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59889,
+            # GHSA-72hv-8253-57qq, and GHSA-mhm7-754m-9p8w (jackson-databind/core)
+            replace_maven_jar com.fasterxml.jackson.core jackson-databind 2.21.5
+            replace_maven_jar com.fasterxml.jackson.core jackson-core 2.21.5
+            replace_maven_jar com.fasterxml.jackson.core jackson-annotations 2.21
+
+            # Fixes CVE-2026-59949 (lz4-java)
+            replace_maven_jar at.yawk.lz4 lz4-java 1.11.1
         - name: build
           runs: |
             set -eux -o pipefail
