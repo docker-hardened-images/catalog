@@ -26,7 +26,7 @@ The Istio Pilot image (also known as Istiod) is the control plane component that
 configuration distribution, and certificate management for the Istio service mesh. It is designed to run as a Deployment
 in Kubernetes and requires a Kubernetes environment to function fully.
 
-Run the following command and replace `<tag>` with the image variant you want to run (for example, `1.28-debian13`):
+Run the following command and replace `<tag>` with the image variant you want to run (for example, `1.29-debian13`):
 
 ```console
 $ docker run --rm dhi.io/istio-pilot:<tag> version
