@@ -1,4 +1,4 @@
-## About Hubble Relay
+## About Cilium Hubble Relay
 
 Hubble Relay is a component within the Cilium ecosystem that enables cross-cluster Hubble connectivity via a distributed
 networking datapath. It aggregates observability data from multiple Hubble instances, providing a centralized view of
