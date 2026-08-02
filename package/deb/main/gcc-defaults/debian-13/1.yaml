@@ -1,0 +1,103 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-gcc-defaults
+variant: runtime
+tags:
+  - 1.220-dhi0
+  - 1.220-dhi0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DEBIAN_DEBIAN_FILENAME: ${DEBIAN_DEBIAN_URL:^.+/(.+)$}
+  DEBIAN_DSC_CHECKSUM: sha256:abfa2d362033435385e733f97d0cace1fbc917fd4160c81cc89abac38d3cdc37
+  DEBIAN_DSC_FILENAME: gcc-defaults_1.220.dsc
+  DEBIAN_DSC_URL: https://deb.debian.org/debian/pool/main/g/gcc-defaults/gcc-defaults_1.220.dsc
+  DEBIAN_FILENAME_VERSION: "1.220"
+  DEBIAN_ORIG_CHECKSUM: sha256:d40fbdb57f351a58e050c3e1037201853e88e3f673242b62357dc20030ad4805
+  DEBIAN_ORIG_FILENAME: gcc-defaults_1.220.tar.xz
+  DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/g/gcc-defaults/gcc-defaults_1.220.tar.xz
+  DEBIAN_VERSION: "1.220"
+  DHI_REL: "0"
+  DHI_VERSION: 1.220+dhi0
+  TAG_VERSION: 1.220-dhi0
+  UPSTREAM_VERSION: "1.220"
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: gcc-defaults deb
+      work-dir: ${source.dir}/gcc-defaults
+      contents:
+        packages:
+          - debhelper
+          - dpkg-dev
+          - gcc-14-base
+          - lsb-release
+          - m4
+        files:
+          - url: https://deb.debian.org/debian/pool/main/g/gcc-defaults/gcc-defaults_1.220.dsc
+            checksum: sha256:abfa2d362033435385e733f97d0cace1fbc917fd4160c81cc89abac38d3cdc37
+            path: ${source.dir}/gcc-defaults_1.220.dsc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/g/gcc-defaults/gcc-defaults_1.220.tar.xz
+            checksum: sha256:d40fbdb57f351a58e050c3e1037201853e88e3f673242b62357dc20030ad4805
+            path: ${source.dir}/gcc-defaults_1.220.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: dpkg/source@v1
+          work-dir: ${source.dir}
+          with:
+            file: gcc-defaults_1.220.dsc
+            path: gcc-defaults
+            remove-original: false
+        - name: remove upstream source artifacts
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            rm gcc-defaults_1.220.dsc gcc-defaults_1.220.tar.xz
+        - uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-skip-multilib-meta-packages.patch
+        - name: drop unsupported metapackages from prebuilt debian/control
+          runs: |
+            set -eux -o pipefail
+
+            host_suffix="-$(dpkg-architecture -qDEB_HOST_GNU_TYPE | tr _ -)"
+            awk -v host="${host_suffix}" '
+              BEGIN { skip = 0 }
+              /^Package: / {
+                pkg = $2
+                foreign_cross = (pkg ~ /-gnu/ || pkg ~ /-kfreebsd/) && pkg !~ (host "$")
+                skip = (pkg ~ /multilib/ || pkg ~ /^gccgo/ || pkg ~ /^gdc/ || pkg ~ /^gm2/ || pkg ~ /^libgphobos/ || pkg ~ /^gcc-hppa64/ || pkg ~ /^gcc-offload/ || foreign_cross)
+              }
+              skip == 0 { print }
+            ' debian/control > debian/control.tmp
+            mv debian/control.tmp debian/control
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Align metapackage set with HSP gcc-14 profile (native and host-triplet only; skip multilib, foreign cross, Go, D, Modula-2, hppa64, and GPU offload)
+            version: 1.220+dhi0
+        - uses: dpkg/build@v1
+          with:
+            args: -uc -us -d
+      paths:
+        - type: file
+          path: ${source.dir}/patch/dhi-skip-multilib-meta-packages.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/gcc-defaults/patch/dhi-skip-multilib-meta-packages.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
