@@ -1,0 +1,154 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-s3proxy
+variant: runtime
+tags:
+  - 3.3.0
+  - 3.3.0-r0
+  - 3.3.0-debian13
+  - 3.3.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 3390164beee7670c27489e76c3b682be5d660a2a
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:16f96100d1aa78b742720607aad55b8b286ab263229816a19e3c21e2293e79d7
+  PACKAGE_NAME: s3proxy
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.3"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.3.0
+  VERSION: 3.3.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: s3proxy
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:16f96100d1aa78b742720607aad55b8b286ab263229816a19e3c21e2293e79d7
+      work-dir: ${source.dir}/s3proxy
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - tar
+          - xmlstarlet
+        files:
+          - url: git+https://github.com/gaul/s3proxy.git#s3proxy-3.3.0
+            checksum: 3390164beee7670c27489e76c3b682be5d660a2a
+            path: ${source.dir}/s3proxy
+            spdx:
+              name: s3proxy
+              version: 3.3.0
+              packages:
+                - name: s3proxy
+                  purl: pkg:maven/org.gaul/s3proxy@3.3.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: pin vulnerable dependency versions
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/s3proxy
+        - name: pin netty native transport classifiers
+          work-dir: ${source.dir}/s3proxy
+          runs: |
+            set -eux -o pipefail
+
+            for entry in \
+              netty-transport-native-epoll:linux-x86_64 \
+              netty-transport-native-epoll:linux-aarch_64 \
+              netty-transport-native-kqueue:osx-x86_64 \
+              netty-transport-native-kqueue:osx-aarch_64; do
+              artifact=${entry%%:*}
+              classifier=${entry##*:}
+              xmlstarlet ed -L \
+                -N m="http://maven.apache.org/POM/4.0.0" \
+                -s "/m:project/m:dependencyManagement/m:dependencies" -t elem -n dependencyTMP -v "" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n groupId -v io.netty \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n artifactId -v "${artifact}" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n version -v 4.1.136.Final \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n classifier -v "${classifier}" \
+                -r "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -v dependency \
+                pom.xml
+            done
+        - name: build
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn package -B -DskipTests \
+              -Dmaven.javadoc.skip=true \
+              -Dcheckstyle.skip=true \
+              -Dspotbugs.skip=true \
+              -Denforcer.skip=true \
+              -Dgpg.skip=true \
+              -Dmodernizer.skip=true
+        - name: stage jar and launcher
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 target/s3proxy \
+              "${target.dir}/usr/share/s3proxy/s3proxy.jar"
+
+            install -D -m 0755 src/main/resources/run-docker-container.sh \
+              "${target.dir}/usr/bin/s3proxy"
+
+            sed -i \
+              -e 's|-jar /opt/s3proxy/s3proxy|-jar /usr/share/s3proxy/s3proxy.jar|' \
+              -e 's|^mkdir |mkdir -p |' \
+              "${target.dir}/usr/bin/s3proxy"
+
+            grep -q -- '-jar /usr/share/s3proxy/s3proxy.jar' \
+              "${target.dir}/usr/bin/s3proxy" \
+              || (
+                echo "FATAL: jar path patch missed in launcher" >&2
+                exit 1
+              )
+            grep -q '^mkdir -p ' "${target.dir}/usr/bin/s3proxy" \
+              || (
+                echo "FATAL: mkdir -p patch missed in launcher" >&2
+                exit 1
+              )
+        - uses: dhi/build-pkg:0
+          with:
+            description: S3-compatible API proxy for the local filesystem and cloud storage backends via Apache jclouds
+            files:
+              - usr
+            license: Apache-2.0
+            name: s3proxy
+            rel: 0
+            url: https://github.com/gaul/s3proxy
+            version: 3.3.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/s3proxy/debian-13/patch/mvn-dependencies.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
