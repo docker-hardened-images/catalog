@@ -1,0 +1,89 @@
+Description: Fix heap out-of-bounds read in EF_IZUNIX3 extra field handler [CAN-2026-2034440]
+Origin: https://salsa.debian.org/sanvila/unzip/-/raw/debian/6.0-30/debian/patches/can-2026-2034440.patch
+Bug: https://bugs.debian.org/1142904
+Tracker: https://security-tracker.debian.org/tracker/TEMP-1142904
+
+--- a/process.c
++++ b/process.c
+@@ -2987,7 +2987,7 @@
+             have_new_type_eb = 2;
+ 
+             /* Ignore any prior EF_IZUNIX/EF_PKUNIX/EF_IZUNIX2 UID/GID. */
+-            flags &= 0x0ff;
++            flags &= EB_UT_FL_TIMES;
+         /*
+           Version       1 byte      version of this extra field, currently 1
+           UIDSize       1 byte      Size of UID field
+@@ -2995,29 +2995,46 @@
+           GIDSize       1 byte      Size of GID field
+           GID           Variable    GID for this entry
+         */
+-
+-#ifdef IZ_HAVE_UXUIDGID
+-            if (eb_len >= EB_UX3_MINLEN
+-                && z_uidgid != NULL
+-                && (*((EB_HEADSIZE + 0) + ef_buf) == 1))
+-                    /* only know about version 1 */
++# ifdef IZ_HAVE_UXUIDGID
++            /* Check for a legitimate extra block length, a non-NULL
++             * destination pointer, and "ux" version 1 (which is all we
++             * understand).
++             */
++            if ((eb_len >= EB_UX3_MINLEN) &&
++             (z_uidgid != NULL) &&
++             (*((EB_HEADSIZE + 0) + ef_buf) == 1))
+             {
+-                uch uid_size;
+-                uch gid_size;
++                /* 2012-12-07 SMS.  (OUSPG report.)
++                 * First, clear "flags".  Then, check the validity of
++                 * uid_size before using it to find gid_size.
++                 * Made Xid_size bigger than "uch" for safer arithmetic.
++                 */
++                unsigned uid_size;
++                unsigned gid_size;
+ 
+                 uid_size = *((EB_HEADSIZE + 1) + ef_buf);
+-                gid_size = *((EB_HEADSIZE + uid_size + 2) + ef_buf);
+ 
+-                if ( read_ux3_value((EB_HEADSIZE + 2) + ef_buf,
+-                                    uid_size, &z_uidgid[0])
+-                    &&
+-                     read_ux3_value((EB_HEADSIZE + uid_size + 3) + ef_buf,
+-                                    gid_size, &z_uidgid[1]) )
++                /* Valid: 1 (Version) + 1 (UIDSize) + UIDSize +
++                 *        1 (GIDSize) + 2 (min GIDSize) <= eb_len.
++                 */
++                if (5+ uid_size <= eb_len)
+                 {
+-                    flags |= EB_UX2_VALID;   /* signal success */
++                    gid_size = *((EB_HEADSIZE + uid_size + 2) + ef_buf);
++
++                    /* Last, check total claimed xID sizes against eb_len. */
++                    if (3+ uid_size+ gid_size == eb_len)
++                    {
++                        if (read_ux3_value( (EB_HEADSIZE + 2) + ef_buf,
++                         uid_size, &z_uidgid[0]) &&
++                         read_ux3_value( (EB_HEADSIZE + uid_size + 3) + ef_buf,
++                         gid_size, &z_uidgid[1]))
++                        {
++                        flags |= EB_UX2_VALID;   /* signal success */
++                        }
++                    }
+                 }
+             }
+-#endif /* IZ_HAVE_UXUIDGID */
++# endif /* def IZ_HAVE_UXUIDGID */
+             break;
+ 
+           case EF_IZUNIX:
+--- a/unzpriv.h
++++ b/unzpriv.h
+@@ -1788,6 +1788,7 @@
+ #define EB_UT_FL_MTIME    (1 << 0)      /* mtime present */
+ #define EB_UT_FL_ATIME    (1 << 1)      /* atime present */
+ #define EB_UT_FL_CTIME    (1 << 2)      /* ctime present */
++# define EB_UT_FL_TIMES    0xff /* Mask for all time flag bits. */
+ 
+ #define EB_FLGS_OFFS      4    /* offset of flags area in generic compressed
+                                   extra field blocks (BEOS, MAC, and others) */
