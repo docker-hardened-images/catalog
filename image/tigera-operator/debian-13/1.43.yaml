@@ -1,25 +1,29 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Tigera Operator 1.40.x
+name: Tigera Operator 1.43.x
 image: dhi.io/tigera-operator
 variant: runtime
 tags:
-  - "1.40"
-  - 1.40.13
-  - 1.40-debian
-  - 1.40-debian13
-  - 1.40.13-debian
-  - 1.40.13-debian13
+  - "1.43"
+  - 1.43.0
+  - 1.43-debian
+  - 1.43-debian13
+  - 1.43.0-debian
+  - 1.43.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2026-07-30"
 vars:
-  COMMIT_SHA: dfd61cff1ea556a3d464b6f4acbc21209436f0e4
+  COMMIT_SHA: 22d717f8e934e78cd34dd79bd8d6dd0bf8faf2c6
+  ENVOY_GATEWAY_COMMIT_SHA: 6bdc55d67b3e86079505ddce9f2dec233cca5a8f
+  ENVOY_GATEWAY_VERSION: v1.8.2
   ISTIO_VERSION: 1.29.2
-  SEMVER_MAJOR_MINOR_VERSION: "1.40"
+  SEMVER_MAJOR_MINOR_VERSION: "1.43"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.40.13
-  VERSION: 1.40.13
+  SEMVER_VERSION: 1.43.0
+  VERSION: 1.43.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -44,15 +48,15 @@ contents:
           - mawk
           - sed
         files:
-          - url: git+https://github.com/tigera/operator.git#v1.40.13
-            checksum: dfd61cff1ea556a3d464b6f4acbc21209436f0e4
+          - url: git+https://github.com/tigera/operator.git#v1.43.0
+            checksum: 22d717f8e934e78cd34dd79bd8d6dd0bf8faf2c6
             path: /go/src/github.com/tigera/operator
             spdx:
               name: tigera-operator
-              version: 1.40.13
+              version: 1.43.0
               packages:
                 - name: tigera-operator
-                  purl: pkg:golang/github.com/tigera/operator@1.40.13
+                  purl: pkg:golang/github.com/tigera/operator@1.43.0
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -72,22 +76,36 @@ contents:
             path: /go/src/github.com/tigera/operator/pkg/render/istio/ztunnel.tgz
             uid: 0
             gid: 0
+          - url: git+https://github.com/envoyproxy/gateway.git#v1.8.2
+            checksum: 6bdc55d67b3e86079505ddce9f2dec233cca5a8f
+            path: /go/src/github.com/envoyproxy/gateway
+            uid: 0
+            gid: 0
       pipeline:
-        - name: bump go dependencies (1.40 only)
+        - name: bump go dependencies (1.43 only)
           uses: go/bump@v2
           work-dir: /go/src/github.com/tigera/operator
           with:
-            deps:
-              - github.com/containerd/containerd@v1.7.33
-              - oras.land/oras-go/v2@v2.6.2
-              - helm.sh/helm/v3@v3.20.2
-              - github.com/envoyproxy/gateway@v1.8.1
+            deps: []
             download: true
-        - name: patch dex tests
-          uses: git/patch@v1
-          work-dir: /go/src/github.com/tigera/operator
-          with:
-            patch: ${source.dir}/patch/fix-dex-tests.patch
+        - name: package gateway-helm chart
+          runs: |
+            set -eux -o pipefail
+
+            chart=/go/src/github.com/envoyproxy/gateway/charts/gateway-helm
+            sed \
+              -e "s|\${GatewayImage}|docker.io/envoyproxy/gateway:v1.8.2|g" \
+              -e "s|\${GatewayImagePullPolicy}|IfNotPresent|g" \
+              "$chart/values.tmpl.yaml" > "$chart/values.yaml"
+            helm dependency update "$chart"
+            out=$(mktemp -d)
+            helm package "$chart" \
+              --app-version "v1.8.2" \
+              --version "v1.8.2" \
+              --destination "$out"
+            mkdir -p /go/src/github.com/tigera/operator/pkg/render/gatewayapi
+            mv "$out"/gateway-helm-*.tgz \
+              /go/src/github.com/tigera/operator/pkg/render/gatewayapi/gateway-helm.tgz
         - name: test
           work-dir: /go/src/github.com/tigera/operator
           runs: |
@@ -95,9 +113,8 @@ contents:
 
             # Exclude controller tests (e.g. installation reconciler) that block on
             # in-cluster service account paths and hit the 10m go test timeout in CI.
-            # Also exclude gatewayapi tests: v1.40.11 embed expects 11 CRDs but upstream ships 12
             for i in {1..3}; do
-              if CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller|render/gatewayapi)'); then
+              if CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller)'); then
                 exit 0
               fi
               echo "Retry $i/3..."
@@ -110,15 +127,9 @@ contents:
           work-dir: /go/src/github.com/tigera/operator
           with:
             ldflags:
-              - -X github.com/tigera/operator/version.VERSION=v1.40.13
+              - -X github.com/tigera/operator/version.VERSION=v1.43.0
             output: ${target.dir}/usr/local/bin/operator
             packages: ./cmd/
-      paths:
-        - type: file
-          path: ${source.dir}/patch/fix-dex-tests.patch
-          uid: 0
-          gid: 0
-          source: image/tigera-operator/patch/fix-dex-tests.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/operator
           target: /usr/local/bin/operator
