@@ -108,8 +108,8 @@ $ kubectl label namespace default istio.io/dataplane-mode=ambient
 Deploy sample workloads to verify traffic flows through ztunnel:
 
 ```console
-$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.28/samples/bookinfo/platform/kube/bookinfo.yaml
-$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.28/samples/sleep/sleep.yaml
+$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.29/samples/bookinfo/platform/kube/bookinfo.yaml
+$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.29/samples/sleep/sleep.yaml
 ```
 
 Test encrypted service-to-service communication:
