@@ -56,13 +56,14 @@ helm install chartmuseum chartmuseum/chartmuseum \
 
 This Docker Hardened Image differs from the upstream image in the following ways:
 
-- **Base image**: Uses Debian 13 instead of Alpine Linux.
+- **Base image**: Available on Debian 13 and Alpine 3.24. Upstream publishes Alpine-based images only.
 - **User**: Runs as UID/GID `1000:1000` (`chartmuseum`) to match the official Helm chart security context and persistent
   volume ownership expectations.
 - **Runtime packages**: Ships only the ChartMuseum binary and TLS certificates needed for production use. Upstream
   Alpine images also include `cifs-utils` for CIFS-backed storage; use the `-dev` variant or a custom build stage if you
   need additional OS packages.
-- **Entrypoint path**: Preserves upstream compatibility via `/chartmuseum`, symlinked to `/usr/local/bin/chartmuseum`.
+- **Entrypoint path**: Preserves upstream compatibility via `/chartmuseum` (and `/usr/local/bin/chartmuseum`), both
+  symlinked to the package-installed binary at `/usr/bin/chartmuseum`.
 
 ## Image variants
 
