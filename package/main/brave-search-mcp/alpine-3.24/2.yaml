@@ -1,0 +1,104 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-brave-search-mcp
+variant: runtime
+tags:
+  - 2.1.0-alpine3.24
+  - 2.1.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-15"
+vars:
+  COMMIT_SHA: 76106c83f9d57319478b540374ba261061d26c3e
+  NODEJS_VERSION: 24.18.1-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.1"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.1.0
+  VERSION: 2.1.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: brave-search-mcp
+      work-dir: ${source.dir}/brave-search-mcp
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - nodejs-24=24.18.1-r0
+          - npm
+        files:
+          - url: git+https://github.com/brave/brave-search-mcp-server.git#v2.1.0
+            checksum: 76106c83f9d57319478b540374ba261061d26c3e
+            path: ${source.dir}/brave-search-mcp
+            spdx:
+              name: brave-search-mcp
+              version: 2.1.0
+              packages:
+                - name: brave-search-mcp
+                  purl: pkg:npm/%40brave/brave-search-mcp-server@2.1.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump
+          uses: npm/bump@v1
+          privileged: true
+          environment:
+            DHI_NO_SFW: "true"
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: ${source.dir}/brave-search-mcp
+        - name: build and stage payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/brave-search-mcp"
+
+            npm ci --ignore-scripts
+            npm run build
+
+            rm -rf node_modules
+
+            npm ci --ignore-scripts --omit=dev
+
+            mkdir -p "${target.dir}/usr/lib/nodejs/brave-search-mcp"
+            cp -a dist node_modules package.json "${target.dir}/usr/lib/nodejs/brave-search-mcp/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Brave Search MCP server (Model Context Protocol server for the Brave Search API)
+            files:
+              - usr/lib/nodejs/brave-search-mcp
+            license: MIT
+            name: brave-search-mcp
+            rel: 0
+            url: https://github.com/brave/brave-search-mcp-server
+            version: 2.1.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/brave-search-mcp/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
