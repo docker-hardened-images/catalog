@@ -1,0 +1,126 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-context7-mcp
+variant: runtime
+tags:
+  - 3.2.5
+  - 3.2.5-r0
+  - 3.2.5-debian13
+  - 3.2.5-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: b250c2515694eee4b6df4db82fa056df9ed3e306
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.2"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.2.5
+  VERSION: 3.2.5
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: context7-mcp
+      work-dir: ${source.dir}/context7
+      caches:
+        - path: /root/.local/share/pnpm
+        - path: /root/.cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - base-files
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+          - yq
+        files:
+          - url: git+https://github.com/upstash/context7.git#@upstash/context7-mcp@3.2.5
+            checksum: b250c2515694eee4b6df4db82fa056df9ed3e306
+            path: ${source.dir}/context7
+            spdx:
+              name: context7-mcp
+              version: 3.2.5
+              packages:
+                - name: context7-mcp
+                  purl: pkg:npm/%40upstash/context7-mcp@3.2.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply CVE overrides
+          runs: |
+            set -eux -o pipefail
+
+            yq -y -i '.overrides."ajv" = "8.18.0"' pnpm-workspace.yaml               # CVE-2025-69873
+            yq -y -i '.overrides."body-parser" = "2.3.0"' pnpm-workspace.yaml        # CVE-2025-13466, CVE-2026-12590
+            yq -y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml           # CVE-2026-6321, CVE-2026-6322, CVE-2026-13676, CVE-2026-16221, CVE-2026-18446
+            yq -y -i '.overrides."hono" = "4.12.34"' pnpm-workspace.yaml             # CVE-2026-65290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287, CVE-2026-59895, CVE-2026-59896, CVE-2026-59897, CVE-2026-69207
+            yq -y -i '.overrides."@hono/node-server" = "2.0.10"' pnpm-workspace.yaml # GHSA-frvp-7c67-39w9, GHSA-9mqv-5hh9-4cgg
+            yq -y -i '.overrides."ip-address" = "10.3.1"' pnpm-workspace.yaml        # CVE-2026-69192, CVE-2026-54272, CVE-2026-69198
+            yq -y -i '.overrides."path-to-regexp" = "8.4.0"' pnpm-workspace.yaml     # CVE-2026-4926, CVE-2026-4923
+            yq -y -i '.overrides."qs" = "6.15.2"' pnpm-workspace.yaml                # CVE-2025-15284, CVE-2026-2391, CVE-2026-8723
+            yq -y -i '.overrides."undici" = "6.28.0"' pnpm-workspace.yaml            # CVE-2026-12151, CVE-2026-16728, CVE-2026-16729, CVE-2026-15157
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+
+            corepack pnpm install --ignore-scripts
+            corepack pnpm --filter @upstash/context7-mcp build
+
+            mkdir -p '${target.dir}/usr/lib/context7-mcp/packages/mcp'
+        - name: install
+          work-dir: ${target.dir}/usr/lib/context7-mcp
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cp -t '${target.dir}/usr/lib/context7-mcp' '${source.dir}/context7/'{package.json,pnpm-lock.yaml,pnpm-workspace.yaml}
+            cp -r -t '${target.dir}/usr/lib/context7-mcp/packages/mcp' '${source.dir}/context7/packages/mcp/'{dist,package.json}
+
+            export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+
+            corepack pnpm install --filter @upstash/context7-mcp \
+              --frozen-lockfile --ignore-scripts --prod
+
+            rm -f '${target.dir}/usr/lib/context7-mcp/'{package.json,pnpm-lock.yaml,pnpm-workspace.yaml}
+
+            mkdir -p '${target.dir}/usr/bin'
+            ln -sf ../lib/context7-mcp/packages/mcp/dist/index.js '${target.dir}/usr/bin/context7-mcp'
+        - uses: dhi/build-pkg:0
+          with:
+            description: Upstash Context7 MCP server (Model Context Protocol server for Context7 documentation)
+            files:
+              - usr/lib/context7-mcp
+              - usr/bin/context7-mcp
+            formats:
+              - deb
+            license: MIT
+            name: context7-mcp
+            rel: 0
+            url: https://github.com/upstash/context7
+            version: 3.2.5
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
