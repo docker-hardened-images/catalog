@@ -1,0 +1,125 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-mongodb-mcp
+variant: runtime
+tags:
+  - 1.14.0
+  - 1.14.0-r0
+  - 1.14.0-debian13
+  - 1.14.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: b7d2a8ea682f99e794215415c71407ba96114f7d
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.14"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.14.0
+  VERSION: 1.14.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: mongodb-mcp
+      work-dir: ${source.dir}/mongodb-mcp-server
+      caches:
+        - path: /root/.local/share/pnpm
+        - path: /root/.npm
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/mongodb-js/mongodb-mcp-server.git#v1.14.0
+            checksum: b7d2a8ea682f99e794215415c71407ba96114f7d
+            path: ${source.dir}/mongodb-mcp-server
+            spdx:
+              name: mongodb-mcp-server
+              version: 1.14.0
+              packages:
+                - name: mongodb-mcp-server
+                  purl: pkg:dhi/mongodb-mcp@1.14.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump pnpm dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm pkg set pnpm.overrides.minimatch=10.2.3                                        # CVE-2026-26996, CVE-2026-27903, CVE-2026-27904
+            npm pkg set pnpm.overrides.qs=6.15.2                                               # CVE-2026-2391, CVE-2026-8723
+            npm pkg set pnpm.overrides."@modelcontextprotocol/sdk"=1.26.0                      # CVE-2026-25536
+            npm pkg set pnpm.overrides.hono=4.12.31                                            # CVE-2026-54290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287, CVE-2026-54289; 4.12.31 compatible with @hono/node-server 2.0.5
+            npm pkg set pnpm.overrides.fast-xml-parser=5.7.0                                   # CVE-2026-41650
+            npm pkg set pnpm.overrides.ip-address=10.1.1                                       # CVE-2026-42338
+            npm pkg set pnpm.overrides.fast-uri=3.1.4                                          # CVE-2026-16221
+            npm pkg set pnpm.overrides."@hono/node-server"=2.0.5                               # GHSA-frvp-7c67-39w9
+            npm pkg set pnpm.overrides."hono>@hono/node-server"=2.0.5                          # GHSA-frvp-7c67-39w9 (peer dependency override)
+            npm pkg set pnpm.packageExtensions.hono.peerDependencies."@hono/node-server"=2.0.5 # GHSA-frvp-7c67-39w9 (force peer dependency version)
+        - name: build and stage payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@latest --activate
+
+            rm -f pnpm-lock.yaml
+
+            pnpm install
+
+            npm run build
+
+            export CI=true
+            pnpm prune --prod --ignore-scripts
+
+            mkdir -p "${target.dir}/usr/lib/mongodb-mcp/packages"
+            cp -a node_modules "${target.dir}/usr/lib/mongodb-mcp/"
+            cp -a dist "${target.dir}/usr/lib/mongodb-mcp/"
+            cp -a packages/metrics "${target.dir}/usr/lib/mongodb-mcp/packages/"
+            cp -a packages/types "${target.dir}/usr/lib/mongodb-mcp/packages/"
+
+            mkdir -p "${target.dir}/usr/bin"
+            printf '#!/bin/sh\nexec node /usr/lib/mongodb-mcp/dist/esm/index.js "$@"\n' > "${target.dir}/usr/bin/mongodb-mcp-server"
+            chmod 0755 "${target.dir}/usr/bin/mongodb-mcp-server"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: MongoDB MCP Server (Model Context Protocol server for MongoDB)
+            files:
+              - usr/lib/mongodb-mcp
+              - usr/bin/mongodb-mcp-server
+            formats:
+              - deb
+            license: Apache-2.0
+            name: mongodb-mcp
+            rel: 0
+            url: https://github.com/mongodb-js/mongodb-mcp-server
+            version: 1.14.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
