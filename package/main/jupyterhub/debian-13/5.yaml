@@ -1,0 +1,139 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-jupyterhub
+variant: runtime
+tags:
+  - 5.5.0
+  - 5.5.0-r0
+  - 5.5.0-debian13
+  - 5.5.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-05-24"
+vars:
+  COMMIT_SHA: 97b3154610726b5b7d8768f1e89a4d910e002854
+  PYTHON_MINOR: "3.14"
+  PYTHON_VERSION: 3.14.6-5
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "5.5"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.5.0
+  VERSION: 5.5.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: jupyterhub
+      work-dir: ${source.dir}/jupyterhub
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - git
+          - grep
+          - libffi-dev
+          - libssl-dev
+          - libstdc++6
+          - python3-pip-whl
+          - python3-setuptools-whl
+          - sed
+          - zlib1g-dev
+          - libpython-3.14-minimal=3.14.6-5
+          - libpython-3.14-stdlib=3.14.6-5
+          - libpython-3.14=3.14.6-5
+          - python-3.14-minimal=3.14.6-5
+          - python-3.14=3.14.6-5
+          - python-3.14-dev=3.14.6-5
+        files:
+          - url: git+https://github.com/jupyterhub/jupyterhub.git#5.5.0
+            checksum: 97b3154610726b5b7d8768f1e89a4d910e002854
+            path: ${source.dir}/jupyterhub
+            spdx:
+              name: jupyterhub
+              version: 5.5.0
+              packages:
+                - name: jupyterhub
+                  purl: pkg:pypi/jupyterhub@5.5.0
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib"
+            /usr/bin/python3.14 -m venv "${target.dir}/usr/lib/jupyterhub"
+        - name: install jupyterhub
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV="${target.dir}/usr/lib/jupyterhub"
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            "$VENV/bin/python3" -m pip install --no-cache-dir "jupyterhub==5.5.0"
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV="${target.dir}/usr/lib/jupyterhub"
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: fix venv shebangs
+          runs: |
+            set -eux -o pipefail
+
+            VENV="${target.dir}/usr/lib/jupyterhub"
+            for f in "$VENV/bin"/*; do
+              [ -f "$f" ] || continue
+              read -r line < "$f" || true
+              case "$line" in
+                "#!${target.dir}"*) sed -i "1s|#!${target.dir}|#!|" "$f" ;;
+              esac
+            done
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf ../lib/jupyterhub/bin/jupyterhub "${target.dir}/usr/bin/jupyterhub"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Multi-user server for Jupyter notebooks
+            files:
+              - usr/lib/jupyterhub
+              - usr/bin/jupyterhub
+            formats:
+              - deb
+            license: BSD-3-Clause
+            name: jupyterhub
+            rel: 0
+            url: https://jupyterhub.readthedocs.io/
+            version: 5.5.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
