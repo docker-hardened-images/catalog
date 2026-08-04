@@ -38,6 +38,7 @@ contents:
     - bash
     - ca-certificates
     - coreutils
+    - libatomic1
     - libstdc++6
     - openssl
     - python-3.13
@@ -254,6 +255,12 @@ contents:
             exit 1
             EOF
             chmod +x "${target.dir}/usr/bin/supervisord"
+
+            # Put the Node.js runtime bundled with litellm on PATH as `node` so the
+            # prisma CLI (invoked by the proxy for `prisma migrate deploy`) uses it
+            # instead of downloading a Node via nodeenv at runtime (which needs
+            # network access and a writable cache and fails in locked-down runtimes).
+            ln -s ../lib/python3.13/site-packages/nodejs_wheel/bin/node "/opt/litellm/bin/node"
         - name: prepare runtime files
           work-dir: ${source.dir}/litellm-src
           runs: |
@@ -268,16 +275,31 @@ contents:
             chmod +x "${target.dir}/app/docker/entrypoint.sh"
             chmod +x "${target.dir}/app/docker/prod_entrypoint.sh"
         - name: generate prisma client
-          work-dir: ${target.dir}/app
+          work-dir: /app
           privileged: true
+          environment:
+            PRISMA_HOME_DIR: /app
           runs: |
             set -eux -o pipefail
 
-            # Generate the client into /app so the runtime image can import it.
-            # Pass --schema explicitly so Prisma uses the staged runtime schema.
             source "$VIRTUAL_ENV/bin/activate"
-            export PRISMA_HOME_DIR="${target.dir}/app"
+
+            cp "${target.dir}/app/schema.prisma" /app/schema.prisma
             python3 -m prisma generate --schema schema.prisma
+
+            # The prisma CLI wrapper (invoked by the proxy for `prisma migrate
+            # deploy` in PRISMA_OFFLINE_MODE) looks for the CLI at the *unversioned*
+            # path /app/.cache/prisma-python/binaries/node_modules/.bin/prisma, but
+            # prisma-client-py installs it under a version/engine-hash subdir. Add a
+            # stable symlink to the versioned node_modules so the offline lookup
+            # resolves without probing (and without needing network or a writable
+            # cache at runtime). Use an absolute target so the link is valid from
+            # any working directory at runtime.
+            versioned_node_modules=$(find /app/.cache/prisma-python/binaries -maxdepth 3 -type d -name node_modules | head -n1)
+            test -x "$versioned_node_modules/.bin/prisma"
+            ln -sfn "$versioned_node_modules" /app/.cache/prisma-python/binaries/node_modules
+
+            cp -a /app/.cache "${target.dir}/app/.cache"
         - name: python dependencies sbom
           uses: sbom@v1
           privileged: true
@@ -288,8 +310,8 @@ contents:
       outputs:
         - source: ${target.dir}/app
           target: /app
-          uid: 0
-          gid: 0
+          uid: 65532
+          gid: 65532
         - source: /opt/litellm
           target: /opt/litellm
           uid: 0
@@ -328,13 +350,19 @@ os-release:
 work-dir: /app
 environment:
   PATH: /opt/litellm/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+  PRISMA_BINARY_CACHE_DIR: /app/.cache/prisma-python/binaries
+  PRISMA_CLI_PATH: /app/.cache/prisma-python/binaries/node_modules/.bin/prisma
+  PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: "true"
+  PRISMA_HIDE_UPDATE_MESSAGE: "true"
   PRISMA_HOME_DIR: /app
+  PRISMA_OFFLINE_MODE: "true"
+  PRISMA_USE_GLOBAL_NODE: "true"
   PYTHON_VERSION: ${PYTHON_VERSION}
 paths:
   - type: directory
     path: /app
-    uid: 0
-    gid: 0
+    uid: 65532
+    gid: 65532
     mode: "0755"
 annotations:
   org.opencontainers.image.description: A minimal LiteLLM image - Universal LLM API Gateway
