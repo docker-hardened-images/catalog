@@ -1,0 +1,128 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-fetch-mcp
+variant: runtime
+tags:
+  - 2026.7.10
+  - 2026.7.10-r0
+  - 2026.7.10-debian13
+  - 2026.7.10-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
+  PYTHON_MINOR: "3.14"
+  PYTHON_VERSION: 3.14.6-5
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2026.7"
+  SEMVER_MAJOR_VERSION: "2026"
+  SEMVER_VERSION: 2026.7.10
+  UV_VERSION: 0.12.1
+  VERSION: 2026.7.10
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: fetch-mcp
+      work-dir: ${source.dir}
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - sed
+          - tar
+          - libpython-3.14=3.14.6-5
+          - libpython-3.14-minimal=3.14.6-5
+          - libpython-3.14-stdlib=3.14.6-5
+          - python-3.14-minimal=3.14.6-5
+          - python-3.14=3.14.6-5
+          - python-3.14-dev=3.14.6-5
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.1/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/modelcontextprotocol/servers.git#2026.7.10
+            checksum: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
+            path: ${source.dir}/servers
+            spdx:
+              name: fetch-mcp
+              version: 2026.7.10
+              packages:
+                - name: fetch-mcp
+                  purl: pkg:dhi/fetch-mcp@2026.7.10
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: apply CVE pins and stage fetch sources
+          runs: |
+            set -eux -o pipefail
+
+            FETCH_SRC="${source.dir}/servers/src/fetch"
+
+            sed -i '/"requests>=2\.32\.3",/a\"urllib3==2.7.0",' "${FETCH_SRC}/pyproject.toml"
+            sed -i '/"urllib3==2\.7\.0",/a\"starlette>=1.3.1",' "${FETCH_SRC}/pyproject.toml"
+            sed -i '/"starlette>=1\.3\.1",/a\"pydantic-settings>=2.14.2",' "${FETCH_SRC}/pyproject.toml"
+            sed -i '/"pydantic-settings>=2\.14\.2",/a"mcp<2.0.0",' "${FETCH_SRC}/pyproject.toml"
+
+            mkdir -p "${source.dir}/fetch"
+            cp -a "${FETCH_SRC}/." "${source.dir}/fetch/"
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.14
+            bash "${source.dir}/build-venv.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Fetch MCP server for web content retrieval
+            files:
+              - usr/lib/fetch-mcp
+              - usr/bin/mcp-server-fetch
+            formats:
+              - deb
+            license: MIT
+            name: fetch-mcp
+            rel: 0
+            url: https://github.com/modelcontextprotocol/servers/tree/main/src/fetch
+            version: 2026.7.10
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/fetch-mcp/build-venv.sh
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
