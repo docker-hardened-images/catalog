@@ -1,0 +1,118 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-mapbox-mcp
+variant: runtime
+tags:
+  - 0.14.0
+  - 0.14.0-r0
+  - 0.14.0-debian13
+  - 0.14.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-15"
+vars:
+  COMMIT_SHA: 8d26d7636a30dd0355db18bb2c64f3bc7112b41c
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.14"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.14.0
+  VERSION: 0.14.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: mapbox-mcp
+      work-dir: ${source.dir}/mapbox-mcp
+      caches:
+        - path: /root/.npm
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/mapbox/mcp-server.git#v0.14.0
+            checksum: 8d26d7636a30dd0355db18bb2c64f3bc7112b41c
+            path: ${source.dir}/mapbox-mcp
+            spdx:
+              name: mapbox-mcp
+              version: 0.14.0
+              packages:
+                - name: mapbox-mcp
+                  purl: pkg:npm/%40mapbox/mcp-server@0.14.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump dependencies
+          uses: npm/bump@v1
+          privileged: true
+          environment:
+            DHI_NO_SFW: "true"
+          with:
+            bumps: ${source.dir}/patch/npm-bump.json
+            npm-root: ${source.dir}/mapbox-mcp
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/mapbox-mcp"
+
+            npm pkg set \
+              "overrides.protobufjs@7"="7.6.5" \
+              "overrides.protobufjs@8"="8.6.6"
+            npm install --package-lock-only --ignore-scripts
+
+            npm ci --ignore-scripts
+
+            ./node_modules/.bin/tshy
+
+            rm -rf node_modules
+            npm ci --omit=dev --ignore-scripts
+            ./node_modules/.bin/patch-package
+
+            mkdir -p "${target.dir}/usr/lib/mapbox-mcp"
+            cp -a dist node_modules package.json "${target.dir}/usr/lib/mapbox-mcp/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Mapbox MCP server - Model Context Protocol server for Mapbox geospatial APIs
+            files:
+              - usr/lib/mapbox-mcp
+            formats:
+              - deb
+            license: MIT
+            name: mapbox-mcp
+            rel: 0
+            url: https://github.com/mapbox/mcp-server
+            version: 0.14.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bump.json
+          uid: 0
+          gid: 0
+          source: package/main/mapbox-mcp/patch/npm-bump.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
