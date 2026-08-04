@@ -1,0 +1,168 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-docker-ce
+variant: runtime
+tags:
+  - 29.6.2
+  - 29.6.2-r2
+  - 29.6.2-debian13
+  - 29.6.2-r2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-16"
+vars:
+  COMMIT_SHA: 3d80467678f6e36325fa9ae3dd486fe91e5652e3
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.5-0
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "29.6"
+  SEMVER_MAJOR_VERSION: "29"
+  SEMVER_VERSION: 29.6.2
+  TINI_COMMIT_SHA: de40ad007797e0dcd8b7126f27bb87401d224240
+  TINI_VERSION: 0.19.0
+  VERSION: 29.6.2
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: docker-ce deb
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - gcc
+          - git
+          - golang-1.26=1.26.5-0
+          - golang-1.26-oci-config=1.26.5-0
+          - libc6-dev
+          - libseccomp-dev
+          - libsystemd-dev
+          - make
+          - pkg-config
+          - sed
+        files:
+          - url: git+https://github.com/moby/moby.git#docker-v29.6.2
+            checksum: 3d80467678f6e36325fa9ae3dd486fe91e5652e3
+            path: /go/src/github.com/moby/moby
+            spdx:
+              name: docker-engine
+              version: 29.6.2
+              packages:
+                - name: docker-engine
+                  purl: pkg:golang/github.com/moby/moby/v2@29.6.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/krallin/tini.git#v0.19.0
+            checksum: de40ad007797e0dcd8b7126f27bb87401d224240
+            path: /go/src/github.com/krallin/tini
+            spdx:
+              name: tini
+              version: 0.19.0
+              packages:
+                - name: tini
+                  purl: pkg:github/krallin/tini@0.19.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update docker engine go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/moby/moby
+          with:
+            deps:
+              - github.com/klauspost/compress@v1.18.7
+              - golang.org/x/net@v0.57.0
+              - golang.org/x/text@v0.40.0
+              - google.golang.org/grpc@v1.83.0
+            download: true
+        - name: test docker engine after dependency updates
+          work-dir: /go/src/github.com/moby/moby
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -count=1 -timeout=5m -tags "nri_no_wasm journald" ./cmd/dockerd
+        - name: build docker engine
+          work-dir: /go/src/github.com/moby/moby
+          runs: |
+            set -eux -o pipefail
+
+            export DOCKER_GITCOMMIT="3d80467678f6e36325fa9ae3dd486fe91e5652e3"
+            export DOCKER_BUILDTAGS="nri_no_wasm journald"
+            export PRODUCT="docker"
+            export VERSION="29.6.2"
+            hack/make.sh dynbinary
+
+            mkdir -p "${target.dir}/usr/bin"
+            cp -a bundles/dynbinary-daemon/dockerd "${target.dir}/usr/bin/dockerd"
+            cp -a bundles/dynbinary-daemon/docker-proxy "${target.dir}/usr/bin/docker-proxy"
+        - name: build docker-init
+          work-dir: /go/src/github.com/krallin/tini
+          runs: |
+            set -eux -o pipefail
+
+            cmake .
+            make tini-static
+            install -Dm755 tini-static "${target.dir}/usr/libexec/docker/docker-init"
+        - name: stage docker-ce packaging assets
+          runs: |
+            set -eux -o pipefail
+
+            cp -a "${source.dir}/assets/etc" "${target.dir}/"
+            install -Dm644 \
+              "${source.dir}/assets/usr-lib/systemd/system/docker.service" \
+              "${target.dir}/usr/lib/systemd/system/docker.service"
+            install -Dm644 \
+              "${source.dir}/assets/usr-lib/systemd/system/docker.socket" \
+              "${target.dir}/usr/lib/systemd/system/docker.socket"
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: docker.io
+            depends:
+              - containerd.io
+              - docker-ce-cli
+              - iptables
+              - libc6
+              - libsystemd0
+              - nftables
+            description: Docker open-source application container engine
+            files:
+              - etc/default/docker
+              - etc/init.d/docker
+              - usr/bin/docker-proxy
+              - usr/bin/dockerd
+              - usr/lib/systemd/system/docker.service
+              - usr/lib/systemd/system/docker.socket
+              - usr/libexec/docker/docker-init
+            formats:
+              - deb
+            license: Apache-2.0
+            name: docker-ce
+            rel: 2
+            url: https://www.docker.com/
+            version: 5:29.6.2
+      paths:
+        - type: directory
+          path: ${source.dir}/assets
+          uid: 0
+          gid: 0
+          source: package/deb/main/docker-ce/debian-13/assets
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
