@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-npm
+variant: runtime
+tags:
+  - 12.0.2-alpine3.24
+  - 12.0.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  _REL: "0"
+  _VERSION: 11.12.1
+  COMMIT_SHA: c331ddc80f97bde2e3ab83edb2cd645e6836e66f
+  DHI_TEST_APK_PACKAGE: npm-12
+  PACKAGE_NAME: community/npm
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "12.0"
+  SEMVER_MAJOR_VERSION: "12"
+  SEMVER_VERSION: 12.0.2
+  VERSION: 12.0.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: abuild
+      work-dir: ${source.dir}/aports/community/npm
+      contents:
+        packages:
+          - nodejs
+        files:
+          - url: git+https://github.com/alpinelinux/aports.git#c331ddc80f97bde2e3ab83edb2cd645e6836e66f
+            path: ${source.dir}/aports
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/npm/-/npm-12.0.2.tgz
+            path: /var/cache/distfiles/npm-12.0.2.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz
+            checksum: sha256:515b5ab666558ed9a117483a310892aede54a68dd78f2d8db6604513e578571c
+            path: ${source.dir}/aports/community/npm/picomatch-4.0.4.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz
+            checksum: sha256:5d06001fddd25cbee90c96db4dc5b7b57711b984c3141e28d10f143deb52dbaf
+            path: ${source.dir}/aports/community/npm/brace-expansion-5.0.9.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/tar/-/tar-7.5.21.tgz
+            path: ${source.dir}/aports/community/npm/tar-7.5.21.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/undici/-/undici-6.28.0.tgz
+            checksum: sha256:32a86c6fa28fd48b915555048c05bbd37ad35457d9e945953831a4374c886a9c
+            path: ${source.dir}/aports/community/npm/undici-6.28.0.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz
+            checksum: sha256:ad1790063beea11a312c801df30d58e147de762f4f77787552376eb7424623e5
+            path: ${source.dir}/aports/community/npm/ip-address-10.3.1.tgz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: abuild/setup@v1
+        - runs: |
+            set -eux -o pipefail
+
+            # Rename the package to npm-12 so it is distinct from the npm (11.x) package
+            sed -i 's,^pkgname=npm$,pkgname=npm-12,' APKBUILD
+
+            # Provide and replace npm so npm-12 satisfies npm dependencies and owns its files
+            cat >> APKBUILD << 'EOF'
+
+            provides="npm=$pkgver-r$pkgrel"
+            replaces="$replaces npm"
+            EOF
+
+            # Remove the distro patch, we disable update checking via env var
+            sed -i 's,dont-check-for-last-version.patch,,' APKBUILD
+
+            # Add _vendor_replace function to APKBUILD
+            cat >> APKBUILD << 'EOF'
+
+            _vendor_replace() {
+                local pkg="$1" ver="$2" dir="$3"
+                rm -rf "$dir"/"$pkg"
+                tar -xzf "${source.dir}/aports/community/npm"/"$pkg"-"$ver".tgz -C "$dir"
+                mv "$dir"/package "$dir"/"$pkg"
+            }
+            _clean_socks() {
+                rm -rf node_modules/socks/.claude
+            }
+            EOF
+
+            # Replace default_prepare with _vendor_replace for brace-expansion, tar, picomatch, undici, and ip-address
+            # CVE-2026-69152: brace-expansion ReDoS
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace brace-expansion 5.0.9 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace tar 7.5.21 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace picomatch 4.0.4 node_modules/tinyglobby/node_modules,' APKBUILD
+            # CVE-2026-15157, CVE-2026-16728, CVE-2026-16729: undici
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace undici 6.28.0 node_modules,' APKBUILD
+            # CVE-2026-54272, CVE-2026-69192, CVE-2026-69198: ip-address
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace ip-address 10.3.1 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_clean_socks,' APKBUILD
+        - uses: abuild/bump@v1
+          with:
+            set: 0
+            version: 12.0.2
+        - uses: abuild/build@v1
+          with:
+            command: checksum
+        - uses: abuild/build@v1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
