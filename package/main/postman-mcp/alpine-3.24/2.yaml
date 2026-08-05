@@ -4,14 +4,14 @@ image: dhi.io/pkg-postman-mcp
 variant: runtime
 tags:
   - 2.11.2-alpine3.24
-  - 2.11.2-r4-alpine3.24
+  - 2.11.2-r5-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   COMMIT_SHA: 6ba0956e8ccdf9bd83c23626ab65e4a91022cab2
   PNPM_VERSION: 10.6.2
-  REL: "4"
+  REL: "5"
   SEMVER_MAJOR_MINOR_VERSION: "2.11"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.11.2
@@ -28,7 +28,14 @@ contents:
     - alpine-baselayout-data
   builds:
     - name: postman-mcp
-      work-dir: ${source.dir}/app-src
+      work-dir: ${source.dir}/postman-mcp
+      environment:
+        CI: "true"
+        PNPM_HOME: /pnpm
+        PNPM_VERSION: 10.6.2
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
       contents:
         packages:
           - bash
@@ -40,7 +47,7 @@ contents:
         files:
           - url: git+https://github.com/postmanlabs/postman-mcp-server.git#v2.11.2
             checksum: 6ba0956e8ccdf9bd83c23626ab65e4a91022cab2
-            path: ${source.dir}/app-src
+            path: ${source.dir}/postman-mcp
             spdx:
               name: postman-mcp
               version: 2.11.2
@@ -51,36 +58,41 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: build and stage payload
-          privileged: true
+        - name: pin vulnerable transitive dependencies
           runs: |
             set -eux -o pipefail
 
-            cd "${source.dir}/app-src"
+            cd "${source.dir}/postman-mcp"
 
             node -e '
               const fs = require("fs");
               const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
               p.pnpm = p.pnpm || {};
               Object.assign(p.pnpm.overrides = p.pnpm.overrides || {}, {
-                "handlebars": "4.7.9",
-                "node-forge": "1.4.0",
-                "flatted": "3.4.2",
+                "handlebars": "4.7.9",       // CVE-2026-33937 (CRIT),33938,33939,33940,33941 (HIGH)
+                "node-forge": "1.4.0",       // CVE-2026-33891,33894,33895,33896,2025-12816,66031 (HIGH)
+                "flatted": "3.4.2",          // CVE-2026-32141,33228 (HIGH)
                 "fast-uri": "3.1.5",         // CVE-2026-13676,16221,18446 (HIGH)
                 "hono": "4.12.34",           // CVE-2026-59895,59896,59897,69207 (MED)
-                "lodash": "4.18.0",
-                "path-to-regexp": "8.4.0",
-                "underscore": "1.13.8",
-                "express-rate-limit": "8.2.2",
+                "lodash": "4.18.0",          // CVE-2026-4800 (HIGH, code injection)
+                "path-to-regexp": "8.4.0",   // CVE-2026-4926 (HIGH, ReDoS)
+                "underscore": "1.13.8",      // CVE-2026-27601 (HIGH)
+                "express-rate-limit": "8.2.2", // CVE-2026-30827 (HIGH)
                 "qs": "6.15.2",              // CVE-2025-15284, CVE-2026-8723
                 "uuid": "13.0.1",            // CVE-2026-41907
                 "ip-address": "10.3.1",      // CVE-2026-42338,54272,69192,69198 (HIGH/MED)
                 "jose": "4.15.5",            // CVE-2024-28176
-                "@hono/node-server": "2.0.10", // GHSA-9mqv-5hh9-4cgg, GHSA-frvp-7c67-39w9 (MED)
+                "@hono/node-server": "2.0.10", // GHSA-9mqv-5hh9-4cgg (MED, memory leak), GHSA-frvp-7c67-39w9 (MED)
                 "body-parser": "2.3.0",      // CVE-2026-12590 (LOW)
               });
               fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
             '
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/postman-mcp"
 
             corepack enable
             corepack prepare pnpm@10.6.2 --activate
@@ -93,27 +105,20 @@ contents:
 
             mkdir -p "${target.dir}/usr/lib/nodejs/postman-mcp"
             cp -a dist node_modules package.json "${target.dir}/usr/lib/nodejs/postman-mcp/"
-
-            mkdir -p /opt/docker/sbom/postman-mcp
-            chmod -R 0777 /opt/docker/sbom
-        - uses: abuild/setup@v1
-          work-dir: ${source.dir}/aports/postman-mcp
-        - uses: abuild/apk@v1
-          work-dir: ${source.dir}/aports/postman-mcp
+        - uses: dhi/build-pkg:0
           with:
-            arch: noarch
-            depends: nodejs
+            depends:
+              - nodejs
             description: Postman MCP server (Model Context Protocol server for the Postman API)
             files:
               - usr/lib/nodejs/postman-mcp
+            formats:
+              - apk
             license: Apache-2.0
             name: postman-mcp
-            options: '!check !strip !fhs'
-            rel: 4
+            rel: 5
             url: https://www.postman.com/product/mcp-server/
             version: 2.11.2
-        - uses: abuild/build@v1
-          work-dir: ${source.dir}/aports/postman-mcp
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
