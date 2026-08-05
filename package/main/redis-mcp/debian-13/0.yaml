@@ -1,0 +1,144 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-redis-mcp
+variant: runtime
+tags:
+  - 0.5.1
+  - 0.5.1-r0
+  - 0.5.1-debian13
+  - 0.5.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 11e67e44358cd6410d5a7e615a29539ccd71a045
+  PYTHON_MINOR: "3.14"
+  PYTHON_VERSION: 3.14.6-5
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.5"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.5.1
+  VERSION: 0.5.1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: redis-mcp
+      work-dir: ${source.dir}
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - uv
+          - libpython-3.14-minimal=3.14.6-5
+          - libpython-3.14-stdlib=3.14.6-5
+          - libpython-3.14=3.14.6-5
+          - python-3.14-minimal=3.14.6-5
+          - python-3.14=3.14.6-5
+        files:
+          - url: git+https://github.com/redis/mcp-redis.git#0.5.1
+            checksum: 11e67e44358cd6410d5a7e615a29539ccd71a045
+            path: ${source.dir}/src
+            spdx:
+              name: redis-mcp-server
+              version: 0.5.1
+              packages:
+                - name: redis-mcp-server
+                  purl: pkg:pypi/redis-mcp-server@0.5.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply CVE pins and add version option
+          work-dir: ${source.dir}/src
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf .git tests
+
+            python3 - << 'PY'
+            from pathlib import Path
+
+            pyproject = Path("pyproject.toml")
+            data = pyproject.read_text()
+            if "[tool.uv]" in data:
+                raise SystemExit("pyproject.toml already defines [tool.uv]; merge constraint-dependencies manually")
+            constraints = [
+                "aiohttp>=3.14.1",
+                "cryptography>=50.0.0",  # CVE-2026-69247
+                "idna>=3.15",
+                "mcp<2.0.0",
+                "pygments>=2.20.0",
+                "pyjwt>=2.13.0",
+                "python-dotenv>=1.2.2",
+                "python-multipart>=0.0.31",
+                "requests>=2.33.0",
+                "starlette>=1.3.1",
+                "urllib3>=2.7.0",
+            ]
+            constraint_lines = "\n".join(f'    "{constraint}",' for constraint in constraints)
+            pyproject.write_text(
+                data.rstrip()
+                + f'\n\n[tool.uv]\nconstraint-dependencies = [\n{constraint_lines}\n]\n'
+            )
+
+            main = Path("src/main.py")
+            data = main.read_text()
+            if "from src.version import __version__" not in data:
+                data = data.replace(
+                    "from src.common.logging_utils import configure_logging\n",
+                    "from src.common.logging_utils import configure_logging\nfrom src.version import __version__\n",
+                )
+            if "@click.version_option(__version__)" not in data:
+                data = data.replace("@click.command()\n", "@click.command()\n@click.version_option(__version__)\n")
+            main.write_text(data)
+            PY
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}/src" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.14
+            bash "${source.dir}/build-venv.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Redis MCP Server - Model Context Protocol server for Redis
+            files:
+              - usr/lib/redis-mcp
+              - usr/bin/redis-mcp-server
+            formats:
+              - deb
+            license: MIT
+            name: redis-mcp
+            rel: 0
+            url: https://github.com/redis/mcp-redis
+            version: 0.5.1
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/redis-mcp/build-venv.sh
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
