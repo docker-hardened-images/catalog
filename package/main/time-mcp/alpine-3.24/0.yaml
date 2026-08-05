@@ -1,0 +1,123 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-time-mcp
+variant: runtime
+tags:
+  - 2026.7.10-alpine3.24
+  - 2026.7.10-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
+  PYTHON_VERSION: 3.14.6-r2
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2026.7"
+  SEMVER_MAJOR_VERSION: "2026"
+  SEMVER_VERSION: 2026.7.10
+  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.12.1
+  VERSION: 2026.7.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: time-mcp
+      work-dir: ${source.dir}
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - libffi-dev
+          - openssl-dev
+          - sed
+          - python-3.14
+          - python-3.14-dev
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.1/uv-${UV_ARCH}.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.12.1/uv-${UV_ARCH}.tar.gz.sha256
+            path: ${source.dir}/uv.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/modelcontextprotocol/servers.git#2026.7.10
+            checksum: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
+            path: ${source.dir}/servers
+            spdx:
+              name: time-mcp
+              version: 2026.7.10
+              packages:
+                - name: time-mcp
+                  purl: pkg:dhi/time-mcp@2026.7.10
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: apply CVE pins and stage time sources
+          runs: |
+            set -eux -o pipefail
+
+            TIME_SRC="${source.dir}/servers/src/time"
+
+            sed -i '/dependencies = \[/a\    "starlette>=1.3.1",' "${TIME_SRC}/pyproject.toml"
+            sed -i '/^\[tool\.uv\]$/a constraint-dependencies = ["mcp<2.0.0"]' "${TIME_SRC}/pyproject.toml"
+
+            mkdir -p "${source.dir}/time"
+            cp -a "${TIME_SRC}/." "${source.dir}/time/"
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.14
+            bash "${source.dir}/build-venv.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Time MCP server for time queries and timezone conversions
+            files:
+              - usr/lib/time-mcp
+              - usr/bin/mcp-server-time
+            formats:
+              - apk
+            license: MIT
+            name: time-mcp
+            rel: 0
+            url: https://github.com/modelcontextprotocol/servers/tree/main/src/time
+            version: 2026.7.10
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/time-mcp/build-venv.sh
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
