@@ -1,0 +1,52 @@
+// wiremock's build.gradle pins handlebars/jackson/commons-lang3 versions that
+// carry known CVEs (see the `versions` map and dependencies block). Force the
+// runtime classpath to fixed releases within the same minor/major series
+// (low-risk patch bumps, not upstream-breaking major upgrades):
+//   jackson 2.20.1 -> 2.22.1  fixes CVE-2026-54512/54513/54514/54515/59888
+//                              and GHSA-r7wm-3cxj-wff9 / GHSA-72hv-8253-57qq
+//                              (jackson-annotations uses its own coarser
+//                              MAJOR.MINOR scheme, so it forces to 2.22)
+//   handlebars 4.3.1 -> 4.5.4 fixes CVE-2026-55760
+//   commons-lang3 3.12.0 -> 3.19.0 fixes CVE-2025-48924
+// jetty stays at 11.0.26 (the last version published to Maven Central for the
+// 11.0.x line): the fixes for jetty's CVEs require either unpublished 11.0.x
+// patch releases (Jetty 11 is EOL) or a Jetty 12 major upgrade, which is a
+// jakarta.servlet namespace migration wiremock's 3.x branch has not adopted.
+// See vex/pkg-wiremock/jetty.vex.json for the under_investigation VEX.
+allprojects {
+  configurations.all {
+    resolutionStrategy {
+      force(
+        'com.fasterxml.jackson.core:jackson-core:2.22.1',
+        'com.fasterxml.jackson.core:jackson-annotations:2.22',
+        'com.fasterxml.jackson.core:jackson-databind:2.22.1',
+        'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.1',
+        'com.github.jknack:handlebars:4.5.4',
+        'com.github.jknack:handlebars-helpers:4.5.4',
+        'org.apache.commons:commons-lang3:3.19.0',
+      )
+    }
+  }
+}
+
+// wiremock's shadowJar shades project.configurations.runtimeClasspath into the
+// wiremock-standalone jar and relocates the merged classes (see
+// `shadowJar { configurations = [project.configurations.runtimeClasspath] }`
+// and the `relocate(...)` calls in build.gradle), which strips the
+// per-dependency META-INF/maven/*/pom.properties metadata that Syft's default
+// java-archive cataloger relies on to identify bundled libraries. This task
+// copies the same, unshaded runtime classpath jars into a plain directory so
+// `sbom@v1` + `extra-scanners: java-archive-cataloger` can see the real
+// dependency set (Jetty, Jackson, Guava, Apache HttpClient, json-smart,
+// jayway JsonPath, XMLUnit, Handlebars, jakarta.servlet, Hamcrest, etc.)
+// that actually ships inside wiremock-standalone.jar.
+rootProject {
+  afterEvaluate { project ->
+    project.tasks.register('dhiCopyRuntimeDeps', Copy) {
+      from(project.configurations.getByName('runtimeClasspath')) {
+        include '*.jar'
+      }
+      into "${project.projectDir}/build/dhi-runtime-deps"
+    }
+  }
+}
