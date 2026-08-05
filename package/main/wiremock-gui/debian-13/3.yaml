@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-wiremock-gui
+variant: runtime
+tags:
+  - 3.13.191
+  - 3.13.191-r0
+  - 3.13.191-debian13
+  - 3.13.191-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-08-23"
+vars:
+  COMMIT_SHA: 55e6f78b022d4509997c6562f80d2ae0825a6380
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk17-debian13-dev@sha256:6bca626da7464fc5aa033ddac9c3073e9d2e880cc14d1391dadef5ade74f7399
+  PACKAGE_NAME: wiremock-gui
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.13"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.13.191
+  VERSION: 3.13.191
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: wiremock-gui
+      uses: dhi.io/gradle:8.14.5-jdk17-debian13-dev@sha256:6bca626da7464fc5aa033ddac9c3073e9d2e880cc14d1391dadef5ade74f7399
+      work-dir: ${source.dir}/wiremock-gui
+      caches:
+        - path: /root/.gradle
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - jq
+          - libatomic1
+          - libc6
+          - libstdc++6
+          - nodejs
+          - npm
+        files:
+          - url: git+https://github.com/holomekc/wiremock.git#3.13.191
+            checksum: 55e6f78b022d4509997c6562f80d2ae0825a6380
+            path: ${source.dir}/wiremock-gui
+            spdx:
+              name: wiremock-gui
+              version: 3.13.191
+              packages:
+                - name: wiremock-gui
+                  purl: pkg:github/holomekc/wiremock@3.13.191
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare npm resolution for the forced angular bump
+          work-dir: ${source.dir}/wiremock-gui/webapp/wiremock
+          runs: |
+            set -eux -o pipefail
+
+            printf 'force=true\n' > .npmrc
+        - name: pin patched webapp dependencies for cve remediation
+          uses: npm/bump@v1
+          privileged: true
+          environment:
+            npm_config_ignore_scripts: "true"
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: ${source.dir}/wiremock-gui/webapp/wiremock
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            gradle shadowJar --no-daemon --console=plain \
+              -x spotlessCheck -x spotlessJavaCheck -x spotlessJava
+        - name: install production dependencies for sbom
+          work-dir: ${source.dir}/wiremock-gui/webapp/wiremock
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+            npm install --omit=dev --ignore-scripts
+        - name: ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: wiremock-gui-ui
+            source: ${source.dir}/wiremock-gui/webapp/wiremock/node_modules
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/wiremock-gui"
+            find build/libs -name "wiremock-standalone*.jar" -type f | head -1 | xargs -I {} cp {} "${target.dir}/usr/share/wiremock-gui/wiremock-standalone.jar"
+        - uses: dhi/build-pkg:0
+          privileged: true
+          with:
+            description: WireMock with an Angular admin webapp
+            files:
+              - usr/share/wiremock-gui/wiremock-standalone.jar
+            formats:
+              - deb
+            license: Apache-2.0
+            name: wiremock-gui
+            rel: 0
+            url: https://github.com/holomekc/wiremock
+            version: 3.13.191
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/wiremock-gui/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
