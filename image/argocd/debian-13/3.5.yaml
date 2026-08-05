@@ -1,27 +1,30 @@
 # syntax=dhi.io/build:2-debian13
 
-name: ArgoCD 3.4.x
+name: ArgoCD 3.5.x
 image: dhi.io/argocd
 variant: runtime
 tags:
-  - "3.4"
-  - 3.4.6
-  - 3.4-debian
-  - 3.4-debian13
-  - 3.4.6-debian
-  - 3.4.6-debian13
+  - "3"
+  - "3.5"
+  - 3.5.0
+  - 3-debian
+  - 3-debian13
+  - 3.5-debian
+  - 3.5-debian13
+  - 3.5.0-debian
+  - 3.5.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2026-05-06"
+  release: "2026-08-04"
 vars:
   ARGOCD_USER_ID: "999"
-  COMMIT_SHA: e1becb74c728a992804d39c3ceb2e9e6ae58f0ae
-  SEMVER_MAJOR_MINOR_VERSION: "3.4"
+  COMMIT_SHA: e95e1be88a2da6c06bff5c2fe1791e4d233ed810
+  SEMVER_MAJOR_MINOR_VERSION: "3.5"
   SEMVER_MAJOR_VERSION: "3"
-  SEMVER_VERSION: 3.4.6
-  VERSION: 3.4.6
+  SEMVER_VERSION: 3.5.0
+  VERSION: 3.5.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -82,69 +85,99 @@ contents:
           - npm
           - yarn-classic
         files:
-          - url: git+https://github.com/argoproj/argo-cd.git#v3.4.6
-            checksum: e1becb74c728a992804d39c3ceb2e9e6ae58f0ae
+          - url: git+https://github.com/argoproj/argo-cd.git#v3.5.0
+            checksum: e95e1be88a2da6c06bff5c2fe1791e4d233ed810
             path: /go/src/github.com/argoproj/argo-cd/v3
             spdx:
               name: argocd
-              version: 3.4.6
+              version: 3.5.0
               packages:
                 - name: argocd
-                  purl: pkg:dhi/argocd@3.4.6
+                  purl: pkg:dhi/argocd@3.5.0
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
-        - name: patch-go (3.4 only)
+        - name: patch-go (3.5 only)
           uses: go/bump@v2
           work-dir: /go/src/github.com/argoproj/argo-cd/v3
           caches:
             - path: /go/pkg/mod
           with:
             deps:
-              - golang.org/x/net@v0.56.0
-              - golang.org/x/text@v0.39.0
-              - github.com/cloudflare/circl@v1.6.3
-              - github.com/go-git/go-git/v5@v5.19.1
               - github.com/klauspost/compress@v1.18.7
-              - github.com/moby/spdystream@v0.5.1
               - github.com/slack-go/slack@v0.23.1
-              - go.opentelemetry.io/otel@v1.44.0
-              - go.opentelemetry.io/otel/sdk@v1.43.0
               - google.golang.org/grpc@v1.82.1
               - oras.land/oras-go/v2@v2.6.2
             tidy: true
-        - name: patch-node
-          uses: yarn/bump@v2
-          caches:
-            - path: /usr/local/share/.cache/yarn
-          with:
-            bumps: ${source.dir}/patches/yarn-patches-3.4.json
-            yarn-root: /go/src/github.com/argoproj/argo-cd/v3/ui
-        - name: build-ui (yarn)
+        - name: bump-pnpm (3.5 only)
           work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
           privileged: true
+          environment:
+            PNPM_HOME: /pnpm
           caches:
-            - path: /usr/local/share/.cache/yarn
+            - path: /pnpm/store
           runs: |
             set -eux -o pipefail
 
-            yarn
-            yarn run build
-        - name: prepare ui for sbom (yarn)
+            corepack enable
+            corepack prepare pnpm@10.28.1 --activate
+            pnpm config set store-dir /pnpm/store
+
+            # CVE remediations (equivalent of yarn-patches for the yarn-classic lines).
+            npm pkg set pnpm.overrides.formidable=2.1.3
+            npm pkg set pnpm.overrides.js-yaml=4.3.0
+            npm pkg set pnpm.overrides.minimatch=5.1.8
+            # lodash 4.18.0/4.18.1 are deprecated "Bad release"s that break
+            # webpack's html-webpack-plugin (_.template). 4.17.23 is the newest
+            # non-deprecated release and still covers CVE-2026-4800/CVE-2026-2950.
+            npm pkg set pnpm.overrides.lodash-es=4.17.23
+            npm pkg set pnpm.overrides.lodash=4.17.23
+            npm pkg set pnpm.overrides.fast-xml-parser=5.7.0
+            npm pkg set pnpm.overrides.dompurify=3.4.12
+            npm pkg set pnpm.overrides.form-data=4.0.6
+            npm pkg set pnpm.overrides.qs=6.15.2
+            npm pkg set pnpm.overrides.yaml=1.10.3
+            npm pkg set pnpm.overrides.unidiff=1.0.4
+            npm pkg set pnpm.overrides.date-fns=4.1.0
+            npm pkg set pnpm.overrides.uuid=11.1.1
+            npm pkg set pnpm.overrides.brace-expansion=5.0.9 # CVE-2026-69152
+            npm pkg set pnpm.overrides.linkify-it=5.0.2      # CVE-2026-48801, CVE-2026-59887
+
+            # tsx is pulled into argocd-ui dependencies but should not ship.
+            npm pkg delete dependencies.tsx devDependencies.tsx
+            # Issue opened: https://github.com/argoproj/argo-cd/issues/24978
+            npm pkg delete dependencies.react-hot-loader devDependencies.react-hot-loader # CVE-2025-57352
+
+            # Refresh the lockfile so the overrides above are honored.
+            pnpm install --lockfile-only
+        - name: build-ui (pnpm, 3.5 only)
           work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
           privileged: true
+          environment:
+            NODE_ENV: production
+            NODE_ONLINE_ENV: online
+            PNPM_HOME: /pnpm
           caches:
-            - path: /usr/local/share/.cache/yarn
+            - path: /pnpm/store
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install
+            pnpm build
+        - name: prepare ui for sbom (pnpm, 3.5 only)
+          work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
+          privileged: true
+          environment:
+            PNPM_HOME: /pnpm
+          caches:
+            - path: /pnpm/store
           runs: |
             set -eux -o pipefail
 
             rm -rf node_modules
-            # tsx is included in the dependencies of argocd-ui but should not.
-            yarn remove tsx
-            # Issue opened: https://github.com/argoproj/argo-cd/issues/24978
-            yarn remove react-hot-loader # CVE-2025-57352
-            yarn install --production
+            # tsx / react-hot-loader already dropped in the bump-pnpm step above.
+            pnpm install --prod
         - name: ui-sbom
           uses: sbom@v1
           with:
@@ -160,20 +193,14 @@ contents:
           with:
             ldflags:
               - -extldflags '-static'
-              - -X github.com/argoproj/argo-cd/v3/common.version=3.4.6
-              - -X github.com/argoproj/argo-cd/v3/common.gitTag=v3.4.6
+              - -X github.com/argoproj/argo-cd/v3/common.version=3.5.0
+              - -X github.com/argoproj/argo-cd/v3/common.gitTag=v3.5.0
               - -X github.com/argoproj/argo-cd/v3/common.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
-              - -X github.com/argoproj/argo-cd/v3/common.gitCommit=e1becb74c728a992804d39c3ceb2e9e6ae58f0ae
+              - -X github.com/argoproj/argo-cd/v3/common.gitCommit=e95e1be88a2da6c06bff5c2fe1791e4d233ed810
               - -X github.com/argoproj/argo-cd/v3/common.gitTreeState=clean
               - -X github.com/argoproj/argo-cd/v3/common.kubectlVersion=$(go list -m k8s.io/client-go | head -n 1 | rev | cut -d' ' -f1 | rev)
             output: ${target.dir}/usr/local/bin/argocd
             packages: ./cmd
-      paths:
-        - type: file
-          path: /src/patches/yarn-patches-3.4.json
-          uid: 0
-          gid: 0
-          source: image/argocd/patch/yarn-patches-3.4.json
       outputs:
         - source: ${target.dir}/usr/local/bin/argocd
           target: /usr/local/bin/argocd
