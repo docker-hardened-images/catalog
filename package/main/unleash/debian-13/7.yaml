@@ -1,0 +1,195 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-unleash
+variant: runtime
+tags:
+  - 7.6.5
+  - 7.6.5-r0
+  - 7.6.5-debian13
+  - 7.6.5-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-06-11"
+vars:
+  COMMIT_SHA: b501005d1d9961605e9c7b5333d17c8ca14579f1
+  PACKAGE_NAME: unleash-7
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "7.6"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.6.5
+  VERSION: 7.6.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: unleash
+      work-dir: ${source.dir}/unleash
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/Unleash/unleash.git#v7.6.5
+            checksum: b501005d1d9961605e9c7b5333d17c8ca14579f1
+            path: ${source.dir}/unleash
+            spdx:
+              name: unleash
+              version: 7.6.5
+              packages:
+                - name: unleash
+                  purl: pkg:npm/unleash-server@7.6.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump yarn deps
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+
+            jq '.resolutions += {
+              "ajv/fast-uri": "3.1.5",
+              "axios": "1.18.0",
+              "body-parser": "1.20.6",
+              "body-parser/qs": "6.15.2",
+              "express/qs": "6.15.2",
+              "unleash-client/ip-address": "10.3.1",
+              "express-rate-limit/ip-address": "10.3.1",
+              "ip-address": "10.3.1",
+              "devalue": "5.8.1",
+              "svelte": "5.55.7",
+              "yaml": "1.10.3",
+              "joi": "18.2.1",
+              "react-router": "6.30.4",
+              "form-data": "4.0.6",
+              "js-yaml": "4.3.0",
+              "tar": "7.5.21",
+              "brace-expansion": "5.0.9",
+              "nodemailer": "9.0.1",
+              "json-2-csv": "5.5.11",
+              "postcss": "8.5.23"
+            }' package.json > package.tmp.json
+            mv package.tmp.json package.json
+
+            jq '.resolutions += {
+              "ajv/fast-uri": "3.1.5",
+              "axios": "1.18.0",
+              "devalue": "5.8.1",
+              "svelte": "5.55.7",
+              "yaml": "1.10.3",
+              "react-router": "6.30.4",
+              "form-data": "4.0.6",
+              "js-yaml": "4.3.0",
+              "tar": "7.5.21",
+              "brace-expansion": "5.0.9",
+              "nodemailer": "9.0.1",
+              "json-2-csv": "5.5.11",
+              "postcss": "8.5.23",
+              "ip-address": "10.3.1"
+            }' frontend/package.json > frontend/package.tmp.json
+            mv frontend/package.tmp.json frontend/package.json
+
+            sed -i 's/--immutable//' scripts/build-frontend-if-needed.sh
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            yarn install
+            yarn prepare:backend
+            yarn local:package
+            yarn build:frontend:if-needed
+        - name: reorganize build
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p build/frontend
+            mv frontend/build build/frontend/build
+        - name: fix frontend dependency classification
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/frontend-deps.patch
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+
+            rm -rf node_modules frontend/node_modules
+
+            yarn workspaces focus -A --production
+
+            cd frontend
+            yarn workspaces focus --production
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-7-frontend
+            source: ${source.dir}/unleash/frontend/node_modules
+        - name: copy app files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/unleash-7"
+
+            cp -r build/dist "${target.dir}/usr/lib/unleash-7/"
+            cp -r build/frontend "${target.dir}/usr/lib/unleash-7/"
+            cp build/package.json "${target.dir}/usr/lib/unleash-7/"
+            cp -r node_modules "${target.dir}/usr/lib/unleash-7/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: Unleash, an open-source feature flag management platform
+            files:
+              - usr/lib/unleash-7
+            formats:
+              - deb
+            license: Apache-2.0
+            name: unleash-7
+            rel: 0
+            url: https://github.com/Unleash/unleash
+            version: 7.6.5
+      paths:
+        - type: file
+          path: ${source.dir}/patch/frontend-deps.patch
+          uid: 0
+          gid: 0
+          source: package/main/unleash/patch/frontend-deps.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

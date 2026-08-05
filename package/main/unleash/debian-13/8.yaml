@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-unleash
+variant: runtime
+tags:
+  - 8.1.0
+  - 8.1.0-r0
+  - 8.1.0-debian13
+  - 8.1.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-09"
+vars:
+  COMMIT_SHA: 9445b1e570e9fe1e41083c6787929cfef58a7cc3
+  PACKAGE_NAME: unleash-8
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "8.1"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.1.0
+  VERSION: 8.1.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: unleash
+      work-dir: ${source.dir}/unleash
+      caches:
+        - path: /root/.local/share/pnpm/store
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+          - yq
+        files:
+          - url: git+https://github.com/Unleash/unleash.git#v8.1.0
+            checksum: 9445b1e570e9fe1e41083c6787929cfef58a7cc3
+            path: ${source.dir}/unleash
+            spdx:
+              name: unleash
+              version: 8.1.0
+              packages:
+                - name: unleash
+                  purl: pkg:npm/unleash-server@8.1.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump pnpm deps for cve fixes
+          runs: |
+            set -eux -o pipefail
+
+            yq -Y -i '.overrides."nodemailer" = "9.0.1"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."js-yaml" = "4.3.0"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."brace-expansion" = "2.1.4"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."body-parser" = "1.20.6"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."postcss" = "8.5.23"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."ip-address" = "10.3.1"' pnpm-workspace.yaml
+
+            yq -Y -i '.minimumReleaseAgeExclude += ["nodemailer@9.0.1"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["js-yaml@4.3.0"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["brace-expansion@2.1.4"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["body-parser@1.20.6"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["fast-uri@3.1.5"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["postcss@8.5.23"]' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude += ["ip-address@10.3.1"]' pnpm-workspace.yaml
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            pnpm install --no-frozen-lockfile --ignore-scripts
+            pnpm prepare:backend
+            pnpm local:package
+            pnpm build:frontend:if-needed
+        - name: reorganize build
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p build/frontend
+            mv frontend/build build/frontend/build
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-8-frontend
+            source: ${source.dir}/unleash/frontend/node_modules
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            CI=true pnpm prune --prod --ignore-scripts
+        - name: copy app files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/unleash-8"
+
+            cp -r build/dist "${target.dir}/usr/lib/unleash-8/"
+            cp -r build/frontend "${target.dir}/usr/lib/unleash-8/"
+            cp build/package.json "${target.dir}/usr/lib/unleash-8/"
+            cp -r node_modules "${target.dir}/usr/lib/unleash-8/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: Unleash, an open-source feature flag management platform
+            files:
+              - usr/lib/unleash-8
+            formats:
+              - deb
+            license: Apache-2.0
+            name: unleash-8
+            rel: 0
+            url: https://github.com/Unleash/unleash
+            version: 8.1.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
