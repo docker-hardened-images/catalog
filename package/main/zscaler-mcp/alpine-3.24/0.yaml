@@ -4,16 +4,18 @@ image: dhi.io/pkg-zscaler-mcp
 variant: runtime
 tags:
   - 0.14.0-alpine3.24
-  - 0.14.0-r1-alpine3.24
+  - 0.14.0-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   COMMIT_SHA: 1872e3bdad259457f9261801841b4a8d3f4a6074
-  REL: "1"
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "0.14"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.14.0
+  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.12.2
   VERSION: 0.14.0
 contents:
   repositories:
@@ -27,17 +29,36 @@ contents:
     - alpine-baselayout-data
   builds:
     - name: zscaler-mcp
+      environment:
+        UV_COMPILE_BYTECODE: "1"
+      caches:
+        - path: /root/.cache/uv
       contents:
         packages:
-          - python3
-          - py3-pip
-          - python3-dev
-          - gcc
-          - musl-dev
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
           - libffi-dev
           - openssl-dev
-          - ca-certificates
+          - sed
+          - python3
+          - python3-dev
         files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.2/uv-${UV_ARCH}.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.12.2/uv-${UV_ARCH}.tar.gz.sha256
+            path: ${source.dir}/uv.tar.gz
+            spdx:
+              name: uv-binary
+              version: 0.12.2
+              packages:
+                - name: uv
+                  purl: pkg:github/astral-sh/uv@0.12.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
           - url: git+https://github.com/zscaler/zscaler-mcp-server.git#v0.14.0
             checksum: 1872e3bdad259457f9261801841b4a8d3f4a6074
             path: ${source.dir}/src
@@ -51,66 +72,42 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: create virtual environment
+        - name: setup uv
           runs: |
             set -eux -o pipefail
 
-            python3 -m venv "${target.dir}/opt/zscaler-mcp"
-        - name: build and install zscaler-mcp from source
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build venv at final path and stage it
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            "${target.dir}/opt/zscaler-mcp/bin/pip" install --no-cache-dir \
-              "${source.dir}/src[gcp]"
-            "${target.dir}/opt/zscaler-mcp/bin/pip" install --no-cache-dir \
-              "cryptography>=50.0.0" # CVE-2026-69247
-        - name: strip build tooling from the venv
-          runs: |
-            set -eux -o pipefail
-
-            "${target.dir}/opt/zscaler-mcp/bin/python" -m pip uninstall -y pip setuptools wheel || true
-            rm -f "${target.dir}/opt/zscaler-mcp/bin/"pip*
-        - name: fix venv shebangs
-          runs: |
-            set -eux -o pipefail
-
-            for f in "${target.dir}/opt/zscaler-mcp/bin"/*; do
-              [ -f "$f" ] || continue
-              read -r line < "$f"
-              case "$line" in
-                "#!${target.dir}"*) sed -i "1s|#!${target.dir}|#!|" "$f" ;;
-              esac
-            done
-        - name: clean python cache
-          runs: |
-            set -eux -o pipefail
-
-            find "${target.dir}/opt/zscaler-mcp" \
-              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
-              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
-              -exec rm -rf '{}' + || true
-        - name: create usr/bin symlink
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${target.dir}/usr/bin"
-            ln -sf /opt/zscaler-mcp/bin/zscaler-mcp "${target.dir}/usr/bin/zscaler-mcp"
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3
+            bash "${source.dir}/build-venv.sh"
         - uses: dhi/build-pkg:0
           with:
             depends:
               - python3
-            description: Zscaler MCP server - Model Context Protocol server for the Zscaler Zero Trust Exchange
+            description: Zscaler MCP Server - Model Context Protocol server for the Zscaler Zero Trust Exchange platform
             files:
-              - usr
-              - opt
+              - opt/zscaler-mcp
+              - usr/bin/zscaler-mcp
             formats:
               - apk
             license: MIT
             name: zscaler-mcp
-            rel: 1
+            rel: 2
             url: https://github.com/zscaler/zscaler-mcp-server
             version: 0.14.0
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/zscaler-mcp/build-venv.sh
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
