@@ -18,11 +18,10 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: b250c2515694eee4b6df4db82fa056df9ed3e306
   SEMVER_MAJOR_MINOR_VERSION: "3.2"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.2.5
-  VERSION: 3.2.5
+  VERSION: 3.2.5-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,97 +33,13 @@ contents:
     - '!original-awk'
     - base-files
     - ca-certificates-bundle
+    - context7-mcp=3.2.5-0
     - libc6
     - libgomp1
     - libstdc++6
     - netbase
     - nodejs-24
     - tzdata
-  builds:
-    - name: context7-mcp
-      work-dir: ${source.dir}/context7
-      contents:
-        packages:
-          - yq
-          - nodejs-24
-          - npm
-          - node-corepack
-          - yarn-classic
-          - base-files
-          - ca-certificates
-          - libc6
-          - libstdc++6
-          - bash
-          - coreutils
-          - findutils
-          - git
-          - sed
-          - sfw-free
-          - sfw-free-oci-config
-        files:
-          - url: git+https://github.com/upstash/context7.git#@upstash/context7-mcp@3.2.5
-            checksum: b250c2515694eee4b6df4db82fa056df9ed3e306
-            path: ${source.dir}/context7
-            spdx:
-              name: context7-mcp
-              version: 3.2.5
-              packages:
-                - name: context7-mcp
-                  purl: pkg:npm/%40upstash/context7-mcp@3.2.5
-                  license: MIT
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update dependencies
-          runs: |
-            set -eux -o pipefail
-
-            yq -y -i '.overrides."ajv" = "8.18.0"' pnpm-workspace.yaml               # CVE-2025-69873
-            yq -y -i '.overrides."body-parser" = "2.3.0"' pnpm-workspace.yaml        # CVE-2025-13466, CVE-2026-12590
-            yq -y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml           # CVE-2026-6321, CVE-2026-6322, CVE-2026-13676, CVE-2026-16221, CVE-2026-18446
-            yq -y -i '.overrides."hono" = "4.12.34"' pnpm-workspace.yaml             # CVE-2026-65290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287, CVE-2026-59895, CVE-2026-59896, CVE-2026-59897, CVE-2026-69207
-            yq -y -i '.overrides."@hono/node-server" = "2.0.10"' pnpm-workspace.yaml # GHSA-frvp-7c67-39w9, GHSA-9mqv-5hh9-4cgg
-            yq -y -i '.overrides."ip-address" = "10.3.1"' pnpm-workspace.yaml        # CVE-2026-69192, CVE-2026-54272, CVE-2026-69198
-            yq -y -i '.overrides."path-to-regexp" = "8.4.0"' pnpm-workspace.yaml     # CVE-2026-4926, CVE-2026-4923
-            yq -y -i '.overrides."qs" = "6.15.2"' pnpm-workspace.yaml                # CVE-2025-15284, CVE-2026-2391, CVE-2026-8723
-            yq -y -i '.overrides."undici" = "6.28.0"' pnpm-workspace.yaml            # CVE-2026-12151, CVE-2026-16728, CVE-2026-16729, CVE-2026-15157
-        - name: build
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Disable pnpm's minimumReleaseAge check to allow fast-uri@3.1.5
-            # (published 2026-07-19, within the default 7-day cutoff)
-            export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
-
-            sfw corepack pnpm install --ignore-scripts
-            sfw corepack pnpm --filter @upstash/context7-mcp build
-
-            mkdir -p '${target.dir}/app/packages/mcp'
-        - name: install
-          work-dir: ${target.dir}/app
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cp -t '${target.dir}/app' '${source.dir}/context7/'{package.json,pnpm-lock.yaml,pnpm-workspace.yaml}
-            cp -r -t '${target.dir}/app/packages/mcp' '${source.dir}/context7/packages/mcp/'{dist,package.json}
-
-            # Disable pnpm's minimumReleaseAge check to allow fast-uri@3.1.5
-            # (published 2026-07-19, within the default 7-day cutoff)
-            export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
-
-            sfw corepack pnpm install --filter @upstash/context7-mcp \
-              --frozen-lockfile --ignore-scripts --prod
-      outputs:
-        - source: ${target.dir}/app
-          target: /app
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/context7-mcp
-          target: /opt/docker/sbom/context7-mcp
-          uid: 0
-          gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -145,6 +60,12 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 work-dir: /app/packages/mcp
+paths:
+  - type: symlink
+    path: /app
+    uid: 0
+    gid: 0
+    source: /usr/lib/context7-mcp
 annotations:
   org.opencontainers.image.description: Upstash Context7 MCP Server
   org.opencontainers.image.licenses: MIT
