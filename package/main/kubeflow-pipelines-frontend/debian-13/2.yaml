@@ -1,0 +1,176 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kubeflow-pipelines-frontend
+variant: runtime
+tags:
+  - 2.17.0
+  - 2.17.0-r0
+  - 2.17.0-debian13
+  - 2.17.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 4a3592cb2dd0a91a4652ab93893ec8beda1f3158
+  NODEJS_VERSION: 24.18.1-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.17"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.17.0
+  VERSION: 2.17.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: kubeflow-pipelines-frontend
+      caches:
+        - path: /root/.npm
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - jq
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24=24.18.1-0
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/kubeflow/pipelines.git#2.17.0
+            checksum: 4a3592cb2dd0a91a4652ab93893ec8beda1f3158
+            path: ${source.dir}/kubeflow-pipelines
+            spdx:
+              name: kubeflow-pipelines-frontend
+              version: 2.17.0
+              packages:
+                - name: kubeflow-pipelines-frontend
+                  purl: pkg:github/kubeflow/pipelines@2.17.0#frontend
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: move dev dependencies from prod (webui)
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          runs: |
+            set -eux -o pipefail
+
+            jq --argjson keys '["@craco/craco", "@types/lodash.groupby", "@types/pako", "http-proxy-middleware", "ts-proto"]' \
+              '. |
+                    ([.dependencies | to_entries[] | select(.key | IN($keys[]))]) as $dev
+                | .dependencies |= ( . | delpaths($keys | group_by(.)))
+              | .devDependencies |= . + ($dev | from_entries)
+              | .overrides |= del(.express)
+              | .engines.node = ">=24.14.0"' \
+              package.json > tmp.json && mv tmp.json package.json
+        - name: patch webserver
+          uses: patch@v1
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend/server
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/server/crypto-js.patch
+              - ${source.dir}/patch/server/proxy-middleware.patch
+        - name: bump webserver dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/server/npm-bumps.json
+            npm-root: ${source.dir}/kubeflow-pipelines/frontend/server
+        - name: override transitive protobufjs in webserver
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend/server
+          runs: |
+            set -eux -o pipefail
+
+            npm pkg set 'overrides.protobufjs=8.6.6' # CVE-2026-59877
+        - name: bump webui dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/browser/npm-bumps.json
+            npm-root: ${source.dir}/kubeflow-pipelines/frontend
+        - name: build webui
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci
+            npm run build
+
+            mkdir -p "${target.dir}/opt/docker/sbom/kubeflow-pipelines-frontend"
+            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx \
+              > "${target.dir}/opt/docker/sbom/kubeflow-pipelines-frontend/.spdx.kubeflow-pipelines-frontend-browser.json"
+        - name: build webserver
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend/server
+          shell: bash
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install
+            npm run build
+
+            rm -rf node_modules/*
+            npm ci --omit=dev
+
+            rm -rf server/integration-tests
+        - name: stage payload
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          runs: |
+            set -eux -o pipefail
+
+            PKG_ROOT="${target.dir}/usr/lib/kubeflow-pipelines-frontend"
+            mkdir -p "${PKG_ROOT}"
+
+            cp -a build "${PKG_ROOT}/"
+            cp -a server/dist "${PKG_ROOT}/server"
+            cp -a server/node_modules "${PKG_ROOT}/server/node_modules"
+
+            install -T -m 0444 <(printf '4a3592cb2dd0a91a4652ab93893ec8beda1f3158') \
+              "${PKG_ROOT}/server/COMMIT_HASH"
+            install -T -m 0444 <(printf '2.17.0') \
+              "${PKG_ROOT}/server/TAG_NAME"
+            install -T -m 0444 <(date -ud @${SOURCE_DATE_EPOCH} --rfc-3339=sec) \
+              "${PKG_ROOT}/server/BUILD_DATE"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubeflow Pipelines web UI and API server
+            files:
+              - usr/lib/kubeflow-pipelines-frontend
+              - opt/docker/sbom/kubeflow-pipelines-frontend
+            formats:
+              - deb
+            license: Apache-2.0
+            name: kubeflow-pipelines-frontend
+            rel: 0
+            url: https://www.kubeflow.org/docs/components/pipelines/
+            version: 2.17.0
+      paths:
+        - type: directory
+          path: ${source.dir}/patch/server
+          uid: 0
+          gid: 0
+          source: package/main/kubeflow-pipelines-frontend/patch/server
+        - type: directory
+          path: ${source.dir}/patch/browser
+          uid: 0
+          gid: 0
+          source: package/main/kubeflow-pipelines-frontend/patch/browser
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
