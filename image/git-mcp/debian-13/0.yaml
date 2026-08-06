@@ -18,13 +18,10 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
-  COMMIT_SHA: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
   SEMVER_MAJOR_MINOR_VERSION: "2026.7"
   SEMVER_MAJOR_VERSION: "2026"
   SEMVER_VERSION: 2026.7.10
-  UV_VERSION: 0.12.2
-  VERSION: 2026.7.10
+  VERSION: 2026.7.10-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -32,108 +29,12 @@ contents:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
+    - ca-certificates-bundle
     - git
+    - git-mcp=2026.7.10-1
     - libstdc++6
     - python-3.14
-    - python-3.14-dev
-    - python3-pip
-    - python3-setuptools
-    - python3-wheel
-  builds:
-    - name: git-mcp
-      environment:
-        UV_COMPILE_BYTECODE: "1"
-      contents:
-        packages:
-          - gzip
-          - tar
-          - python-3.14
-          - python-3.14-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - bash
-          - coreutils
-          - diffutils
-          - findutils
-          - gawk
-          - grep
-          - sed
-          - sfw-free-pip
-          - sfw-free-oci-config
-        files:
-          - url: https://github.com/astral-sh/uv/releases/download/0.12.2/uv-${ARCH}-unknown-linux-gnu.tar.gz
-            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
-            uid: 0
-            gid: 0
-          - url: git+https://github.com/modelcontextprotocol/servers.git#2026.7.10
-            checksum: 9a96ea6e5913736f92b88345bf51caeaaa8e719f
-            path: ${source.dir}/servers
-            spdx:
-              name: git-mcp
-              version: 2026.7.10
-              packages:
-                - name: git-mcp
-                  purl: pkg:dhi/git-mcp@2026.7.10
-                  license: MIT
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: setup uv
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /usr/local/bin
-            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
-            chmod +x /usr/local/bin/uv
-        - name: patch dependencies for CVE fixes
-          runs: |
-            set -eux -o pipefail
-
-            # starlette is a transitive dep from mcp/uvicorn, explicitly stating it will bump it to the desired version
-            # CVE-2026-54283
-            sed -i '/^dependencies = \[/a"starlette>=1.3.1",' "${source.dir}/servers/src/git/pyproject.toml"
-
-            # pydantic-settings is a transitive dep from mcp, explicitly stating it will bump it to the desired version
-            # GHSA-4xgf-cpjx-pc3j
-            sed -i '/^dependencies = \[/a"pydantic-settings>=2.14.2",' "${source.dir}/servers/src/git/pyproject.toml"
-
-            # Pin mcp to <2.0.0 until upstream git-mcp is updated to support the new API
-            # The new MCP SDK 2.x has breaking changes (removed list_tools decorator)
-            printf '\n[tool.uv]\nconstraint-dependencies = ["mcp<2.0.0"]\n' >> "${source.dir}/servers/src/git/pyproject.toml"
-        - name: move to /app
-          runs: |
-            set -eux -o pipefail
-
-            cp -r "${source.dir}/servers/src/git" /app
-        - name: align pyproject version with monorepo tag
-          work-dir: /app
-          runs: |
-            set -eux -o pipefail
-
-            sed -i 's/^version = ".*"/version = "2026.7.10"/' pyproject.toml
-            grep -E '^version = ' pyproject.toml
-        - name: build python package
-          work-dir: /app
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            rm .python-version
-
-            sfw uv lock --upgrade
-            sfw uv sync --locked --no-install-project --no-dev --no-editable
-            sfw uv sync --locked --no-dev --no-editable
-      outputs:
-        - source: /app/.venv
-          target: /app/.venv
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/git-mcp
-          target: /opt/docker/sbom/git-mcp
-          uid: 0
-          gid: 0
+    - tzdata
 accounts:
   root: true
   run-as: nonroot
@@ -157,6 +58,15 @@ os-release:
 environment:
   PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
+  - type: directory
+    path: /app
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /app/.venv
+    uid: 0
+    gid: 0
+    source: /usr/lib/git-mcp
   - type: file
     path: /home/nonroot/.gitconfig
     content: |
