@@ -159,8 +159,11 @@ Cipher count: 26
 
 When importing Python packages that have binaries pre-built, those binaries might bundle or link to a non-FIPS OpenSSL
 implementation. For packages such as `cryptography`, build them from source and disable vendored OpenSSL so they link
-against the FIPS OpenSSL in the image. The FIPS dev image already includes `libssl-dev` and `libzstd-dev`, so install
-only the remaining build tools before running `pip`.
+against the FIPS OpenSSL in the image. Debian FIPS dev images include `libssl-dev` and `libzstd-dev`; Alpine FIPS dev
+images include `openssl-dev` and the matching Python headers. Install only the remaining build tools before running
+`pip`.
+
+For Debian:
 
 ```Dockerfile
 # syntax=docker/dockerfile:1
@@ -181,7 +184,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN OPENSSL_NO_VENDOR=1 OPENSSL_STATIC=0 \
     pip install --no-cache-dir --no-binary cryptography cryptography
 
-FROM dhi.io/python:<tag>-fips AS build-stage
+FROM dhi.io/python:<tag>-fips AS runtime-stage
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/.venv/bin:$PATH"
+WORKDIR /
+COPY --from=build-stage /.venv /.venv
+CMD ["python"]
+```
+
+For Alpine:
+
+```Dockerfile
+# syntax=docker/dockerfile:1
+FROM dhi.io/python:<tag>-fips-dev AS build-stage
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/.venv/bin:$PATH"
+
+RUN python -m venv /.venv
+RUN apk add --no-cache cargo pkgconf rust
+RUN OPENSSL_NO_VENDOR=1 OPENSSL_STATIC=0 \
+    pip install --no-cache-dir --no-binary cryptography cryptography
+
+FROM dhi.io/python:<tag>-fips AS runtime-stage
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/.venv/bin:$PATH"
