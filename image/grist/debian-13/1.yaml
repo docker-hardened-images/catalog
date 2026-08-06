@@ -17,12 +17,11 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: fe672818f879c86d2d145f3f30cb30f106e15f1a
   PYTHON_MAJOR_MINOR: "3.13"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.17
-  VERSION: 1.7.17
+  VERSION: 1.7.17-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,6 +33,7 @@ contents:
     - ca-certificates
     - ca-certificates-bundle
     - coreutils
+    - grist=1.7.17-1
     - libc-bin
     - libc6
     - libgomp1
@@ -42,209 +42,8 @@ contents:
     - netbase
     - nodejs-24
     - python-3.13
-    - python-3.13-dev
-    - python3-pip
-    - python3-setuptools
-    - python3-wheel
     - tini
     - tzdata
-  builds:
-    - name: grist-node
-      environment:
-        GRIST_EDITION: community
-      contents:
-        packages:
-          - coreutils
-          - bash
-          - make
-          - gcc
-          - g++
-          - grep
-          - base-files
-          - ca-certificates
-          - curl
-          - findutils
-          - git
-          - gzip
-          - libc6
-          - libstdc++6
-          - mawk
-          - nodejs-24
-          - node-corepack
-          - npm
-          - sed
-          - tar
-          - yarn-classic
-          - python-3.13
-          - python-3.13-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-        files:
-          - url: git+https://github.com/gristlabs/grist-core.git#v1.7.17
-            checksum: fe672818f879c86d2d145f3f30cb30f106e15f1a
-            path: ${source.dir}/grist
-            spdx:
-              name: grist
-              version: 1.7.17
-              packages:
-                - name: grist
-                  purl: pkg:dhi/grist@1.7.17
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: set-community-edition
-          work-dir: ${source.dir}/grist
-          runs: |
-            set -eux -o pipefail
-
-            echo community > grist-edition
-        - name: patch-lockfile
-          work-dir: ${source.dir}/grist
-          runs: |
-            set -eux -o pipefail
-
-            grep -q 'brace-expansion-1.1.11.tgz' yarn.lock
-            sed -i \
-              -e '/^brace-expansion@\^1\.1\.7:/,/^$/{
-                    s|^  version "1\.1\.11"|  version "1.1.16"|
-                    s|^  resolved "[^"]*brace-expansion-1\.1\.11\.tgz[^"]*"|  resolved "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.16.tgz"|
-                    s|^  integrity .*|  integrity sha512-IDw48K2/2kRkg9LdJxurvq3lV3aBgq0REY89duEqFRthjlPdXHKMj7EnQOXVckxzgisinf3nHfrcE2FufFLXMw==|
-                  }' \
-              yarn.lock
-            grep -q 'brace-expansion-1.1.16.tgz' yarn.lock
-        - name: patch-node
-          uses: yarn/bump@v2
-          with:
-            bumps: ${source.dir}/patches/yarn-patches.json
-            yarn-root: ${source.dir}/grist
-        - name: patch-brace-expansion-2
-          work-dir: ${source.dir}/grist
-          runs: |
-            set -eux -o pipefail
-
-            grep -q 'brace-expansion-2.0.2.tgz' yarn.lock
-            sed -i \
-              -e '/^brace-expansion@\^2\.0\.2:/,/^$/{
-                    s|^  version "2\.0\.2"|  version "2.1.2"|
-                    s|^  resolved "[^"]*brace-expansion-2\.0\.2\.tgz[^"]*"|  resolved "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.2.tgz"|
-                    s|^  integrity .*|  integrity sha512-w5JZcKgdhDOgOwm8H+KgbosopHMuGcl6qbulwjtz3SM7I7P3yW1eAjzMPLrIE+NQ9vjgANKHWeMHnrT0OXW1oA==|
-                  }' \
-              yarn.lock
-            grep -q 'version "2.1.2"' yarn.lock
-            grep -q 'brace-expansion-2.1.2.tgz' yarn.lock
-            ! grep -q 'brace-expansion-2.0.2.tgz' yarn.lock
-        - name: build-node
-          work-dir: ${source.dir}/grist
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            yarn install --frozen-lockfile --verbose --network-timeout 600000
-            yarn global add --verbose --network-timeout 600000 node-gyp node-pre-gyp node-gyp-build node-gyp-build-optional-packages
-            yarn install --prod --frozen-lockfile --modules-folder=node_modules_prod --verbose --network-timeout 600000
-
-            yarn run build:prod
-
-            rm -rf node_modules
-            mv node_modules_prod node_modules
-        - name: patch-pyodide-worker
-          uses: yarn/bump@v2
-          with:
-            bumps: ${source.dir}/patches/yarn-patches-pyodide-worker.json
-            yarn-root: ${source.dir}/grist/sandbox/pyodide/worker
-        - name: build-pyodide
-          work-dir: ${source.dir}/grist/sandbox/pyodide
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            make setup
-        - name: copy-node
-          work-dir: ${source.dir}/grist
-          runs: |
-            set -eux -o pipefail
-
-            chmod 755 sandbox/*
-
-            mkdir -p "${target.dir}/opt/grist"
-            cp -r node_modules "${target.dir}/opt/grist/node_modules"
-            cp -r _build "${target.dir}/opt/grist/_build"
-            cp -r static "${target.dir}/opt/grist/static"
-            cp -r sandbox "${target.dir}/opt/grist/sandbox"
-            cp app/cli.sh "${target.dir}/opt/grist/cli"
-            cp package.json "${target.dir}/opt/grist/package.json"
-            cp -r bower_components "${target.dir}/opt/grist/bower_components"
-            cp -r plugins "${target.dir}/opt/grist/plugins"
-      paths:
-        - type: file
-          path: /src/patches/yarn-patches.json
-          uid: 0
-          gid: 0
-          source: image/grist/patch/yarn-patches.json
-        - type: file
-          path: /src/patches/yarn-patches-pyodide-worker.json
-          uid: 0
-          gid: 0
-          source: image/grist/patch/yarn-patches-pyodide-worker.json
-      outputs:
-        - source: ${target.dir}/opt/grist
-          target: /grist
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/grist
-          target: /opt/docker/sbom/grist
-          uid: 0
-          gid: 0
-    - name: grist-python
-      contents:
-        packages:
-          - coreutils
-          - bash
-          - python-3.13
-          - python-3.13-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - diffutils
-          - findutils
-          - gawk
-          - grep
-          - sed
-          - build-essential
-        files:
-          - url: git+https://github.com/gristlabs/grist-core.git#v1.7.17
-            checksum: fe672818f879c86d2d145f3f30cb30f106e15f1a
-            path: ${source.dir}/grist
-            spdx:
-              name: grist
-              version: 1.7.17
-              packages:
-                - name: grist
-                  purl: pkg:dhi/grist@1.7.17
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: build-python
-          work-dir: ${source.dir}/grist/sandbox
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Install lazy-object-proxy 1.7.1 first (1.6.0 has build issues with setuptools_scm)
-            pip install lazy-object-proxy==1.7.1
-            # Install remaining requirements, skipping lazy-object-proxy since we already installed it
-            grep -v "^lazy-object-proxy" requirements.txt > requirements-filtered.txt
-            pip install -r requirements-filtered.txt
-      outputs:
-        - source: /usr/lib/python3.13
-          target: /usr/lib/python3.13
-          uid: 0
-          gid: 0
-          diff: true
 accounts:
   run-as: nonroot
   users:
@@ -283,8 +82,13 @@ environment:
   PYTHON_VERSION_ON_CREATION: "3"
   TYPEORM_DATABASE: /persist/home.sqlite3
 paths:
-  - type: directory
+  - type: symlink
     path: /grist
+    uid: 0
+    gid: 0
+    source: /usr/lib/grist
+  - type: directory
+    path: /usr/lib/grist/sandbox/pyodide/_build/cache
     uid: 0
     gid: 0
     mode: "0755"
