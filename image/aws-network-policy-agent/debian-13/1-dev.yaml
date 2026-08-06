@@ -20,10 +20,12 @@ dates:
   release: "2025-12-19"
 vars:
   COMMIT_SHA: 8e2bd3089ba8190db23d66c0958002ee4d7875eb
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "1.4"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.4.0
-  VERSION: 1.4.0
+  SUFFIX: -dev
+  VERSION: 1.4.0-3
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,6 +36,9 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - aws-network-policy-agent-cli-dev=1.4.0-3
+    - aws-network-policy-agent-cliv6-dev=1.4.0-3
+    - aws-network-policy-agent-dev=1.4.0-3
     - base-files
     - bash
     - ca-certificates
@@ -51,10 +56,8 @@ contents:
     - tzdata
     - util-linux
   builds:
-    - name: aws-network-policy-agent
+    - name: ebpf-objects
       work-dir: /go/src/github.com/aws/aws-network-policy-agent
-      caches:
-        - path: /go/pkg/mod
       contents:
         packages:
           - bpftool
@@ -64,10 +67,11 @@ contents:
           - bash
           - ca-certificates-bundle
           - coreutils
-          - golang-1.26
           - findutils
           - mawk
           - sed
+          - tar
+          - xz-utils
         files:
           - url: git+https://github.com/aws/aws-network-policy-agent.git#v1.4.0
             checksum: 8e2bd3089ba8190db23d66c0958002ee4d7875eb
@@ -82,90 +86,50 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - golang.org/x/net@v0.55.0
-              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
-              - github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs@v1.65.0
-              - google.golang.org/grpc@v1.82.1
-            download: true
-        - name: run go tests
-          runs: |
-            set -eux -o pipefail
-
-            # For FIPS builds, use lenient mode to allow SHA-1 usage in interface name generation
-
-            go test $(go list ./... | grep -v 'test/integration')
         - name: generate vmlinux.h
-          privileged: true
           runs: |
             set -eux -o pipefail
 
-            bpftool btf dump file /sys/kernel/btf/vmlinux format c > pkg/ebpf/c/vmlinux.h
+            case "$(uname -m)" in
+              x86_64) BTF_ARCHIVE="${source.dir}/vmlinux-amd64.btf.tar.xz" ;;
+              aarch64) BTF_ARCHIVE="${source.dir}/vmlinux-arm64.btf.tar.xz" ;;
+              *)
+                echo "unsupported architecture for ebpf-objects build: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+
+            tar -xJf "$BTF_ARCHIVE" -C /tmp
+            BTF_FILE="$(find /tmp -maxdepth 1 -name '*.btf' -print -quit)"
+            bpftool btf dump file "$BTF_FILE" format c > pkg/ebpf/c/vmlinux.h
         - name: build BPF programs
           runs: |
             set -eux -o pipefail
 
-            # Determine architecture for TC programs (events programs are x86-only upstream)
             ARCH=$(uname -m | sed 's/x86_64/amd64/g; s/aarch64/arm64/g')
             EBPF_DIR=./pkg/ebpf/c
-            # Include path mirrors upstream Makefile: CLANG_INCLUDE := -I../../.
             CLANG_INCLUDE="-I../../."
             CLANG_FLAGS="${CLANG_INCLUDE} -g -O2 -Wall -fpie -target bpf -DCORE -D__BPF_TRACING__"
 
-            # Events programs (hardcoded x86 per upstream Makefile)
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v4events.bpf.c -o ${EBPF_DIR}/v4events.bpf.o
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v6events.bpf.c -o ${EBPF_DIR}/v6events.bpf.o
 
-            # TC programs (architecture-specific per upstream Makefile)
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4ingress.bpf.c -o ${EBPF_DIR}/tc.v4ingress.bpf.o
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4egress.bpf.c -o ${EBPF_DIR}/tc.v4egress.bpf.o
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6ingress.bpf.c -o ${EBPF_DIR}/tc.v6ingress.bpf.o
             clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6egress.bpf.c -o ${EBPF_DIR}/tc.v6egress.bpf.o
-        - name: build controller
-          uses: go/build@v1
-          with:
-            cgo_enabled: 1
-            extra-args: -buildmode=pie
-            ldflags:
-              - -X github.com/aws/aws-network-policy-agent/pkg/version.GitVersion=1.4.0
-              - -X github.com/aws/aws-network-policy-agent/pkg/version.GitCommit=8e2bd3089ba8190db23d66c0958002ee4d7875eb
-              - -X github.com/aws/aws-network-policy-agent/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
-              - -extldflags=-static
-            output: ${target.dir}/controller
-            packages: .
-            strip: true
-            tags: netgo,ebpf,core
-        - name: build aws-eks-na-cli
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/aws-eks-na-cli
-            packages: ./cmd/cli
-            strip: true
-        - name: build aws-eks-na-cli-v6
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/aws-eks-na-cli-v6
-            packages: ./cmd/cliv6
-            strip: true
+      paths:
+        - type: file
+          path: ${source.dir}/vmlinux-amd64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: image/aws-network-policy-agent/bpf/vmlinux-amd64.btf.tar.xz
+        - type: file
+          path: ${source.dir}/vmlinux-arm64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: image/aws-network-policy-agent/bpf/vmlinux-arm64.btf.tar.xz
       outputs:
-        - source: ${target.dir}/controller
-          target: /controller
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/aws-eks-na-cli
-          target: /aws-eks-na-cli
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/aws-eks-na-cli-v6
-          target: /aws-eks-na-cli-v6
-          uid: 0
-          gid: 0
-          mode: "0755"
         - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/tc.v4ingress.bpf.o
           target: /tc.v4ingress.bpf.o
           uid: 0
@@ -221,6 +185,22 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /controller
+    uid: 0
+    gid: 0
+    source: /usr/bin/aws-network-policy-agent
+  - type: symlink
+    path: /aws-eks-na-cli
+    uid: 0
+    gid: 0
+    source: /usr/bin/cli
+  - type: symlink
+    path: /aws-eks-na-cli-v6
+    uid: 0
+    gid: 0
+    source: /usr/bin/cliv6
 annotations:
   org.opencontainers.image.description: A minimal AWS Network Policy Agent image
   org.opencontainers.image.licenses: Apache-2.0
