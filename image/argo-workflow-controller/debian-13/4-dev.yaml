@@ -17,12 +17,12 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: 570c470582fc7fe41b1963d8703111679cc3d25a
-  MODULE_MAJOR_VERSION: v4
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "4.0"
   SEMVER_MAJOR_VERSION: "4"
   SEMVER_VERSION: 4.0.8
-  VERSION: 4.0.8
+  SUFFIX: -dev
+  VERSION: 4.0.8-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -33,6 +33,7 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - argo-workflows-4-dev=4.0.8-1
     - base-files
     - bash
     - ca-certificates
@@ -48,78 +49,6 @@ contents:
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: argo-workflow-controller
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/argoproj/argo-workflows.git#v4.0.8
-            checksum: 570c470582fc7fe41b1963d8703111679cc3d25a
-            path: /go/src/github.com/argoproj/argo-workflows
-            spdx:
-              name: argo-workflow-controller
-              version: 4.0.8
-              packages:
-                - name: argo-workflow-controller
-                  purl: pkg:golang/github.com/argoproj/argo-workflows@4.0.8
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: patch (4 only)
-          uses: go/bump@v1
-          with:
-            deps:
-              - github.com/go-jose/go-jose/v3@v3.0.5
-              - github.com/go-jose/go-jose/v4@v4.1.4
-              - github.com/jackc/pgx/v5@v5.9.2
-              - github.com/klauspost/compress@v1.18.7
-              - github.com/moby/spdystream@v0.5.1
-              - go.opentelemetry.io/otel/sdk@v1.43.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
-            dir: /go/src/github.com/argoproj/argo-workflows
-            download: true
-        - name: test
-          work-dir: /go/src/github.com/argoproj/argo-workflows
-          runs: |
-            set -eux -o pipefail
-
-            echo "Testing core functionality after patching..."
-
-            # Test core workflow functionality
-            go test -v -count=1 -timeout=3m ./workflow/validate -run="TestDAG"
-            go test -v -count=1 -timeout=3m ./workflow/common
-
-            # Test all util packages except telemetry (which fails due to network requirements)
-            UTIL_PACKAGES=$(go list ./util/... | grep -v './util/telemetry')
-            go test -v -count=1 -timeout=4m $UTIL_PACKAGES
-        - name: build-backend
-          uses: go/build@v1
-          work-dir: /go/src/github.com/argoproj/argo-workflows
-          with:
-            ldflags:
-              - -X github.com/argoproj/argo-workflows/v4.version=4.0.8
-              - -X github.com/argoproj/argo-workflows/v4.gitCommit=570c470582fc7fe41b1963d8703111679cc3d25a
-            output: ${target.dir}/usr/local/bin/workflow-controller
-            packages: ./cmd/workflow-controller
-      outputs:
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/argo-workflow-controller
-          target: /opt/docker/sbom/argo-workflow-controller
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -145,6 +74,16 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/workflow-controller
+    uid: 0
+    gid: 0
+    source: /usr/bin/workflow-controller
 annotations:
   org.opencontainers.image.description: A minimal Argo Workflow Controller image
   org.opencontainers.image.licenses: Apache-2.0
