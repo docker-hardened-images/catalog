@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-opencost-ui
+variant: runtime
+tags:
+  - 1.121.0
+  - 1.121.0-r0
+  - 1.121.0-debian13
+  - 1.121.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-09"
+vars:
+  COMMIT_SHA: 5babf86adf8d75677e721d62902b3b2b4d1a59a0
+  DHI_TEST_DEB_EXPECTED_FILES: /usr/share/opencost-ui/index.html /usr/share/opencost-ui/legacy/index.html
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.121"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.121.0
+  VERSION: 1.121.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: opencost-ui
+      work-dir: ${source.dir}/opencost-ui
+      caches:
+        - path: ${source.dir}/opencost-ui/node_modules
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - less
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/opencost/opencost-ui.git#v1.121.0
+            checksum: 5babf86adf8d75677e721d62902b3b2b4d1a59a0
+            path: ${source.dir}/opencost-ui
+            spdx:
+              name: opencost-ui
+              version: 1.121.0
+              packages:
+                - name: opencost-ui
+                  purl: pkg:github/opencost/opencost-ui@v1.121.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump dependencies
+          uses: npm/bump@v1
+          privileged: true
+          environment:
+            DHI_NO_SFW: "true"
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: ${source.dir}/opencost-ui
+        - name: bump react-router family
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            tmp=$(mktemp)
+            jq 'del(.packages["node_modules/react-router","node_modules/@react-router/node","node_modules/@react-router/serve","node_modules/@react-router/dev"])' \
+              package-lock.json > "$tmp" && mv "$tmp" package-lock.json
+
+            npm install --fund=false --audit=false \
+              react-router@8.3.0 \
+              @react-router/node@8.3.0 \
+              @react-router/serve@8.3.0 \
+              @react-router/dev@8.3.0
+        - name: install dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci
+        - name: build standard UI
+          runs: |
+            set -eux -o pipefail
+
+            NODE_ENV=production npm run build
+            mkdir -p "${target.dir}/usr/share/opencost-ui"
+            cp -r build/client/. "${target.dir}/usr/share/opencost-ui/"
+        - name: build legacy UI
+          runs: |
+            set -eux -o pipefail
+
+            VITE_LEGACY_MODE=true NODE_ENV=production npm run build:legacy
+            mkdir -p "${target.dir}/usr/share/opencost-ui/legacy"
+            cp -r build/client/. "${target.dir}/usr/share/opencost-ui/legacy/"
+        - name: prepare for sbom
+          runs: |
+            set -eux -o pipefail
+
+            tmp=$(mktemp)
+            jq --arg version "1.121.0" '.version = $version' package.json > "$tmp" && mv "$tmp" package.json
+        - name: reinstall dependencies for sbom
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+            npm install --omit=dev --ignore-scripts
+        - name: generate sbom
+          uses: sbom@v1
+          with:
+            prefix: opencost-ui
+            source: ${source.dir}/opencost-ui
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenCost UI static frontend assets
+            files:
+              - usr/share/opencost-ui
+            formats:
+              - deb
+            license: Apache-2.0
+            name: opencost-ui
+            rel: 0
+            url: https://github.com/opencost/opencost-ui
+            version: 1.121.0
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/opencost-ui/patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
