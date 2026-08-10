@@ -1,0 +1,158 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-gitlab-exporter
+variant: runtime
+tags:
+  - 16.10.0
+  - 16.10.0-r1
+  - 16.10.0-debian13
+  - 16.10.0-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-30"
+vars:
+  COMMIT_SHA: 097af4de40aeac4003f4163116bb1a016cf5bac2
+  REL: "1"
+  RUBY_MAJOR_MINOR_VERSION: "3.3"
+  RUBY_VERSION: 3.3.12-6
+  SEMVER_MAJOR_MINOR_VERSION: "16.10"
+  SEMVER_MAJOR_VERSION: "16"
+  SEMVER_VERSION: 16.10.0
+  VERSION: 16.10.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: gitlab-exporter
+      work-dir: ${source.dir}/gitlab-exporter-src
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - sed
+          - git
+          - build-essential
+          - libc6-dev
+          - pkg-config
+          - ruby-3.3=3.3.12-6
+          - ruby-3.3-dev=3.3.12-6
+          - libjemalloc2
+          - libjemalloc-dev
+          - libyaml-0-2
+          - libyaml-dev
+          - libffi8
+          - libffi-dev
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+          - libgdbm-dev
+          - libncurses-dev
+          - libreadline-dev
+          - libpq-dev
+          - libssl-dev
+        files:
+          - url: git+https://gitlab.com/gitlab-org/ruby/gems/gitlab-exporter.git#16.10.0
+            checksum: 097af4de40aeac4003f4163116bb1a016cf5bac2
+            path: ${source.dir}/gitlab-exporter-src
+            spdx:
+              name: gitlab-exporter
+              version: 16.10.0
+              packages:
+                - name: gitlab-exporter
+                  purl: pkg:gem/gitlab-exporter@16.10.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: drop development and test dependencies
+          runs: |
+            set -eux -o pipefail
+
+            sed -i '/add_development_dependency/d' gitlab-exporter.gemspec
+            sed -i '/^group :test do$/,/^end$/d' Gemfile
+        - name: bump vulnerable gems in the lock
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            bundle config set --local path vendor/bundle
+            bundle config set --local without 'development test'
+            bundle config set --local force_ruby_platform true
+            bundle lock --update rack json --conservative
+        - name: install pinned gems
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            bundle config set --local deployment true
+            bundle install --jobs 4 --retry 3
+        - name: prune native-extension build residue
+          runs: |
+            set -eux -o pipefail
+
+            find vendor/bundle -type f \( -name '*.c' -o -name '*.h' -o -name '*.o' \
+              -o -name 'mkmf.log' -o -name 'gem_make.out' \) -delete 2> /dev/null || true
+        - name: prune duplicate gemspecs, documentation and the gem cache
+          runs: |
+            set -eux -o pipefail
+
+            find vendor/bundle/ruby/*/gems -maxdepth 2 -type f -name '*.gemspec' -delete
+            find vendor/bundle/ruby/*/gems -maxdepth 2 -type f \
+              \( -iname 'README*' -o -iname 'CHANGELOG*' -o -iname 'CHANGES*' \
+              -o -iname 'History*' -o -iname '*.md' -o -iname '*.rdoc' \) \
+              ! -iname '*licen[cs]e*' ! -iname '*notice*' ! -iname '*copying*' \
+              -delete 2> /dev/null || true
+            rm -rf vendor/bundle/ruby/*/cache
+        - name: freeze the gemspec file list
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/`git ls-files -z`.split("\\x0")/Dir["lib\/**\/*", "bin\/*"]/' gitlab-exporter.gemspec
+
+            if grep -q 'git ls-files' gitlab-exporter.gemspec; then
+              echo 'gemspec still shells out to git: the rewrite did not apply' >&2
+              exit 1
+            fi
+        - name: stage the application tree
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/lib/gitlab-exporter"
+            mkdir -p "$dest"
+            cp -a bin lib Gemfile Gemfile.lock gitlab-exporter.gemspec vendor "$dest/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.3
+              - libpq5
+              - libssl3t64
+              - zlib1g
+              - libyaml-0-2
+              - libffi8
+            description: Prometheus exporter for GitLab
+            files:
+              - usr
+            formats:
+              - deb
+            license: MIT
+            name: gitlab-exporter
+            rel: 1
+            url: https://gitlab.com/gitlab-org/ruby/gems/gitlab-exporter
+            version: 16.10.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
