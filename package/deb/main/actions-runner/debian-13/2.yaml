@@ -1,0 +1,100 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-actions-runner
+variant: runtime
+tags:
+  - 2.336.0-0
+  - 2.336.0-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 98aabcd429c4e8402406c56ce2d26387fed3b9ce
+  DHI_REL: "0"
+  DHI_VERSION: 2.336.0-0
+  RUNTIME_ID: '#{ target.arch == "amd64" ? "linux-x64" : "linux-arm64" }'
+  VERSION: 2.336.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: actions-runner
+      work-dir: ${source.dir}/actions-runner
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - curl
+          - debhelper
+          - dotnet-sdk-8
+          - dpkg-dev
+          - findutils
+          - gawk
+          - git
+          - tar
+          - unzip
+        files:
+          - url: git+https://github.com/actions/runner.git#v2.336.0
+            checksum: 98aabcd429c4e8402406c56ce2d26387fed3b9ce
+            path: ${source.dir}/actions-runner
+            spdx:
+              name: actions-runner
+              version: 2.336.0
+              packages:
+                - name: actions-runner
+                  purl: pkg:github/actions/runner@2.336.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build runner
+          work-dir: ${source.dir}/actions-runner/src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            printf '{"sdk":{"version":"%s"}}' "$(dotnet --version)" > global.json
+
+            dotnet msbuild -t:layout \
+              -p:PackageRuntime=${RUNTIME_ID} \
+              -p:BUILDCONFIG=Release \
+              -p:RunnerVersion=2.336.0 \
+              ./dir.proj
+
+            chmod +x ../_layout/bin/Runner.Listener ../_layout/bin/Runner.Worker \
+              ../_layout/bin/Runner.PluginHost ../_layout/bin/installdependencies.sh \
+              ../_layout/safe_sleep.sh
+
+            bash ./Misc/externals.sh ${RUNTIME_ID} "Pre-Cache"
+            bash ./Misc/externals.sh ${RUNTIME_ID}
+
+            rm -rf ../_layout/_diag
+            find ../_layout/bin -name '*.pdb' -delete
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 2.336.0-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/actions-runner/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/deb/main/actions-runner/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
