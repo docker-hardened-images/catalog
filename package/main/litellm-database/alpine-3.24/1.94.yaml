@@ -4,7 +4,7 @@ image: dhi.io/pkg-litellm-database
 variant: runtime
 tags:
   - 1.94.2-alpine3.24
-  - 1.94.2-r1-alpine3.24
+  - 1.94.2-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,7 +12,8 @@ dates:
   release: "2026-07-28"
 vars:
   COMMIT_SHA: 51d0368943ae13e46b00959eba5096451166c5ab
-  REL: "1"
+  PRISMA_MUSL_BINARY_TARGET: '#{ target.arch == "amd64" ? "linux-musl-openssl-3.0.x" : "linux-musl-arm64-openssl-3.0.x" }'
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "1.94"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.94.2
@@ -109,6 +110,8 @@ contents:
 
             uv venv --python python3.13 "$VIRTUAL_ENV"
             uv pip install --python "$VIRTUAL_ENV/bin/python" -r /tmp/litellm-requirements.txt
+
+            sed -i "s/\"linux-musl-openssl-3\\.0\\.x\"/\"${PRISMA_MUSL_BINARY_TARGET}\"/" schema.prisma
         - name: prepare runtime files
           runs: |
             set -eux -o pipefail
@@ -128,8 +131,11 @@ contents:
               printf '%s\n' 'export PATH="/app/.venv/bin:$PATH"'
               printf '%s\n' 'export PRISMA_BINARY_CACHE_DIR="${PRISMA_BINARY_CACHE_DIR:-/opt/prisma/binaries}"'
               printf '%s\n' 'export PRISMA_CLI_PATH="${PRISMA_CLI_PATH:-/opt/prisma/binaries/node_modules/.bin/prisma}"'
+              printf '%s\n' 'export PRISMA_CLIENT_ENGINE_TYPE="${PRISMA_CLIENT_ENGINE_TYPE:-binary}"'
               printf '%s\n' 'export PRISMA_CLI_QUERY_ENGINE_TYPE="${PRISMA_CLI_QUERY_ENGINE_TYPE:-binary}"'
               printf '%s\n' 'export PRISMA_OFFLINE_MODE="${PRISMA_OFFLINE_MODE:-true}"'
+              printf '%s\n' "export PRISMA_QUERY_ENGINE_BINARY=\"\${PRISMA_QUERY_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
+              printf '%s\n' "export PRISMA_SCHEMA_ENGINE_BINARY=\"\${PRISMA_SCHEMA_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
               sed -n '2,$p' "$entrypoint"
             } > "$tmp"
             mv "$tmp" "$entrypoint"
@@ -139,6 +145,13 @@ contents:
             {
               sed -n '1p' "$prod_entrypoint"
               printf '%s\n' 'export PATH="/app/.venv/bin:$PATH"'
+              printf '%s\n' 'export PRISMA_BINARY_CACHE_DIR="${PRISMA_BINARY_CACHE_DIR:-/opt/prisma/binaries}"'
+              printf '%s\n' 'export PRISMA_CLI_PATH="${PRISMA_CLI_PATH:-/opt/prisma/binaries/node_modules/.bin/prisma}"'
+              printf '%s\n' 'export PRISMA_CLIENT_ENGINE_TYPE="${PRISMA_CLIENT_ENGINE_TYPE:-binary}"'
+              printf '%s\n' 'export PRISMA_CLI_QUERY_ENGINE_TYPE="${PRISMA_CLI_QUERY_ENGINE_TYPE:-binary}"'
+              printf '%s\n' 'export PRISMA_OFFLINE_MODE="${PRISMA_OFFLINE_MODE:-true}"'
+              printf '%s\n' "export PRISMA_QUERY_ENGINE_BINARY=\"\${PRISMA_QUERY_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
+              printf '%s\n' "export PRISMA_SCHEMA_ENGINE_BINARY=\"\${PRISMA_SCHEMA_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
               sed -n '2,$p' "$prod_entrypoint"
             } > "$tmp"
             mv "$tmp" "$prod_entrypoint"
@@ -159,9 +172,18 @@ contents:
               PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
               npm_config_cache=/root/.npm \
               prisma generate --schema="${target.dir}/app/schema.prisma"
+            HOME=/opt/prisma \
+              XDG_CACHE_HOME=/opt/prisma/.cache \
+              PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
+              PRISMA_CLI_BINARY_TARGETS=${PRISMA_MUSL_BINARY_TARGET} \
+              PRISMA_CLI_QUERY_ENGINE_TYPE=binary \
+              npm_config_cache=/root/.npm \
+              node -e 'require("/opt/prisma/binaries/node_modules/@prisma/engines").ensureBinariesExist()'
 
             test -x "${target.dir}/opt/prisma/binaries/node_modules/.bin/prisma"
+            test -x "${target.dir}/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}"
             test -f "${target.dir}/opt/prisma/binaries/node_modules/prisma/build/index.js"
+            test -x "${target.dir}/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}"
             find "$VIRTUAL_ENV/lib" -type f -path "*/site-packages/prisma/*.py" \
               -exec sed -i "s#${target.dir}/app#/app#g" {} +
             find "$VIRTUAL_ENV/lib" -type f -path "*/site-packages/prisma/*.py" \
@@ -216,7 +238,7 @@ contents:
               - apk
             license: MIT AND LicenseRef-Proprietary
             name: litellm-database
-            rel: 1
+            rel: 2
             url: https://github.com/BerriAI/litellm
             version: 1.94.2
 os-release:
