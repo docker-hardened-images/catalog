@@ -1,0 +1,41 @@
+Subject: tests: route the tokens-invalid generator through the jq wrapper
+Origin: DHI-internal (cryptsetup 2.8.6 test compatibility)
+Description: Patched jq rejects the trailing NUL bytes in the generated LUKS2
+ JSON fixture. Route this generator's remaining jq calls through upstream's
+ _jq wrapper, which strips those bytes before parsing. Without this adaptation,
+ luks2-validation-test fails and prevents the Alpine package check() phase from
+ completing.
+Upstream source:
+ Wrapper introduction: https://github.com/mbroz/cryptsetup/commit/fe0afb9046e6cd3ad5bb53f091fdabb4d2276de3
+ Trailing-NUL fix: https://github.com/mbroz/cryptsetup/commit/6298269486354834d4037ba294c91452dec4c2f5
+Base tree:
+ Package: cryptsetup 2.8.6
+ Orig: https://www.kernel.org/pub/linux/utils/cryptsetup/v2.8/cryptsetup-2.8.6.tar.gz
+ SHA256: 4f0fffbffc4edeab6994db6062e47c841c8c1679fc9010bf4d03c707514dacd4
+ Layout: cryptsetup-2.8.6
+Files: tests/generators/generate-luks2-tokens-invalid.img.sh
+Adaptation: The 2.8.6 release tarball contains this additional generator, but
+ the upstream wrapper commit does not modify it. These two substitutions are
+ the same jq-to-_jq conversion upstream applies to the other generators.
+Forwarded: not-needed (the generator is absent from the upstream fix's tree)
+
+diff --git a/tests/generators/generate-luks2-tokens-invalid.img.sh b/tests/generators/generate-luks2-tokens-invalid.img.sh
+--- a/tests/generators/generate-luks2-tokens-invalid.img.sh
++++ b/tests/generators/generate-luks2-tokens-invalid.img.sh
+@@ -12,7 +12,7 @@
+ 
+ generate()
+ {
+-	json_str=$(jq -c '.tokens."0" = 42' $TMPDIR/json0)
++	json_str=$(_jq '.tokens."0" = 42' $TMPDIR/json0)
+ 	test ${#json_str} -lt $((LUKS2_JSON_SIZE*512)) || exit 2
+ 
+ 	write_luks2_json "$json_str" $TMPDIR/json0
+@@ -27,7 +27,7 @@ check()
+ 	lib_hdr1_checksum || exit 2
+ 
+ 	read_luks2_json0 $TGT_IMG $TMPDIR/json_res0
+-	jq -c 'if (.tokens."0" != 42)
++	_jq 'if (.tokens."0" != 42)
+ 	       then error("Unexpected value in result json") else empty end' $TMPDIR/json_res0 || exit 5
+ }
