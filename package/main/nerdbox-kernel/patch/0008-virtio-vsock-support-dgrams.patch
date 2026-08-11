@@ -2,10 +2,11 @@ DHI provenance header (not part of the upstream commit below).
 
 Purpose: guest-kernel vsock multi-transport datagram support needed by the
   containerd nerdbox microVM guest kernel. Implements datagram send/receive in
-  the virtio-vsock transport.
+  the virtio-vsock transport. Rebased for 6.12.103 (virtio_transport_alloc_skb
+  ubuf_info param; see nerdbox-internal PR 324).
 Upstream series: https://lore.kernel.org/netdev/?q=vsock+dgram+multi-transport
-Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/0008-virtio-vsock-support-dgrams.patch
-Applied to Linux v6.12.46 with `patch -p1`.
+Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/6.12.103/0008-virtio-vsock-support-dgrams.patch
+Applied to Linux v6.12.103 with `patch -p1`.
 
 From 8e01b14892ef313342b0e738b65f6486f07aab26 Mon Sep 17 00:00:00 2001
 From: Bobby Eshleman <bobby.eshleman () bytedance ! com>
@@ -33,16 +34,22 @@ Future work might include finding a way to reduce the virtqueue kick
 rate for datagram flows with high packet loss.
 
 Signed-off-by: Bobby Eshleman <bobby.eshleman@bytedance.com>
+[nerdbox: rebased for 6.12.103 — dropped virtio_transport_sock_alloc_send_skb
+ hunk (no callers, anchor context reworked upstream); dgram_enqueue now passes
+ uarg=NULL to virtio_transport_alloc_skb, which gained a ubuf_info param.
+ Cleanups vs the vendored series: dropped dead virtio_transport_init_dgram_
+ bind_tables + duplicate dgram_get_* declarations, two unused "int err"
+ locals, and an accidental -ENOMEM→-EINVAL change in reset_no_sock]
 ---
  drivers/vhost/vsock.c                   |  27 +++-
- include/linux/virtio_vsock.h            |   5 +-
+ include/linux/virtio_vsock.h            |   1 -
  include/net/af_vsock.h                  |   1 +
  include/uapi/linux/virtio_vsock.h       |   1 +
  net/vmw_vsock/af_vsock.c                |  62 +++++++--
  net/vmw_vsock/virtio_transport.c        |  23 +++-
- net/vmw_vsock/virtio_transport_common.c | 175 ++++++++++++++++++------
+ net/vmw_vsock/virtio_transport_common.c | 142 +++++++++++++++-----
  net/vmw_vsock/vsock_loopback.c          |   8 +-
- 8 files changed, 242 insertions(+), 60 deletions(-)
+ 8 files changed, 206 insertions(+), 59 deletions(-)
 
 diff --git a/drivers/vhost/vsock.c b/drivers/vhost/vsock.c
 index 4659a74078bd..eb088aa1afc1 100644
@@ -132,15 +139,6 @@ index 0a4369e01c4a..09188bbbfcc5 100644
  int virtio_transport_dgram_get_cid(struct sk_buff *skb, unsigned int *cid);
  int virtio_transport_dgram_get_port(struct sk_buff *skb, unsigned int *port);
  int virtio_transport_dgram_get_length(struct sk_buff *skb, size_t *len);
-@@ -270,4 +269,8 @@ void virtio_transport_deliver_tap_pkt(struct sk_buff *skb);
- int virtio_transport_purge_skbs(void *vsk, struct sk_buff_head *list);
- int virtio_transport_read_skb(struct vsock_sock *vsk, skb_read_actor_t read_actor);
- int virtio_transport_notify_set_rcvlowat(struct vsock_sock *vsk, int val);
-+void virtio_transport_init_dgram_bind_tables(void);
-+int virtio_transport_dgram_get_cid(struct sk_buff *skb, unsigned int *cid);
-+int virtio_transport_dgram_get_port(struct sk_buff *skb, unsigned int *port);
-+int virtio_transport_dgram_get_length(struct sk_buff *skb, size_t *len);
- #endif /* _LINUX_VIRTIO_VSOCK_H */
 diff --git a/include/net/af_vsock.h b/include/net/af_vsock.h
 index 9ba6e2bcef94..5f93bb290a83 100644
 --- a/include/net/af_vsock.h
@@ -361,42 +359,6 @@ diff --git a/net/vmw_vsock/virtio_transport_common.c b/net/vmw_vsock/virtio_tran
 index 96b6303b24c2..0cb9261e433d 100644
 --- a/net/vmw_vsock/virtio_transport_common.c
 +++ b/net/vmw_vsock/virtio_transport_common.c
-@@ -136,6 +136,35 @@ static void virtio_transport_init_hdr(struct sk_buff *skb,
- 	hdr->fwd_cnt	= cpu_to_le32(0);
- }
-
-+/* Requires info->msg and info->vsk */
-+static struct sk_buff *
-+virtio_transport_sock_alloc_send_skb(struct virtio_vsock_pkt_info *info, unsigned int size,
-+				     gfp_t mask, int *err)
-+{
-+	struct sk_buff *skb;
-+	struct sock *sk;
-+	int noblock;
-+
-+	if (size < VIRTIO_VSOCK_SKB_HEADROOM) {
-+		*err = -EINVAL;
-+		return NULL;
-+	}
-+
-+	if (info->msg)
-+		noblock = info->msg->msg_flags & MSG_DONTWAIT;
-+	else
-+		noblock = 1;
-+
-+	sk = sk_vsock(info->vsk);
-+	sk->sk_allocation = mask;
-+	skb = sock_alloc_send_skb(sk, size, noblock, err);
-+	if (!skb)
-+		return NULL;
-+
-+	skb_reserve(skb, VIRTIO_VSOCK_SKB_HEADROOM);
-+	return skb;
-+}
-+
- static void virtio_transport_copy_nonlinear_skb(const struct sk_buff *skb,
- 						void *dst,
- 						size_t len)
 @@ -238,7 +267,9 @@ EXPORT_SYMBOL_GPL(virtio_transport_deliver_tap_pkt);
 
  static u16 virtio_transport_get_type(struct sock *sk)
@@ -476,7 +438,7 @@ index 96b6303b24c2..0cb9261e433d 100644
  int virtio_transport_connect(struct vsock_sock *vsk)
  {
  	struct virtio_vsock_pkt_info info = {
-@@ -1103,7 +1126,33 @@ virtio_transport_dgram_enqueue(struct vsock_sock *vsk,
+@@ -1103,7 +1126,32 @@ virtio_transport_dgram_enqueue(struct vsock_sock *vsk,
  			       struct msghdr *msg,
  			       size_t dgram_len)
  {
@@ -490,7 +452,6 @@ index 96b6303b24c2..0cb9261e433d 100644
 +	};
 +	u32 src_cid, src_port;
 +	struct sk_buff *skb;
-+	int err;
 +
 +	if (dgram_len > VIRTIO_VSOCK_MAX_PKT_BUF_SIZE)
 +		return -EMSGSIZE;
@@ -499,7 +460,7 @@ index 96b6303b24c2..0cb9261e433d 100644
 +	src_cid = t_ops->transport.get_local_cid();
 +	src_port = vsk->local_addr.svm_port;
 +
-+	skb = virtio_transport_alloc_skb(&info, dgram_len, false,
++	skb = virtio_transport_alloc_skb(&info, dgram_len, false, NULL,
 +					 src_cid, src_port,
 +					 remote_addr->svm_cid,
 +					 remote_addr->svm_port);
@@ -511,23 +472,6 @@ index 96b6303b24c2..0cb9261e433d 100644
  }
  EXPORT_SYMBOL_GPL(virtio_transport_dgram_enqueue);
 
-@@ -1176,6 +1225,7 @@ static int virtio_transport_reset_no_sock(const struct virtio_transport *t,
- 		.reply = true,
- 	};
- 	struct sk_buff *reply;
-+	int err;
-
- 	/* Send RST only if the original pkt is not a RST pkt */
- 	if (le16_to_cpu(hdr->op) == VIRTIO_VSOCK_OP_RST)
-@@ -1190,7 +1240,7 @@ static int virtio_transport_reset_no_sock(const struct virtio_transport *t,
- 					   le64_to_cpu(hdr->src_cid),
- 					   le32_to_cpu(hdr->src_port));
- 	if (!reply)
--		return -ENOMEM;
-+		return -EINVAL;
-
- 	return t->send_pkt(reply);
- }
 @@ -1418,6 +1468,21 @@ virtio_transport_recv_enqueue(struct vsock_sock *vsk,
  		kfree_skb(skb);
  }
