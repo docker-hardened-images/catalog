@@ -1,0 +1,177 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-netbox
+variant: runtime
+tags:
+  - 4.6.7
+  - 4.6.7-r0
+  - 4.6.7-debian13
+  - 4.6.7-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-05-06"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: a1fc744556fc2cd185ffdac5d474ab3066b7cf38
+  NETBOX_DOCKER_COMMIT_SHA: 5adc62fe3fa65163c4ef63733bdcbd3e59b5c544
+  NETBOX_DOCKER_VERSION: 5.0.2
+  PYTHON_MINOR: "3.12"
+  PYTHON_VERSION: 3.12.13-11
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.6"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.6.7
+  UV_VERSION: 0.12.2
+  VERSION: 4.6.7
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: netbox
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+        - path: /root/.cache/pip
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - git
+          - grep
+          - gzip
+          - libldap2-dev
+          - libpq-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libstdc++6
+          - libxml2-dev
+          - libxmlsec1-dev
+          - libxslt1-dev
+          - pkg-config
+          - zlib1g-dev
+          - sed
+          - tar
+          - libpython-3.12=3.12.13-11
+          - libpython-3.12-dev=3.12.13-11
+          - libpython-3.12-minimal=3.12.13-11
+          - libpython-3.12-stdlib=3.12.13-11
+          - python-3.12-minimal=3.12.13-11
+          - python-3.12=3.12.13-11
+          - python-3.12-dev=3.12.13-11
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.2/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/netbox-community/netbox.git#v4.6.7
+            checksum: a1fc744556fc2cd185ffdac5d474ab3066b7cf38
+            path: ${source.dir}/netbox-src
+            spdx:
+              name: netbox
+              version: 4.6.7
+              packages:
+                - name: netbox
+                  purl: pkg:github/netbox-community/netbox@v4.6.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/netbox-community/netbox-docker.git#5.0.2
+            checksum: 5adc62fe3fa65163c4ef63733bdcbd3e59b5c544
+            path: ${source.dir}/netbox-docker-src
+            spdx:
+              name: netbox-docker
+              version: 5.0.2
+              packages:
+                - name: netbox-docker
+                  purl: pkg:github/netbox-community/netbox-docker@5.0.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build netbox app payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.12
+            bash "${source.dir}/build-netbox.sh"
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: netbox-venv
+            source: ${target.dir}/usr/lib/netbox
+        - uses: dhi/build-pkg:0
+          with:
+            deb:
+              depends:
+                - libldap-common
+                - libpq5
+                - libstdc++6
+                - libxmlsec1t64-openssl
+                - libxslt1.1
+            depends:
+              - python-3.12
+            description: NetBox network source of truth and IPAM/DCIM platform
+            files:
+              - etc/netbox
+              - usr/lib/netbox
+              - usr/share/netbox
+            formats:
+              - deb
+            license: Apache-2.0
+            name: netbox
+            rel: 0
+            url: https://github.com/netbox-community/netbox
+            version: 4.6.7
+      paths:
+        - type: file
+          path: ${source.dir}/build-netbox.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/netbox/build-netbox.sh
+        - type: file
+          path: ${source.dir}/requirements-container.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/netbox/files/requirements-container.txt
+        - type: file
+          path: ${source.dir}/overrides.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/netbox/files/overrides.txt
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
