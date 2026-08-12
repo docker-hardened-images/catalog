@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-datahub-ingestion
+variant: runtime
+tags:
+  - 1.5.0.7
+  - 1.5.0.7-r0
+  - 1.5.0.7-debian13
+  - 1.5.0.7-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  ACRYL_DATAHUB_SDIST_CHECKSUM: sha256:5a170b6ef48ed1deabfdd05ddef0450bdd293969c048f4e980dc2a3f8a74a5e6
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  EXTRAS: base,datahub-rest,datahub-kafka,snowflake,bigquery,redshift,mysql,postgres,s3-slim,gcs-slim,abs-slim,clickhouse,glue,dbt,looker,lookml,tableau,powerbi,superset,datahub-business-glossary
+  PYTHON_MINOR: "3.10"
+  PYTHON_VERSION: 3.10.20-11
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.0.7
+  UV_VERSION: 0.11.23
+  VERSION: 1.5.0.7
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: datahub-ingestion
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - g++
+          - gawk
+          - grep
+          - gzip
+          - libaio-dev
+          - libffi-dev
+          - libkrb5-dev
+          - libldap2-dev
+          - librdkafka-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libxml2-dev
+          - libxslt1-dev
+          - pkg-config
+          - sed
+          - tar
+          - unixodbc-dev
+          - libpython-3.10=3.10.20-11
+          - libpython-3.10-minimal=3.10.20-11
+          - libpython-3.10-stdlib=3.10.20-11
+          - python-3.10-minimal=3.10.20-11
+          - python-3.10=3.10.20-11
+          - python-3.10-dev=3.10.20-11
+          - libstdc++6
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.11.23/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/source/a/acryl-datahub/acryl_datahub-1.5.0.7.tar.gz
+            checksum: sha256:5a170b6ef48ed1deabfdd05ddef0450bdd293969c048f4e980dc2a3f8a74a5e6
+            path: ${source.dir}/acryl_datahub.tar.gz
+            spdx:
+              name: acryl-datahub
+              version: 1.5.0.7
+              packages:
+                - name: acryl-datahub
+                  purl: pkg:pypi/acryl-datahub@1.5.0.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: install datahub-ingestion
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat > ${source.dir}/overrides.txt << 'EOF'
+            urllib3>=2.7.0
+            lxml>=6.1.0
+            cryptography>=50.0.0
+            EOF
+
+            UV_LINK_MODE=copy uv pip install \
+              --prefix ${target.dir}/usr/lib/datahub-ingestion \
+              --override ${source.dir}/overrides.txt \
+              "${source.dir}/acryl_datahub.tar.gz[base,datahub-rest,datahub-kafka,snowflake,bigquery,redshift,mysql,postgres,s3-slim,gcs-slim,abs-slim,clickhouse,glue,dbt,looker,lookml,tableau,powerbi,superset,datahub-business-glossary]"
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: datahub-ingestion
+            source: ${target.dir}/usr/lib/datahub-ingestion
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find ${target.dir}/usr/lib/datahub-ingestion \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: fix venv shebangs
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/usr/lib/datahub-ingestion/bin"/*; do
+              [ -f "$f" ] || continue
+              read -r line < "$f"
+              case "$line" in
+                "#!${target.dir}"*) sed -i "1s|#!${target.dir}|#!|" "$f" ;;
+              esac
+            done
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            test -e "${target.dir}/usr/lib/datahub-ingestion/bin/datahub"
+            ln -sf ../lib/datahub-ingestion/bin/datahub "${target.dir}/usr/bin/datahub"
+        - uses: dhi/build-pkg:0
+          with:
+            deb:
+              depends:
+                - ca-certificates
+                - krb5-user
+                - libaio1t64
+                - libffi8
+                - libkrb5-3
+                - libldap2
+                - libodbc2
+                - librdkafka1
+                - libsasl2-2
+                - unixodbc
+            depends:
+              - python-3.10
+            description: DataHub metadata ingestion framework
+            files:
+              - usr/lib/datahub-ingestion
+              - usr/bin/datahub
+            formats:
+              - deb
+            license: Apache-2.0
+            name: datahub-ingestion
+            rel: 0
+            url: https://datahubproject.io/
+            version: 1.5.0.7
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
