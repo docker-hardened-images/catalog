@@ -1,17 +1,39 @@
 From 303cbeb50f4dd4332d416f04b85adb3c9aa61c4b Mon Sep 17 00:00:00 2001
 From: Christian Dupuis <cd@docker.com>
 Date: Thu, 30 Oct 2025 09:42:12 +0100
-Subject: [PATCH] Disable deprecation warnings
+Subject: [PATCH] Disable strict-compile -Werror for Error Prone warnings
 
+Gradle 9.7.0 enables Error Prone via gradlebuild.code-quality with
+allErrorsAsWarnings=true, but gradlebuild.strict-compile still passes
+-Werror to javac. Any Error Prone warning (for example AvoidCommonTypeNames
+on DefaultBinaryCollection.State) is promoted to a hard compile error.
+
+Remove -Werror from strictCompilerArgs, strip any later -Werror additions,
+and disable AvoidCommonTypeNames for DHI packaging builds.
+
+Upstream: https://github.com/gradle/gradle/blob/v9.7.0/build-logic/jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts
 ---
- .../jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts   | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ .../gradle-plugin/src/main/kotlin/gradlebuild.code-quality.gradle.kts | 1 +
+ .../jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts        | 5 +++--
+ 2 files changed, 4 insertions(+), 2 deletions(-)
 
+diff --git a/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.code-quality.gradle.kts b/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.code-quality.gradle.kts
+index bfce09e6ba8..154588f7a1b 100644
+--- a/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.code-quality.gradle.kts
++++ b/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.code-quality.gradle.kts
+@@ -56,6 +56,7 @@ val errorproneExtension = project.extensions.create<ErrorProneProjectExtension>(
+         "EqualsGetClass", // Let's agree if we want to adopt Error Prone's idea of valid equals()
+         "JdkObsolete", // Most of the checks are good, but we do not want to replace all LinkedLists without a good reason
+         "ReferenceEquality", // evaluate again in future EP versions https://github.com/gradle/gradle/pull/38269#pullrequestreview-4568989259
++        "AvoidCommonTypeNames", // Inner enum names like State clash with JDK types under Error Prone
+ 
+         // NEVER
+         "AssignmentExpression", // Not using it is more a matter of taste.
 diff --git a/build-logic/jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts b/build-logic/jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts
-index f0333160f4e..2ab908295d8 100644
+index f0333160f4e..5b56c410a1b 100644
 --- a/build-logic/jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts
 +++ b/build-logic/jvm/src/main/kotlin/gradlebuild.strict-compile.gradle.kts
-@@ -18,7 +18,7 @@ import gradlebuild.jvm.extension.StrictCompileExtension
+@@ -18,12 +18,13 @@ import gradlebuild.jvm.extension.StrictCompileExtension
  
  extensions.create<StrictCompileExtension>("strictCompile")
  
@@ -20,5 +42,11 @@ index f0333160f4e..2ab908295d8 100644
  
  tasks.withType<JavaCompile>().configureEach {
      // Generated classes may not adhere to the strict no-warning policy that we apply to handwritten code
+     // For example, external JMH plugin generates code that produces compiler warnings
+     if (!name.contains("CompileGeneratedClasses")) {
+         options.compilerArgs.addAll(strictCompilerArgs)
++        options.compilerArgs.removeAll(setOf("-Werror"))
+     }
+ }
 -- 
 2.51.0
