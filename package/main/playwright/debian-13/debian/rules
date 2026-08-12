@@ -1,0 +1,167 @@
+#!/usr/bin/make -f
+
+# PLAYWRIGHT_VERSION, CHROMIUM_REVISION and CHROMIUM_HEADLESS_REVISION arrive
+# via the build environment.
+PREFIX := $(CURDIR)/debian/tmp/usr
+BROWSERS := $(PREFIX)/lib/ms-playwright
+DEB_HOST_ARCH := $(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+# Playwright's own directory-naming scheme (registry/index.ts: browser name,
+# dashes replaced with underscores, plus "-" plus the browsers.json revision)
+# for the two chromium entries. Neither is downloaded any more (see below),
+# but the driver still resolves its bundled-browser paths through exactly
+# this scheme regardless of what's actually sitting there.
+CHROMIUM_DIR := $(BROWSERS)/chromium-$(CHROMIUM_REVISION)
+CHROMIUM_HEADLESS_DIR := $(BROWSERS)/chromium_headless_shell-$(CHROMIUM_HEADLESS_REVISION)
+
+# Within those two directories, registry/index.ts's EXECUTABLE_PATHS table
+# uses a genuinely different layout per host arch -- not just a different
+# source, a different subdirectory *and* filename scheme. amd64 (its CfT
+# layout): chrome-linux64/chrome and chrome-headless-shell-linux64/
+# chrome-headless-shell. arm64 (its self-built-Chromium layout, marked
+# "non-cft build" in that table): both entries share one chrome-linux/
+# subdirectory, distinguished only by binary name -- chrome vs
+# headless_shell. Getting this wrong doesn't fail the build, it fails at
+# container runtime with "Executable doesn't exist at ...", which is
+# exactly what happened here the first time arm64 was actually tested.
+ifeq ($(DEB_HOST_ARCH),amd64)
+CHROMIUM_EXECUTABLE := $(CHROMIUM_DIR)/chrome-linux64/chrome
+CHROMIUM_HEADLESS_EXECUTABLE := $(CHROMIUM_HEADLESS_DIR)/chrome-headless-shell-linux64/chrome-headless-shell
+else
+CHROMIUM_EXECUTABLE := $(CHROMIUM_DIR)/chrome-linux/chrome
+CHROMIUM_HEADLESS_EXECUTABLE := $(CHROMIUM_HEADLESS_DIR)/chrome-linux/headless_shell
+endif
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_clean:
+
+override_dh_auto_install:
+	# Verify the driver's npm registry signature and SLSA provenance attestation
+	# before shipping it, and fail the build if either does not verify. This is
+	# the only part of the payload with any upstream provenance at all: the
+	# browser bundles below carry no digest, signature or attestation. The check
+	# needs a project tree with a lockfile, which the tarball install below
+	# does not produce, hence the throwaway directory against the live registry.
+	rm -rf debian/npm-verify
+	mkdir -p debian/npm-verify
+	cd debian/npm-verify \
+		&& npm install --ignore-scripts --no-audit --no-fund playwright@$(PLAYWRIGHT_VERSION) \
+		&& npm audit signatures
+	rm -rf debian/npm-verify
+	# Ship the driver from the definition-pinned registry tarballs so its bytes
+	# are checksum-locked like the browser archives: the verify step above
+	# proves the registry's copy of this version has valid provenance, the pins
+	# prove these are those bytes. A project-dir install dedupes playwright's
+	# exact-version playwright-core dependency onto the pinned tarball, so
+	# --offline holds and npm resolves nothing over the network.
+	rm -rf debian/npm-stage
+	mkdir -p debian/npm-stage
+	cd debian/npm-stage \
+		&& npm install --ignore-scripts --no-audit --no-fund --omit=optional --offline \
+			/opt/playwright-downloads/npm/playwright-core-$(PLAYWRIGHT_VERSION).tgz \
+			/opt/playwright-downloads/npm/playwright-$(PLAYWRIGHT_VERSION).tgz
+	# Replicate the layout npm --global produces: playwright-core nested under
+	# the driver, and the CLI shim as a relative symlink.
+	mkdir -p $(PREFIX)/lib/node_modules $(PREFIX)/bin
+	cp -a debian/npm-stage/node_modules/playwright $(PREFIX)/lib/node_modules/
+	mkdir -p $(PREFIX)/lib/node_modules/playwright/node_modules
+	cp -a debian/npm-stage/node_modules/playwright-core \
+		$(PREFIX)/lib/node_modules/playwright/node_modules/
+	ln -s ../lib/node_modules/playwright/cli.js $(PREFIX)/bin/playwright
+	rm -rf debian/npm-stage
+	mkdir -p $(BROWSERS)
+	# Serve the definition-pinned inputs from a build-local mirror; Playwright
+	# retains responsibility for extracting and marking each bundle. set -e is
+	# load-bearing: without it the recipe's exit status is that of the final
+	# trap reset, and a failed readiness check or a partial browser install
+	# would ship a browser-missing deb green.
+	#
+	# chromium is deliberately not in this list: nothing was staged for it at
+	# the mirror (see .playwright.inc.yaml), so asking the installer for it
+	# would just fail. It's wired up below instead.
+	rm -f /tmp/playwright-browser-mirror.ready
+	set -e; \
+		node debian/browser-mirror.js \
+			/opt/playwright-downloads 8123 /tmp/playwright-browser-mirror.ready & \
+		mirror_pid=$$!; \
+		trap 'kill $$mirror_pid 2>/dev/null || true' EXIT; \
+		for attempt in $$(seq 1 50); do \
+			test -e /tmp/playwright-browser-mirror.ready && break; \
+			sleep 0.1; \
+		done; \
+		test -e /tmp/playwright-browser-mirror.ready; \
+		PLAYWRIGHT_DOWNLOAD_HOST=http://127.0.0.1:8123 \
+		PLAYWRIGHT_BROWSERS_PATH=$(BROWSERS) \
+			node $(PREFIX)/lib/node_modules/playwright/cli.js install firefox webkit; \
+		kill $$mirror_pid 2>/dev/null || true; \
+		wait $$mirror_pid || true; \
+		trap - EXIT
+	# No CfT or self-built chromium payload ships in this package at all (see
+	# 1.yaml and .playwright.inc.yaml), so there is no Widevine module to
+	# strip either -- Debian's chromium is DFSG-compliant and never carries
+	# one. Instead, point Playwright's own bundled-browser paths at Debian's
+	# chromium packages (debian/control Depends) so playwright.chromium's
+	# default launch path resolves there with no consumer-side config. The
+	# real binaries are not present in this build container: they land
+	# later, when the consuming image installs this package's dependencies.
+	# Debian packages chrome-headless-shell as its own binary too (source:
+	# chromium, same version, Depends: chromium-common) -- not a repack of
+	# the full browser, so this links each Playwright path to the matching
+	# Debian binary rather than pointing both at the same one.
+	mkdir -p $(dir $(CHROMIUM_EXECUTABLE)) $(dir $(CHROMIUM_HEADLESS_EXECUTABLE))
+	ln -s /usr/lib/chromium/chromium $(CHROMIUM_EXECUTABLE)
+	ln -s /usr/lib/chromium/chromium-headless-shell $(CHROMIUM_HEADLESS_EXECUTABLE)
+	touch $(CHROMIUM_DIR)/INSTALLATION_COMPLETE $(CHROMIUM_HEADLESS_DIR)/INSTALLATION_COMPLETE
+	# The SBOM declares FFMPEG_VERSION as the real ffmpeg version so its CVEs
+	# are matchable. Nothing upstream publishes that version, so assert it
+	# against the shipped binary: a revision bump that changes the underlying
+	# ffmpeg fails here instead of silently mislabelling the SBOM.
+	$(BROWSERS)/ffmpeg-$(FFMPEG_REVISION)/ffmpeg-linux -version \
+		| head -1 | grep -qF 'ffmpeg version n$(FFMPEG_VERSION)-playwright-build-$(FFMPEG_REVISION)'
+	# Same fail-closed idea for the libraries the ffmpeg bundle links
+	# statically: their SBOM entries would otherwise drift silently when a
+	# revision bump changes the underlying builds.
+	grep -aqF 'WebM Project VP8 Encoder v$(LIBVPX_VERSION)' \
+		$(BROWSERS)/ffmpeg-$(FFMPEG_REVISION)/ffmpeg-linux
+	grep -aqF 'deflate $(ZLIB_VERSION)' \
+		$(BROWSERS)/ffmpeg-$(FFMPEG_REVISION)/ffmpeg-linux
+	# .links records the build-tree install path; it is dead at runtime and
+	# leaks the build directory into the payload.
+	rm -rf $(BROWSERS)/.links
+	mkdir -p $(CURDIR)/debian/tmp/opt/docker/sbom
+	# No playwright-chromium / playwright-chromium-headless-shell here: those
+	# SBOM rows only ever existed for the archives this package no longer
+	# downloads. Chromium is tracked instead as an ordinary apt package via
+	# debian/control's Depends, picked up wherever it actually gets installed.
+	cp -a \
+		/opt/docker/sbom/playwright-core \
+		/opt/docker/sbom/playwright-driver \
+		/opt/docker/sbom/playwright-ffmpeg \
+		/opt/docker/sbom/playwright-firefox \
+		/opt/docker/sbom/playwright-webkit \
+		$(CURDIR)/debian/tmp/opt/docker/sbom/
+	chmod -R a+rX $(BROWSERS)
+
+# dh_fixperms strips the exec bit npm set on the /usr/bin/playwright symlink
+# target; restore it so the CLI shim stays executable.
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0755 debian/playwright/usr/lib/node_modules/playwright/cli.js
+
+# Prebuilt browser bundles: stripping corrupts them, and shlibdeps/makeshlibs
+# would scan hundreds of bundled .so files; the runtime library set is instead
+# declared explicitly in debian/control from upstream's nativeDeps.ts.
+override_dh_strip:
+override_dh_shlibdeps:
+override_dh_makeshlibs:
+override_dh_dwz:
+
+# ~1.5 GB of browser payload: default xz compression takes tens of minutes;
+# zstd keeps the build fast and dpkg/apt on trixie unpack it natively.
+override_dh_builddeb:
+	dh_builddeb -- -Zzstd
