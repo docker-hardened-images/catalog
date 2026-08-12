@@ -1,0 +1,108 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Cert-Manager Helm chart 1.21.x
+image: dhi.io/cert-manager-chart
+variant: helm
+tags:
+  - 1.21.1
+platforms:
+  - linux/amd64
+vars:
+  CERT_MANAGER_ACMESOLVER_REFERENCE: dhi/cert-manager-acmesolver:1.21.1-debian13@sha256:526a73e76caa6f72952f26ab56f85eef1618f8ca733b5a2dbe13023a151aee47
+  CERT_MANAGER_CAINJECTOR_REFERENCE: dhi/cert-manager-cainjector:1.21.1-debian13@sha256:cd47f7ad63c75134e02b27dc40a01838ebc05d27b06f7bd6ff9752530cbe5ea8
+  CERT_MANAGER_COMMIT_SHA: 24e33194fb39488eff2bbf10c6dc640f407cad44
+  CERT_MANAGER_CONTROLLER_REFERENCE: dhi/cert-manager-controller:1.21.1-debian13@sha256:7f6b5662e24a5c4ac1f9bbf199c380a2f2bac577f4296f63aa1e3f0ef3f9e245
+  CERT_MANAGER_MAJOR_MINOR_VERSION: "1.21"
+  CERT_MANAGER_STARTUPAPICHECK_REFERENCE: dhi/cert-manager-startupapicheck:1.21.1-debian13@sha256:8c97f1111da43e92fe90dfa779cb7c7013306316d9b32e0c8dc1daad959760bb
+  CERT_MANAGER_VERSION: 1.21.1
+  CERT_MANAGER_WEBHOOK_REFERENCE: dhi/cert-manager-webhook:1.21.1-debian13@sha256:03a671d4c5bd6ed22c5478d7886a0eaff5a5dacfb483f755e9453504ee71c726
+  CHART_HELM_NAME: cert-manager-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_VERSION: 4.1.4-2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: cert-manager
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - make
+          - curl
+          - git
+          - grep
+          - gawk
+          - findutils
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/cert-manager/cert-manager.git#v1.21.1
+            checksum: 24e33194fb39488eff2bbf10c6dc640f407cad44
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: Make Chart from template
+          work-dir: ${source.dir}/helm-charts/
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make _bin/helm/cert-manager/Chart.yaml
+            cp _bin/helm/cert-manager/Chart.yaml deploy/charts/cert-manager/Chart.yaml
+            rm deploy/charts/cert-manager/Chart.template.yaml
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts/cert-manager
+          with:
+            chart:
+              appRef: cert-manager-controller
+              description: Docker Hardened Images Helm chart for Cert-Manager
+              images:
+                - name: cert-manager-controller
+                  ref: dhi/cert-manager-controller:1.21.1-debian13@sha256:7f6b5662e24a5c4ac1f9bbf199c380a2f2bac577f4296f63aa1e3f0ef3f9e245
+                - name: cert-manager-cainjector
+                  ref: dhi/cert-manager-cainjector:1.21.1-debian13@sha256:cd47f7ad63c75134e02b27dc40a01838ebc05d27b06f7bd6ff9752530cbe5ea8
+                - name: cert-manager-acmesolver
+                  ref: dhi/cert-manager-acmesolver:1.21.1-debian13@sha256:526a73e76caa6f72952f26ab56f85eef1618f8ca733b5a2dbe13023a151aee47
+                - name: cert-manager-startupapicheck
+                  ref: dhi/cert-manager-startupapicheck:1.21.1-debian13@sha256:8c97f1111da43e92fe90dfa779cb7c7013306316d9b32e0c8dc1daad959760bb
+                - name: cert-manager-webhook
+                  ref: dhi/cert-manager-webhook:1.21.1-debian13@sha256:03a671d4c5bd6ed22c5478d7886a0eaff5a5dacfb483f755e9453504ee71c726
+              name: cert-manager-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/cert-manager/cert-manager
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts/cert-manager
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts/
+          with:
+            chart: cert-manager
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/deploy/charts
+          with:
+            chart: cert-manager
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/cert-manager/config
