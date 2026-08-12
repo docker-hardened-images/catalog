@@ -16,14 +16,13 @@ platforms:
 dates:
   release: "2023-08-23"
 vars:
-  COMMIT_SHA: afd905f1dddccdc5166e2c9f50be33f9a869c714
   JAVA_HOME_PATH: /usr/lib/jvm/temurin-17
   JAVA_MAJOR_VERSION: "17"
   JDK_MAJOR_VERSION: "17"
   SEMVER_MAJOR_MINOR_VERSION: "3.13"
   SEMVER_MAJOR_VERSION: "3"
-  SEMVER_VERSION: 3.13.194
-  VERSION: 3.13.194
+  SEMVER_VERSION: 3.13.192
+  VERSION: 3.13.192-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,6 +39,7 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - diffutils
     - dpkg
@@ -48,109 +48,16 @@ contents:
     - findutils
     - grep
     - libc-bin
+    - libc6
+    - libstdc++6
+    - lsb-base
     - mawk
     - perl-base
     - sed
+    - tzdata
     - util-linux
+    - wiremock-gui=3.13.192-0
   builds:
-    - name: wiremock-gui
-      work-dir: ${source.dir}/wiremock-gui
-      caches:
-        - path: /root/.gradle
-        - path: /root/.npm
-      contents:
-        packages:
-          - bash
-          - coreutils
-          - findutils
-          - git
-          - jq
-          - libatomic1
-          - libc6
-          - libstdc++6
-          - nodejs
-          - npm
-          - eclipse-temurin-17-jdk
-          - gradle-8
-        files:
-          - url: git+https://github.com/holomekc/wiremock.git#3.13.194
-            checksum: afd905f1dddccdc5166e2c9f50be33f9a869c714
-            path: ${source.dir}/wiremock-gui
-            spdx:
-              name: wiremock-gui
-              version: 3.13.194
-              packages:
-                - name: wiremock-gui
-                  purl: pkg:github/holomekc/wiremock@3.13.194
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: prepare npm resolution for the forced angular bump
-          work-dir: ${source.dir}/wiremock-gui/webapp/wiremock
-          runs: |
-            set -eux -o pipefail
-
-            printf 'force=true\n' > .npmrc
-        - name: pin patched webapp dependencies for cve remediation
-          uses: npm/bump@v1
-          privileged: true
-          environment:
-            npm_config_ignore_scripts: "true"
-          with:
-            bumps: ${source.dir}/patch/npm-bumps.json
-            npm-root: ${source.dir}/wiremock-gui/webapp/wiremock
-        - name: build
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            export GRADLE_HOME="/usr/share/java/gradle"
-            export JAVA_HOME="/usr/lib/jvm/temurin-17"
-            export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
-            gradle shadowJar --no-daemon --console=plain \
-              -x spotlessCheck -x spotlessJavaCheck -x spotlessJava
-        - name: install production dependencies for sbom
-          work-dir: ${source.dir}/wiremock-gui/webapp/wiremock
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            rm -rf node_modules
-            npm install --omit=dev --ignore-scripts
-        - name: ui sbom
-          uses: sbom@v1
-          with:
-            extra-scanners: javascript-package-cataloger
-            prefix: wiremock-gui-ui
-            source: ${source.dir}/wiremock-gui/webapp/wiremock/node_modules
-        - name: install
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${target.dir}/usr/local/bin"
-            mkdir -p "${target.dir}/etc/wiremock"
-            find build/libs -name "wiremock-standalone*.jar" -type f | head -1 | xargs -I {} cp {} "${target.dir}/usr/local/bin/wiremock-standalone.jar"
-      paths:
-        - type: file
-          path: ${source.dir}/patch/npm-bumps.json
-          uid: 0
-          gid: 0
-          source: image/wiremock-gui/patch/npm-bumps.json
-      outputs:
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/etc/wiremock
-          target: /etc/wiremock
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/wiremock-gui-ui
-          target: /opt/docker/sbom/wiremock-gui-ui
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
@@ -208,6 +115,15 @@ environment:
   LC_ALL: en_US.UTF-8
   PATH: /usr/lib/jvm/temurin-17/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/wiremock-standalone.jar
+    uid: 0
+    gid: 0
+    source: /usr/share/wiremock-gui/wiremock-standalone.jar
   - type: directory
     path: /home/wiremock
     uid: 65532
