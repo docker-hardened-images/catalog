@@ -19,11 +19,10 @@ platforms:
 dates:
   release: "2025-12-18"
 vars:
-  COMMIT_SHA: c83fb2bb1dcfac41ac51bcebd82471f4a7180d18
   SEMVER_MAJOR_MINOR_VERSION: "6.1"
   SEMVER_MAJOR_VERSION: "6"
   SEMVER_VERSION: 6.1.0
-  VERSION: 6.1.0
+  VERSION: 6.1.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,8 +33,10 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - dash
     - diffutils
@@ -52,271 +53,11 @@ contents:
     - mawk
     - perl-base
     - python-3.11
-    - python-3.11-dev
-    - python3-pip
-    - python3-setuptools
-    - python3-wheel
     - sed
+    - superset=6.1.0-0
     - tini
+    - tzdata
     - util-linux
-  builds:
-    - name: build ui
-      work-dir: /app/superset-frontend
-      caches:
-        - path: /root/.npm
-      contents:
-        packages:
-          - bash
-          - coreutils
-          - findutils
-          - gnu-which
-          - make
-          - gcc
-          - g++
-          - zstd
-          - base-files
-          - ca-certificates
-          - git
-          - libc6
-          - libstdc++6
-          - mawk
-          - nodejs-24
-          - node-corepack
-          - npm
-          - sed
-          - yarn-classic
-        files:
-          - url: git+https://github.com/apache/superset.git#6.1.0
-            checksum: c83fb2bb1dcfac41ac51bcebd82471f4a7180d18
-            path: /app
-            spdx:
-              name: superset-frontend
-              version: 6.1.0
-              packages:
-                - name: superset-frontend
-                  purl: pkg:dhi/superset-frontend@6.1.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: bump frontend axios for cves
-          uses: npm/bump@v1
-          work-dir: /app/superset-frontend
-          privileged: true
-          environment:
-            DHI_NO_SFW: "true"
-          with:
-            bumps: ${source.dir}/patch/npm-bumps.json
-            npm-root: /app/superset-frontend
-        - name: install frontend deps
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            npm install --prefer-offline --no-audit --no-fund
-        - name: build frontend
-          environment:
-            PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
-          runs: |
-            set -eux -o pipefail
-
-            npm run build
-        - name: build translations
-          runs: |
-            set -eux -o pipefail
-
-            npm run build-translation
-        - name: reinstall production deps for sbom
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            rm -rf node_modules
-            npm install --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund
-        - name: ui sbom
-          uses: sbom@v1
-          with:
-            extra-scanners: javascript-package-cataloger
-            prefix: superset-frontend
-            source: /app/superset-frontend
-      paths:
-        - type: file
-          path: ${source.dir}/patch/npm-bumps.json
-          uid: 0
-          gid: 0
-          source: image/superset/patch/npm-bumps.json
-      outputs:
-        - source: /app/superset/static/assets
-          target: /app/superset/static/assets
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/superset-frontend
-          target: /opt/docker/sbom/superset-frontend
-          uid: 0
-          gid: 0
-    - name: install superset
-      work-dir: /app
-      caches:
-        - path: /root/.cache/uv
-        - path: /root/.cache/pip
-      contents:
-        packages:
-          - bash
-          - ca-certificates
-          - coreutils
-          - findutils
-          - build-essential
-          - gcc
-          - g++
-          - pkg-config
-          - default-libmysqlclient-dev
-          - libpq-dev
-          - libecpg-dev
-          - libsasl2-dev
-          - libldap2-dev
-          - libffi-dev
-          - libssl-dev
-          - libxml2-dev
-          - libxmlsec1-dev
-          - python-3.11
-          - python-3.11-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - diffutils
-          - gawk
-          - grep
-          - sed
-        files:
-          - url: git+https://github.com/apache/superset.git#6.1.0
-            checksum: c83fb2bb1dcfac41ac51bcebd82471f4a7180d18
-            path: /app
-            spdx:
-              name: superset
-              version: 6.1.0
-              packages:
-                - name: superset
-                  purl: pkg:dhi/superset@6.1.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: install uv and create venv
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            pip install --no-cache-dir --upgrade uv
-            uv venv /app/.venv
-            . /app/.venv/bin/activate
-            uv pip install --upgrade pip setuptools 'wheel>=0.46.2'
-        - name: install base requirements
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            . /app/.venv/bin/activate
-            uv pip install -r requirements/base.txt
-        - name: install superset package
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            . /app/.venv/bin/activate
-            uv pip install -e .
-
-            uv pip install --upgrade 'msgpack>=1.2.1'                              # GHSA-6v7p-g79w-8964
-            uv pip install --upgrade 'pyarrow>=17.0.0'                             # CVE-2024-52338
-            uv pip install --upgrade 'urllib3>=2.6.3'                              # CVE-2026-21441, CVE-2025-66471, CVE-2025-66418
-            uv pip install --upgrade 'pillow>=12.2.0'                              # CVE-2026-25990, CVE-2026-40192
-            uv pip install --upgrade 'pyasn1>=0.6.3'                               # CVE-2026-30922, CVE-2026-23490
-            uv pip install --upgrade 'pyopenssl>=26.0.0'                           # CVE-2026-27459, CVE-2026-27448
-            uv pip install --upgrade 'cryptography>=46.0.6'                        # CVE-2026-26007, CVE-2026-34073
-            uv pip install --upgrade 'brotli>=1.2.0'                               # CVE-2025-6176
-            uv pip install --upgrade 'pyjwt>=2.12.1'                               # CVE-2026-32597, CVE-2025-45768
-            uv pip install --upgrade 'werkzeug>=3.1.6'                             # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221
-            uv pip install --upgrade 'requests>=2.33.0'                            # CVE-2026-25645
-            uv pip install --upgrade 'flask>=3.1.3'                                # CVE-2026-27205
-            uv pip install --upgrade 'flask-babel>=4.0.0'                          # Flask 3.1.x compat (locked_cached_property removed)
-            uv pip install --upgrade 'flask-sqlalchemy>=3.0.5,<3.1' 'sqlalchemy<2' # Flask 3.x compat; stay on flask-sqlalchemy 3.0.x so SQLAlchemy remains 1.4 (superset needs <2; flask-sqlalchemy>=3.1 requires SQLAlchemy 2.0)
-            uv pip install --upgrade 'marshmallow>=3.26.2,<4'                      # CVE-2025-68480 (capped <4 for flask-appbuilder)
-            uv pip install --upgrade 'pynacl>=1.6.2'                               # CVE-2025-69277
-            uv pip install --upgrade 'wheel>=0.46.2'                               # CVE-2026-24049
-            uv pip install --upgrade 'markdown>=3.8.1'                             # CVE-2025-69534
-            uv pip install --upgrade 'mako>=1.3.11'                                # GHSA-v92g-xgxw-vvmm
-            uv pip install --upgrade 'python-dotenv>=1.2.2'                        # CVE-2026-28684
-            uv pip install --upgrade 'pygments>=2.20.0'                            # CVE-2026-4539
-            uv pip install --upgrade 'jaraco-context>=6.1.0'                       # CVE-2026-23949
-            uv pip install --upgrade 'click>=8.3.3'                                # CVE-2026-7246
-            uv pip install --upgrade 'setuptools>=83.0.0'                          # CVE-2026-59890
-        - name: compile translations
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            . /app/.venv/bin/activate
-            uv pip install Babel
-            pybabel compile -d /app/superset/translations || true
-            rm -f /app/superset/translations/*/*/*.po
-            rm -f /app/superset/translations/*/*/*.json
-        - name: precompile python bytecode
-          runs: |
-            set -eux -o pipefail
-
-            . /app/.venv/bin/activate
-            python -m compileall -q /app/superset /app/.venv/lib
-        - name: posixify run-server.sh shebang
-          runs: |
-            set -eux -o pipefail
-
-            sed -i '1s|.*|#!/bin/sh|' /app/docker/entrypoints/run-server.sh
-      outputs:
-        - source: /app/.venv/
-          target: /app/.venv/
-          uid: 0
-          gid: 0
-        - source: /app/superset/
-          target: /app/superset/
-          uid: 0
-          gid: 0
-        - source: /app/superset-core/
-          target: /app/superset-core/
-          uid: 0
-          gid: 0
-        - source: /app/superset-frontend/package.json
-          target: /app/superset-frontend/package.json
-          uid: 0
-          gid: 0
-        - source: /app/docker/
-          target: /app/docker/
-          uid: 0
-          gid: 0
-        - source: /app/pyproject.toml
-          target: /app/pyproject.toml
-          uid: 0
-          gid: 0
-        - source: /app/setup.py
-          target: /app/setup.py
-          uid: 0
-          gid: 0
-        - source: /app/MANIFEST.in
-          target: /app/MANIFEST.in
-          uid: 0
-          gid: 0
-        - source: /app/README.md
-          target: /app/README.md
-          uid: 0
-          gid: 0
-        - source: /app/docker/entrypoints/run-server.sh
-          target: /usr/local/bin/run-server.sh
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/superset
-          target: /opt/docker/sbom/superset
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -351,11 +92,64 @@ environment:
   SUPERSET_HOME: /app/superset_home
   SUPERSET_PORT: "8088"
 paths:
-  - type: symlink
-    path: /usr/bin/run-server.sh
+  - type: directory
+    path: /app
     uid: 0
     gid: 0
-    source: /usr/local/bin/run-server.sh
+  - type: symlink
+    path: /app/.venv
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/.venv
+  - type: symlink
+    path: /app/superset
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/superset
+  - type: symlink
+    path: /app/superset-core
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/superset-core
+  - type: symlink
+    path: /app/docker
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/docker
+  - type: symlink
+    path: /app/superset-frontend
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/superset-frontend
+  - type: symlink
+    path: /app/pyproject.toml
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/pyproject.toml
+  - type: symlink
+    path: /app/setup.py
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/setup.py
+  - type: symlink
+    path: /app/MANIFEST.in
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/MANIFEST.in
+  - type: symlink
+    path: /app/README.md
+    uid: 0
+    gid: 0
+    source: /usr/lib/superset/README.md
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/run-server.sh
+    uid: 0
+    gid: 0
+    source: /usr/bin/run-server.sh
   - type: directory
     path: /app/superset_home
     uid: 65532
