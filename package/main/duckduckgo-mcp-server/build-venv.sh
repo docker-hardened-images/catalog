@@ -33,6 +33,8 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # CVE-2026-49476 / CVE-2026-49477: soupsieve <2.8.4.
 # CVE-2026-7246: click <8.3.3.
 # GHSA-537C-GMF6-5CCF: cryptography <48.0.1.
+# CVE-2026-45409: idna <3.15.
+# CVE-2026-4539: pygments <2.20.0.
 uv lock \
   --upgrade-package "mcp==1.28.1" \
   --upgrade-package "pydantic-settings>=2.14.2" \
@@ -41,7 +43,9 @@ uv lock \
   --upgrade-package "starlette>=1.3.1" \
   --upgrade-package "soupsieve>=2.8.4" \
   --upgrade-package "click>=8.3.3" \
-  --upgrade-package "cryptography>=48.0.1"
+  --upgrade-package "cryptography>=48.0.1" \
+  --upgrade-package "idna>=3.15" \
+  --upgrade-package "pygments>=2.20.0"
 uv sync --locked --no-install-project --no-dev --no-editable
 uv sync --locked --no-dev --no-editable
 
