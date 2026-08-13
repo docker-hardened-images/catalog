@@ -1,0 +1,125 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-socket-cli
+variant: runtime
+tags:
+  - 1.1.156-alpine3.24
+  - 1.1.156-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-06-13"
+vars:
+  COMMIT_SHA: cb416184205e90ce219e86deb4fcacf42fe713fa
+  NODEJS_VERSION: 24.19.0-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.1"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.1.156
+  VERSION: 1.1.156
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: socket-cli
+      work-dir: ${source.dir}/app-src
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - corepack
+          - git
+          - nodejs-24=24.19.0-r0
+          - openjdk17
+        files:
+          - url: git+https://github.com/SocketDev/socket-cli.git#v1.1.156
+            checksum: cb416184205e90ce219e86deb4fcacf42fe713fa
+            path: ${source.dir}/app-src
+            spdx:
+              name: socket-cli
+              version: 1.1.156
+              packages:
+                - name: socket
+                  purl: pkg:npm/socket@1.1.156
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build and stage payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare "$(node -p 'require("./package.json").packageManager')" --activate
+
+            pnpm install --frozen-lockfile --ignore-scripts
+
+            export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+            export MVNW_REPOURL=https://maven-central.storage-download.googleapis.com/maven2
+
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'SETTINGS'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            SETTINGS
+
+            for attempt in 1 2 3; do
+              bash src/commands/manifest/scripts/maven-extension/build-jar.sh && break
+              [ "$attempt" -eq 3 ] && exit 1
+              sleep $((attempt * 15))
+            done
+
+            INLINED_SOCKET_CLI_PUBLISHED_BUILD=1 pnpm run build:dist
+
+            pnpm prune --prod --ignore-scripts
+
+            mkdir -p "${target.dir}/usr/lib/nodejs/socket-cli"
+            PUBLISH_SET="$(node -p 'require("./package.json").files.map(f => f.split("/")[0]).join(" ")')"
+            cp -a $PUBLISH_SET package.json node_modules \
+              "${target.dir}/usr/lib/nodejs/socket-cli/"
+
+            sed -i '1s|^#!/usr/bin/env node$|#!/usr/bin/node|' \
+              "${target.dir}/usr/lib/nodejs/socket-cli/bin/"*.js
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: socket
+            purl: pkg:npm/socket@1.1.156
+            version: 1.1.156
+        - uses: dhi/build-pkg:0
+          with:
+            description: Socket CLI (supply-chain security scanning for npm/pnpm/yarn projects)
+            files:
+              - usr/lib/nodejs/socket-cli
+            license: MIT
+            name: socket-cli
+            rel: 0
+            url: https://github.com/SocketDev/socket-cli
+            version: 1.1.156
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
