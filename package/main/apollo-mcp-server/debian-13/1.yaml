@@ -1,0 +1,135 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-apollo-mcp-server
+variant: runtime
+tags:
+  - 1.17.0-0
+  - 1.17.0-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-02"
+vars:
+  COMMIT_SHA: 5118b032662d60ca32f3ac311786758327166703
+  DHI_REL: "0"
+  DHI_VERSION: 1.17.0-0
+  VERSION: 1.17.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: apollo-mcp-server
+      work-dir: ${source.dir}/apollo-mcp-server-pkg
+      caches:
+        - path: /root/.cargo
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - cargo-1.97
+          - cargo-auditable
+          - rustc-1.97
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - libssl-dev
+          - perl
+          - pkg-config
+          - sed
+        files:
+          - url: git+https://github.com/apollographql/apollo-mcp-server.git#v1.17.0
+            checksum: 5118b032662d60ca32f3ac311786758327166703
+            path: ${source.dir}/apollo-mcp-server-src
+            spdx:
+              name: apollo-mcp-server
+              version: 1.17.0
+              packages:
+                - name: apollo-mcp-server
+                  purl: pkg:cargo/apollo-mcp-server@1.17.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump vulnerable crates
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            axum_otel_metrics_floor=0.14.1
+            axum_otel_metrics_manifest=crates/apollo-mcp-server/Cargo.toml
+            axum_otel_metrics_version="$(
+              sed -n 's/^axum-otel-metrics = "\([^"]*\)"$/\1/p' \
+                "${axum_otel_metrics_manifest}"
+            )"
+            test -n "${axum_otel_metrics_version}"
+            if dpkg --compare-versions \
+              "${axum_otel_metrics_version}" lt "${axum_otel_metrics_floor}"; then
+              sed -i \
+                "s|^axum-otel-metrics = \"${axum_otel_metrics_version}\"$|axum-otel-metrics = \"${axum_otel_metrics_floor}\"|" \
+                "${axum_otel_metrics_manifest}"
+              cargo update --package axum-otel-metrics --precise "${axum_otel_metrics_floor}"
+            fi
+
+            cargo update --package anyhow@1.0.101 --precise 1.0.103
+            cargo update --package aws-lc-rs@1.16.0 --precise 1.17.3
+            cargo update --package crossbeam-epoch@0.9.18 --precise 0.9.20
+            cargo update --package lz4_flex@0.11.5 --precise 0.11.6
+            cargo update --package memmap2@0.9.9 --precise 0.9.11
+            cargo update --package openssl@0.10.75 --precise 0.10.80
+            cargo update --package opentelemetry_sdk@0.32.0 --precise 0.32.1
+            cargo update --package quinn-proto@0.11.13 --precise 0.11.15
+            cargo update --package rand@0.8.5 --precise 0.8.6
+            cargo update --package rand@0.9.2 --precise 0.9.3
+            cargo update --package rand@0.10.0 --precise 0.10.1
+            cargo update --package rustls-webpki@0.103.9 --precise 0.103.13
+            cargo update --package thin-vec@0.2.14 --precise 0.2.16
+        - name: build
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export OPENSSL_NO_VENDOR=1
+            export CARGO_PROFILE_RELEASE_STRIP=symbols
+
+            cargo auditable build --release --locked \
+              --package apollo-mcp-server --bin apollo-mcp-server
+
+            ldd target/release/apollo-mcp-server | grep -q 'libssl\.so\.3'
+
+            install -D -m 0755 target/release/apollo-mcp-server \
+              '${source.dir}/apollo-mcp-server-pkg/payload/usr/bin/apollo-mcp-server'
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Bump anyhow, crossbeam-epoch, lz4_flex, memmap2, openssl, opentelemetry_sdk, quinn-proto, rand, rustls-webpki and thin-vec to their advisory-fixed releases.
+              - Bump aws-lc-rs to 1.17.3, carrying aws-lc-sys past the advisories affecting 0.37.1, which its own dependency requirement pinned in place.
+              - Link the system OpenSSL rather than upstream's vendored copy, so OpenSSL fixes reach consumers as a libssl3t64 update.
+              - Raise axum-otel-metrics to 0.14.1 so the build no longer carries the opentelemetry_sdk 0.30 line affected by CVE-2026-48504.
+            version: 1.17.0-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/apollo-mcp-server-pkg/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/apollo-mcp-server/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
