@@ -5,36 +5,36 @@ image: dhi.io/datahub-frontend-react
 variant: dev
 tags:
   - 1-dev
-  - 1.5-dev
-  - 1.5.0-dev
-  - 1.5.0.7-dev
+  - 1.6-dev
+  - 1.6.0-dev
+  - 1.6.0.1-dev
   - 1-debian-dev
   - 1-debian13-dev
-  - 1.5-debian-dev
-  - 1.5-debian13-dev
-  - 1.5.0-debian-dev
-  - 1.5.0-debian13-dev
-  - 1.5.0.7-debian-dev
-  - 1.5.0.7-debian13-dev
+  - 1.6-debian-dev
+  - 1.6-debian13-dev
+  - 1.6.0-debian-dev
+  - 1.6.0-debian13-dev
+  - 1.6.0.1-debian-dev
+  - 1.6.0.1-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2025-08-22"
 vars:
-  COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+  COMMIT_SHA: 036f89a860a92e8a756eccfc2d46047b52f05877
   JAVA_FIPS_SUFFIX: ""
   JAVA_VARIANT: jdk
-  JDK_MAJOR_VERSION: "17"
+  JDK_MAJOR_VERSION: "21"
   JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
   JMX_PROMETHEUS_VERSION: 0.20.0
   OTEL_JAVAAGENT_SHA256: 130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500
   OTEL_JAVAAGENT_VERSION: 2.28.0
-  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.5.0.7
-  VERSION: 1.5.0.7
-  VERSION_MAJOR_MINOR_PATCH: 1.5.0
+  SEMVER_VERSION: 1.6.0.1
+  VERSION: 1.6.0.1
+  VERSION_MAJOR_MINOR_PATCH: 1.6.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -52,8 +52,8 @@ contents:
     - coreutils
     - diffutils
     - dpkg
-    - eclipse-temurin-17-jdk
-    - eclipse-temurin-17-jdk-oci-config
+    - eclipse-temurin-21-jdk
+    - eclipse-temurin-21-jdk-oci-config
     - findutils
     - grep
     - libc-bin
@@ -94,18 +94,18 @@ contents:
           - node-corepack
           - npm
           - yarn-classic
-          - eclipse-temurin-17-jdk
+          - eclipse-temurin-21-jdk
           - gradle-8
         files:
-          - url: git+https://github.com/datahub-project/datahub.git#v1.5.0.7
-            checksum: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+          - url: git+https://github.com/datahub-project/datahub.git#v1.6.0.1
+            checksum: 036f89a860a92e8a756eccfc2d46047b52f05877
             path: ${source.dir}/datahub
             spdx:
               name: datahub-frontend-react
-              version: 1.5.0.7
+              version: 1.6.0.1
               packages:
                 - name: datahub-frontend-react
-                  purl: pkg:github/datahub-project/datahub@1.5.0.7
+                  purl: pkg:github/datahub-project/datahub@1.6.0.1
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -187,6 +187,8 @@ contents:
             def cloudsmithUrl = 'https://dl.cloudsmith.io/basic/docker/dhi-maven-central/maven/'
             def gcsMirror     = 'https://maven-central.storage-download.googleapis.com/maven2/'
             def pluginPortal  = 'https://plugins.gradle.org/m2/'
+            def confluentUrl  = 'https://packages.confluent.io/maven'
+            def linkedinUrl   = 'https://linkedin.jfrog.io/artifactory/open-source'
 
             def cloudsmithUser = System.getenv('MAVEN_USER')
             def cloudsmithPass = System.getenv('MAVEN_PASSWORD')
@@ -207,6 +209,8 @@ contents:
                 }
               }
               container.maven { url gcsMirror; name 'gcs-maven-central-mirror' }
+              container.maven { url confluentUrl; name 'confluent' }
+              container.maven { url linkedinUrl; name 'linkedin-open-source' }
               container.maven {
                 url pluginPortal
                 name 'gradle-plugin-portal'
@@ -240,6 +244,11 @@ contents:
                   configureRepos delegate
                 }
               }
+              settings.dependencyResolutionManagement {
+                repositories {
+                  configureRepos delegate
+                }
+              }
             }
             EOF
         - name: tweak upstream build
@@ -254,55 +263,43 @@ contents:
               datahub-web-react/vite.config.ts
             grep -q 'enableBundleAnalysis: false' datahub-web-react/vite.config.ts
 
-            # Upstream root build.gradle owns Jackson / lz4 via
-            # ext.jacksonVersion + resolutionStrategy.force (and an
-            # eachDependency that useTarget()s the same pin). Appending a
-            # later eachDependency.useVersion cannot override those forces,
-            # which is why prior PR attempts left jackson at 2.21.2/2.21.3
-            # and lz4 at 1.10.1 in the staged image.
-            #
-            # jacksonVersion 2.21.3 -> 2.21.5 remediates GHSA-r7wm-3cxj-wff9,
-            # CVE-2026-59888, CVE-2026-59889, GHSA-mhm7-754m-9p8w (and the
-            # earlier 545xx jackson-databind family) for unshaded copies.
-            # buildSrc must stay in sync (upstream comment on both files).
-            # jackson-annotations stays on the minor-only 2.21 line via
-            # jacksonMinorRelease derived from jacksonVersion.
+            # Upstream root build.gradle owns Jackson / lz4 via ext.jacksonVersion,
+            # ext.lz4JavaVersion, and resolutionStrategy.force. v1.5.x pinned
+            # jackson 2.21.3 and literal lz4-java:1.10.1; v1.6+ already ships
+            # jackson 2.21.5 and lz4JavaVersion 1.11.1. Rewrite legacy literals
+            # when present, then verify the minimum safe versions either way.
             sed -i "s|ext.jacksonVersion = '2.21.3'|ext.jacksonVersion = '2.21.5'|" \
               build.gradle buildSrc/build.gradle
             grep -q "ext.jacksonVersion = '2.21.5'" build.gradle
             grep -q "ext.jacksonVersion = '2.21.5'" buildSrc/build.gradle
 
-            # lz4-java 1.10.1 -> 1.11.1 fixes CVE-2026-59949. Upstream pins
-            # this both via eachDependency useTarget and resolutionStrategy.force.
             sed -i \
               -e "s|at.yawk.lz4:lz4-java:1.10.1|at.yawk.lz4:lz4-java:1.11.1|g" \
               build.gradle
-            grep -q 'at.yawk.lz4:lz4-java:1.11.1' build.gradle
+            if grep -q "ext.lz4JavaVersion = '1.11.1'" build.gradle; then
+              :
+            elif grep -q 'at.yawk.lz4:lz4-java:1.11.1' build.gradle; then
+              :
+            else
+              echo "expected lz4-java 1.11.1 pin not found in build.gradle" >&2
+              exit 1
+            fi
             if grep -q 'at.yawk.lz4:lz4-java:1.10.1' build.gradle; then
               echo "lz4-java 1.10.1 pin still present after sed" >&2
               exit 1
             fi
 
-            # Force narrowly-scoped transitive CVE fixes not covered by the
-            # jacksonVersion / lz4 sed above. eachDependency is sufficient for
-            # these (upstream does not resolutionStrategy.force them to an
-            # older pin the way it does jackson/lz4).
+            # Append narrowly-scoped transitive CVE fixes upstream v1.6.0.1 does
+            # not already force at the same or a newer version. Do not downgrade
+            # spring/jetty/micrometer/netty/shiro/hazelcast/httpcore5 — upstream
+            # pins those via ext.*Version. Hazelcast shaded jackson copies stay
+            # on vex/datahub-frontend-react/jackson-*.vex.json.
             #
-            # hazelcast 5.7.0 is still required for other findings, but its
-            # shaded jackson copies remain unreachable by Gradle and are
-            # covered by vex/datahub-frontend-react/jackson-*.vex.json.
-            # akka-http 10.5.3 fixes CVE-2023-44487; Akka core modules must
-            # stay aligned at 2.7.0+.
-            # netty 4.2.16.Final covers the 2026 Netty CVE batch.
-            # shiro-core 2.2.1 fixes CVE-2026-49268.
-            # tools.jackson 3.1.4/3.1.5 covers unshaded Jackson 3.x copies
-            # for GHSA-r7wm-3cxj-wff9 / CVE-2026-59888 / CVE-2026-59889.
-            # jetty 12.0.36 fixes CVE-2026-10050.
-            # logback 1.5.35 fixes CVE-2026-9828, CVE-2026-10532.
-            # spring-core/spring-expression 6.2.19 fixes CVE-2026-41848,
-            # CVE-2026-41850, CVE-2026-41851, CVE-2026-41852.
-            # micrometer-core 1.15.12 fixes CVE-2026-40983, CVE-2026-40984.
-            # httpcore5 5.4.3 fixes CVE-2026-54399.
+            # akka-http 10.5.3 fixes CVE-2023-44487; Akka core modules must stay
+            # aligned at 2.7.0+.
+            # tools.jackson 3.1.4/3.1.5 covers unshaded Jackson 3.x copies for
+            # GHSA-r7wm-3cxj-wff9 / CVE-2026-59888 / CVE-2026-59889.
+            # logback 1.5.35 fixes CVE-2026-9828, CVE-2026-10532 (upstream 1.5.32).
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
@@ -310,10 +307,6 @@ contents:
                 configurations.configureEach {
                     resolutionStrategy.eachDependency { details ->
                         def req = details.requested
-                        if (req.group == 'com.hazelcast' && req.name == 'hazelcast') {
-                            details.useVersion '5.7.0'
-                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq'
-                        }
                         if (req.group == 'com.typesafe.akka' && req.name.startsWith('akka-')) {
                             if (req.name == 'akka-http_2.13' || req.name == 'akka-http-core_2.13' || req.name == 'akka-parsing_2.13') {
                                 details.useVersion '10.5.3'
@@ -322,18 +315,6 @@ contents:
                                 details.useVersion '2.7.0'
                                 details.because 'DHI CVE remediation: Akka version alignment for akka-http 10.5.3'
                             }
-                        }
-                        if (req.group == 'io.netty' && req.name.startsWith('netty-') && !req.name.startsWith('netty-tcnative')) {
-                            details.useVersion '4.2.16.Final'
-                            details.because 'DHI CVE remediation: CVE-2026-44249, CVE-2026-44250, CVE-2026-44890, CVE-2026-44891, CVE-2026-44892, CVE-2026-44893, CVE-2026-44894, CVE-2026-45416, CVE-2026-45536, CVE-2026-45673, CVE-2026-45674, CVE-2026-46340, CVE-2026-47244, CVE-2026-47691, CVE-2026-48006, CVE-2026-48043, CVE-2026-48059'
-                        }
-                        if (req.group == 'org.apache.shiro' && req.name == 'shiro-core') {
-                            details.useVersion '2.2.1'
-                            details.because 'DHI CVE remediation: CVE-2026-49268'
-                        }
-                        if (req.group == 'org.springframework' && (req.name == 'spring-core' || req.name == 'spring-expression')) {
-                            details.useVersion '6.2.19'
-                            details.because 'DHI CVE remediation: CVE-2026-41848, CVE-2026-41850, CVE-2026-41851, CVE-2026-41852'
                         }
                         if (req.group == 'tools.jackson.core') {
                             if (req.name == 'jackson-core') {
@@ -344,21 +325,9 @@ contents:
                                 details.because 'DHI CVE remediation: CVE-2026-59888, CVE-2026-59889'
                             }
                         }
-                        if (req.group == 'org.eclipse.jetty' && req.name.startsWith('jetty-')) {
-                            details.useVersion '12.0.36'
-                            details.because 'DHI CVE remediation: CVE-2026-10050'
-                        }
                         if (req.group == 'ch.qos.logback' && req.name.startsWith('logback-')) {
                             details.useVersion '1.5.35'
                             details.because 'DHI CVE remediation: CVE-2026-9828, CVE-2026-10532'
-                        }
-                        if (req.group == 'io.micrometer' && req.name == 'micrometer-core') {
-                            details.useVersion '1.15.12'
-                            details.because 'DHI CVE remediation: CVE-2026-40983, CVE-2026-40984'
-                        }
-                        if (req.group == 'org.apache.httpcomponents.core5' && req.name == 'httpcore5') {
-                            details.useVersion '5.4.3'
-                            details.because 'DHI CVE remediation: CVE-2026-54399'
                         }
                     }
                 }
@@ -371,7 +340,7 @@ contents:
             set -eux -o pipefail
 
             export GRADLE_HOME="/usr/share/java/gradle"
-            export JAVA_HOME="/usr/lib/jvm/temurin-17"
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
             export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8"
 
@@ -396,10 +365,8 @@ contents:
             # (placed by the `configure gradle maven mirror` step above) is
             # auto-loaded by Gradle from the user init.d directory — no
             # `--init-script` flag needed.
-            # `--update-locks` refreshes lock lines for the groups we sed/force
-            # above. jacksonVersion is now 2.21.5 and lz4 is forced to 1.11.1
-            # in upstream build.gradle, so lock refresh writes those pins
-            # instead of fighting them.
+            # `--update-locks` refreshes lock lines for DHI-appended forces and
+            # upstream-owned jackson/lz4 pins after the version bump.
             ./gradlew \
               --no-daemon \
               --no-watch-fs \
@@ -407,7 +374,7 @@ contents:
               --warning-mode=summary \
               --parallel \
               --max-workers=4 \
-              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,com.fasterxml.jackson:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,at.yawk.lz4:*,org.eclipse.jetty:*,io.netty:*,ch.qos.logback:*,com.hazelcast:*,com.typesafe.akka:*,org.apache.shiro:*,org.springframework:*,io.micrometer:*,org.apache.httpcomponents.core5:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,com.fasterxml.jackson:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,at.yawk.lz4:*,ch.qos.logback:*,com.typesafe.akka:*' \
               :datahub-frontend:stage \
               -x test \
               -x check
