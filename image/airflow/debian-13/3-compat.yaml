@@ -46,8 +46,11 @@ contents:
     - '!original-awk'
     - airflow=3.3.0-2
     - base-files
+    - bash
     - ca-certificates
     - ca-certificates-bundle
+    - coreutils
+    - dumb-init
     - libc6
     - libffi8
     - libgcc-s1
@@ -222,6 +225,9 @@ contents:
             sed -i 's/apache-airflow-providers-ftp==3\.15\.0/apache-airflow-providers-ftp==3.15.1/' ./constraints.txt
 
             sed -i 's/h2==4\.3\.0/h2==4.4.1/' ./constraints.txt # CVE-2026-71554
+
+            echo "apache-airflow==3.3.0" >> ./overrides.txt
+            echo "apache-airflow-core==3.3.0" >> ./overrides.txt
         - name: build providers and install extra packages
           work-dir: ${source.dir}/airflow
           privileged: true
@@ -283,6 +289,14 @@ contents:
                 rm -f "$oldjar"
               done < <(find "$site" -type f -name "${artifact}-2.25.3.jar" -print0 2> /dev/null || true)
             done
+        - name: install scripts
+          work-dir: ${source.dir}/airflow
+          runs: |
+            set -eux -o pipefail
+
+            install -m 0775 scripts/docker/entrypoint_prod.sh ${target.dir}/entrypoint
+            install -m 0775 scripts/docker/clean-logs.sh ${target.dir}/clean-logs
+            install -m 0775 scripts/docker/airflow-scheduler-autorestart.sh ${target.dir}/airflow-scheduler-autorestart
       paths:
         - type: file
           path: ${source.dir}/scripts/build-provider
@@ -293,6 +307,18 @@ contents:
       outputs:
         - source: ${target.dir}/usr/lib/airflow
           target: /usr/lib/airflow
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/entrypoint
+          target: /entrypoint
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/clean-logs
+          target: /clean-logs
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/airflow-scheduler-autorestart
+          target: /airflow-scheduler-autorestart
           uid: 0
           gid: 0
 accounts:
@@ -334,6 +360,8 @@ annotations:
   org.opencontainers.image.description: A minimal Airflow image
   org.opencontainers.image.licenses: Apache-2.0
 entrypoint:
-  - airflow
+  - /usr/bin/dumb-init
+  - --
+  - /entrypoint
 ports:
   - 8080/tcp
