@@ -1,0 +1,141 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-azure-cli
+variant: runtime
+tags:
+  - 2.88.0
+  - 2.88.0-r0
+  - 2.88.0-debian13
+  - 2.88.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  PYTHON_MINOR: "3.13"
+  PYTHON_VERSION: 3.13.14-3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.88"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.88.0
+  VERSION: 2.88.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: azure-cli
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - sed
+          - ca-certificates
+          - libpython-3.13=3.13.14-3
+          - libpython-3.13-minimal=3.13.14-3
+          - libpython-3.13-stdlib=3.13.14-3
+          - python-3.13-minimal=3.13.14-3
+          - python-3.13=3.13.14-3
+          - python3-pip-whl
+          - python3-setuptools-whl
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv "${target.dir}/opt/azure-cli"
+        - name: install azure-cli
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/opt/azure-cli/bin/pip" install --no-cache-dir \
+              "pip>=26.1.2" # CVE-2025-8869 CVE-2026-1703 CVE-2026-3219 CVE-2026-6357 CVE-2026-8643
+            "${target.dir}/opt/azure-cli/bin/pip" install --no-cache-dir --only-binary=:all: \
+              "azure-cli==2.88.0"
+        - name: fix venv build paths
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/azure-cli/bin"/* \
+              "${target.dir}/opt/azure-cli/pyvenv.cfg"; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              sed -i "s|${target.dir}||g" "$f"
+            done
+
+            rc=0
+            for f in "${target.dir}/opt/azure-cli/bin"/* \
+              "${target.dir}/opt/azure-cli/pyvenv.cfg"; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              while read -r line || [ -n "$line" ]; do
+                case "$line" in
+                  *"${target.dir}"*)
+                    echo "staging path leaked into ${f##*/}: $line" >&2
+                    rc=1
+                    ;;
+                esac
+              done < "$f"
+            done
+            [ "$rc" -eq 0 ]
+        - name: strip build tooling and python cache
+          runs: |
+            set -eux -o pipefail
+
+            sp=$(echo "${target.dir}/opt/azure-cli/lib"/python*/site-packages)
+            rm -rf "$sp"/setuptools "$sp"/setuptools-*.dist-info \
+              "$sp"/pkg_resources \
+              "$sp"/_distutils_hack "$sp"/distutils-precedence.pth \
+              "$sp"/wheel "$sp"/wheel-*.dist-info \
+              "${target.dir}/opt/azure-cli/bin/wheel"
+
+            find "${target.dir}/opt/azure-cli" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: prune unused venv console scripts
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/azure-cli/bin"/*; do
+              [ -e "$f" ] || continue
+              case "${f##*/}" in
+                az | az.completion.sh | register-python-argcomplete | activate) continue ;;
+                python | python3 | python3.* | pip | pip3 | pip3.*) continue ;;
+                *) rm -rf "$f" ;;
+              esac
+            done
+
+            test -x "${target.dir}/opt/azure-cli/bin/az"
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf /opt/azure-cli/bin/az "${target.dir}/usr/bin/az"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.13-minimal
+              - libpython-3.13-stdlib
+            description: Azure CLI - Microsoft's command-line tool for managing Azure resources
+            files:
+              - usr
+              - opt
+            formats:
+              - deb
+            license: MIT
+            name: azure-cli
+            rel: 0
+            url: https://github.com/Azure/azure-cli
+            version: 2.88.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

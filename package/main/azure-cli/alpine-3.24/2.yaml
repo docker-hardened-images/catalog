@@ -1,0 +1,129 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-azure-cli
+variant: runtime
+tags:
+  - 2.88.0-alpine3.24
+  - 2.88.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  PYTHON_MINOR: "3.14"
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.88"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.88.0
+  VERSION: 2.88.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: azure-cli
+      contents:
+        packages:
+          - ca-certificates
+          - python-3.14
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv "${target.dir}/opt/azure-cli"
+        - name: install azure-cli
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/opt/azure-cli/bin/pip" install --no-cache-dir \
+              "pip>=26.1.2" # CVE-2025-8869 CVE-2026-1703 CVE-2026-3219 CVE-2026-6357 CVE-2026-8643
+            "${target.dir}/opt/azure-cli/bin/pip" install --no-cache-dir --only-binary=:all: \
+              "azure-cli==2.88.0"
+        - name: fix venv build paths
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/azure-cli/bin"/* \
+              "${target.dir}/opt/azure-cli/pyvenv.cfg"; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              sed -i "s|${target.dir}||g" "$f"
+            done
+
+            rc=0
+            for f in "${target.dir}/opt/azure-cli/bin"/* \
+              "${target.dir}/opt/azure-cli/pyvenv.cfg"; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              while read -r line || [ -n "$line" ]; do
+                case "$line" in
+                  *"${target.dir}"*)
+                    echo "staging path leaked into ${f##*/}: $line" >&2
+                    rc=1
+                    ;;
+                esac
+              done < "$f"
+            done
+            [ "$rc" -eq 0 ]
+        - name: strip build tooling and python cache
+          runs: |
+            set -eux -o pipefail
+
+            sp=$(echo "${target.dir}/opt/azure-cli/lib"/python*/site-packages)
+            rm -rf "$sp"/setuptools "$sp"/setuptools-*.dist-info \
+              "$sp"/pkg_resources \
+              "$sp"/_distutils_hack "$sp"/distutils-precedence.pth \
+              "$sp"/wheel "$sp"/wheel-*.dist-info \
+              "${target.dir}/opt/azure-cli/bin/wheel"
+
+            find "${target.dir}/opt/azure-cli" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: prune unused venv console scripts
+          runs: |
+            set -eux -o pipefail
+
+            for f in "${target.dir}/opt/azure-cli/bin"/*; do
+              [ -e "$f" ] || continue
+              case "${f##*/}" in
+                az | az.completion.sh | register-python-argcomplete | activate) continue ;;
+                python | python3 | python3.* | pip | pip3 | pip3.*) continue ;;
+                *) rm -rf "$f" ;;
+              esac
+            done
+
+            test -x "${target.dir}/opt/azure-cli/bin/az"
+        - name: create usr/bin symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf /opt/azure-cli/bin/az "${target.dir}/usr/bin/az"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.14
+            description: Azure CLI - Microsoft's command-line tool for managing Azure resources
+            files:
+              - usr
+              - opt
+            formats:
+              - apk
+            license: MIT
+            name: azure-cli
+            rel: 0
+            url: https://github.com/Azure/azure-cli
+            version: 2.88.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
