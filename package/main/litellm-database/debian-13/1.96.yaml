@@ -1,38 +1,38 @@
-# syntax=dhi.io/build:2-alpine3.24
+# syntax=dhi.io/build:2-debian13
 
 image: dhi.io/pkg-litellm-database
 variant: runtime
 tags:
-  - 1.94.3-alpine3.24
-  - 1.94.3-r0-alpine3.24
+  - 1.96.2
+  - 1.96.2-r0
+  - 1.96.2-debian13
+  - 1.96.2-r0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2026-07-28"
+  release: "2026-08-08"
 vars:
-  COMMIT_SHA: 397859f6722909451ae573229aa9daef7ed960c9
-  PRISMA_MUSL_BINARY_TARGET: '#{ target.arch == "amd64" ? "linux-musl-openssl-3.0.x" : "linux-musl-arm64-openssl-3.0.x" }'
+  COMMIT_SHA: 83d6d84bfb7abbbff70d456bc89028d426db8c33
   REL: "0"
-  SEMVER_MAJOR_MINOR_VERSION: "1.94"
+  RUST_LINKER: '#{ target.arch == "amd64" ? "x86_64-linux-gnu-gcc-14" : "aarch64-linux-gnu-gcc-14" }'
+  SEMVER_MAJOR_MINOR_VERSION: "1.96"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.94.3
-  VERSION: 1.94.3
+  SEMVER_VERSION: 1.96.2
+  VERSION: 1.96.2
 contents:
   repositories:
-    - https://dhi.io/apk/alpine/v3.24/main
-    - https://dhi.io/apk/alpine/v3.23/main
-    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
-    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
   keyring:
-    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - alpine-baselayout-data
+    - base-files
   builds:
     - name: litellm-build
       work-dir: ${source.dir}/litellm-src
       environment:
         PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        RUSTFLAGS: -C linker=${RUST_LINKER}
         UV_LINK_MODE: copy
         UV_PROJECT_ENVIRONMENT: /app/.venv
         VIRTUAL_ENV: /app/.venv
@@ -41,37 +41,44 @@ contents:
         - path: /root/.cache/uv
         - path: /root/.npm
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
-          - build-base
-          - openssl
-          - openssl-dev
-          - rust
-          - coreutils
           - bash
-          - ca-certificates-bundle
-          - grep
+          - cargo-1.97
+          - ca-certificates
+          - build-essential
+          - coreutils
+          - diffutils
           - findutils
+          - gcc
+          - grep
           - gzip
-          - python-3.13
-          - python-3.13-dev
-          - py3.13-pip
-          - py3.13-setuptools
-          - libstdc++
+          - libssl-dev
+          - libsndfile1
+          - libstdc++6
           - nodejs
           - npm
-          - diffutils
+          - python3.13
+          - python3-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-venv
+          - python3-wheel
+          - rustc-1.97
           - sed
-          - tar
         files:
-          - url: git+https://github.com/BerriAI/litellm.git#v1.94.3
-            checksum: 397859f6722909451ae573229aa9daef7ed960c9
+          - url: git+https://github.com/BerriAI/litellm.git#v1.96.2
+            checksum: 83d6d84bfb7abbbff70d456bc89028d426db8c33
             path: ${source.dir}/litellm-src
             spdx:
               name: litellm
-              version: 1.94.3
+              version: 1.96.2
               packages:
                 - name: litellm
-                  purl: pkg:pypi/litellm@1.94.3
+                  purl: pkg:pypi/litellm@1.96.2
                   license: MIT
             uid: 0
             gid: 0
@@ -90,28 +97,23 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            python3 -m pip install uv==0.11.7
+            python3 -m venv /tmp/litellm-build
+            /tmp/litellm-build/bin/pip install uv==0.11.7
 
             sed -i 's/"aiohttp>=3\.14\.1,<4\.0"/"aiohttp>=3.14.3,<4.0"/' pyproject.toml
             sed -i '/^override-dependencies = \[/a\ "cryptography==50.0.0",' pyproject.toml
             sed -i '/^override-dependencies = \[/a\ "pypdf==6.15.0",' pyproject.toml
-            uv lock \
+            /tmp/litellm-build/bin/uv lock \
               --upgrade-package aiohttp==3.14.3 \
               --upgrade-package cryptography==50.0.0 \
               --upgrade-package pypdf==6.15.0
 
-            uv export --no-default-groups --no-editable \
-              --no-emit-package pyroscope-io \
+            /tmp/litellm-build/bin/uv sync --no-default-groups --no-editable \
               --extra proxy \
               --extra proxy-runtime \
               --extra extra_proxy \
               --extra semantic-router \
-              --output-file /tmp/litellm-requirements.txt
-
-            uv venv --python python3.13 "$VIRTUAL_ENV"
-            uv pip install --python "$VIRTUAL_ENV/bin/python" -r /tmp/litellm-requirements.txt
-
-            sed -i "s/\"linux-musl-openssl-3\\.0\\.x\"/\"${PRISMA_MUSL_BINARY_TARGET}\"/" schema.prisma
+              --python python3.13
         - name: prepare runtime files
           runs: |
             set -eux -o pipefail
@@ -131,11 +133,8 @@ contents:
               printf '%s\n' 'export PATH="/app/.venv/bin:$PATH"'
               printf '%s\n' 'export PRISMA_BINARY_CACHE_DIR="${PRISMA_BINARY_CACHE_DIR:-/opt/prisma/binaries}"'
               printf '%s\n' 'export PRISMA_CLI_PATH="${PRISMA_CLI_PATH:-/opt/prisma/binaries/node_modules/.bin/prisma}"'
-              printf '%s\n' 'export PRISMA_CLIENT_ENGINE_TYPE="${PRISMA_CLIENT_ENGINE_TYPE:-binary}"'
               printf '%s\n' 'export PRISMA_CLI_QUERY_ENGINE_TYPE="${PRISMA_CLI_QUERY_ENGINE_TYPE:-binary}"'
               printf '%s\n' 'export PRISMA_OFFLINE_MODE="${PRISMA_OFFLINE_MODE:-true}"'
-              printf '%s\n' "export PRISMA_QUERY_ENGINE_BINARY=\"\${PRISMA_QUERY_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
-              printf '%s\n' "export PRISMA_SCHEMA_ENGINE_BINARY=\"\${PRISMA_SCHEMA_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
               sed -n '2,$p' "$entrypoint"
             } > "$tmp"
             mv "$tmp" "$entrypoint"
@@ -145,13 +144,6 @@ contents:
             {
               sed -n '1p' "$prod_entrypoint"
               printf '%s\n' 'export PATH="/app/.venv/bin:$PATH"'
-              printf '%s\n' 'export PRISMA_BINARY_CACHE_DIR="${PRISMA_BINARY_CACHE_DIR:-/opt/prisma/binaries}"'
-              printf '%s\n' 'export PRISMA_CLI_PATH="${PRISMA_CLI_PATH:-/opt/prisma/binaries/node_modules/.bin/prisma}"'
-              printf '%s\n' 'export PRISMA_CLIENT_ENGINE_TYPE="${PRISMA_CLIENT_ENGINE_TYPE:-binary}"'
-              printf '%s\n' 'export PRISMA_CLI_QUERY_ENGINE_TYPE="${PRISMA_CLI_QUERY_ENGINE_TYPE:-binary}"'
-              printf '%s\n' 'export PRISMA_OFFLINE_MODE="${PRISMA_OFFLINE_MODE:-true}"'
-              printf '%s\n' "export PRISMA_QUERY_ENGINE_BINARY=\"\${PRISMA_QUERY_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
-              printf '%s\n' "export PRISMA_SCHEMA_ENGINE_BINARY=\"\${PRISMA_SCHEMA_ENGINE_BINARY:-/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}}\""
               sed -n '2,$p' "$prod_entrypoint"
             } > "$tmp"
             mv "$tmp" "$prod_entrypoint"
@@ -172,18 +164,9 @@ contents:
               PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
               npm_config_cache=/root/.npm \
               prisma generate --schema="${target.dir}/app/schema.prisma"
-            HOME=/opt/prisma \
-              XDG_CACHE_HOME=/opt/prisma/.cache \
-              PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
-              PRISMA_CLI_BINARY_TARGETS=${PRISMA_MUSL_BINARY_TARGET} \
-              PRISMA_CLI_QUERY_ENGINE_TYPE=binary \
-              npm_config_cache=/root/.npm \
-              node -e 'require("/opt/prisma/binaries/node_modules/@prisma/engines").ensureBinariesExist()'
 
             test -x "${target.dir}/opt/prisma/binaries/node_modules/.bin/prisma"
-            test -x "${target.dir}/opt/prisma/binaries/node_modules/@prisma/engines/schema-engine-${PRISMA_MUSL_BINARY_TARGET}"
             test -f "${target.dir}/opt/prisma/binaries/node_modules/prisma/build/index.js"
-            test -x "${target.dir}/opt/prisma/binaries/node_modules/prisma/query-engine-${PRISMA_MUSL_BINARY_TARGET}"
             find "$VIRTUAL_ENV/lib" -type f -path "*/site-packages/prisma/*.py" \
               -exec sed -i "s#${target.dir}/app#/app#g" {} +
             find "$VIRTUAL_ENV/lib" -type f -path "*/site-packages/prisma/*.py" \
@@ -219,15 +202,17 @@ contents:
             source: /opt/prisma/binaries/node_modules
         - uses: dhi/build-pkg:0
           with:
+            deb:
+              depends:
+                - ca-certificates
+                - libsndfile1
+                - libssl3t64
+                - libstdc++6
             depends:
               - bash
-              - ca-certificates-bundle
               - coreutils
-              - libsndfile
-              - libstdc++
               - nodejs
-              - openssl
-              - python-3.13
+              - python3.13
               - tzdata
             description: LiteLLM Database runtime files
             files:
@@ -235,16 +220,17 @@ contents:
               - opt/prisma
               - usr/bin
             formats:
-              - apk
+              - deb
             license: MIT AND LicenseRef-Proprietary
             name: litellm-database
             rel: 0
             url: https://github.com/BerriAI/litellm
-            version: 1.94.3
+            version: 1.96.2
 os-release:
-  name: Docker Hardened Images (Alpine)
-  id: alpine
-  version-id: "3.24"
-  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
