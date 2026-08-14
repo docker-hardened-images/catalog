@@ -4,9 +4,9 @@ image: dhi.io/pkg-mongodb-mcp
 variant: runtime
 tags:
   - 2.1.0
-  - 2.1.0-r0
+  - 2.1.0-r1
   - 2.1.0-debian13
-  - 2.1.0-r0-debian13
+  - 2.1.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,7 +14,7 @@ dates:
   release: "2026-07-31"
 vars:
   COMMIT_SHA: 5fefa7ab20b457453238eb0a7feca31bca608515
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "2.1"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.1.0
@@ -47,6 +47,7 @@ contents:
           - npm
           - sed
           - yarn-classic
+          - yq
         files:
           - url: git+https://github.com/mongodb-js/mongodb-mcp-server.git#v2.1.0
             checksum: 5fefa7ab20b457453238eb0a7feca31bca608515
@@ -66,23 +67,24 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            npm pkg set pnpm.overrides.minimatch=10.2.3                                        # CVE-2026-26996, CVE-2026-27903, CVE-2026-27904
-            npm pkg set pnpm.overrides.qs=6.15.2                                               # CVE-2026-2391, CVE-2026-8723
-            npm pkg set pnpm.overrides."@modelcontextprotocol/sdk"=1.26.0                      # CVE-2026-25536
-            npm pkg set pnpm.overrides.hono=4.12.31                                            # CVE-2026-54290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287, CVE-2026-54289; 4.12.31 compatible with @hono/node-server 2.0.5
-            npm pkg set pnpm.overrides.fast-xml-parser=5.7.0                                   # CVE-2026-41650
-            npm pkg set pnpm.overrides.ip-address=10.1.1                                       # CVE-2026-42338
-            npm pkg set pnpm.overrides.fast-uri=3.1.4                                          # CVE-2026-16221
-            npm pkg set pnpm.overrides."@hono/node-server"=2.0.5                               # GHSA-frvp-7c67-39w9
-            npm pkg set pnpm.overrides."hono>@hono/node-server"=2.0.5                          # GHSA-frvp-7c67-39w9 (peer dependency override)
-            npm pkg set pnpm.packageExtensions.hono.peerDependencies."@hono/node-server"=2.0.5 # GHSA-frvp-7c67-39w9 (force peer dependency version)
+            yq -Y -i '.overrides.minimatch = "10.2.3"' pnpm-workspace.yaml                                         # CVE-2026-26996, CVE-2026-27903, CVE-2026-27904
+            yq -Y -i '.overrides.qs = "6.15.2"' pnpm-workspace.yaml                                                # CVE-2026-2391, CVE-2026-8723
+            yq -Y -i '.overrides."@modelcontextprotocol/sdk" = "1.26.0"' pnpm-workspace.yaml                       # CVE-2026-25536
+            yq -Y -i '.overrides.hono = "4.12.34"' pnpm-workspace.yaml                                             # CVE-2026-54290, CVE-2026-54288, CVE-2026-54286, CVE-2026-54287, CVE-2026-54289
+            yq -Y -i '.overrides."fast-xml-parser" = "5.7.0"' pnpm-workspace.yaml                                  # CVE-2026-41650
+            yq -Y -i '.overrides."ip-address" = "10.3.1"' pnpm-workspace.yaml                                      # CVE-2026-69192, CVE-2026-54272, CVE-2026-69198
+            yq -Y -i '.overrides."@mongodb-js/socksv5" = "0.0.11"' pnpm-workspace.yaml                             # pulls ip-address@10.3.1 (CVE-2026-69192 transitive)
+            yq -Y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml                                         # CVE-2026-16221, CVE-2026-18446
+            yq -Y -i '.overrides."@hono/node-server" = "2.0.10"' pnpm-workspace.yaml                               # GHSA-frvp-7c67-39w9
+            yq -Y -i '.overrides."hono>@hono/node-server" = "2.0.10"' pnpm-workspace.yaml                          # GHSA-frvp-7c67-39w9 (peer dependency override)
+            yq -Y -i '.packageExtensions.hono.peerDependencies."@hono/node-server" = "2.0.10"' pnpm-workspace.yaml # GHSA-frvp-7c67-39w9 (force peer dependency version)
         - name: build and stage payload
           privileged: true
           runs: |
             set -eux -o pipefail
 
             corepack enable
-            corepack prepare pnpm@latest --activate
+            corepack prepare pnpm@11.5.1 --activate
 
             rm -f pnpm-lock.yaml
 
@@ -92,6 +94,13 @@ contents:
 
             export CI=true
             pnpm prune --prod --ignore-scripts
+
+            test -d node_modules/.pnpm/@mongodb-js+socksv5@0.0.11
+            test -d node_modules/.pnpm/ip-address@10.3.1
+            if ls -d node_modules/.pnpm/ip-address@9.* > /dev/null 2>&1; then
+              echo "[ERROR] vulnerable ip-address@9.x still present after override" >&2
+              exit 1
+            fi
 
             mkdir -p "${target.dir}/usr/lib/mongodb-mcp/packages"
             cp -a node_modules "${target.dir}/usr/lib/mongodb-mcp/"
@@ -114,7 +123,7 @@ contents:
               - deb
             license: Apache-2.0
             name: mongodb-mcp
-            rel: 0
+            rel: 1
             url: https://github.com/mongodb-js/mongodb-mcp-server
             version: 2.1.0
 os-release:
