@@ -1,0 +1,133 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-forklift-validation
+variant: runtime
+tags:
+  - 2.12.1-alpine3.24
+  - 2.12.1-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-30"
+vars:
+  COMMIT_SHA: af0a4fab8bfda7e678a74c1fa69293f7664a4c3b
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.6-r0
+  OPA_COMMIT_SHA: 1e32c796e8979b1bda2f768138500b1deb95ff24
+  OPA_VERSION: 1.19.0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.1
+  VERSION: 2.12.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: forklift-validation
+      work-dir: /go/src/github.com/open-policy-agent/opa
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.6-r0
+          - golang-1.26-oci-config=1.26.6-r0
+        files:
+          - url: git+https://github.com/open-policy-agent/opa.git#v1.19.0
+            checksum: 1e32c796e8979b1bda2f768138500b1deb95ff24
+            path: /go/src/github.com/open-policy-agent/opa
+            spdx:
+              name: open-policy-agent
+              version: 1.19.0
+              packages:
+                - name: open-policy-agent
+                  purl: pkg:golang/github.com/open-policy-agent/opa@v1.19.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/kubev2v/forklift.git#v2.12.1
+            checksum: af0a4fab8bfda7e678a74c1fa69293f7664a4c3b
+            path: /src/kubev2v/forklift
+            spdx:
+              name: forklift-validation
+              version: 2.12.1
+              packages:
+                - name: forklift-validation
+                  purl: pkg:github/kubev2v/forklift@v2.12.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+            download: true
+        - name: build opa
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/open-policy-agent/opa/version.Hostname=dhi
+              - -X github.com/open-policy-agent/opa/version.Version=1.19.0
+            output: ${target.dir}/usr/bin/opa
+            packages: .
+        - name: build opa dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/open-policy-agent/opa/version.Hostname=dhi
+              - -X github.com/open-policy-agent/opa/version.Version=1.19.0
+            output: ${target.dir}/usr/bin/opa-dev
+            packages: .
+            strip: false
+        - name: verify rego policies
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/bin/opa" test /src/kubev2v/forklift/validation/policies
+        - name: stage validation policies and entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/opa/policies"
+            cp -a /src/kubev2v/forklift/validation/policies/. "${target.dir}/usr/share/opa/policies/"
+            find "${target.dir}/usr/share/opa/policies" -name "*_test.rego" -delete
+
+            cp /src/kubev2v/forklift/validation/entrypoint.sh "${target.dir}/usr/bin/entrypoint.sh"
+            sed -i '1s|#!/bin/bash|#!/bin/sh|' "${target.dir}/usr/bin/entrypoint.sh"
+            chmod 0755 "${target.dir}/usr/bin/entrypoint.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            description: OPA binary and Rego validation policies for the Forklift VM migration service
+            files:
+              - usr/bin/opa
+              - usr/share/opa/policies
+              - usr/bin/entrypoint.sh
+            license: Apache-2.0
+            name: forklift-validation
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/opa
+                    source: usr/bin/opa-dev
+                name: forklift-validation-dev
+            url: https://github.com/kubev2v/forklift
+            version: 2.12.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
