@@ -1,0 +1,154 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-homepage
+variant: runtime
+tags:
+  - 2.0.0
+  - 2.0.0-r0
+  - 2.0.0-debian13
+  - 2.0.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-14"
+vars:
+  COMMIT_SHA: 17456f2125a8365ebaa68792bf82a1f75bc1a24c
+  DHI_TEST_DEB_EXPECTED_FILES: /usr/lib/homepage/server.js
+  NODEJS_VERSION: 24.19.0-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.0"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.0.0
+  VERSION: 2.0.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: homepage
+      work-dir: ${source.dir}/homepage
+      caches:
+        - path: /root/.local/share/pnpm
+        - path: /root/.cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24=24.19.0-0
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+          - yq
+        files:
+          - url: git+https://github.com/gethomepage/homepage.git#v2.0.0
+            checksum: 17456f2125a8365ebaa68792bf82a1f75bc1a24c
+            path: ${source.dir}/homepage
+            spdx:
+              name: homepage
+              version: 2.0.0
+              packages:
+                - name: homepage
+                  purl: pkg:dhi/homepage@2.0.0
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/su-exec/gosu/g' docker-entrypoint.sh
+            sed -i '/^set -e/a\
+            \
+            if [ -d /usr/lib/homepage ]; then\
+              find /usr/lib/homepage -depth -name '"'"'*__DHI_LB__*'"'"' | while IFS= read -r f; do\
+                dir=$(dirname "$f")\
+                base=$(basename "$f")\
+                real=$(printf '"'"'%s'"'"' "$base" | sed '"'"'s#__DHI_LB__#[#g; s#__DHI_RB__#]#g'"'"')\
+                mv "$f" "${dir}/${real}"\
+              done\
+            fi' docker-entrypoint.sh
+        - name: bump pnpm dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@latest --activate
+
+            yq -Y -i '.overrides."gamedig>fast-xml-parser" = "5.7.0"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."postcss@8.4.31" = "8.5.18"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."tmp" = "0.2.7"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."ws" = "8.21.0"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."protobufjs" = "7.6.5"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."tar" = "7.5.21"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."js-yaml" = "4.3.0"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."@protobufjs/utf8" = "1.1.1"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."systeminformation" = "5.31.7"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."sharp" = "0.35.0"' pnpm-workspace.yaml
+
+            pnpm up next@16.2.11
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --prefer-offline \
+              && NEXT_TELEMETRY_DISABLED=1 \
+                NEXT_PUBLIC_BUILDTIME=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ') \
+                NEXT_PUBLIC_VERSION=2.0.0 \
+                NEXT_PUBLIC_REVISION=17456f2125a8365ebaa68792bf82a1f75bc1a24c \
+                pnpm run build
+
+            mkdir -p "${target.dir}/usr/lib/homepage"
+            cp -a ./.next/standalone/. "${target.dir}/usr/lib/homepage/"
+            mkdir -p "${target.dir}/usr/lib/homepage/.next/static"
+            cp -a ./.next/static/. "${target.dir}/usr/lib/homepage/.next/static/"
+            mkdir -p "${target.dir}/usr/lib/homepage/public"
+            cp -a ./public/. "${target.dir}/usr/lib/homepage/public/"
+
+            install -D -m 0755 docker-entrypoint.sh "${target.dir}/usr/bin/docker-entrypoint.sh"
+
+            rm -rf "${target.dir}/usr/lib/homepage/src"
+
+            find "${target.dir}/usr/lib/homepage" -depth -name '*\[*' | while IFS= read -r f; do
+              dir=$(dirname "$f")
+              base=$(basename "$f")
+              safe=$(printf '%s' "$base" | sed 's/\[/__DHI_LB__/g; s/\]/__DHI_RB__/g')
+              mv "$f" "${dir}/${safe}"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: A highly customizable homepage (dashboard) for your server
+            files:
+              - usr/lib/homepage
+              - usr/bin/docker-entrypoint.sh
+            formats:
+              - deb
+            license: GPL-3.0
+            name: homepage
+            rel: 0
+            url: https://github.com/gethomepage/homepage
+            version: 2.0.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
