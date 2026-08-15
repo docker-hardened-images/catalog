@@ -1,0 +1,272 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-cdi-importer
+variant: runtime
+tags:
+  - 1.66.0
+  - 1.66.0-r0
+  - 1.66.0-debian13
+  - 1.66.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2018-06-14"
+vars:
+  COMMIT_SHA: 938af7c54b2491321156bad2daa707b54bbdb214
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.6-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.66"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.66.0
+  VERSION: 1.66.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: cdi-importer
+      work-dir: /go/src/kubevirt.io/containerized-data-importer
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - libnbd-dev
+          - pkg-config
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - libc6-dev
+          - mawk
+          - sed
+          - golang-1.26=1.26.6-0
+          - golang-1.26-oci-config=1.26.6-0
+        files:
+          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.66.0
+            checksum: 938af7c54b2491321156bad2daa707b54bbdb214
+            path: /go/src/kubevirt.io/containerized-data-importer
+            spdx:
+              name: cdi-importer
+              version: 1.66.0
+              packages:
+                - name: cdi-importer
+                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.66.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch vulnerable Go dependencies
+          uses: go/bump@v1
+          environment:
+            GOWORK: "off"
+          with:
+            deps:
+              - golang.org/x/net@v0.55.0
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/klauspost/compress@v1.18.7
+              - github.com/ulikunitz/xz@v0.5.15
+              - go.opentelemetry.io/otel@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: patch grpc CVE
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            if [ -f go.work ]; then
+              go work edit -go=1.25.0
+            fi
+
+            go get google.golang.org/grpc@v1.82.1 # GHSA-HRXH-6V49-42GF
+
+            go mod tidy
+            if [ -f go.work ]; then
+              go work vendor
+            else
+              go mod vendor
+            fi
+        - name: test
+          environment:
+            CGO_ENABLED: "1"
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            go test ./pkg/importer/...
+        - name: build cdi-importer
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.66.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=938af7c54b2491321156bad2daa707b54bbdb214
+            output: ${target.dir}/usr/bin/cdi-importer
+            packages: ./cmd/cdi-importer
+        - name: build cdi-importer dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.66.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=938af7c54b2491321156bad2daa707b54bbdb214
+            output: ${target.dir}/usr/bin/cdi-importer-dev
+            packages: ./cmd/cdi-importer
+            strip: false
+        - name: build openstack-populator
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/openstack-populator
+            packages: ./cmd/openstack-populator
+        - name: build openstack-populator dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/openstack-populator-dev
+            packages: ./cmd/openstack-populator
+            strip: false
+        - name: build ovirt-populator
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/ovirt-populator
+            packages: ./cmd/ovirt-populator
+        - name: build ovirt-populator dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/ovirt-populator-dev
+            packages: ./cmd/ovirt-populator
+            strip: false
+        - name: build cdi-containerimage-server
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/cdi-containerimage-server
+            packages: ./tools/cdi-containerimage-server
+        - name: build cdi-containerimage-server dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/cdi-containerimage-server-dev
+            packages: ./tools/cdi-containerimage-server
+            strip: false
+        - name: build cdi-image-size-detection
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/cdi-image-size-detection
+            packages: ./tools/cdi-image-size-detection
+        - name: build cdi-image-size-detection dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            output: ${target.dir}/usr/bin/cdi-image-size-detection-dev
+            packages: ./tools/cdi-image-size-detection
+            strip: false
+        - name: build cdi-source-update-poller
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            cgo_enabled: 1
+            output: ${target.dir}/usr/bin/cdi-source-update-poller
+            packages: ./tools/cdi-source-update-poller
+        - name: build cdi-source-update-poller dev
+          uses: go/build@v1
+          environment:
+            GOWORK: "off"
+          with:
+            cgo_enabled: 1
+            output: ${target.dir}/usr/bin/cdi-source-update-poller-dev
+            packages: ./tools/cdi-source-update-poller
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libnbd0
+            description: KubeVirt Containerized Data Importer importer binaries
+            files:
+              - usr/bin/cdi-importer
+            formats:
+              - deb
+            license: Apache-2.0
+            name: cdi-importer
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/openstack-populator
+                name: openstack-populator
+              - files:
+                  - path: usr/bin/ovirt-populator
+                name: ovirt-populator
+              - files:
+                  - path: usr/bin/cdi-containerimage-server
+                name: cdi-containerimage-server
+              - files:
+                  - path: usr/bin/cdi-image-size-detection
+                name: cdi-image-size-detection
+              - depends:
+                  - libnbd0
+                files:
+                  - path: usr/bin/cdi-source-update-poller
+                name: cdi-source-update-poller
+              - depends:
+                  - libnbd0
+                files:
+                  - path: usr/bin/cdi-importer
+                    source: usr/bin/cdi-importer-dev
+                name: cdi-importer-dev
+              - files:
+                  - path: usr/bin/openstack-populator
+                    source: usr/bin/openstack-populator-dev
+                name: openstack-populator-dev
+              - files:
+                  - path: usr/bin/ovirt-populator
+                    source: usr/bin/ovirt-populator-dev
+                name: ovirt-populator-dev
+              - files:
+                  - path: usr/bin/cdi-containerimage-server
+                    source: usr/bin/cdi-containerimage-server-dev
+                name: cdi-containerimage-server-dev
+              - files:
+                  - path: usr/bin/cdi-image-size-detection
+                    source: usr/bin/cdi-image-size-detection-dev
+                name: cdi-image-size-detection-dev
+              - depends:
+                  - libnbd0
+                files:
+                  - path: usr/bin/cdi-source-update-poller
+                    source: usr/bin/cdi-source-update-poller-dev
+                name: cdi-source-update-poller-dev
+            url: https://github.com/kubevirt/containerized-data-importer
+            version: 1.66.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
