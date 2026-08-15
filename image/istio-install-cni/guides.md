@@ -32,7 +32,7 @@ with CNI directory mounts.
 ### Basic usage
 
 Replace `<secret name>` with your Kubernetes image pull secret and `<tag>` with the image variant you want to use (for
-example, `1.29.3-debian13`).
+example, `1.30.3-debian13`).
 
 ```yaml
 apiVersion: apps/v1
@@ -158,7 +158,7 @@ istio-cni-node-def34   1/1     Running   0          30s
 $ kubectl label namespace default istio-injection=enabled
 
 # Deploy a sample workload
-$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.29/samples/bookinfo/platform/kube/bookinfo.yaml
+$ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.30/samples/bookinfo/platform/kube/bookinfo.yaml
 
 # Verify no privileged init containers are used
 $ kubectl describe pod -l app=productpage | grep -A2 "Init Containers"
@@ -265,7 +265,7 @@ The following steps outline the general migration process.
 1. **Find hardened images for your deployment.**
 
    A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
-   For production, use a runtime variant (for example, `1.29.3-debian13`). For debugging, use a `dev` variant. For
+   For production, use a runtime variant (for example, `1.30.3-debian13`). For debugging, use a `dev` variant. For
    regulated environments, use a `fips` variant.
 
 1. **Update your installation configuration.**
