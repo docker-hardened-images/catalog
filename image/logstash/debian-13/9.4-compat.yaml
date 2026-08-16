@@ -466,6 +466,18 @@ contents:
                   license: BSD-3-Clause
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar
+            checksum: sha256:18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a
+            path: ${source.dir}/patch/deps/httpcore5-5.4.3.jar
+            spdx:
+              name: httpcore5
+              version: 5.4.3
+              packages:
+                - name: httpcore5
+                  purl: pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.4.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - name: patch deps
           uses: git/patch@v1
@@ -602,6 +614,8 @@ contents:
             replace_jars "*/io/netty/netty-codec-http/*/netty-codec-http-*.jar" "${source.dir}/patch/deps/netty-codec-http-4.1.136.Final.jar"
             # CVE-2026-44249, CVE-2026-45416, CVE-2026-50010 - netty-handler 4.1.134 -> 4.1.136
             replace_jars "*/io/netty/netty-handler/*/netty-handler-*.jar" "${source.dir}/patch/deps/netty-handler-4.1.136.Final.jar"
+            # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3
+            replace_jars "*/org/apache/httpcomponents/core5/httpcore5/*/httpcore5-*.jar" "${source.dir}/patch/deps/httpcore5-5.4.3.jar"
             replace_jars "*/org/bouncycastle/bcprov-jdk18on/*/bcprov-jdk18on-*.jar" "${source.dir}/patch/deps/bcprov-jdk18on-1.84.jar"
             replace_jars "*/org/bouncycastle/bcpkix-jdk18on/*/bcpkix-jdk18on-*.jar" "${source.dir}/patch/deps/bcpkix-jdk18on-1.84.jar"
             replace_jars "*/tools/jackson/core/jackson-core/*/jackson-core-*.jar" "${source.dir}/patch/deps/tools-jackson-core-3.1.5.jar"
@@ -839,6 +853,54 @@ contents:
 
             # Verify the fix was applied
             "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/log4j/Category.class"
+        - name: patch shaded httpcore5 in elastic_integration jar
+          runs: |
+            set -eux -o pipefail
+
+            # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3 in elastic_integration shaded JAR
+
+            JAR_CMD="/opt/java/openjdk/21/bin/jar"
+            httpcore5_fixed="${source.dir}/patch/deps/httpcore5-5.4.3.jar"
+            base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.4.0/gems"
+
+            ei_jar=$(find "$base" -path "*/logstash-filter-elastic_integration-*/vendor/jar-dependencies/co/elastic/logstash-filter-elastic_integration/*/logstash-filter-elastic_integration-*.jar" -type f | head -1)
+
+            if [ -z "$ei_jar" ]; then
+              echo "WARNING: No elastic_integration JAR found, skipping"
+              exit 0
+            fi
+
+            if ! "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/hc/core5/"; then
+              echo "No httpcore5 classes in elastic_integration JAR, skipping"
+              exit 0
+            fi
+
+            echo "Patching httpcore5 in shaded JAR: $ei_jar"
+            work_dir="/tmp/ei_jar_httpcore5_patch"
+
+            mkdir -p "$work_dir"
+            cd "$work_dir"
+
+            "$JAR_CMD" xf "$ei_jar"
+
+            rm -rf org/apache/hc/core5
+            rm -rf META-INF/maven/org.apache.httpcomponents.core5/httpcore5
+
+            "$JAR_CMD" xf "$httpcore5_fixed" 'org/apache/hc/core5'
+            "$JAR_CMD" xf "$httpcore5_fixed" 'META-INF/maven/org.apache.httpcomponents.core5/httpcore5'
+
+            rm "$ei_jar"
+            "$JAR_CMD" cf "$ei_jar" .
+
+            verify_dir="/tmp/ei_jar_httpcore5_verify"
+            rm -rf "$verify_dir"
+            mkdir -p "$verify_dir"
+            cd "$verify_dir"
+            "$JAR_CMD" xf "$ei_jar" META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties
+            grep -q 'version=5.4.3' META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties
+
+            cd /
+            rm -rf "$work_dir" "$verify_dir"
         - name: fix vulnerable ruby gems
           runs: |
             set -eux -o pipefail
