@@ -21,11 +21,12 @@ dates:
 vars:
   AWSCLI_REFERENCE: dhi/awscli:2.36.24-debian13@sha256:f7bc04bde07a202c58e81dd18a873f98f6a15eb8e7f328c00779d827882c44fd
   AWSCLI_VERSION: 2.36.24
-  COMMIT_SHA: 098b544f1c7d6d1368e89c3f8d92415ede353916
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "1.3"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.3.0
-  VERSION: 1.3.0
+  SUFFIX: ""
+  VERSION: 1.3.0-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -36,6 +37,7 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - argocd-image-updater=1.3.0-1
     - base-files
     - bash
     - ca-certificates
@@ -60,84 +62,6 @@ contents:
     - tini
     - tzdata
     - util-linux
-  builds:
-    - name: argocd-image-updater
-      work-dir: /go/src/github.com/argoproj-labs/argocd-image-updater
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - binutils
-          - binutils-gold
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/argoproj-labs/argocd-image-updater.git#v1.3.0
-            checksum: 098b544f1c7d6d1368e89c3f8d92415ede353916
-            path: /go/src/github.com/argoproj-labs/argocd-image-updater
-            spdx:
-              name: argocd-image-updater
-              version: 1.3.0
-              packages:
-                - name: argocd-image-updater
-                  purl: pkg:golang/github.com/argoproj-labs/argocd-image-updater@1.3.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - github.com/go-git/go-git/v5@v5.19.2
-              - github.com/google/cel-go@v0.29.0
-              - github.com/moby/spdystream@v0.5.1
-              - go.opentelemetry.io/otel@v1.44.0
-              - google.golang.org/grpc@v1.82.1
-              - oras.land/oras-go/v2@v2.6.2
-            download: true
-            tidy: true
-        - name: test
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Run unit tests, skip e2e tests and packages that require external access
-            go test $(go list ./... | egrep -v '(test/|mocks/|ext/|e2e/)') -short -count=1 -v
-        - name: build argocd-image-updater
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -extldflags "-static"
-              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.version=1.3.0
-              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.gitCommit=098b544f1c7d6d1368e89c3f8d92415ede353916
-              - -X github.com/argoproj-labs/argocd-image-updater/pkg/version.buildDate=${SOURCE_DATE_EPOCH}
-            output: ${target.dir}/usr/local/bin/argocd-image-updater
-            packages: ./cmd
-        - name: create git-ask-pass script
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/usr/local/bin
-            cp hack/git-ask-pass.sh ${target.dir}/usr/local/bin/git-ask-pass.sh
-      outputs:
-        - source: ${target.dir}/usr/local/bin/argocd-image-updater
-          target: /usr/local/bin/argocd-image-updater
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/bin/git-ask-pass.sh
-          target: /usr/local/bin/git-ask-pass.sh
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/argocd-image-updater
-          target: /opt/docker/sbom/argocd-image-updater
-          uid: 0
-          gid: 0
   artifacts:
     - name: dhi.io/awscli:2.36.24-debian13@sha256:f7bc04bde07a202c58e81dd18a873f98f6a15eb8e7f328c00779d827882c44fd
       includes:
@@ -179,11 +103,26 @@ paths:
     uid: 1000
     gid: 1000
     mode: "0755"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/argocd-image-updater
+    uid: 0
+    gid: 0
+    source: /usr/bin/argocd-image-updater
   - type: symlink
     path: /manager
     uid: 0
     gid: 0
     source: /usr/local/bin/argocd-image-updater
+  - type: file
+    path: /usr/local/bin/git-ask-pass.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/argocd-image-updater/git-ask-pass.sh
 annotations:
   org.opencontainers.image.description: A minimal Argo CD Image Updater image
   org.opencontainers.image.licenses: Apache-2.0
