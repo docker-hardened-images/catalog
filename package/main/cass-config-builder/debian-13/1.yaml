@@ -1,0 +1,173 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-cass-config-builder
+variant: runtime
+tags:
+  - 1.0.21
+  - 1.0.21-r0
+  - 1.0.21-debian13
+  - 1.0.21-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-26"
+vars:
+  COMMIT_SHA: c4b92f35b50c07f1c583c37fdcd8a04c56b4d654
+  DEFINITIONS_CHECKSUM: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
+  DEFINITIONS_COMMIT_SHA: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+  JAVA_VERSION: 11.0.32.9-0
+  JDK_MAJOR_VERSION: "11"
+  PACKAGE_HOME: /usr/share/cass-config-builder
+  PACKAGE_NAME: cass-config-builder
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.21
+  SOURCE_CHECKSUM: sha256:b0713843c7ddc9af332086457dcc4d52365a40182a40b4cc826aca9727bb2edc
+  VERSION: 1.0.21
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: cass-config-builder
+      work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.21
+      environment:
+        GRADLE_USER_HOME: /root/.gradle
+        JAVA_HOME: /usr/lib/jvm/temurin-11
+      caches:
+        - path: /root/.gradle
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - grep
+          - sed
+          - eclipse-temurin-11-jdk=11.0.32.9-0
+        files:
+          - url: https://github.com/datastax/cass-config-builder/archive/refs/tags/v1.0.21.tar.gz
+            checksum: sha256:b0713843c7ddc9af332086457dcc4d52365a40182a40b4cc826aca9727bb2edc
+            path: ${source.dir}/cass-config-builder
+            spdx:
+              name: cass-config-builder
+              version: 1.0.21
+              packages:
+                - name: cass-config-builder
+                  purl: pkg:github/datastax/cass-config-builder@v1.0.21
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/datastax/cass-config-definitions/archive/1b7eaf4e50447fc8168c4a6c16d0ed986941edf8.tar.gz
+            checksum: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
+            path: ${source.dir}/cass-config-definitions
+            spdx:
+              name: cass-config-definitions
+              version: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+              packages:
+                - name: cass-config-definitions
+                  purl: pkg:github/datastax/cass-config-definitions@1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: patch@v1
+          work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.21
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/jackson-cve.patch
+        - name: configure gradle maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle/init.d
+            cat > /root/.gradle/init.d/mirror.gradle << 'EOF'
+            def MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
+
+            settingsEvaluated { settings ->
+                settings.pluginManagement.repositories.clear()
+                settings.pluginManagement.repositories {
+                    maven { url MIRROR }
+                    gradlePluginPortal()
+                }
+            }
+
+            allprojects {
+                buildscript {
+                    repositories {
+                        maven { url MIRROR }
+                    }
+                }
+                repositories {
+                    maven { url MIRROR }
+                }
+            }
+
+            gradle.projectsLoaded {
+                rootProject.allprojects {
+                    buildscript.repositories {
+                        maven { url MIRROR }
+                    }
+                    repositories {
+                        maven { url MIRROR }
+                    }
+                }
+            }
+            EOF
+        - name: build
+          work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.21
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ln -sfn ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8 cass-config-definitions
+            ./gradlew shadowJar --no-daemon
+        - name: stage jar and definitions
+          work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.21
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/share/cass-config-builder"
+            install -m 0644 build/libs/cass-config-builder-*-all.jar \
+              "${target.dir}/usr/share/cass-config-builder/cass-config-builder.jar"
+            cp -a ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8/resources/. \
+              "${target.dir}/usr/share/cass-config-builder/definitions/"
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: cass-config-builder
+            source: ${target.dir}/usr/share/cass-config-builder
+        - uses: dhi/build-pkg:0
+          with:
+            description: Configuration templating engine for Apache Cassandra
+            files:
+              - usr/share/cass-config-builder
+            formats:
+              - deb
+            license: Apache-2.0
+            name: cass-config-builder
+            rel: 0
+            url: https://github.com/datastax/cass-config-builder
+            version: 1.0.21
+      paths:
+        - type: file
+          path: ${source.dir}/patch/jackson-cve.patch
+          uid: 0
+          gid: 0
+          source: package/main/cass-config-builder/patch/jackson-cve.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
