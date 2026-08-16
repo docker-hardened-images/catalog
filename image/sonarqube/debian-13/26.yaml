@@ -23,6 +23,7 @@ vars:
   ELASTICSEARCH_LINUX_ARCH: '#{ target.arch == "arm64" ? "aarch64" : "x86_64" }'
   ELASTICSEARCH_LINUX_SHA512: '#{ target.arch == "arm64" ? "c41f4d33c7ce8fdd0754017755d05a9ba4d6326b4099525f1939cdc12a5c5e7afd1879ee45d56a90c665bdb877da4b553fda13796a60030e214ae1bd2da6fbaa" : "d53f8d3efeb830b73704873d082b940158deb9387937ed817eea89d2bf542ece24dae877548e4b48b0e134d5123704f04c86be23dcd9cb732a2489868a8dd0c5" }'
   ELASTICSEARCH_VERSION: 9.4.3
+  HTTPCORE5_VERSION: 5.4.3
   JACKSON_CORE_2_VERSION: 2.21.4
   JACKSON_CORE_3_VERSION: 3.1.5
   JACKSON_DATABIND_2_VERSION: 2.21.5
@@ -204,6 +205,14 @@ contents:
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/io/projectreactor/netty/reactor-netty-core/1.2.8/reactor-netty-core-1.2.8.jar
             path: ${source.dir}/patch/deps/reactor-netty-core-1.2.8.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar
+            path: ${source.dir}/patch/deps/httpcore5-5.4.3.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar
+            path: ${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar
             uid: 0
             gid: 0
       pipeline:
@@ -562,6 +571,61 @@ contents:
             mv "${app_new}" "${app_jar}"
 
             unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=1.11.1"
+        - name: patch bundled httpcore5 in sonar-application
+          runs: |
+            set -eux -o pipefail
+
+            app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
+            if [[ -z "${app_jar}" ]]; then
+              echo "ERROR: sonar-application jar not found" >&2
+              exit 1
+            fi
+
+            metadata_dir="META-INF/maven/org.apache.httpcomponents.core5/httpcore5"
+            h2_metadata_dir="META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2"
+            patch_dir="$(mktemp -d)"
+            repack_dir="${patch_dir}/repack"
+            overlay_dir="${patch_dir}/overlay"
+            trap 'rm -rf "${patch_dir}"' EXIT
+            mkdir -p "${repack_dir}" "${overlay_dir}"
+
+            (cd "${repack_dir}" && jar xf "${app_jar}")
+
+            if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              echo "ERROR: org.apache.httpcomponents.core5:httpcore5 not found in $(basename "${app_jar}")" >&2
+              exit 1
+            fi
+
+            if grep -q "version=5.4.3" "${repack_dir}/${metadata_dir}/pom.properties" \
+              && [[ -f "${repack_dir}/${h2_metadata_dir}/pom.properties" ]] \
+              && grep -q "version=5.4.3" "${repack_dir}/${h2_metadata_dir}/pom.properties" \
+              && [[ -f "${repack_dir}/org/apache/hc/core5/http2/protocol/H2RequestTargetHost.class" ]]; then
+              echo "httpcore5 already at 5.4.3 in $(basename "${app_jar}")"
+              exit 0
+            fi
+
+            rm -rf "${overlay_dir:?}"/*
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/httpcore5-5.4.3.jar")
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar")
+
+            rm -rf "${repack_dir:?}/org/apache/hc/core5" \
+              "${repack_dir:?}/${metadata_dir}" \
+              "${repack_dir:?}/${h2_metadata_dir}"
+            mkdir -p "${repack_dir}/org/apache/hc" "${repack_dir}/META-INF/maven/org.apache.httpcomponents.core5"
+            cp -a "${overlay_dir}/org/apache/hc/core5" "${repack_dir}/org/apache/hc/core5"
+            cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+            cp -a "${overlay_dir}/${h2_metadata_dir}" "${repack_dir}/${h2_metadata_dir}"
+
+            grep -q "version=5.4.3" "${repack_dir}/${metadata_dir}/pom.properties"
+            grep -q "version=5.4.3" "${repack_dir}/${h2_metadata_dir}/pom.properties"
+            [[ -f "${repack_dir}/org/apache/hc/core5/http2/protocol/H2RequestTargetHost.class" ]]
+
+            app_new="${patch_dir}/app-repacked.jar"
+            (cd "${repack_dir}" && jar --create --file "${app_new}" --manifest META-INF/MANIFEST.MF .)
+            mv "${app_new}" "${app_jar}"
+
+            unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=5.4.3"
+            unzip -p "${app_jar}" "${h2_metadata_dir}/pom.properties" | grep -q "version=5.4.3"
       paths:
         - type: file
           path: ${source.dir}/patch/dhi-patch-config.json
