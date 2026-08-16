@@ -79,6 +79,27 @@ contents:
             gid: 0
       pipeline:
         - uses: mvn/mirror@v1
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            # Overwrite the Cloudsmith mirror with GCS (public Maven Central
+            # read replica). Used when MAVEN_USER/MAVEN_PASSWORD are unavailable
+            # locally; mirrors the keycloak pattern for the same reason.
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
         - name: copy startup scripts
           work-dir: ${source.dir}/docker-neo4j-publish
           runs: |
@@ -125,6 +146,19 @@ contents:
               -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n "classifier" -v "linux-aarch_64" \
               -r "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -v "dependency" \
               pom.xml
+        - name: remove maven profiler extension
+          work-dir: ${source.dir}/neo4j
+          runs: |
+            set -eux -o pipefail
+
+            # maven-profiler is optional build analytics tooling and is not
+            # available in the DHI Maven mirror, which breaks mvn versions:set.
+            ext_xml=".mvn/extensions.xml"
+            if [ -f "${ext_xml}" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='maven-profiler']" \
+                "${ext_xml}"
+            fi
         - name: build
           work-dir: ${source.dir}/neo4j
           privileged: true
