@@ -1,0 +1,208 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-arangodb
+variant: runtime
+tags:
+  - 3.12.10
+  - 3.12.10-r0
+  - 3.12.10-debian13
+  - 3.12.10-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-03-21"
+vars:
+  ARANGO_REPO: https://download.arangodb.com/9c169fe900ff79790395784287bfa82f0dc0059375a34a2881b9b745c8efd42e/arangodb312/DEBIAN
+  COMMIT_SHA: 9ee9d0a0cafd5e5fe3b271d2280b090ab6e64048
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.6-0
+  PACKAGE_NAME: arangodb
+  RCLONE_VERSION: 1.75.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.12"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.12.10
+  VERSION: 3.12.10-1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: arangodb
+      work-dir: ${source.dir}/rclone
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/arango-keyring.gpg] https://download.arangodb.com/9c169fe900ff79790395784287bfa82f0dc0059375a34a2881b9b745c8efd42e/arangodb312/DEBIAN /
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://download.arangodb.com/9c169fe900ff79790395784287bfa82f0dc0059375a34a2881b9b745c8efd42e/arangodb312/DEBIAN/Release.key
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - dpkg
+          - findutils
+          - gzip
+          - golang-1.26=1.26.6-0
+          - golang-1.26-oci-config=1.26.6-0
+          - jq
+          - sed
+          - arangodb3e=3.12.10-1
+        files:
+          - url: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz
+            checksum: sha256:5d06001fddd25cbee90c96db4dc5b7b57711b984c3141e28d10f143deb52dbaf
+            path: ${source.dir}/npm/brace-expansion-5.0.9.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz
+            checksum: sha256:82a71e7e3716dc8c392cac0762bce80614cf539ef22000415e26eaf5c453ce2f
+            path: ${source.dir}/npm/fast-uri-3.1.5.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz
+            checksum: sha256:08d6282b77a3e7242061f6dd5516c019b25c53041ad267bca3b790d79ddd5f34
+            path: ${source.dir}/npm/js-yaml-4.3.1.tgz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/rclone/rclone.git#v1.75.0
+            checksum: 9ee9d0a0cafd5e5fe3b271d2280b090ab6e64048
+            path: ${source.dir}/rclone
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: configure arangodb payload
+          work-dir: /
+          runs: |
+            set -eux -o pipefail
+
+            rm -f /bin/arangodb
+
+            sed -ri \
+              -e 's!127\.0\.0\.1!0.0.0.0!g' \
+              -e 's!^(file\s*=\s*).*!\1 -!' \
+              -e 's!^\s*uid\s*=.*!!' \
+              /etc/arangodb3/arangod.conf
+        - name: stage arangodb payload
+          work-dir: /
+          runs: |
+            set -eux -o pipefail
+
+            dpkg -L arangodb3e | while IFS= read -r path; do
+              case "${path}" in
+                /bin/arangodb) continue ;;
+              esac
+              [ -e "${path}" ] || continue
+              case "${path}" in
+                /*) dest="${target.dir}${path}" ;;
+                *) continue ;;
+              esac
+              if [ -d "${path}" ]; then
+                install -d "${dest}"
+              elif [ -L "${path}" ]; then
+                install -d "$(dirname "${dest}")"
+                ln -sf "$(readlink "${path}")" "${dest}"
+              else
+                install -D "${path}" "${dest}"
+              fi
+            done
+        - name: patch arangodb npm modules
+          work-dir: /
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}/usr/share/arangodb3/js/node"
+            lock="${root}/package-lock.json"
+
+            replace_npm_module() {
+              local pkg="$1"
+              local tgz="$2"
+              local moddir="${root}/node_modules/${pkg}"
+
+              rm -rf "${moddir}"
+              mkdir -p "${moddir}"
+              tar xzf "${tgz}" -C "${moddir}" --strip-components=1
+            }
+
+            replace_npm_module brace-expansion "${source.dir}/npm/brace-expansion-5.0.9.tgz"
+            replace_npm_module fast-uri "${source.dir}/npm/fast-uri-3.1.5.tgz"
+            replace_npm_module js-yaml "${source.dir}/npm/js-yaml-4.3.1.tgz"
+
+            jq \
+              --arg be "5.0.9" \
+              --arg beurl "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz" \
+              --arg beint "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==" \
+              --arg fu "3.1.5" \
+              --arg fuurl "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz" \
+              --arg uint "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==" \
+              --arg jy "4.3.1" \
+              --arg jyurl "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz" \
+              --arg jyint "sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==" \
+              '
+              .packages[""].dependencies["brace-expansion"] = "^5.0.9" |
+              .packages[""].dependencies["fast-uri"] = "^3.1.5" |
+              .packages[""].dependencies["js-yaml"] = "^4.3.1" |
+              .packages["node_modules/brace-expansion"].version = $be |
+              .packages["node_modules/brace-expansion"].resolved = $beurl |
+              .packages["node_modules/brace-expansion"].integrity = $beint |
+              .packages["node_modules/fast-uri"].version = $fu |
+              .packages["node_modules/fast-uri"].resolved = $fuurl |
+              .packages["node_modules/fast-uri"].integrity = $uint |
+              .packages["node_modules/js-yaml"].version = $jy |
+              .packages["node_modules/js-yaml"].resolved = $jyurl |
+              .packages["node_modules/js-yaml"].integrity = $jyint
+              ' "${lock}" > "${lock}.tmp"
+            mv "${lock}.tmp" "${lock}"
+        - name: rebuild rclone-arangodb
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/image@v0.45.0
+            download: true
+        - name: build rclone-arangodb
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s
+              - -w
+            output: ${target.dir}/usr/sbin/rclone-arangodb
+            packages: .
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: rclone
+            purl: pkg:golang/github.com/rclone/rclone@1.75.0
+            version: 1.75.0
+        - uses: spdx@v1
+          with:
+            license: ArangoDB-Community-License
+            name: arangodb
+            purl: pkg:generic/arangodb@3.12.10
+            version: 3.12.10
+        - uses: dhi/build-pkg:0
+          work-dir: /
+          with:
+            depends:
+              - debconf
+            description: ArangoDB multi-model graph database
+            files:
+              - etc/arangodb3
+              - usr/bin
+              - usr/lib
+              - usr/sbin
+              - usr/share/arangodb3
+            formats:
+              - deb
+            license: ArangoDB-Community-License
+            name: arangodb
+            rel: 0
+            url: https://arangodb.com/
+            version: 3.12.10
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
