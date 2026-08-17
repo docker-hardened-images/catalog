@@ -1,0 +1,113 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-azcopy
+variant: runtime
+tags:
+  - 10.32.7-alpine3.24
+  - 10.32.7-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 96a83216c1e34f291ee93fbaca614ed010c90b23
+  GOLANG_VERSION: 1.26.6-r0
+  PACKAGE_NAME: azcopy
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "10.32"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.32.7
+  VERSION: 10.32.7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: azcopy
+      work-dir: /go/src/github.com/Azure/azure-storage-azcopy
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.6-r0
+          - golang-1.26-oci-config=1.26.6-r0
+        files:
+          - url: git+https://github.com/Azure/azure-storage-azcopy.git#v10.32.7
+            checksum: 96a83216c1e34f291ee93fbaca614ed010c90b23
+            path: /go/src/github.com/Azure/azure-storage-azcopy
+            spdx:
+              name: azcopy
+              version: 10.32.7
+              packages:
+                - name: azcopy
+                  purl: pkg:golang/github.com/Azure/azure-storage-azcopy/v10@10.32.7
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel/sdk@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+              - golang.org/x/net@v0.58.0
+              - golang.org/x/text@v0.41.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test -short -count=1 -timeout 120s \
+              ./mock_server ./sddl ./traverser
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            output: ${target.dir}/usr/bin/azcopy
+            packages: .
+        - name: verify version
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF "const AzcopyVersion = \"10.32.7\"" common/version.go \
+              || {
+                echo "common/version.go does not declare AzcopyVersion = 10.32.7" >&2
+                exit 1
+              }
+
+            grep -qF "AzCopy/10.32.7" ${target.dir}/usr/bin/azcopy \
+              || {
+                echo "built azcopy binary does not embed version 10.32.7" >&2
+                exit 1
+              }
+        - uses: dhi/build-pkg:0
+          with:
+            description: AzCopy v10 command-line utility for copying data to and from Azure Storage
+            files:
+              - usr/bin/azcopy
+            license: MIT
+            name: azcopy
+            rel: 1
+            url: https://github.com/Azure/azure-storage-azcopy
+            version: 10.32.7
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
