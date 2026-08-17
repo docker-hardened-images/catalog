@@ -1,0 +1,138 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-headlamp
+variant: runtime
+tags:
+  - 0.44.0-alpine3.24
+  - 0.44.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  COMMIT_SHA: 7e2f255cc256a16c39681ffea31fa16e11a11eaf
+  GOLANG_VERSION: 1.26.6-r0
+  PACKAGE_NAME: headlamp
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.44"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.44.0
+  VERSION: 0.44.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: headlamp
+      work-dir: /go/src/github.com/kubernetes-sigs/headlamp
+      caches:
+        - path: /go/pkg/mod
+        - path: /root/.cache/go-build
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26=1.26.6-r0
+          - golang-1.26-oci-config=1.26.6-r0
+          - nodejs-22
+          - npm
+        files:
+          - url: git+https://github.com/kubernetes-sigs/headlamp.git#v0.44.0
+            checksum: 7e2f255cc256a16c39681ffea31fa16e11a11eaf
+            path: /go/src/github.com/kubernetes-sigs/headlamp
+            spdx:
+              name: headlamp
+              version: 0.44.0
+              packages:
+                - name: headlamp
+                  purl: pkg:golang/github.com/kubernetes-sigs/headlamp/backend@0.44.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/kubernetes-sigs/headlamp/backend
+          with:
+            deps:
+              - github.com/containerd/containerd@v1.7.33
+              - oras.land/oras-go/v2@v2.6.2
+            download: true
+        - name: build frontend
+          work-dir: /go/src/github.com/kubernetes-sigs/headlamp/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Pin js-yaml to 4.3.1 (GHSA-5p4m-2wfm-xmqj). The frontend SBOM also lists
+            # @types/js-yaml@4.0.9, which is TypeScript type stubs (build-only, no runtime
+            # code) -- a different package from js-yaml itself. Drop the lockfile so the
+            # override actually replaces the 4.3.0 pin from upstream.
+            npm pkg set dependencies.js-yaml=4.3.1 overrides.js-yaml=4.3.1 overrides.fast-uri=^3.1.5 overrides.postcss=^8.5.25 overrides.brace-expansion=^5.0.9
+            npm pkg set 'overrides.minimatch@^3.brace-expansion=^1.1.18'
+            rm -f package-lock.json
+            npm install
+            npm run build
+            npm prune --production
+
+            # Strip esbuild/tsgo native binaries so their Go stdlib is not cataloged as phantom CVEs in the sbom.
+            rm -rf node_modules/@esbuild node_modules/@typescript
+            find node_modules -type d -name esbuild -exec rm -rf {} + 2> /dev/null || true
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: headlamp-frontend
+            source: /go/src/github.com/kubernetes-sigs/headlamp/frontend
+        - name: test
+          work-dir: /go/src/github.com/kubernetes-sigs/headlamp/backend
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -short $(go list ./... | grep -vE '/pkg/helm$')
+        - name: build headlamp
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-sigs/headlamp/backend
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig.Version=0.44.0
+              - -X github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig.AppName=Headlamp
+            output: ${target.dir}/usr/bin/headlamp-server
+            packages: ./cmd
+            strip: true
+        - name: stage frontend
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/usr/share/headlamp
+            cp -a frontend/build ${target.dir}/usr/share/headlamp/frontend
+        - uses: dhi/build-pkg:0
+          with:
+            description: Headlamp, a fully-featured Kubernetes web UI
+            files:
+              - usr/bin/headlamp-server
+              - usr/share/headlamp/frontend
+            license: Apache-2.0
+            name: headlamp
+            rel: 0
+            url: https://headlamp.dev/
+            version: 0.44.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
