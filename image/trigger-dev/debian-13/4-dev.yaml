@@ -221,15 +221,11 @@ contents:
             pnpm pkg set pnpm.overrides.prismjs=">=1.30.0"             # 1 MEDIUM (CVE-2024-53382)
             pnpm pkg set pnpm.overrides.morgan=">=1.11.0"              # 1 MEDIUM (CVE-2026-5078)
 
-            # NOTE: no nanoid override. The broad >=5.0.9 broke @trigger.dev/core
-            # at build (TS1479: forces ESM-only 5.x into a CJS callsite).
-            # Scoping per-major (nanoid@^3/^5) also failed because pnpm's
-            # selector matches the literal constraint string and @trigger.dev/core
-            # pins `nanoid: "3.3.8"` exactly — neither `^3` nor `^5` matches an
-            # exact pin. Letting pnpm resolve naturally: @trigger.dev/core gets
-            # its pinned 3.3.8 (already CVE-fixed), and the other consumer
-            # holding nanoid 5.0.6 keeps that version (CVE-2024-55565 MEDIUM
-            # stays open for that single resolution).
+            # NOTE: nanoid overrides use scoped selectors (nanoid@3.3.8, nanoid@5)
+            # because @trigger.dev/core pins `nanoid: "3.3.8"` exactly — broad
+            # >=5.0.9 breaks CJS (TS1479), and unscoped ^3/^5 selectors do not
+            # match an exact pin. A separate nanoid 5.0.6 resolution may still
+            # exist for CVE-2024-55565 (see vex/trigger-dev/nanoid.vex.json).
             # mdast-util-to-hast: upstream has both 12.3.0 (used by remix-mdx,
             # which imports the `all` export removed in 13.x) and 13.2.0 (the
             # CVE-vulnerable one). Scope per-major via the jq block below so
@@ -293,8 +289,10 @@ contents:
               .pnpm.overrides["brace-expansion@5"] = "5.0.9"                      | # 3 HIGH (CVE-2026-13149, CVE-2026-14257 fixed 5.0.8, CVE-2026-69152 fixed 5.0.9); scoped so minimatch 10.x ESM imports keep their v1/v2/v4 resolutions
               .pnpm.overrides["@opentelemetry/core@2"] = "2.8.0"                  | # 1 MEDIUM (CVE-2026-54285); 1.x consumer left to VEX (fix is major-only, high risk)
               .pnpm.overrides["body-parser@2"] = "2.3.0"                          | # 1 LOW CVE-2026-12590, v2 line fixed 2.3.0. The v1 line 1.20.3 is pinned exactly by express 4.x and is not overridable via a pnpm version selector: neither a scoped @1 range nor an exact @1.20.3 selector matches an exact express pin, same limitation documented for nanoid/js-yaml above. Left to VEX; CVE-2026-12590 is LOW; see vex/trigger-dev/body-parser.vex.json
-              .pnpm.overrides["js-yaml@3"] = "3.15.0"                             | # 1 HIGH (CVE-2026-59869), 1 MEDIUM (CVE-2026-53550); exact-version value (range values are not applied by the pnpm version selector — see js-yaml note)
-              .pnpm.overrides["js-yaml@4"] = "4.3.0"                              | # 1 HIGH (CVE-2026-59869); supersedes prior 4.2.0 pin (CVE-2026-53550)
+              .pnpm.overrides["js-yaml@3"] = "3.15.1"                             | # GHSA-5p4m-2wfm-xmqj (fixed 3.15.1); exact-version value (range values are not applied by the pnpm version selector — see js-yaml note)
+              .pnpm.overrides["js-yaml@4"] = "4.3.1"                              | # GHSA-5p4m-2wfm-xmqj (fixed 4.3.1); supersedes prior 4.3.0 pin
+              .pnpm.overrides["nanoid@3.3.8"] = "3.3.17"                         | # CVE-2026-67213/67214 (@trigger.dev/core exact pin; scoped selector matches literal 3.3.8)
+              .pnpm.overrides["nanoid@5"] = "5.1.16"                             | # CVE-2026-67213/67214 (5.x transitive consumer; 5.1.16 clears both)
               .pnpm.overrides["@jsonhero/json-infer-types>ip-address"] = ">=10.3.1 <10.5.0"  # 1 HIGH (CVE-2026-69192), 2 MEDIUM (CVE-2026-69198, CVE-2026-54272); upstream pins this parent>child selector to ^10.2.0, which outranks the bare ip-address override
             ' > package.json.tmp && mv package.json.tmp package.json
             # NOTE: @conform-to/{dom,zod} CVE-2024-32866 left unfixed —
@@ -341,6 +339,9 @@ contents:
             #                                       deploy path; the webapp imports
             #                                       the JS shim but self-hosted
             #                                       instances never invoke the binary
+            # - @typescript/typescript-<platform> -> native tsc binary (Go-compiled);
+            #                                       build-time only; surfaces as
+            #                                       phantom pkg:golang/stdlib CVEs in SBOM
             #
             # Each find matches both the workspace symlink view (e.g.
             # node_modules/@esbuild/<platform>) AND pnpm's content-addressable
@@ -362,6 +363,7 @@ contents:
             # @depot/sdk-node (JS-only — webapp imports it too).
             find node_modules/.pnpm -maxdepth 1 -type d -name '@depot+cli-*' -exec rm -rf {} + 2> /dev/null || true
             find node_modules -path '*/@depot/cli/bin/depot' -type f -exec rm -f {} + 2> /dev/null || true
+            find node_modules/.pnpm -maxdepth 1 -type d -name '@typescript+typescript-*' -exec rm -rf {} + 2> /dev/null || true
         - name: dependencies sbom
           uses: sbom@v1
           with:
