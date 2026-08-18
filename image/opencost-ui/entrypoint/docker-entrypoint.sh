@@ -41,8 +41,10 @@ fi
 
 if [ -n "$OPENCOST_FOOTER_CONTENT" ]; then
     replace_placeholder_in_js "PLACEHOLDER_FOOTER_CONTENT" "$OPENCOST_FOOTER_CONTENT"
-else
+elif [ -n "$HEAD" ]; then
     replace_placeholder_in_js "PLACEHOLDER_FOOTER_CONTENT" "OpenCost version: $VERSION ($HEAD)"
+else
+    replace_placeholder_in_js "PLACEHOLDER_FOOTER_CONTENT" "OpenCost version: $VERSION"
 fi
 
 # Custom aggregation options: JSON object (map string:string), e.g. {"Label: team":"label:team"}
@@ -65,6 +67,10 @@ if [ ! -e /etc/nginx/conf.d/default.nginx.conf ]; then
         < /etc/nginx/default.nginx.conf.template \
         > /etc/nginx/conf.d/default.nginx.conf
 fi
-echo "Starting OpenCost UI version $VERSION ($HEAD)"
+if [ -n "$HEAD" ]; then
+    echo "Starting OpenCost UI version $VERSION ($HEAD)"
+else
+    echo "Starting OpenCost UI version $VERSION"
+fi
 
 exec "$@"

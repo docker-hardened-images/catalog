@@ -19,11 +19,10 @@ platforms:
 dates:
   release: "2026-02-09"
 vars:
-  COMMIT_SHA: 5babf86adf8d75677e721d62902b3b2b4d1a59a0
   SEMVER_MAJOR_MINOR_VERSION: "1.121"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.121.1
-  VERSION: 1.121.1
+  VERSION: 1.121.1-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -41,130 +40,36 @@ contents:
     - libpcre2-8-0
     - libssl3t64
     - nginx-mainline
+    - opencost-ui=1.121.1-1
     - sed
     - tzdata
     - zlib1g
   builds:
-    - name: opencost-ui
-      work-dir: ${source.dir}/opencost-ui
-      caches:
-        - path: ${source.dir}/opencost-ui/node_modules
+    - name: opencost-ui-www
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
-          - less
           - base-files
           - bash
-          - ca-certificates
           - coreutils
-          - findutils
-          - git
-          - libc6
-          - libstdc++6
-          - mawk
-          - nodejs-24
-          - node-corepack
-          - npm
-          - sed
-          - yarn-classic
-        files:
-          - url: git+https://github.com/opencost/opencost-ui.git#v1.121.1
-            checksum: 5babf86adf8d75677e721d62902b3b2b4d1a59a0
-            path: ${source.dir}/opencost-ui
-            spdx:
-              name: opencost-ui
-              version: 1.121.1
-              packages:
-                - name: opencost-ui
-                  purl: pkg:github/opencost/opencost-ui@v1.121.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
+          - opencost-ui=1.121.1-1
       pipeline:
-        - name: bump dependencies
-          uses: npm/bump@v1
-          privileged: true
-          environment:
-            DHI_NO_SFW: "true"
-          with:
-            bumps: ${source.dir}/patch/npm-bumps.json
-            npm-root: ${source.dir}/opencost-ui
-        - name: bump react-router family
-          privileged: true
+        - name: stage www root
           runs: |
             set -eux -o pipefail
 
-            tmp=$(mktemp)
-            jq 'del(.packages["node_modules/react-router","node_modules/@react-router/node","node_modules/@react-router/serve","node_modules/@react-router/dev"])' \
-              package-lock.json > "$tmp" && mv "$tmp" package-lock.json
-
-            npm install --fund=false --audit=false \
-              react-router@7.18.0 \
-              @react-router/node@7.18.0 \
-              @react-router/serve@7.18.0 \
-              @react-router/dev@7.18.0
-        - name: install dependencies
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            npm ci
-        - name: build standard UI
-          runs: |
-            set -eux -o pipefail
-
-            # Standard (non-legacy) build — output lands in build/client/
-            NODE_ENV=production npm run build
-            mkdir -p "${target.dir}/var/www"
-            cp -r build/client/. "${target.dir}/var/www/"
-        - name: build legacy UI
-          runs: |
-            set -eux -o pipefail
-
-            # Legacy build overwrites build/client/; copy separately.
-            VITE_LEGACY_MODE=true NODE_ENV=production npm run build:legacy
-            mkdir -p "${target.dir}/var/www/legacy"
-            cp -r build/client/. "${target.dir}/var/www/legacy/"
-        - name: prepare for sbom
-          runs: |
-            set -eux -o pipefail
-
-            # Add resolved version to package.json for accurate SBOM generation.
-            tmp=$(mktemp)
-            jq --arg version "1.121.1" '.version = $version' package.json > "$tmp" && mv "$tmp" package.json
-        - name: reinstall dependencies for sbom
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Clean and reinstall only production dependencies for accurate SBOM.
-            rm -rf node_modules
-            npm install --omit=dev --ignore-scripts
-        - name: generate sbom
-          uses: sbom@v1
-          with:
-            prefix: opencost-ui
-            source: ${source.dir}/opencost-ui
-      paths:
-        - type: directory
-          path: ${source.dir}/patch
-          uid: 0
-          gid: 0
-          source: image/opencost-ui/patch
+            mkdir -p /var/www
+            cp -a /usr/share/opencost-ui/. /var/www/
+            chown -R 65532:65532 /var/www
       outputs:
-        - source: ${target.dir}/var/www
-          target: /var/www
-          uid: 65532
-          gid: 65532
-          mode: "0755"
-        - source: ${target.dir}/var/www/legacy
-          target: /var/www/legacy
-          uid: 65532
-          gid: 65532
-          mode: "0755"
-        - source: /opt/docker/sbom/opencost-ui
-          target: /opt/docker/sbom/opencost-ui
+        - source: /
+          target: /
           uid: 0
           gid: 0
+          diff: true
 accounts:
   run-as: nginx
   users:
@@ -190,7 +95,6 @@ environment:
   API_PORT: "9003"
   API_SERVER: 0.0.0.0
   BASE_URL: /model
-  HEAD: 5babf86adf8d75677e721d62902b3b2b4d1a59a0
   LEGACY_MODE: "false"
   PROXY_CONNECT_TIMEOUT: 60s
   PROXY_READ_TIMEOUT: 60s
