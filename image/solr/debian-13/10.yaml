@@ -1,0 +1,304 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache Solr 10.0.x
+image: dhi.io/solr
+variant: runtime
+tags:
+  - "10"
+  - "10.0"
+  - 10.0.0
+  - 10-debian
+  - 10-debian13
+  - 10.0-debian
+  - 10.0-debian13
+  - 10.0.0-debian
+  - 10.0.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-03"
+vars:
+  COMMIT_SHA: 6c6c48a6f78486130682ea9c1f7a2723af5a87be
+  GRADLE_REFERENCE: dhi/gradle:8.14.5-jdk21-debian13-dev@sha256:b14190267bbb49812ce333c205f62b42f5225f0bc62961380c93854b18707d2e
+  GRADLE_VERSION: 8.14.5
+  JAVA_REFERENCE: dhi/eclipse-temurin:21.0.12.8-debian13@sha256:0f8d869a57951cbd51a9e346b7c57decde437f365faab227c818232f7a44045d
+  JAVA_VERSION: 21.0.12.8
+  SEMVER_MAJOR_MINOR_VERSION: "10.0"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.0.0
+  SOLR_MAJOR_VERSION: "10"
+  VERSION: 10.0.0
+contents:
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - findutils
+    - grep
+    - procps
+    - sed
+    - tini
+    - tzdata
+  builds:
+    - name: solr
+      uses: dhi.io/gradle:8.14.5-jdk21-debian13-dev@sha256:b14190267bbb49812ce333c205f62b42f5225f0bc62961380c93854b18707d2e
+      work-dir: ${source.dir}/solr
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libstdc++6
+          - patch
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/apache/solr.git#releases/solr/10.0.0
+            checksum: 6c6c48a6f78486130682ea9c1f7a2723af5a87be
+            path: ${source.dir}/solr
+            spdx:
+              name: solr
+              version: 10.0.0
+              packages:
+                - name: solr
+                  purl: pkg:github/apache/solr@10.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: strip develocity
+          runs: |
+            set -eux -o pipefail
+
+            sed -i \
+              -e "/id 'com\.gradle\.develocity'/d" \
+              -e "/id 'com\.gradle\.common-custom-user-data-gradle-plugin'/d" \
+              -e "/apply from: file('gradle\/develocity\.gradle')/d" \
+              settings.gradle
+            sed -i \
+              -e "/apply from: file('gradle\/testing\/retry-test\.gradle')/d" \
+              build.gradle
+        - name: mirror maven central
+          runs: |
+            set -eux -o pipefail
+
+            MIRROR='https://maven-central.storage-download.googleapis.com/maven2/'
+            find . -type f -name '*.gradle' -print0 | xargs -0 sed -i \
+              -e "s|mavenCentral()|maven { url '${MIRROR}' }|g" \
+              -e "s|gradlePluginPortal()|maven { url '${MIRROR}' }; gradlePluginPortal()|g"
+        - name: inject pluginManagement for included builds
+          runs: |
+            set -eux -o pipefail
+
+            MIRROR='https://maven-central.storage-download.googleapis.com/maven2/'
+            PM_BLOCK="pluginManagement { repositories { maven { url '${MIRROR}' }; gradlePluginPortal() } }"
+            for s in build-tools/missing-doclet/settings.gradle build-tools/build-infra/settings.gradle; do
+              if [ -f "$s" ]; then sed -i "1i ${PM_BLOCK}" "$s"; fi
+            done
+        - name: pin cve-remediated dependency versions (10.x)
+          runs: |
+            set -eux -o pipefail
+
+            expect() {
+              local file="$1" pattern="$2" desc="$3"
+              if ! grep -qE "$pattern" "$file"; then
+                echo "ERROR: ${desc} not found in ${file}; refresh the pin step." >&2
+                exit 1
+              fi
+            }
+
+            expect gradle/libs.versions.toml '^netty = ' 'netty alias'
+            sed -i 's|^netty = ".*"$|netty = "4.2.15.Final"|' gradle/libs.versions.toml
+            expect gradle/libs.versions.toml '^netty-tcnative = ' 'netty-tcnative alias'
+            sed -i 's|^netty-tcnative = ".*"$|netty-tcnative = "2.0.74.Final"|' gradle/libs.versions.toml
+            expect gradle/libs.versions.toml '^apache-zookeeper = ' 'apache-zookeeper alias'
+            sed -i 's|^apache-zookeeper = ".*"$|apache-zookeeper = "3.9.5"|' gradle/libs.versions.toml
+            expect gradle/libs.versions.toml '^eclipse-jetty = ' 'eclipse-jetty alias'
+            sed -i 's|^eclipse-jetty = ".*"$|eclipse-jetty = "12.0.36"|' gradle/libs.versions.toml
+            expect gradle/libs.versions.toml '^fasterxml = ' 'fasterxml alias'
+            sed -i 's|^fasterxml = ".*"$|fasterxml = "2.21.4"|' gradle/libs.versions.toml
+
+            LOCKS=$(find . -name 'gradle.lockfile')
+            test -n "$LOCKS"
+            grep -qE '^io\.netty:netty-buffer:4\.2\.6\.Final=' $LOCKS \
+              || {
+                echo "ERROR: io.netty:netty-* at 4.2.6.Final not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            grep -qE '^io\.netty:netty-tcnative-classes:2\.0\.70\.Final=' $LOCKS \
+              || {
+                echo "ERROR: io.netty:netty-tcnative-* at 2.0.70.Final not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            grep -qE '^org\.apache\.zookeeper:zookeeper:3\.9\.4=' $LOCKS \
+              || {
+                echo "ERROR: org.apache.zookeeper:zookeeper at 3.9.4 not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            grep -qE '^org\.eclipse\.jetty:jetty-http:12\.0\.27=' $LOCKS \
+              || {
+                echo "ERROR: org.eclipse.jetty:jetty-http at 12.0.27 not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            grep -qE '^com\.fasterxml\.jackson\.core:jackson-databind:2\.20\.0=' $LOCKS \
+              || {
+                echo "ERROR: com.fasterxml.jackson.core:jackson-databind at 2.20.0 not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            grep -qE '^com\.fasterxml\.jackson\.core:jackson-annotations:2\.20=' $LOCKS \
+              || {
+                echo "ERROR: com.fasterxml.jackson.core:jackson-annotations at 2.20 (bare) not found in any gradle.lockfile" >&2
+                exit 1
+              }
+            find . -name 'gradle.lockfile' -print0 | xargs -0 sed -i \
+              -e 's|^\(io\.netty:netty[a-z0-9-]*:\)4\.2\.6\.Final\(=\)|\14.2.15.Final\2|' \
+              -e 's|^\(io\.netty:netty-tcnative[a-z0-9-]*:\)2\.0\.70\.Final\(=\)|\12.0.74.Final\2|' \
+              -e 's|^\(org\.apache\.zookeeper:zookeeper[a-z-]*:\)3\.9\.4\(=\)|\13.9.5\2|' \
+              -e 's|^\(org\.eclipse\.jetty[a-z0-9.]*:[a-z][a-z0-9-]*:\)12\.0\.27\(=\)|\112.0.36\2|' \
+              -e 's|^\(com\.fasterxml\.jackson[^:]*:[^:]*:\)2\.20\.0\(=\)|\12.21.4\2|' \
+              -e 's|^\(com\.fasterxml\.jackson[^:]*:[^:]*:\)2\.20\(=\)|\12.21\2|'
+        - name: build solr distribution
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./gradlew \
+              -Pversion.release=10.0.0 \
+              :solr:packaging:assemble \
+              --no-daemon \
+              --console=plain \
+              --warning-mode=summary
+        - name: extract distribution
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/solr"
+            tarball=$(find solr/packaging/build/distributions -maxdepth 1 -name "solr-*.tgz" ! -name "*-src.tgz" ! -name "*-slim.tgz" -print -quit)
+            test -n "$tarball"
+            tar -xzf "$tarball" --strip-components=1 -C "${target.dir}/opt/solr"
+            rm -rf \
+              "${target.dir}/opt/solr/modules" \
+              "${target.dir}/opt/solr/prometheus-exporter" \
+              "${target.dir}/opt/solr/cross-dc-manager"
+
+            mkdir -p "${target.dir}/etc/default"
+            cp "${target.dir}/opt/solr/bin/solr.in.sh" "${target.dir}/etc/default/solr.in.sh"
+      outputs:
+        - source: ${target.dir}/opt/solr
+          target: /opt/solr
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/default/solr.in.sh
+          target: /etc/default/solr.in.sh
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/solr
+          target: /opt/docker/sbom/solr
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/eclipse-temurin:21.0.12.8-debian13@sha256:0f8d869a57951cbd51a9e346b7c57decde437f365faab227c818232f7a44045d
+      includes:
+        - opt/**
+        - usr/local/bin/**
+      uid: 0
+      gid: 0
+accounts:
+  run-as: solr
+  users:
+    - name: solr
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: solr
+      gid: 65532
+      members:
+        - solr
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  LOG4J_PROPS: /var/solr/log4j2.xml
+  PATH: /opt/solr/bin:/opt/solr/docker/scripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  SOLR_HOME: /var/solr/data
+  SOLR_INCLUDE: /etc/default/solr.in.sh
+  SOLR_JETTY_HOST: 0.0.0.0
+  SOLR_LOGS_DIR: /var/solr/logs
+  SOLR_PID_DIR: /var/solr
+  SOLR_ZK_EMBEDDED_HOST: 0.0.0.0
+paths:
+  - type: directory
+    path: /var/solr
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /var/solr/data
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /var/solr/logs
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /docker-entrypoint-initdb.d
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/solr/bin/docker-entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Apache Solr image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+cmd:
+  - solr-foreground
+ports:
+  - 8983/tcp
