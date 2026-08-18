@@ -19,11 +19,10 @@ platforms:
 dates:
   release: "2025-11-21"
 vars:
-  COMMIT_SHA: 8e313503ddaf58838fbab74b7ab49df161ce837d
   SEMVER_MAJOR_MINOR_VERSION: "2.5"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.5.0
-  VERSION: 2.5.0
+  VERSION: 2.5.0-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -49,139 +48,13 @@ contents:
     - libcrypt1
     - libpcre2-8-0
     - libssl3t64
+    - linstor-gui-2=2.5.0-1
     - mawk
     - nginx-mainline
     - perl-base
     - sed
     - util-linux
     - zlib1g
-  builds:
-    - name: linstor-gui
-      contents:
-        packages:
-          - bash
-          - gettext-base
-          - jq
-          - base-files
-          - ca-certificates
-          - coreutils
-          - findutils
-          - git
-          - libc6
-          - libstdc++6
-          - mawk
-          - nodejs-24
-          - node-corepack
-          - npm
-          - sed
-          - yarn-classic
-        files:
-          - url: git+https://github.com/LINBIT/linstor-gui.git#v2.5.0
-            checksum: 8e313503ddaf58838fbab74b7ab49df161ce837d
-            path: ${source.dir}/linstor-gui
-            spdx:
-              name: linstor-gui
-              version: 2.5.0
-              packages:
-                - name: linstor-gui
-                  purl: pkg:github/LINBIT/linstor-gui@v2.5.0
-                  license: GPL-3.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: bump dependencies
-          uses: npm/bump@v1
-          privileged: true
-          environment:
-            npm_config_ignore_scripts: "true"
-          with:
-            bumps: ${source.dir}/patch/npm-bumps-2.json
-            npm-root: ${source.dir}/linstor-gui
-        - name: install dependencies
-          work-dir: ${source.dir}/linstor-gui
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Install dependencies
-            npm ci
-        - name: build frontend
-          work-dir: ${source.dir}/linstor-gui
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Build the frontend
-            npm run build
-        - name: copy built files
-          work-dir: ${source.dir}/linstor-gui
-          runs: |
-            set -eux -o pipefail
-
-            # Copy built files to target
-            mkdir -p "${target.dir}/app"
-            cp -r dist/* "${target.dir}/app/"
-        - name: prepare for sbom
-          work-dir: ${source.dir}/linstor-gui
-          runs: |
-            set -eux -o pipefail
-
-            # Add version to package.json for SBOM generation
-            tmp=$(mktemp)
-            jq --arg version "2.5.0" '.version = $version' package.json > "$tmp" && mv "$tmp" package.json
-        - name: reinstall dependencies for sbom
-          work-dir: ${source.dir}/linstor-gui
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Clean and reinstall only production dependencies for accurate SBOM
-            rm -rf node_modules
-            npm install --omit=dev --ignore-scripts
-        - name: generate sbom
-          work-dir: ${source.dir}/linstor-gui
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /opt/docker/sbom/linstor-gui
-            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx \
-              > /opt/docker/sbom/linstor-gui/.spdx.linstor-gui.json
-        - name: install config files
-          runs: |
-            set -eux -o pipefail
-
-            # Copy nginx config file
-            mkdir -p "${target.dir}/etc/nginx"
-            cp ${source.dir}/config/nginx.conf "${target.dir}/etc/nginx/nginx.conf"
-
-            # Copy error page to html directory
-            cp ${source.dir}/config/50x.html "${target.dir}/app/50x.html"
-      paths:
-        - type: directory
-          path: ${source.dir}/config
-          uid: 0
-          gid: 0
-          source: image/linstor-gui/config
-        - type: file
-          path: ${source.dir}/patch/npm-bumps-2.json
-          uid: 0
-          gid: 0
-          source: image/linstor-gui/patch/npm-bumps-2.json
-      outputs:
-        - source: ${target.dir}/app
-          target: /usr/share/nginx/html
-          uid: 65532
-          gid: 65532
-          mode: "0755"
-        - source: ${target.dir}/etc/nginx/nginx.conf
-          target: /etc/nginx/nginx.conf
-          uid: 0
-          gid: 0
-          mode: "0644"
-        - source: /opt/docker/sbom/linstor-gui
-          target: /opt/docker/sbom/linstor-gui
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -219,6 +92,21 @@ os-release:
 environment:
   DEBIAN_FRONTEND: noninteractive
 paths:
+  - type: delete
+    path: /usr/share/nginx/html
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/share/nginx/html
+    uid: 0
+    gid: 0
+    source: /usr/share/linstor-gui
+  - type: file
+    path: /etc/nginx/nginx.conf
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/linstor-gui/config/nginx.conf
   - type: directory
     path: /run
     uid: 65532
