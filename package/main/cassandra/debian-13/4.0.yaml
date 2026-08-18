@@ -1,0 +1,254 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-cassandra
+variant: runtime
+tags:
+  - 4.0.21
+  - 4.0.21-r1
+  - 4.0.21-debian13
+  - 4.0.21-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-07-26"
+vars:
+  BCFIPS_VERSION: 2.1.2
+  BCPKIXFIPS_VERSION: 2.1.11
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.23
+  BCUTILFIPS_VERSION: 2.1.6
+  COMMIT_SHA: 172099f4a8c1316da35ca77eab19aea535936a6d
+  ECLIPSE_TEMURIN_VERSION: 11.0.32.9-0
+  JDK_MAJOR_VERSION: "11"
+  PACKAGE_NAME: cassandra-4.0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "4.0"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.0.21
+  VERSION: 4.0.21
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: cassandra-4.0
+      work-dir: ${source.dir}/apache/cassandra
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-11
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - ant
+          - ant-optional
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - eclipse-temurin-11-jdk=11.0.32.9-0
+          - eclipse-temurin-11-jdk-oci-config=11.0.32.9-0
+          - findutils
+          - gpg
+          - grep
+          - jq
+          - libjemalloc2
+          - sed
+          - tar
+          - gzip
+        files:
+          - url: git+https://github.com/apache/cassandra.git#cassandra-4.0.21
+            checksum: 172099f4a8c1316da35ca77eab19aea535936a6d
+            path: ${source.dir}/apache/cassandra
+            spdx:
+              name: apache-cassandra
+              version: 4.0.21
+              packages:
+                - name: cassandra
+                  purl: pkg:github/apache/cassandra@4.0.21
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update lz4-java groupId for new coordinates
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's|groupId="org.lz4" artifactId="lz4-java"|groupId="at.yawk.lz4" artifactId="lz4-java"|g' build.xml
+            echo "Updated lz4-java groupId from org.lz4 to at.yawk.lz4"
+            grep "lz4-java" build.xml
+        - name: patch cassandra 4.x dependencies
+          runs: |
+            set -eux -o pipefail
+
+            jq -c '.[]' "${source.dir}/patch/cassandra-4-mvn-dependencies.json" | while read -r dep; do
+              groupId="$(echo "$dep" | jq -r '.groupId')"
+              artifactId="$(echo "$dep" | jq -r '.artifactId')"
+              from_version="$(echo "$dep" | jq -r '.from_version')"
+              version="$(echo "$dep" | jq -r '.version')"
+
+              if ! grep -q "groupId=\"${groupId}\" artifactId=\"${artifactId}\" version=\"${from_version}\"" build.xml; then
+                echo "ERROR: ${groupId}:${artifactId}:${from_version} not found in build.xml; upstream may have bumped this dependency. Update cassandra-4-mvn-dependencies.json." >&2
+                exit 1
+              fi
+              sed -i "s|groupId=\"${groupId}\" artifactId=\"${artifactId}\" version=\"${from_version}\"|groupId=\"${groupId}\" artifactId=\"${artifactId}\" version=\"${version}\"|g" build.xml
+            done
+        - name: fix guava failureaccess dependency
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/4.0/guava-failureaccess.patch
+        - name: exclude vulnerable hadoop dependencies
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/4.0/exclude-dependencies.patch
+        - name: patch snakeyaml compatibility
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/4.0/snakeyaml-compatibility.patch
+        - name: patch logback compatibility for cassandra 4.x
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/4.0/logback-compatibility.patch
+        - name: prefetch maven resolver ant tasks
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            DEST=/root/.m2/repository/org/apache/maven/resolver/maven-resolver-ant-tasks/1.3.0
+            JAR="$DEST/maven-resolver-ant-tasks-1.3.0.jar"
+            mkdir -p "$DEST"
+
+            URLS="https://maven-central.storage-download.googleapis.com/maven2/org/apache/maven/resolver/maven-resolver-ant-tasks/1.3.0/maven-resolver-ant-tasks-1.3.0-uber.jar
+            https://repo.maven.apache.org/maven2/org/apache/maven/resolver/maven-resolver-ant-tasks/1.3.0/maven-resolver-ant-tasks-1.3.0-uber.jar
+            https://repo1.maven.org/maven2/org/apache/maven/resolver/maven-resolver-ant-tasks/1.3.0/maven-resolver-ant-tasks-1.3.0-uber.jar"
+
+            for url in $URLS; do
+              echo ">>> trying $url"
+              if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors "$url" -o "$JAR"; then
+                echo ">>> got jar from $url ($(wc -c < "$JAR") bytes)"
+                exit 0
+              fi
+              echo ">>> $url failed, trying next"
+            done
+            echo "all mirrors failed for maven-resolver-ant-tasks-1.3.0-uber.jar" >&2
+            exit 1
+        - name: build cassandra
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "4.0" = "4.0" ] || [ "4.0" = "4.1" ]; then
+              export CASSANDRA_USE_JDK11=true
+            fi
+
+            MIRROR=https://maven-central.storage-download.googleapis.com/maven2
+            ant _main-jar \
+              -Dno-checkstyle=true \
+              -Dartifact.remoteRepository.central="$MIRROR" \
+              -Dartifact.remoteRepository.apache="$MIRROR" \
+              -Dmaven-ant-tasks.url="$MIRROR/org/apache/maven/maven-ant-tasks"
+        - name: stage runtime payload
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/cassandra"
+            install -d "$dest"
+
+            cp -a bin conf doc pylib tools "$dest/"
+            install -d "$dest/lib"
+            cp -a "build/apache-cassandra-4.0.21-SNAPSHOT.jar" "$dest/lib/"
+            cp -a build/classes "$dest/lib/"
+            cp -a build/lib/jars/. "$dest/lib/"
+
+            rm -f "$dest/bin/cqlsh" "$dest/bin/cqlsh.py"
+        - name: stage dev payload
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/dev-staging/usr/share/cassandra"
+            install -d "$dest"
+
+            cp -a bin conf doc pylib tools "$dest/"
+            install -d "$dest/lib"
+            cp -a "build/apache-cassandra-4.0.21-SNAPSHOT.jar" "$dest/lib/"
+            cp -a build/classes "$dest/lib/"
+            cp -a build/lib/jars/. "$dest/lib/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Apache Cassandra distributed database
+            files:
+              - usr/share/cassandra
+            formats:
+              - deb
+            license: Apache-2.0
+            name: cassandra-4.0
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/share/cassandra
+                    source: dev-staging/usr/share/cassandra
+                name: cassandra-4.0-dev
+            url: https://cassandra.apache.org/
+            version: 4.0.21
+      paths:
+        - type: file
+          path: ${source.dir}/patch/5.0/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/5.0/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/cassandra-4-mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/cassandra-4-mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/4.0/exclude-dependencies.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.0/exclude-dependencies.patch
+        - type: file
+          path: ${source.dir}/patch/4.1/exclude-dependencies.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.1/exclude-dependencies.patch
+        - type: file
+          path: ${source.dir}/patch/4.1/snakeyaml-compatibility.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.1/snakeyaml-compatibility.patch
+        - type: file
+          path: ${source.dir}/patch/4.0/snakeyaml-compatibility.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.0/snakeyaml-compatibility.patch
+        - type: file
+          path: ${source.dir}/patch/4.0/guava-failureaccess.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.0/guava-failureaccess.patch
+        - type: file
+          path: ${source.dir}/patch/4.1/guava-failureaccess.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.1/guava-failureaccess.patch
+        - type: file
+          path: ${source.dir}/patch/4.0/logback-compatibility.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.0/logback-compatibility.patch
+        - type: file
+          path: ${source.dir}/patch/4.1/logback-compatibility.patch
+          uid: 0
+          gid: 0
+          source: package/main/cassandra/patch/4.1/logback-compatibility.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
