@@ -17,130 +17,25 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: 5eee034f8e9ca174982a08d7838e608dfbe6054c
-  PYTHON_BUILD_REFERENCE: dhi/python:3.13.15-debian13-dev@sha256:4ed0ec648c9743a8729e8c04d805fbe3c4ef0a6b61c4bf9d07fd0b1f1a206bf2
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "2.20"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.20.0
-  VERSION: 2.20.0
+  SUFFIX: -dev
+  VERSION: 2.20.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
   keyring:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
+    - azure-service-operator-dev=2.20.0-0
     - base-files
     - bash
     - ca-certificates-bundle
     - coreutils
     - findutils
     - tzdata
-  builds:
-    - name: azure-service-operator
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - gettext-base
-          - hostname
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - git
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/Azure/azure-service-operator.git#v2.20.0
-            checksum: 5eee034f8e9ca174982a08d7838e608dfbe6054c
-            path: /go/src/github.com/Azure/azure-service-operator
-            spdx:
-              name: azure-service-operator
-              version: 2.20.0
-              packages:
-                - name: azure-service-operator
-                  purl: pkg:golang/github.com/Azure/azure-service-operator/v2@2.20.0
-                  license: MIT
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/python:3.13.15-debian13-dev@sha256:4ed0ec648c9743a8729e8c04d805fbe3c4ef0a6b61c4bf9d07fd0b1f1a206bf2
-            includes:
-              - opt/**
-              - usr/**
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: install setup utilities
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Build tools installed upstream via .devcontainer/install-dependencies.sh
-            # https://github.com/Azure/azure-service-operator/blob/079194d1c4882362369e2e337249f914a8370400/.devcontainer/install-dependencies.sh
-            go install github.com/go-task/task/v3/cmd/task@latest
-            go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
-            go install mvdan.cc/gofumpt@latest
-            CGO_ENABLED=0 go install sigs.k8s.io/kustomize/kustomize/v4@v4.5.7
-        - name: generate CRDs
-          work-dir: /go/src/github.com/Azure/azure-service-operator
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            export PATH="$(go env GOPATH)/bin:$PATH"
-
-            # Patch to use the built-in venv module.
-            sed -i 's/-m virtualenv/-m venv/' Taskfile.yml
-
-            task controller:bundle-crds
-            cp -a ./v2/out/crds '${target.dir}/crds'
-        - name: update go dependencies
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/Azure/azure-service-operator/v2
-          with:
-            deps:
-              - github.com/google/cel-go@v0.29.0
-              - go.opentelemetry.io/otel@v1.44.0
-              - go.opentelemetry.io/otel/sdk@v1.43.0
-              - google.golang.org/grpc@v1.82.1
-            download: true
-            tidy: true
-        - name: test
-          work-dir: /go/src/github.com/Azure/azure-service-operator
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            export PATH="$(go env GOPATH)/bin:$PATH"
-
-            cd v2/tools/generator/
-            go mod tidy
-
-            cd -
-            task controller:test
-        - name: build
-          uses: go/build@v1
-          work-dir: /go/src/github.com/Azure/azure-service-operator/v2
-          with:
-            ldflags:
-              - -X github.com/Azure/azure-service-operator/v2/internal/version.BuildVersion=2.20.0
-            output: ${target.dir}/usr/local/bin/aso-controller
-            packages: ./cmd/controller
-      outputs:
-        - source: ${target.dir}/usr/local/bin/
-          target: /usr/local/bin/
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/crds
-          target: /crds
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/azure-service-operator
-          target: /opt/docker/sbom/azure-service-operator
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -163,6 +58,21 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/aso-controller
+    uid: 0
+    gid: 0
+    source: /usr/bin/aso-controller
+  - type: symlink
+    path: /crds
+    uid: 0
+    gid: 0
+    source: /usr/share/azure-service-operator/crds
 annotations:
   org.opencontainers.image.description: A minimal Azure Service Operator image
   org.opencontainers.image.licenses: MIT
