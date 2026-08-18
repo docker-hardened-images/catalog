@@ -21,11 +21,10 @@ dates:
 vars:
   BASE_DIGEST: sha256:4a01816cedefdd66a4a7f32813de794d8b8a8478e68deafd49f82e81c249cd8d
   BASE_TAG: 20250419-debian13
-  COMMIT_SHA: e75e7378cd024d74d18a22c66d5aea32abd474c7
   SEMVER_MAJOR_MINOR_VERSION: "5.7"
   SEMVER_MAJOR_VERSION: "5"
   SEMVER_VERSION: 5.7.0
-  VERSION: 5.7.0
+  VERSION: 5.7.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,113 +33,11 @@ contents:
   packages:
     - '!base-files'
     - ca-certificates
+    - certbot=5.7.0-0
     - libffi8
     - libstdc++6
     - python-3.14
-    - python-3.14-dev
-    - python3-pip
-    - python3-setuptools
-    - python3-wheel
     - tzdata
-  builds:
-    - name: certbot
-      work-dir: ${source.dir}/certbot-src
-      environment:
-        CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-      caches:
-        - path: /root/.cache/pip
-        - path: /root/.cargo
-      contents:
-        packages:
-          - build-essential
-          - libssl-dev
-          - libffi-dev
-          - pkg-config
-          - cargo
-          - rustc
-          - git
-          - ca-certificates
-          - bash
-          - coreutils
-          - findutils
-          - python-3.14
-          - python-3.14-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - diffutils
-          - gawk
-          - grep
-          - sed
-        files:
-          - url: git+https://github.com/certbot/certbot.git#e75e7378cd024d74d18a22c66d5aea32abd474c7
-            checksum: e75e7378cd024d74d18a22c66d5aea32abd474c7
-            path: ${source.dir}/certbot-src
-            spdx:
-              name: certbot
-              version: 5.7.0
-              packages:
-                - name: certbot
-                  purl: pkg:pypi/certbot@5.7.0
-                  license: Apache-2.0
-                - name: acme
-                  purl: pkg:pypi/acme@5.7.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: create virtual environment
-          runs: |
-            set -eux -o pipefail
-
-            VENV=/opt/certbot/.venv
-            mkdir -p /opt/certbot
-            python3 -m venv "$VENV"
-        - name: install certbot
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            VENV=/opt/certbot/.venv
-            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
-            # Install acme and certbot from source. Force cryptography to build
-            # from source via --no-binary so it links against the image's
-            # OpenSSL (dhi/pkg-openssl, FIPS-validated in the -fips variants)
-            # instead of the non-FIPS OpenSSL statically bundled in the
-            # cryptography manylinux wheel.
-            "$VENV/bin/python3" -m pip install --no-cache-dir \
-              --no-binary=cryptography \
-              ./acme \
-              ./certbot
-
-            # Upgrade pip to fix CVE-2026-8643 (26.1.1 -> 26.1.2)
-            "$VENV/bin/python3" -m pip install --no-cache-dir --upgrade pip==26.1.2
-        - name: clean python cache and tests
-          runs: |
-            set -eux -o pipefail
-
-            VENV=/opt/certbot/.venv
-            find "$VENV" \
-              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
-              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
-              -exec rm -rf '{}' + || true
-        - name: python dependencies sbom
-          uses: sbom@v1
-          with:
-            extra-scanners: python-package-cataloger
-            prefix: certbot-python
-            source: /opt/certbot/.venv
-      outputs:
-        - source: /opt/certbot
-          target: /opt/certbot
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
-          uid: 0
-          gid: 0
   artifacts:
     - name: dhi.io/static:20250419-debian13@sha256:4a01816cedefdd66a4a7f32813de794d8b8a8478e68deafd49f82e81c249cd8d
       includes:
@@ -186,6 +83,16 @@ environment:
   PYTHONUNBUFFERED: "1"
 paths:
   - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /opt/certbot
+    uid: 0
+    gid: 0
+    source: /usr/lib/certbot
+  - type: directory
     path: /usr/local/bin
     uid: 0
     gid: 0
@@ -194,7 +101,7 @@ paths:
     path: /usr/local/bin/certbot
     uid: 0
     gid: 0
-    source: /opt/certbot/.venv/bin/certbot
+    source: /usr/bin/certbot
   - type: directory
     path: /etc/letsencrypt
     uid: 65532
