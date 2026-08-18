@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2025-10-07"
 vars:
-  COMMIT_SHA: fa59fca15872bb8a914ba4c68188bcc8a502cbdf
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "1.5"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.5.4
-  VERSION: 1.5.4
+  SUFFIX: ""
+  VERSION: 1.5.4-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -33,6 +34,7 @@ contents:
     - base-files
     - ca-certificates
     - ca-certificates-bundle
+    - clamav-1.5=1.5.4-0
     - coreutils
     - dash
     - grep
@@ -64,152 +66,41 @@ contents:
       gid: 0
       mode: "0755"
   builds:
-    - name: build clamav
-      environment:
-        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      caches:
-        - path: /root/.cargo
+    - name: update databases
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
-          - bash
-          - bison
-          - build-essential
-          - ca-certificates
-          - cargo-1.97
-          - rustc-1.97
-          - check
-          - cmake
           - coreutils
-          - diffutils
-          - findutils
-          - flex
-          - g++
-          - gawk
-          - gcc
-          - grep
-          - libbz2-dev
-          - libc6-dev
-          - libcurl4-openssl-dev
-          - libjson-c-dev
-          - libmilter-dev
-          - libncurses-dev
-          - libpcre2-dev
-          - libssl-dev
-          - libstdc++6
-          - libxml2-dev
-          - make
-          - net-tools
-          - pkg-config
-          - python-3.13
-          - python-3.13-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - sed
-          - zlib1g-dev
-        files:
-          - url: git+https://github.com/Cisco-Talos/clamav#clamav-1.5.4
-            checksum: fa59fca15872bb8a914ba4c68188bcc8a502cbdf
-            path: ${source.dir}/clamav
-            spdx:
-              name: clamav
-              version: 1.5.4
-              packages:
-                - purl: pkg:dhi/clamav@1.5.4
-                  license: GPL-2.0
-            uid: 0
-            gid: 0
+          - dash
+          - clamav-1.5=1.5.4-0
+          - ca-certificates
+          - libbz2-1.0
+          - libcurl4t64
+          - libjson-c5
+          - libmilter1.0.1
+          - libncurses6
+          - libpcre2-8-0
+          - libssl3t64
+          - libxml2
+          - zlib1g
       pipeline:
-        - name: install pytest
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            pip3 install pytest
-        - name: compile
-          work-dir: ${source.dir}/clamav/build
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cmake .. \
-              -DCMAKE_BUILD_TYPE="Release" \
-              -DCMAKE_INSTALL_PREFIX="/usr" \
-              -DCMAKE_INSTALL_LIBDIR="/usr/lib" \
-              -DAPP_CONFIG_DIRECTORY="/etc/clamav" \
-              -DDATABASE_DIRECTORY="/var/lib/clamav" \
-              -DENABLE_CLAMONACC=OFF \
-              -DENABLE_EXAMPLES=OFF \
-              -DENABLE_JSON_SHARED=ON \
-              -DENABLE_MAN_PAGES=OFF \
-              -DENABLE_MILTER=ON \
-              -DENABLE_STATIC_LIB=OFF
-
-            make -j$(($(nproc) - 1)) install DESTDIR="${target.dir}/clamav"
-        - name: tests
-          work-dir: ${source.dir}/clamav/build
-          runs: |
-            set -eux -o pipefail
-
-            ctest -V --timeout 3000
-        - name: setup configuration
-          work-dir: ${source.dir}/clamav
-          runs: |
-            set -eux -o pipefail
-
-            sed -e "s|^\(Example\)|\# \1|" \
-              -e "s|.*\(LocalSocket\) .*|\1 /tmp/clamd.sock|" \
-              -e "s|.*\(TCPSocket\) .*|\1 3310|" \
-              -e "s|.*\(TCPAddr\) .*|#\1 0.0.0.0|" \
-              -e "s|.*\(User\) .*|\1 clamav|" \
-              -e "s|^\#\(LogFile\) .*|\1 /var/log/clamav/clamd.log|" \
-              -e "s|^\#\(LogTime\).*|\1 yes|" \
-              ${target.dir}/clamav/etc/clamav/clamd.conf.sample > ${target.dir}/clamav/etc/clamav/clamd.conf
-
-            sed -e "s|^\(Example\)|\# \1|" \
-              -e "s|.*\(DatabaseOwner\) .*|\1 clamav|" \
-              -e "s|^\#\(UpdateLogFile\) .*|\1 /var/log/clamav/freshclam.log|" \
-              -e "s|^\#\(NotifyClamd\).*|\1 /etc/clamav/clamd.conf|" \
-              -e "s|^\#\(ScriptedUpdates\).*|\1 yes|" \
-              ${target.dir}/clamav/etc/clamav/freshclam.conf.sample > ${target.dir}/clamav/etc/clamav/freshclam.conf
-
-            sed -e "s|^\(Example\)|\# \1|" \
-              -e "s|.*\(MilterSocket\) .*|\1 inet:7357|" \
-              -e "s|.*\(User\) .*|\1 clamav|" \
-              -e "s|^\#\(LogFile\) .*|\1 /var/log/clamav/milter.log|" \
-              -e "s|^\#\(LogTime\).*|\1 yes|" \
-              -e "s|.*\(\ClamdSocket\) .*|\1 unix:/tmp/clamd.sock|" \
-              ${target.dir}/clamav/etc/clamav/clamav-milter.conf.sample > ${target.dir}/clamav/etc/clamav/clamav-milter.conf
         - name: update databases
-          work-dir: ${target.dir}/clamav
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            # Create the necessary folder for freshclam to run
             mkdir -p /var/lib/clamav /var/log/clamav
 
-            # Copy all the lib files in /usr/lib so freshclam can find them when running.
-            ln -s ${target.dir}/clamav/usr/lib/lib* /usr/lib/
-
-            # Copy all the config in /etc/clamav so freshclam can find the config and certificats
-            ln -s ${target.dir}/clamav/etc/clamav /etc/clamav
-
-            usr/bin/freshclam \
-              --config-file=etc/clamav/freshclam.conf \
+            freshclam \
+              --config-file=/etc/clamav/freshclam.conf \
               --user=$(whoami)
 
             rm -f /var/lib/clamav/freshclam.dat
             rm -f /var/lib/clamav/mirrors.dat
       outputs:
-        - source: ${target.dir}/clamav/usr
-          target: /usr
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/clamav/etc/clamav
-          target: /etc/clamav
-          uid: 0
-          gid: 0
         - source: /var/lib/clamav
           target: /var/lib/clamav
           uid: 65532
