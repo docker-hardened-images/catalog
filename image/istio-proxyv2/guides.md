@@ -95,7 +95,7 @@ spec:
           ports:
             - containerPort: 8080
         - name: istio-proxy
-          image: dhi.io/istio-proxyv2:1.28.4
+          image: dhi.io/istio-proxyv2:1.30.3
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 1337
