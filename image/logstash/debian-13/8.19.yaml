@@ -480,6 +480,42 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar
+            checksum: sha256:c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6
+            path: ${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar
+            spdx:
+              name: httpcore5-h2
+              version: 5.4.3
+              packages:
+                - name: httpcore5-h2
+                  purl: pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.4.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar
+            checksum: sha256:80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18
+            path: ${source.dir}/patch/deps/httpclient5-5.6.3.jar
+            spdx:
+              name: httpclient5
+              version: 5.6.3
+              packages:
+                - name: httpclient5
+                  purl: pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.6.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://rubygems.org/downloads/json-2.21.2-java.gem
+            checksum: sha256:f01521cd90639cc26b63040fb00d2b949f18f41ecaab5c82b02fb31d0b8b736c
+            path: ${source.dir}/patch/deps/json-2.21.2-java.gem
+            spdx:
+              name: json
+              version: 2.21.2-java
+              packages:
+                - name: json
+                  purl: pkg:gem/json@2.21.2
+                  license: Ruby
+            uid: 0
+            gid: 0
       pipeline:
         - name: patch deps
           uses: git/patch@v1
@@ -580,6 +616,10 @@ contents:
             replace_jars "*/io/netty/netty-handler/*/netty-handler-*.jar" "${source.dir}/patch/deps/netty-handler-4.1.136.Final.jar"
             # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3
             replace_jars "*/org/apache/httpcomponents/core5/httpcore5/*/httpcore5-*.jar" "${source.dir}/patch/deps/httpcore5-5.4.3.jar"
+            # CVE-2026-54428 - httpcore5-h2 5.4 -> 5.4.3
+            replace_jars "*/org/apache/httpcomponents/core5/httpcore5-h2/*/httpcore5-h2-*.jar" "${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar"
+            # CVE-2026-64607 - httpclient5 -> 5.6.3
+            replace_jars "*/org/apache/httpcomponents/client5/httpclient5/*/httpclient5-*.jar" "${source.dir}/patch/deps/httpclient5-5.6.3.jar"
             replace_jars "*/org/bouncycastle/bcprov-jdk18on/*/bcprov-jdk18on-*.jar" "${source.dir}/patch/deps/bcprov-jdk18on-1.84.jar"
             replace_jars "*/org/bouncycastle/bcpkix-jdk18on/*/bcpkix-jdk18on-*.jar" "${source.dir}/patch/deps/bcpkix-jdk18on-1.84.jar"
             replace_jars "*/tools/jackson/core/jackson-core/*/jackson-core-*.jar" "${source.dir}/patch/deps/tools-jackson-core-3.1.5.jar"
@@ -817,14 +857,18 @@ contents:
 
             # Verify the fix was applied
             "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/log4j/Category.class"
-        - name: patch shaded httpcore5 in elastic_integration jar
+        - name: patch shaded http components in elastic_integration jar
           runs: |
             set -eux -o pipefail
 
-            # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3 in elastic_integration shaded JAR
+            # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3
+            # CVE-2026-54428 - httpcore5-h2 5.4 -> 5.4.3
+            # CVE-2026-64607 - httpclient5 -> 5.6.3
 
             JAR_CMD="/opt/java/openjdk/21/bin/jar"
             httpcore5_fixed="${source.dir}/patch/deps/httpcore5-5.4.3.jar"
+            httpcore5_h2_fixed="${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar"
+            httpclient5_fixed="${source.dir}/patch/deps/httpclient5-5.6.3.jar"
             base="${target.dir}/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems"
 
             ei_jar=$(find "$base" -path "*/logstash-filter-elastic_integration-*/vendor/jar-dependencies/co/elastic/logstash-filter-elastic_integration/*/logstash-filter-elastic_integration-*.jar" -type f | head -1)
@@ -834,13 +878,13 @@ contents:
               exit 0
             fi
 
-            if ! "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/hc/core5/"; then
-              echo "No httpcore5 classes in elastic_integration JAR, skipping"
+            if ! "$JAR_CMD" tf "$ei_jar" | grep -q "org/apache/hc/"; then
+              echo "No Apache HTTP components in elastic_integration JAR, skipping"
               exit 0
             fi
 
-            echo "Patching httpcore5 in shaded JAR: $ei_jar"
-            work_dir="/tmp/ei_jar_httpcore5_patch"
+            echo "Patching Apache HTTP components in shaded JAR: $ei_jar"
+            work_dir="/tmp/ei_jar_http_patch"
 
             mkdir -p "$work_dir"
             cd "$work_dir"
@@ -848,20 +892,31 @@ contents:
             "$JAR_CMD" xf "$ei_jar"
 
             rm -rf org/apache/hc/core5
+            rm -rf org/apache/hc/client5
             rm -rf META-INF/maven/org.apache.httpcomponents.core5/httpcore5
+            rm -rf META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2
+            rm -rf META-INF/maven/org.apache.httpcomponents.client5/httpclient5
 
             "$JAR_CMD" xf "$httpcore5_fixed" 'org/apache/hc/core5'
             "$JAR_CMD" xf "$httpcore5_fixed" 'META-INF/maven/org.apache.httpcomponents.core5/httpcore5'
+            "$JAR_CMD" xf "$httpcore5_h2_fixed" 'org/apache/hc/core5/http2'
+            "$JAR_CMD" xf "$httpcore5_h2_fixed" 'META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2'
+            "$JAR_CMD" xf "$httpclient5_fixed" 'org/apache/hc/client5'
+            "$JAR_CMD" xf "$httpclient5_fixed" 'META-INF/maven/org.apache.httpcomponents.client5/httpclient5'
 
             rm "$ei_jar"
             "$JAR_CMD" cf "$ei_jar" .
 
-            verify_dir="/tmp/ei_jar_httpcore5_verify"
+            verify_dir="/tmp/ei_jar_http_verify"
             rm -rf "$verify_dir"
             mkdir -p "$verify_dir"
             cd "$verify_dir"
             "$JAR_CMD" xf "$ei_jar" META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties
+            "$JAR_CMD" xf "$ei_jar" META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties
+            "$JAR_CMD" xf "$ei_jar" META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.properties
             grep -q 'version=5.4.3' META-INF/maven/org.apache.httpcomponents.core5/httpcore5/pom.properties
+            grep -q 'version=5.4.3' META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/pom.properties
+            grep -q 'version=5.6.3' META-INF/maven/org.apache.httpcomponents.client5/httpclient5/pom.properties
 
             cd /
             rm -rf "$work_dir" "$verify_dir"
@@ -992,6 +1047,11 @@ contents:
             fi
             install_default_gem "${source.dir}/patch/deps/rexml-3.4.4.gem" rexml rexml-3.4.4
             install_default_gem "${source.dir}/patch/deps/uri-0.12.5.gem" uri uri-0.12.5
+            # CVE-2026-71847 - json 2.20.0 -> 2.21.2-java when the bundle still ships 2.20.x/2.21.0/2.21.1
+            if grep -qE 'json \(2\.(20\.[0-9]+|21\.[01])(-java)?\)' "${target.dir}/usr/share/logstash/Gemfile.lock"; then
+              install_fixed_gem "${source.dir}/patch/deps/json-2.21.2-java.gem" json json-2.21.2-java true
+              sed -i -E 's/json \(2\.(20\.[0-9]+|21\.[01])(-java)?\)/json (2.21.2-java)/' "${target.dir}/usr/share/logstash/Gemfile.lock"
+            fi
         - name: replace vulnerable bouncycastle jars
           runs: |
             set -eux -o pipefail
