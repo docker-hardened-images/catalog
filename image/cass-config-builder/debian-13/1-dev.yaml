@@ -19,17 +19,13 @@ platforms:
 dates:
   release: "2026-01-26"
 vars:
-  COMMIT_SHA: c4b92f35b50c07f1c583c37fdcd8a04c56b4d654
-  DEFINITIONS_CHECKSUM: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
-  DEFINITIONS_COMMIT_SHA: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
   JAVA_FIPS_SUFFIX: ""
   JAVA_VARIANT: jdk
   JDK_MAJOR_VERSION: "11"
   SEMVER_MAJOR_MINOR_VERSION: "1.0"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.0.21
-  SOURCE_CHECKSUM: sha256:b0713843c7ddc9af332086457dcc4d52365a40182a40b4cc826aca9727bb2edc
-  VERSION: 1.0.21
+  VERSION: 1.0.21-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -41,8 +37,11 @@ contents:
     - '!original-awk'
     - '!tar'
     - apt
+    - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
+    - cass-config-builder=1.0.21-0
     - coreutils
     - diffutils
     - dpkg
@@ -56,126 +55,9 @@ contents:
     - perl-base
     - sed
     - tar
+    - tzdata
     - util-linux
   builds:
-    - name: build-cass-config-builder
-      work-dir: ${source.dir}/cass-config-builder/cass-config-builder-1.0.21
-      environment:
-        JAVA_HOME: /usr/lib/jvm/temurin-11
-      caches:
-        - path: /root/.gradle
-      contents:
-        packages:
-          - base-files
-          - bash
-          - ca-certificates
-          - coreutils
-          - findutils
-          - grep
-          - sed
-          - eclipse-temurin-11-jdk
-        files:
-          - url: https://github.com/datastax/cass-config-builder/archive/refs/tags/v1.0.21.tar.gz
-            checksum: sha256:b0713843c7ddc9af332086457dcc4d52365a40182a40b4cc826aca9727bb2edc
-            path: ${source.dir}/cass-config-builder
-            spdx:
-              name: cass-config-builder
-              version: 1.0.21
-              packages:
-                - name: cass-config-builder
-                  purl: pkg:github/datastax/cass-config-builder@v1.0.21
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://github.com/datastax/cass-config-definitions/archive/1b7eaf4e50447fc8168c4a6c16d0ed986941edf8.tar.gz
-            checksum: sha256:6660fc3427894b441fc07c40195d52d1df726beffbce29267413287107e60438
-            path: ${source.dir}/cass-config-definitions
-            spdx:
-              name: cass-config-definitions
-              version: 1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
-              packages:
-                - name: cass-config-definitions
-                  purl: pkg:github/datastax/cass-config-definitions@1b7eaf4e50447fc8168c4a6c16d0ed986941edf8
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: patch
-          uses: patch@v1
-          with:
-            options: -p1
-            patches:
-              - ${source.dir}/patch/jackson-cve.patch
-        - name: configure gradle maven mirror
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /root/.gradle/init.d
-            cat > /root/.gradle/init.d/mirror.gradle << 'EOF'
-            def MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
-
-            settingsEvaluated { settings ->
-                settings.pluginManagement.repositories.clear()
-                settings.pluginManagement.repositories {
-                    maven { url MIRROR }
-                    gradlePluginPortal()
-                }
-            }
-
-            allprojects {
-                buildscript {
-                    repositories {
-                        maven { url MIRROR }
-                    }
-                }
-                repositories {
-                    maven { url MIRROR }
-                }
-            }
-
-            gradle.projectsLoaded {
-                rootProject.allprojects {
-                    buildscript.repositories {
-                        maven { url MIRROR }
-                    }
-                    repositories {
-                        maven { url MIRROR }
-                    }
-                }
-            }
-            EOF
-        - name: build
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            ln -s ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8 cass-config-definitions
-            ./gradlew shadowJar
-
-            mkdir -p ${target.dir}/usr/local/bin
-            cp build/libs/cass-config-builder-*-all.jar ${target.dir}/usr/local/bin/cass-config-builder.jar
-
-            mkdir -p ${target.dir}/definitions
-            cp -r ${source.dir}/cass-config-definitions/cass-config-definitions-1b7eaf4e50447fc8168c4a6c16d0ed986941edf8/resources/. ${target.dir}/definitions/
-      paths:
-        - type: file
-          path: ${source.dir}/patch/jackson-cve.patch
-          uid: 0
-          gid: 0
-          source: image/cass-config-builder/patch/jackson-cve.patch
-      outputs:
-        - source: ${target.dir}/usr/local/bin/cass-config-builder.jar
-          target: /usr/local/bin/cass-config-builder.jar
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/definitions
-          target: /definitions
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/cass-config-builder
-          target: /opt/docker/sbom/cass-config-builder
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
@@ -231,16 +113,25 @@ environment:
   LANGUAGE: en_US:en
   LC_ALL: en_US.UTF-8
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
   - type: symlink
     path: /usr/local/bin/java
     uid: 0
     gid: 0
-    source: /usr/bin/java
-  - type: directory
+    source: /usr/lib/jvm/temurin-11/bin/java
+  - type: symlink
+    path: /usr/local/bin/cass-config-builder.jar
+    uid: 0
+    gid: 0
+    source: /usr/share/cass-config-builder/cass-config-builder.jar
+  - type: symlink
     path: /definitions
-    uid: 65532
-    gid: 65532
-    mode: "0755"
+    uid: 0
+    gid: 0
+    source: /usr/share/cass-config-builder/definitions
   - type: directory
     path: /opt/cass-config-builder/output
     uid: 65532
