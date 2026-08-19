@@ -23,6 +23,7 @@ vars:
   ELASTICSEARCH_LINUX_ARCH: '#{ target.arch == "arm64" ? "aarch64" : "x86_64" }'
   ELASTICSEARCH_LINUX_SHA512: '#{ target.arch == "arm64" ? "c41f4d33c7ce8fdd0754017755d05a9ba4d6326b4099525f1939cdc12a5c5e7afd1879ee45d56a90c665bdb877da4b553fda13796a60030e214ae1bd2da6fbaa" : "d53f8d3efeb830b73704873d082b940158deb9387937ed817eea89d2bf542ece24dae877548e4b48b0e134d5123704f04c86be23dcd9cb732a2489868a8dd0c5" }'
   ELASTICSEARCH_VERSION: 9.4.3
+  HTTPCLIENT5_VERSION: 5.6.3
   HTTPCORE5_VERSION: 5.4.3
   JACKSON_CORE_2_VERSION: 2.21.4
   JACKSON_CORE_3_VERSION: 3.1.5
@@ -31,6 +32,8 @@ vars:
   JACKSON_DATABIND_ES_VERSION: 2.18.9
   JAVA_HOME_PATH: /usr/lib/jvm/temurin-21
   JDK_MAJOR_VERSION: "21"
+  LOG4J_API_25_VERSION: 2.25.5
+  LOG4J_API_26_VERSION: 2.26.1
   MAVEN_REF: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:78f46562f2f4101a373368d62fed006ce7c8c88b464ba0c8356efaefd7fa5df8
   NETTY_VERSION: 4.1.136.Final
   REACTOR_NETTY_VERSION: 1.2.8
@@ -213,6 +216,18 @@ contents:
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar
             path: ${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar
+            path: ${source.dir}/patch/deps/httpclient5-5.6.3.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar
+            path: ${source.dir}/patch/deps/log4j-api-2.25.5.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/logging/log4j/log4j-api/2.26.1/log4j-api-2.26.1.jar
+            path: ${source.dir}/patch/deps/log4j-api-2.26.1.jar
             uid: 0
             gid: 0
       pipeline:
@@ -626,6 +641,157 @@ contents:
 
             unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=5.4.3"
             unzip -p "${app_jar}" "${h2_metadata_dir}/pom.properties" | grep -q "version=5.4.3"
+        - name: patch bundled httpclient5 in sonar-application
+          runs: |
+            set -eux -o pipefail
+
+            app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
+            if [[ -z "${app_jar}" ]]; then
+              echo "ERROR: sonar-application jar not found" >&2
+              exit 1
+            fi
+
+            metadata_dir="META-INF/maven/org.apache.httpcomponents.client5/httpclient5"
+            patch_dir="$(mktemp -d)"
+            repack_dir="${patch_dir}/repack"
+            overlay_dir="${patch_dir}/overlay"
+            trap 'rm -rf "${patch_dir}"' EXIT
+            mkdir -p "${repack_dir}" "${overlay_dir}"
+
+            (cd "${repack_dir}" && jar xf "${app_jar}")
+
+            if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              echo "ERROR: org.apache.httpcomponents.client5:httpclient5 not found in $(basename "${app_jar}")" >&2
+              exit 1
+            fi
+
+            if grep -q "version=5.6.3" "${repack_dir}/${metadata_dir}/pom.properties"; then
+              echo "httpclient5 already at 5.6.3 in $(basename "${app_jar}")"
+              exit 0
+            fi
+
+            rm -rf "${overlay_dir:?}"/*
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/httpclient5-5.6.3.jar")
+
+            rm -rf "${repack_dir:?}/org/apache/hc/client5" "${repack_dir:?}/${metadata_dir}"
+            mkdir -p "${repack_dir}/org/apache/hc" "${repack_dir}/META-INF/maven/org.apache.httpcomponents.client5"
+            cp -a "${overlay_dir}/org/apache/hc/client5" "${repack_dir}/org/apache/hc/client5"
+            cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+
+            grep -q "version=5.6.3" "${repack_dir}/${metadata_dir}/pom.properties"
+
+            app_new="${patch_dir}/app-repacked.jar"
+            (cd "${repack_dir}" && jar --create --file "${app_new}" --manifest META-INF/MANIFEST.MF .)
+            mv "${app_new}" "${app_jar}"
+
+            unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=5.6.3"
+        - name: patch bundled log4j-api in sonar-application
+          runs: |
+            set -eux -o pipefail
+
+            app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
+            if [[ -z "${app_jar}" ]]; then
+              echo "ERROR: sonar-application jar not found" >&2
+              exit 1
+            fi
+
+            metadata_dir="META-INF/maven/org.apache.logging.log4j/log4j-api"
+            patch_dir="$(mktemp -d)"
+            repack_dir="${patch_dir}/repack"
+            overlay_dir="${patch_dir}/overlay"
+            trap 'rm -rf "${patch_dir}"' EXIT
+            mkdir -p "${repack_dir}" "${overlay_dir}"
+
+            (cd "${repack_dir}" && jar xf "${app_jar}")
+
+            if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              echo "ERROR: org.apache.logging.log4j:log4j-api not found in $(basename "${app_jar}")" >&2
+              exit 1
+            fi
+
+            if grep -q "version=2.26.1" "${repack_dir}/${metadata_dir}/pom.properties"; then
+              echo "log4j-api already at 2.26.1 in $(basename "${app_jar}")"
+              exit 0
+            fi
+
+            rm -rf "${overlay_dir:?}"/*
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/log4j-api-2.26.1.jar")
+
+            rm -rf "${repack_dir:?}/org/apache/logging/log4j" "${repack_dir:?}/${metadata_dir}"
+            for vdir in "${repack_dir}"/META-INF/versions/*/org/apache/logging/log4j; do
+              rm -rf "${vdir}"
+            done
+
+            mkdir -p "${repack_dir}/org/apache/logging" "${repack_dir}/META-INF/maven/org.apache.logging.log4j"
+            cp -a "${overlay_dir}/org/apache/logging/log4j" "${repack_dir}/org/apache/logging/log4j"
+            cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+            for vdir in "${overlay_dir}"/META-INF/versions/*/org/apache/logging/log4j; do
+              rel="${vdir#${overlay_dir}/}"
+              mkdir -p "${repack_dir}/$(dirname "${rel}")"
+              cp -a "${vdir}" "${repack_dir}/${rel}"
+            done
+
+            grep -q "version=2.26.1" "${repack_dir}/${metadata_dir}/pom.properties"
+
+            app_new="${patch_dir}/app-repacked.jar"
+            (cd "${repack_dir}" && jar --create --file "${app_new}" --manifest META-INF/MANIFEST.MF .)
+            mv "${app_new}" "${app_jar}"
+
+            unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=2.26.1"
+        - name: patch bundled log4j-api in elastic apm agent
+          runs: |
+            set -eux -o pipefail
+
+            apm_jar=$(find "${target.dir}/sonarqube/elasticsearch/modules/apm" -name 'elastic-apm-agent-java8-*.jar' -type f | head -1)
+            if [[ -z "${apm_jar}" ]]; then
+              echo "ERROR: elastic-apm-agent-java8 jar not found" >&2
+              exit 1
+            fi
+
+            metadata_dir="agent/META-INF/maven/org.apache.logging.log4j/log4j-api"
+            class_dir="agent/org/apache/logging/log4j"
+            patch_dir="$(mktemp -d)"
+            repack_dir="${patch_dir}/repack"
+            overlay_dir="${patch_dir}/overlay"
+            trap 'rm -rf "${patch_dir}"' EXIT
+            mkdir -p "${repack_dir}" "${overlay_dir}"
+
+            (cd "${repack_dir}" && jar xf "${apm_jar}")
+
+            if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              echo "ERROR: org.apache.logging.log4j:log4j-api not found in $(basename "${apm_jar}")" >&2
+              exit 1
+            fi
+
+            if grep -q "version=2.25.5" "${repack_dir}/${metadata_dir}/pom.properties"; then
+              echo "log4j-api already at 2.25.5 in $(basename "${apm_jar}")"
+              exit 0
+            fi
+
+            rm -rf "${overlay_dir:?}"/*
+            (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/log4j-api-2.25.5.jar")
+
+            rm -rf "${repack_dir:?}/${class_dir}" "${repack_dir:?}/${metadata_dir}"
+            for vdir in "${repack_dir}"/agent/META-INF/versions/*/org/apache/logging/log4j; do
+              rm -rf "${vdir}"
+            done
+
+            mkdir -p "${repack_dir}/agent/org/apache/logging" "${repack_dir}/agent/META-INF/maven/org.apache.logging.log4j"
+            cp -a "${overlay_dir}/org/apache/logging/log4j" "${repack_dir}/${class_dir}"
+            cp -a "${overlay_dir}/META-INF/maven/org.apache.logging.log4j/log4j-api" "${repack_dir}/${metadata_dir}"
+            for vdir in "${overlay_dir}"/META-INF/versions/*/org/apache/logging/log4j; do
+              rel="agent/${vdir#${overlay_dir}/META-INF/}"
+              mkdir -p "${repack_dir}/$(dirname "${rel}")"
+              cp -a "${vdir}" "${repack_dir}/${rel}"
+            done
+
+            grep -q "version=2.25.5" "${repack_dir}/${metadata_dir}/pom.properties"
+
+            apm_new="${patch_dir}/apm-repacked.jar"
+            (cd "${repack_dir}" && jar --create --file "${apm_new}" --manifest META-INF/MANIFEST.MF .)
+            mv "${apm_new}" "${apm_jar}"
+
+            unzip -p "${apm_jar}" "${metadata_dir}/pom.properties" | grep -q "version=2.25.5"
       paths:
         - type: file
           path: ${source.dir}/patch/dhi-patch-config.json
