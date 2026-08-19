@@ -125,48 +125,25 @@ $ kubectl apply -n <kubernetes-namespace> -f rabbitmq.yaml
 
 ### Key differences
 
-| Feature            | RabbitMQ non-hardened image           | RabbitMQ Docker Hardened Image (DHI)                |
-| ------------------ | ------------------------------------- | --------------------------------------------------- |
-| Base OS            | Ubuntu or Alpine Linux                | Debian                                              |
-| Entry point        | `docker-entrypoint.sh`                | `rabbitmq-server` (direct)                          |
-| User context       | Runs as `rabbitmq` (uid 999, gid 999) | Runs as `rabbitmq` user (uid/gid 65532)             |
-| Shell access       | Full shell available                  | No shell or shell utilities                         |
-| Package management | Package manager included              | No package manager                                  |
-| Attack surface     | Larger due to additional utilities    | Minimal, only essential components                  |
-| Security posture   | Standard security metadata            | Ships with SBOM and VEX metadata                    |
-| Debugging          | Traditional shell debugging           | Use Docker Debug or image mount for troubleshooting |
+| Feature            | RabbitMQ non-hardened image           | RabbitMQ Docker Hardened Image (DHI)                  |
+| ------------------ | ------------------------------------- | ----------------------------------------------------- |
+| Base OS            | Ubuntu or Alpine Linux                | Debian                                                |
+| Entry point        | `docker-entrypoint.sh`                | `rabbitmq-server` (direct)                            |
+| User context       | Runs as `rabbitmq` (uid 999, gid 999) | Runs as `rabbitmq` user (uid/gid 65532)               |
+| Shell access       | Full shell available                  | Bash included for RabbitMQ's runtime scripts          |
+| Package management | Package manager included              | No package manager                                    |
+| Attack surface     | Larger due to additional utilities    | Minimal, only essential components                    |
+| Security posture   | Standard security metadata            | Ships with SBOM and VEX metadata                      |
+| Debugging          | Traditional shell debugging           | Use Docker Debug for additional troubleshooting tools |
 
-### Why no shell or package manager?
+### Why is Bash included?
 
-Docker Hardened Images prioritize security through minimalism:
+The RabbitMQ runtime image includes Bash because RabbitMQ's command scripts require a POSIX-compatible shell. The image
+does not include a package manager and otherwise remains minimal.
 
-- Reduced attack surface: Fewer binaries mean fewer potential vulnerabilities
-- Immutable infrastructure: Runtime containers shouldn't be modified after deployment
-- Compliance ready: Meets strict security requirements for regulated environments
-
-The hardened images intended for runtime don't contain a shell nor any tools for debugging. Common debugging methods for
-applications built with Docker Hardened Images include:
-
-- [Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to containers
-- Docker's Image Mount feature to mount debugging tools
-- Ecosystem-specific debugging approaches
-
-Docker Debug provides a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer
-that only exists during the debugging session.
-
-For example, you can use Docker Debug:
-
-```
-docker debug <image-name>
-```
-
-or mount debugging tools with the image mount feature:
-
-```
-docker run --rm -it --pid container:my-container \
-  --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/<image-name>:<tag> /dbg/bin/sh
-```
+For debugging tools beyond the included shell utilities, use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/). It attaches a separate debugging toolbox without
+adding those tools to the production image.
 
 ## Image variants
 
