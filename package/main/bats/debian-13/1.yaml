@@ -1,13 +1,17 @@
-# syntax=dhi.io/build:2-alpine3.23
+# syntax=dhi.io/build:2-debian13
 
 image: dhi.io/pkg-bats
 variant: runtime
 tags:
-  - 1.14.0-alpine3.24
-  - 1.14.0-r0-alpine3.24
+  - 1.14.0
+  - 1.14.0-r0
+  - 1.14.0-debian13
+  - 1.14.0-r0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2025-11-07"
 vars:
   BATS_ASSERT_COMMIT_SHA: f1e9280eaae8f86cbe278a687e6ba755bc802c1a
   BATS_ASSERT_VERSION: 2.2.4
@@ -24,60 +28,85 @@ vars:
   SEMVER_VERSION: 1.14.0
   VERSION: 1.14.0
 contents:
-  repositories:
-    - https://dhi.io/apk/alpine/v3.24/main
-    - https://dhi.io/apk/alpine/v3.23/main
-    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
-    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
-  keyring:
-    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
   packages:
-    - alpine-baselayout-data
+    - base-files
   builds:
     - name: bats
-      work-dir: ${source.dir}/bats-core
+      work-dir: ${source.dir}
       contents:
         packages:
           - bash
-          - busybox
           - coreutils
+          - findutils
           - sed
         files:
           - url: git+https://github.com/bats-core/bats-core.git#v1.14.0
             checksum: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5
             path: ${source.dir}/bats-core
+            spdx:
+              name: bats
+              version: 1.14.0
+              packages:
+                - purl: pkg:dhi/bats@1.14.0
+                  license: MIT
             uid: 0
             gid: 0
           - url: git+https://github.com/bats-core/bats-support.git#v0.3.0
             checksum: 24a72e14349690bcbf7c151b9d2d1cdd32d36eb1
             path: ${source.dir}/bats-support
+            spdx:
+              name: bats-support
+              version: 0.3.0
+              packages:
+                - name: bats-support
+                  purl: pkg:dhi/bats-support@v0.3.0
+                  license: 0BSD
             uid: 0
             gid: 0
           - url: git+https://github.com/bats-core/bats-assert.git#v2.2.4
             checksum: f1e9280eaae8f86cbe278a687e6ba755bc802c1a
             path: ${source.dir}/bats-assert
+            spdx:
+              name: bats-assert
+              version: 2.2.4
+              packages:
+                - name: bats-assert
+                  purl: pkg:dhi/bats-assert@v2.2.4
+                  license: CC0-1.0
             uid: 0
             gid: 0
           - url: git+https://github.com/bats-core/bats-file.git#v0.4.0
             checksum: 13ad5e2ffcc360281432db3d43a306f7b3667d60
             path: ${source.dir}/bats-file
+            spdx:
+              name: bats-file
+              version: 0.4.0
+              packages:
+                - name: bats-file
+                  purl: pkg:dhi/bats-file@v0.4.0
+                  license: CC0-1.0
             uid: 0
             gid: 0
           - url: git+https://github.com/bats-core/bats-detik.git#v1.4.0
             checksum: d42699741a2ed7b74ab8178b0038276d6e36faf1
             path: ${source.dir}/bats-detik
+            spdx:
+              name: bats-detik
+              version: 1.4.0
+              packages:
+                - name: bats-detik
+                  purl: pkg:dhi/bats-detik@v1.4.0
+                  license: MIT
             uid: 0
             gid: 0
       pipeline:
-        - name: stage bats + plugins
+        - name: stage bats and plugins
           runs: |
             set -eux -o pipefail
 
-            # Follow the existing image layout for now (including /opt/bats).
-            mkdir -p "${target.dir}/opt/bats"
-            cp -r "${source.dir}/bats-core"/* "${target.dir}/opt/bats"
+            mkdir -p "${target.dir}/usr/share/bats"
+            cp -r "${source.dir}/bats-core"/* "${target.dir}/usr/share/bats"
 
-            # Install the different plugins into the correct locations.
             install -Dm755 "${source.dir}/bats-support/load.bash" "${target.dir}/usr/lib/bats/bats-support/load.bash"
             for fn in "${source.dir}/bats-support/src/"*.bash; do
               install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-support/src/$(basename "$fn")"
@@ -93,37 +122,31 @@ contents:
               install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-assert/src/$(basename "$fn")"
             done
 
-            # Detik is a bit different. It does not have a load.bash and scripts don't go in a src directory.
             for fn in "${source.dir}/bats-detik/lib/"*.bash; do
               install -Dm755 "$fn" "${target.dir}/usr/lib/bats/bats-detik/$(basename "$fn")"
             done
 
-            # Provide the same bats path as the image uses.
-            mkdir -p "${target.dir}/usr/local/bin"
-            ln -s /opt/bats/bin/bats "${target.dir}/usr/local/bin/bats"
-        - uses: abuild/setup@v1
-          work-dir: ${source.dir}/aports/bats
-        - uses: abuild/apk@v1
-          work-dir: ${source.dir}/aports/bats
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf ../share/bats/bin/bats "${target.dir}/usr/bin/bats"
+        - uses: dhi/build-pkg:0
           with:
-            depends: bash
+            depends:
+              - bash
             description: Bash Automated Testing System (bats-core) with bundled plugins
             files:
-              - opt/bats
+              - usr/share/bats
               - usr/lib/bats
-              - usr/local/bin
+              - usr/bin/bats
             license: MIT
             name: bats
-            options: '!check !strip !fhs'
             rel: 0
             url: https://github.com/bats-core/bats-core
             version: 1.14.0
-        - uses: abuild/build@v1
-          work-dir: ${source.dir}/aports/bats
 os-release:
-  name: Docker Hardened Images (Alpine)
-  id: alpine
-  version-id: "3.24"
-  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
