@@ -3,8 +3,8 @@
 image: dhi.io/pkg-fzf
 variant: runtime
 tags:
-  - 0.60.3-1-dhi0
-  - 0.60.3-1-dhi0-debian13
+  - 0.60.3-1-dhi1
+  - 0.60.3-1-dhi1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -20,9 +20,11 @@ vars:
   DEBIAN_ORIG_FILENAME: fzf_0.60.3.orig.tar.gz
   DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/f/fzf/fzf_0.60.3.orig.tar.gz
   DEBIAN_VERSION: 0.60.3-1
-  DHI_REL: "0"
-  DHI_VERSION: 0.60.3-1+dhi0
-  TAG_VERSION: 0.60.3-1-dhi0
+  DHI_REL: "1"
+  DHI_VERSION: 0.60.3-1+dhi1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.6-0
+  TAG_VERSION: 0.60.3-1-dhi1
   UPSTREAM_VERSION: 0.60.3
 contents:
   packages:
@@ -31,13 +33,19 @@ contents:
     - name: fzf deb
       work-dir: ${source.dir}/fzf
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - build-essential
           - debhelper
           - dh-exec
           - dh-golang
           - dpkg-dev
-          - golang-any
+          - gawk
+          - golang-1.26=1.26.6-0
+          - golang-1.26-oci-config=1.26.6-0
           - golang-github-charlievieth-fastwalk-dev
           - golang-github-gdamore-tcell.v2-dev
           - golang-github-junegunn-go-shellwords-dev
@@ -45,6 +53,8 @@ contents:
           - golang-github-rivo-uniseg-dev
           - golang-golang-x-sys-dev
           - golang-golang-x-term-dev
+          - quilt
+          - util-linux
         files:
           - url: https://deb.debian.org/debian/pool/main/f/fzf/fzf_0.60.3-1.dsc
             checksum: sha256:4f4bbdac23e0fc9e7d0fe3f0a5fbce738134b3b58a9f89a9af9a2bac2e219a70
@@ -67,14 +77,36 @@ contents:
           with:
             file: fzf_0.60.3-1.dsc
             path: fzf
+        - name: create debian patch stack directory
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p debian/patches
+        - uses: dpkg/patch@v1
+          with:
+            apply: true
+            patches:
+              - ${source.dir}/patch/dhi-cve-2026-53432-fuzzymatchv2-int-overflow.patch
+              - ${source.dir}/patch/dhi-cve-2026-53433-listen-http-body-o2.patch
         - uses: dpkg/bump@v1
           with:
             changelog:
-              - DHI Rebuild
-            version: 0.60.3-1+dhi0
+              - Backport upstream fixes for CVE-2026-53432 and CVE-2026-53433
+            version: 0.60.3-1+dhi1
+        - name: verify golang toolchain
+          runs: |
+            set -eux -o pipefail
+
+            go version | grep -F 'go1.26.'
         - uses: dpkg/build@v1
           with:
             args: -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/fzf/patch
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
