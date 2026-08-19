@@ -1,0 +1,131 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-openresty
+variant: runtime
+tags:
+  - 1.31.1.1-0
+  - 1.31.1.1-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DHI_REL: "0"
+  DHI_VERSION: 1.31.1.1-0
+  VERSION: 1.31.1.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: openresty deb
+      work-dir: ${source.dir}/openresty
+      contents:
+        packages:
+          - build-essential
+          - ca-certificates
+          - debhelper
+          - dpkg-dev
+          - gnupg
+          - jq
+          - libpcre2-dev
+          - libssl-dev
+          - perl
+          - zlib1g-dev
+        files:
+          - url: https://openresty.org/download/openresty-1.31.1.1.tar.gz.asc
+            path: ${source.dir}/sigs/openresty.tar.gz.asc
+            uid: 0
+            gid: 0
+          - url: https://openresty.org/download/openresty-1.31.1.1.tar.gz
+            path: ${source.dir}/openresty.tar.gz
+            spdx:
+              name: openresty
+              version: 1.31.1.1
+              packages:
+                - name: openresty
+                  purl: pkg:generic/openresty/openresty@1.31.1.1
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify and unpack
+          runs: |
+            set -eux -o pipefail
+
+            GNUPGHOME="$(mktemp -d)"
+            export GNUPGHOME
+
+            gpg --import "${source.dir}/key/openresty-key.asc"
+            gpg --batch --verify "${source.dir}/sigs/openresty.tar.gz.asc" "${source.dir}/openresty.tar.gz"
+            tar -xf "${source.dir}/openresty.tar.gz" --strip-components=1
+        - name: add luajit sbom
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "/opt/docker/sbom/luajit"
+
+            version="$(ls -a bundle | grep -m 1 'LuaJIT' | sed -E 's|LuaJIT-([^/]+)/?|\1|')"
+
+            jq -n \
+              --arg name "luajit" \
+              --arg version "$version" \
+              --arg purl "pkg:github/openresty/luajit2@$version" \
+              --arg license "MIT" \
+              '{
+                "spdxVersion": "SPDX-2.3",
+                "dataLicense": "CC0-1.0",
+                "SPDXID": ("SPDXRef-" + $name),
+                "name": ("SPDX document for " + $name + " " + $version),
+                "documentNamespace": ($name + "-" + $version),
+                "creationInfo": {
+                    "creators": [
+                        "Organization: Docker, Inc.",
+                        "Tool: dhi/build"
+                    ],
+                    "created": "1970-01-01T00:00:00Z"
+                },
+                "packages": [
+                  {
+                    "name": $name,
+                    "SPDXID": ("SPDXRef-" + $name),
+                    "versionInfo": $version,
+                    "filesAnalyzed": false,
+                    "licenseConcluded": "NOASSERTION",
+                    "licenseDeclared": $license,
+                    "externalRefs": [
+                      {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": $purl
+                      }
+                    ]
+                  }
+                ]
+              }' > /opt/docker/sbom/luajit/.spdx.luajit.json
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 1.31.1.1-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: file
+          path: ${source.dir}/key/openresty-key.asc
+          uid: 0
+          gid: 0
+          source: package/main/openresty/key/openresty-key.asc
+        - type: directory
+          path: ${source.dir}/openresty/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/openresty/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
