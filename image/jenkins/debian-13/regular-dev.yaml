@@ -4,9 +4,9 @@ name: Jenkins 2.x (weekly) (dev)
 image: dhi.io/jenkins
 variant: dev
 tags:
-  - 2.576-dev
-  - 2.576-debian-dev
-  - 2.576-debian13-dev
+  - 2.577-dev
+  - 2.577-debian-dev
+  - 2.577-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,9 +16,9 @@ vars:
   BCRNGJENT_VERSION: 1.3.6
   BCTLSFIPS_VERSION: 2.1.23
   BCUTILFIPS_VERSION: 2.1.6
-  COMMIT_SHA: 7fe1be675ae0eff7a724f202d79f919bceb696be
-  DOCKER_REPO_COMMIT_SHA: bbe6b623f15ce9bfecea9e0033b94a0fd531b6f6
-  DOCKER_REPO_VERSION: "2.576"
+  COMMIT_SHA: 82c37634b354dd2832ae80772ef2548cc388671f
+  DOCKER_REPO_COMMIT_SHA: ae960660ebcfc3cc73a638d1b4a384d9098274e2
+  DOCKER_REPO_VERSION: "2.577"
   JAVA_FIPS_SUFFIX: ""
   JAVA_HOME_PATH: /usr/lib/jvm/temurin-21
   JAVA_MAJOR_VERSION: "21"
@@ -26,9 +26,9 @@ vars:
   JDK_MAJOR_VERSION: "21"
   MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:beaef057af84e9a457725e7a7aa30da8ed7d2e8c74e91c29f0709d1e0a3877e8
   MAVEN_VERSION: 3.9.16
-  SEMVER_MAJOR_MINOR_VERSION: "2.576"
+  SEMVER_MAJOR_MINOR_VERSION: "2.577"
   SEMVER_MAJOR_VERSION: "2"
-  VERSION: "2.576"
+  VERSION: "2.577"
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -85,20 +85,20 @@ contents:
           - zip
           - xmlstarlet
         files:
-          - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.576
-            checksum: 7fe1be675ae0eff7a724f202d79f919bceb696be
+          - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.577
+            checksum: 82c37634b354dd2832ae80772ef2548cc388671f
             path: ${source.dir}/jenkins
             spdx:
               name: jenkins
-              version: "2.576"
+              version: "2.577"
               packages:
                 - name: jenkins
-                  purl: pkg:dhi/jenkins@2.576
+                  purl: pkg:dhi/jenkins@2.577
                   license: MIT
             uid: 0
             gid: 0
-          - url: git+https://github.com/jenkinsci/docker.git#bbe6b623f15ce9bfecea9e0033b94a0fd531b6f6
-            checksum: bbe6b623f15ce9bfecea9e0033b94a0fd531b6f6
+          - url: git+https://github.com/jenkinsci/docker.git#ae960660ebcfc3cc73a638d1b4a384d9098274e2
+            checksum: ae960660ebcfc3cc73a638d1b4a384d9098274e2
             path: ${source.dir}/docker-builds
             uid: 0
             gid: 0
@@ -116,20 +116,23 @@ contents:
             gid: 0
       pipeline:
         - uses: mvn/mirror@v1
-        - name: remove git-changelist-maven-extension
+        - name: remove unavailable maven extensions
           work-dir: ${source.dir}/jenkins
           runs: |
             set -eux -o pipefail
 
-            # git-changelist-maven-extension is unavailable in the DHI Maven mirror.
-            # It derives changelist values from Git metadata for Jenkins incremental
+            # git-changelist-maven-extension and develocity-maven-extension are
+            # unavailable in the DHI Maven mirror. git-changelist derives
+            # changelist values from Git metadata for Jenkins incremental
             # builds, which are unnecessary when DHI builds a tagged release.
+            # develocity is Gradle build-scan telemetry, not needed for DHI builds.
             # Use local-name() so the XPath matches regardless of whether the
             # file declares an xmlns or not.
             ext_xml=".mvn/extensions.xml"
             if [ -f "${ext_xml}" ]; then
               xmlstarlet ed -L \
                 -d "//*[local-name()='extension'][*[local-name()='artifactId']='git-changelist-maven-extension']" \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='develocity-maven-extension']" \
                 "${ext_xml}"
             fi
         - name: build
@@ -146,57 +149,6 @@ contents:
             set -eux -o pipefail
 
             mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
-        - name: patch bundled mina-core
-          work-dir: ${source.dir}/jenkins
-          runs: |
-            set -eux -o pipefail
-
-            patch_dir="$(mktemp -d)"
-            trap 'rm -rf "${patch_dir}"' EXIT
-
-            war_file="war/target/jenkins.war"
-            hpi_path="WEB-INF/detached-plugins/mina-sshd-api-core.hpi"
-            old_mina_path="WEB-INF/lib/mina-core-2.2.4.jar"
-            new_mina_path="WEB-INF/lib/mina-core-2.2.8.jar"
-
-            unzip -q "${war_file}" "${hpi_path}" -d "${patch_dir}"
-            hpi_file="${patch_dir}/${hpi_path}"
-
-            if jar tf "${hpi_file}" | grep -q "${old_mina_path}"; then
-              zip -q -d "${hpi_file}" "${old_mina_path}"
-            fi
-
-            # Also remove 2.2.7 if present from previous patch
-            if jar tf "${hpi_file}" | grep -q "WEB-INF/lib/mina-core-2.2.7.jar"; then
-              zip -q -d "${hpi_file}" "WEB-INF/lib/mina-core-2.2.7.jar"
-            fi
-
-            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/lib"
-            cp "${source.dir}/patch/deps/mina-core-2.2.8.jar" "${patch_dir}/hpi-overlay/${new_mina_path}"
-            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_mina_path}")
-
-            if jar tf "${hpi_file}" | grep -q "${old_mina_path}"; then
-              echo "ERROR: ${old_mina_path} is still present in ${hpi_path}" >&2
-              exit 1
-            fi
-            if jar tf "${hpi_file}" | grep -q "WEB-INF/lib/mina-core-2.2.7.jar"; then
-              echo "ERROR: mina-core-2.2.7.jar is still present in ${hpi_path}" >&2
-              exit 1
-            fi
-            jar tf "${hpi_file}" | grep -q "${new_mina_path}"
-
-            (cd "${patch_dir}" && jar --update --file "${source.dir}/jenkins/${war_file}" "${hpi_path}")
-
-            unzip -p "${war_file}" "${hpi_path}" > "${patch_dir}/verified-mina-sshd-api-core.hpi"
-            if jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "${old_mina_path}"; then
-              echo "ERROR: ${old_mina_path} is still present in repacked ${war_file}" >&2
-              exit 1
-            fi
-            if jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "WEB-INF/lib/mina-core-2.2.7.jar"; then
-              echo "ERROR: mina-core-2.2.7.jar is still present in repacked ${war_file}" >&2
-              exit 1
-            fi
-            jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "${new_mina_path}"
         - name: install
           work-dir: ${source.dir}/jenkins
           runs: |
@@ -293,7 +245,7 @@ environment:
   JENKINS_SLAVE_AGENT_PORT: "50000"
   JENKINS_UC: https://updates.jenkins.io
   JENKINS_UC_EXPERIMENTAL: https://updates.jenkins.io/experimental
-  JENKINS_VERSION: "2.576"
+  JENKINS_VERSION: "2.577"
   LANG: en_US.UTF-8
   LANGUAGE: en_US:en
   LC_ALL: en_US.UTF-8
