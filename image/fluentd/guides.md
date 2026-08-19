@@ -174,48 +174,26 @@ docker run --name custom-fluentd -p 9880:9880 \
 
 ### Key differences
 
-| Feature             | Docker Official Fluentd             | Docker Hardened Fluentd                             |
-| ------------------- | ----------------------------------- | --------------------------------------------------- |
-| Security            | Standard base with common utilities | Minimal, hardened base with security patches        |
-| Shell access        | Full shell (bash/sh) available      | No shell in runtime variants                        |
-| Package manager     | apt/apk available                   | No package manager in runtime variants              |
-| User                | Runs as root by default             | Runs as nonroot user for enhanced security          |
-| Attack surface      | Larger due to additional utilities  | Minimal, only essential components                  |
-| Plugin installation | Direct gem install in runtime       | Multi-stage build required for plugins              |
-| Debugging           | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting |
-| Base OS             | Various Alpine/Debian versions      | Hardened Debian 13 base                             |
+| Feature             | Docker Official Fluentd             | Docker Hardened Fluentd                               |
+| ------------------- | ----------------------------------- | ----------------------------------------------------- |
+| Security            | Standard base with common utilities | Minimal, hardened base with security patches          |
+| Shell access        | Full shell (bash/sh) available      | Bash included for Fluentd's runtime entrypoint        |
+| Package manager     | apt/apk available                   | No package manager in runtime variants                |
+| User                | Runs as root by default             | Runs as nonroot user for enhanced security            |
+| Attack surface      | Larger due to additional utilities  | Minimal, only essential components                    |
+| Plugin installation | Direct gem install in runtime       | Multi-stage build required for plugins                |
+| Debugging           | Traditional shell debugging         | Use Docker Debug for additional troubleshooting tools |
+| Base OS             | Various Alpine/Debian versions      | Hardened Debian 13 base                               |
 
-### Why no shell or package manager?
+### Why is Bash included?
 
-Docker Hardened Images prioritize security through minimalism:
+The Fluentd runtime image includes Bash because its entrypoint uses it to preserve the behavior of Fluentd's upstream
+shell-based entrypoint. Fluentd and some other images retain shell-based startup scripts when they are necessary for
+upstream compatibility. The Fluentd runtime image does not include a package manager and otherwise remains minimal.
 
-- Reduced attack surface: Fewer binaries mean fewer potential vulnerabilities
-- Immutable infrastructure: Runtime containers shouldn't be modified after deployment
-- Compliance ready: Meets strict security requirements for regulated environments
-
-The hardened images intended for runtime don't contain a shell nor any tools for debugging. Common debugging methods for
-applications built with Docker Hardened Images include:
-
-- [Docker Debug](https://docs.docker.com/reference/cli/docker/debug/) to attach to containers
-- Docker's Image Mount feature to mount debugging tools
-- Ecosystem-specific debugging approaches
-
-Docker Debug provides a shell, common debugging tools, and lets you install other tools in an ephemeral, writable layer
-that only exists during the debugging session.
-
-For example, you can use Docker Debug:
-
-```bash
-docker debug my-fluentd
-```
-
-or mount debugging tools with the Image Mount feature:
-
-```bash
-docker run --rm -it --pid container:my-fluentd \
-  --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/fluentd:<tag> /dbg/bin/sh
-```
+For debugging tools beyond the included shell utilities, use
+[Docker Debug](https://docs.docker.com/reference/cli/docker/debug/). It attaches a separate debugging toolbox without
+adding those tools to the production image.
 
 ## Image variants
 
