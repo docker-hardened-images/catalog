@@ -10,23 +10,22 @@ tags:
   - 1.29-debian13
   - 1.29.7-debian
   - 1.29.7-debian13
-  - 1.29.7-cli-1.7.3
-  - 1.29.7-cli-1.7.3-debian
-  - 1.29.7-cli-1.7.3-debian13
+  - 1.29.7-cli-1.8.2
+  - 1.29.7-cli-1.8.2-debian
+  - 1.29.7-cli-1.8.2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  CLI_VERSION: 1.7.3
+  CLI_COMMIT_SHA: c579925f193fe2f0bf5134008125aea0c858ca95
+  CLI_VERSION: 1.8.2
+  COMMIT_SHA: 1f74f0c8e9935980d92a39069185671bbbba7c7e
   DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "1.29"
   DEBIAN_EPOCH_MAJOR_VERSION: "1"
   DEBIAN_EPOCH_VERSION: 1.29.7
-  DEBIAN_VERSION: "13"
   SEMVER_MAJOR_MINOR_VERSION: "1.29"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.29.7
-  TEMPORALIO_SERVER_DIGEST: sha256:3b6f4a1cf90972e859e49fee4f73b7d341de36cb50741948c046a18f8a6216d4
-  VARIANT_SUFFIX: ""
   VERSION: 1.29.7
 contents:
   repositories:
@@ -58,18 +57,151 @@ contents:
     - tini
     - tzdata
   builds:
-    - name: add bash completion
+    - name: build apps
+      work-dir: /go/src/go.temporal.io/temporal
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - bash
+          - ca-certificates-bundle
           - coreutils
-        artifacts:
-          - name: dhi.io/temporalio-server:1.29.7-debian13@sha256:3b6f4a1cf90972e859e49fee4f73b7d341de36cb50741948c046a18f8a6216d4
-            includes:
-              - usr/local/bin/temporal
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.29.7
+            checksum: 1f74f0c8e9935980d92a39069185671bbbba7c7e
+            path: /go/src/go.temporal.io/temporal
+            spdx:
+              name: temporalio-admin-tools
+              version: 1.29.7
+              packages:
+                - name: temporal-cassandra-tool
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/cassandra@1.29.7
+                  license: MIT
+                - name: temporal-sql-tool
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/sql@1.29.7
+                  license: MIT
+                - name: tdbg
+                  purl: pkg:golang/go.temporal.io/server/cmd/tools/tdbg@1.29.7
+                  license: MIT
             uid: 0
             gid: 0
       pipeline:
+        - name: go dependencies (1.28 and 1.29)
+          uses: go/bump@v2
+          work-dir: /go/src/go.temporal.io/temporal
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/apache/thrift@v0.23.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: build temporal-cassandra-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-cassandra-tool
+            packages: ./cmd/tools/cassandra
+        - name: build temporal-sql-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-sql-tool
+            packages: ./cmd/tools/sql
+        - name: build tdbg
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/tdbg
+            packages: ./cmd/tools/tdbg
+        - name: install schema
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/temporal"
+
+            # Copy configuration files and scripts
+            cp -r schema "${target.dir}/etc/temporal/"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/temporal-cassandra-tool
+          target: /usr/local/bin/temporal-cassandra-tool
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/temporal-sql-tool
+          target: /usr/local/bin/temporal-sql-tool
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/tdbg
+          target: /usr/local/bin/tdbg
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/temporal/schema
+          target: /etc/temporal/schema
+          uid: 0
+          gid: 0
+    - name: build-cli
+      work-dir: /go/src/github.com/temporalio/cli
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/cli.git#v1.8.2
+            checksum: c579925f193fe2f0bf5134008125aea0c858ca95
+            path: /go/src/github.com/temporalio/cli
+            spdx:
+              name: temporal-cli
+              version: 1.8.2
+              packages:
+                - name: temporal-cli
+                  purl: pkg:dhi/temporal-cli@1.8.2
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies (1.28 and 1.29)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/temporalio/cli
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - github.com/apache/thrift@v0.23.0
+              - github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/gomarkdown/markdown@v0.0.0-20260411013819-759bbc3e3207
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: build temporal CLI binary
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal
+            packages: ./cmd/temporal
+        - name: test temporal CLI binary
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/local/bin/temporal --help
         - name: install bash completion
           runs: |
             set -eux -o pipefail
@@ -78,8 +210,16 @@ contents:
             # interactive shells, so we can add completion logic in /etc/bash/temporal-completion.sh
             # Completion for temporal depends on the bash-completion package.
             mkdir -p "${target.dir}"/etc/bash/
-            /usr/local/bin/temporal completion bash > "${target.dir}"/etc/bash/temporal-completion.sh
+            ${target.dir}/usr/local/bin/temporal completion bash > "${target.dir}"/etc/bash/temporal-completion.sh
       outputs:
+        - source: ${target.dir}/usr/local/bin/temporal
+          target: /usr/local/bin/temporal
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporal-cli
+          target: /opt/docker/sbom/temporal-cli
+          uid: 0
+          gid: 0
         - source: ${target.dir}/etc/bash/temporal-completion.sh
           target: /etc/bash/temporal-completion.sh
           uid: 0
@@ -180,16 +320,6 @@ contents:
           target: /usr/local/bin/yq
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/temporalio-server:1.29.7-debian13@sha256:3b6f4a1cf90972e859e49fee4f73b7d341de36cb50741948c046a18f8a6216d4
-      includes:
-        - etc/temporal/schema/**
-        - usr/local/bin/tdbg
-        - usr/local/bin/temporal
-        - usr/local/bin/temporal-cassandra-tool
-        - usr/local/bin/temporal-sql-tool
-      uid: 0
-      gid: 0
 accounts:
   run-as: temporal
   users:
