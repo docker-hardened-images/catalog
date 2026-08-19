@@ -21,15 +21,12 @@ dates:
 vars:
   ACTIVEMQ_ARTEMIS_MAJOR_MINOR_VERSION: "2.55"
   ACTIVEMQ_ARTEMIS_MAJOR_VERSION: "2"
-  ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
-  COMMIT_SHA: b2f1018553017a411d55bb6e09cefc29d49eb4c2
   JDK_MAJOR_VERSION: "21"
   JRE_PATH: /usr/lib/jvm/temurin-21
-  MAVEN_REF: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:bda3bb1b5591a11c355337ea640af53312b4a157da7aca1b5976dbc8d13fac9d
   SEMVER_MAJOR_MINOR_VERSION: "2.55"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.55.0
-  VERSION: 2.55.0
+  VERSION: 2.55.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,10 +37,12 @@ contents:
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
+    - activemq-artemis=2.55.0-0
     - apt
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - diffutils
     - dpkg
@@ -55,133 +54,9 @@ contents:
     - mawk
     - perl-base
     - sed
+    - tzdata
     - util-linux
   builds:
-    - name: activemq-artemis
-      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:bda3bb1b5591a11c355337ea640af53312b4a157da7aca1b5976dbc8d13fac9d
-      contents:
-        packages:
-          - coreutils
-        files:
-          - url: git+https://github.com/apache/activemq-artemis.git#2.55.0
-            checksum: b2f1018553017a411d55bb6e09cefc29d49eb4c2
-            path: ${source.dir}/activemq-artemis
-            spdx:
-              name: activemq-artemis
-              version: 2.55.0
-              packages:
-                - name: activemq-artemis
-                  purl: pkg:dhi/activemq-artemis@2.55.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-kqueue/4.1.137.Final/netty-transport-native-kqueue-4.1.137.Final-osx-x86_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-kqueue-4.1.137.Final-osx-x86_64.jar
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-transport-native-kqueue/4.1.137.Final/netty-transport-native-kqueue-4.1.137.Final-osx-aarch_64.jar
-            path: ${source.dir}/patch/deps/netty-transport-native-kqueue-4.1.137.Final-osx-aarch_64.jar
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: patch dependencies
-          uses: mvn/patch@v1
-          with:
-            dependencies: ${source.dir}/patch/mvn-dependencies.json
-            mvn-root: ${source.dir}/activemq-artemis
-            properties: ${source.dir}/patch/mvn-properties.json
-        - name: configure maven mirror
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /root/.m2
-            cat > /root/.m2/settings.xml << 'EOF'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-              <mirrors>
-                <mirror>
-                  <id>google-maven-central</id>
-                  <name>GCS Maven Central mirror</name>
-                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
-                  <mirrorOf>central</mirrorOf>
-                </mirror>
-              </mirrors>
-            </settings>
-            EOF
-        - name: build
-          work-dir: ${source.dir}/activemq-artemis
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Set platform-specific Maven properties
-            if [ "${ARCH}" = "aarch64" ]; then
-              export MAVEN_OPTS="-Dos.arch=aarch64 -Dos.name=Linux -Dos.version=arm64"
-              export JAVA_OPTS="-Dos.arch=aarch64"
-            fi
-
-            mvn clean install -DskipTests
-        - name: patch native netty classifier jars
-          runs: |
-            set -eux -o pipefail
-
-            # mvn/patch bumps netty dependencyManagement to 4.1.137.Final, but
-            # classifier JARs stay on the upstream 4.1.132.Final line unless swapped
-            # explicitly (CVE-2026-59901, CVE-2026-55851, CVE-2026-56745, CVE-2026-55831,
-            # CVE-2026-55833, CVE-2026-59899, CVE-2026-56746, CVE-2026-59898, CVE-2026-59921,
-            # CVE-2026-59919, CVE-2026-59903).
-            dist_lib="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.55.0-bin/apache-artemis-2.55.0/lib"
-            netty_version="4.1.137.Final"
-
-            for arch in x86_64 aarch_64; do
-              find "${dist_lib}" \
-                -name "netty-transport-native-epoll-*-linux-${arch}.jar" \
-                ! -name "netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
-                -delete
-              install -m 0644 \
-                "${source.dir}/patch/deps/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
-                "${dist_lib}/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar"
-            done
-
-            for arch in x86_64 aarch_64; do
-              stale_kqueue=$(find "${dist_lib}" \
-                -name "netty-transport-native-kqueue-*-osx-${arch}.jar" \
-                ! -name "netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
-                -print)
-              if [ -z "${stale_kqueue}" ]; then
-                continue
-              fi
-              find "${dist_lib}" \
-                -name "netty-transport-native-kqueue-*-osx-${arch}.jar" \
-                ! -name "netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
-                -delete
-              install -m 0644 \
-                "${source.dir}/patch/deps/netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar" \
-                "${dist_lib}/netty-transport-native-kqueue-${netty_version}-osx-${arch}.jar"
-            done
-      paths:
-        - type: directory
-          path: /src/patch
-          uid: 0
-          gid: 0
-          source: image/activemq-artemis/patch
-      outputs:
-        - source: ${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.55.0-bin/apache-artemis-2.55.0
-          target: /opt/activemq-artemis
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/activemq-artemis
-          target: /opt/docker/sbom/activemq-artemis
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
@@ -238,16 +113,19 @@ environment:
   LC_ALL: en_US.UTF-8
   PATH: /opt/activemq-artemis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
-  - type: file
-    path: /opt/activemq-artemis/bin/entrypoint.sh
-    uid: 0
-    gid: 0
-    mode: "0755"
-    source: image/activemq-artemis/bin/entrypoint.sh
   - type: directory
-    path: /opt/activemq-artemis/broker
+    path: /usr/share/activemq-artemis/broker
     uid: 65532
     gid: 65532
+  - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/activemq-artemis
+    uid: 0
+    gid: 0
+    source: /usr/share/activemq-artemis
 annotations:
   org.opencontainers.image.description: A minimal ActiveMQ Artemis image
   org.opencontainers.image.licenses: Apache-2.0
