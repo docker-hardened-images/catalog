@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-crossplane
+variant: runtime
+tags:
+  - 1.20.11-alpine3.24
+  - 1.20.11-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-05-21"
+vars:
+  COMMIT_SHA: 7e2a292f1493b86504ede4db22bff2a78608157c
+  CROSSPLANE_MODULE_BASE: github.com/crossplane/crossplane
+  CROSSPLANE_VERSION_LDFLAG: github.com/crossplane/crossplane/internal/version.version
+  GOLANG_VERSION: 1.26.6-r0
+  PACKAGE_NAME: crossplane-1.20
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.20"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.20.11
+  VERSION: 1.20.11
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: crossplane-1.20
+      work-dir: /go/src/github.com/crossplane/crossplane
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.6-r0
+          - golang-1.26-oci-config=1.26.6-r0
+        files:
+          - url: git+https://github.com/crossplane/crossplane.git#v1.20.11
+            checksum: 7e2a292f1493b86504ede4db22bff2a78608157c
+            path: /go/src/github.com/crossplane/crossplane
+            spdx:
+              name: crossplane
+              version: 1.20.11
+              packages:
+                - name: crossplane
+                  purl: pkg:golang/github.com/crossplane/crossplane@1.20.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.20 only)
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/in-toto/in-toto-golang@v0.11.0
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - github.com/sigstore/rekor@v1.5.2
+              - github.com/sigstore/cosign/v2@v2.6.2
+            download: true
+        - name: build crossplane
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/crossplane/crossplane/internal/version.version=1.20.11
+            output: ${target.dir}/usr/bin/crossplane
+            packages: ./cmd/crossplane
+            tidy: true
+        - name: build crossplane dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/crossplane/crossplane/internal/version.version=1.20.11
+            output: ${target.dir}/usr/bin/crossplane-dev
+            packages: ./cmd/crossplane
+            strip: false
+            tidy: true
+        - name: install cluster assets
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/share/crossplane/crds"
+            install -d "${target.dir}/usr/share/crossplane/webhookconfigurations"
+            cp -a cluster/crds/. "${target.dir}/usr/share/crossplane/crds/"
+            install -m 0644 cluster/webhookconfigurations/usage.yaml \
+              "${target.dir}/usr/share/crossplane/webhookconfigurations/usage.yaml"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Crossplane control plane
+            files:
+              - usr/bin/crossplane
+              - usr/share/crossplane/crds
+              - usr/share/crossplane/webhookconfigurations
+            license: Apache-2.0
+            name: crossplane-1.20
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/crossplane
+                    source: usr/bin/crossplane-dev
+                name: crossplane-1.20-dev
+            url: https://crossplane.io/
+            version: 1.20.11
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
