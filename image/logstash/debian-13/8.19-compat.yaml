@@ -182,27 +182,27 @@ contents:
                   license: MIT
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar
-            checksum: sha256:2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
-            path: ${source.dir}/patch/deps/netty-codec-4.1.136.Final.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-codec/4.1.137.Final/netty-codec-4.1.137.Final.jar
+            checksum: sha256:9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798
+            path: ${source.dir}/patch/deps/netty-codec-4.1.137.Final.jar
             spdx:
               name: netty-codec
-              version: 4.1.136.Final
+              version: 4.1.137.Final
               packages:
                 - name: netty-codec
-                  purl: pkg:maven/io.netty/netty-codec@4.1.136.Final
+                  purl: pkg:maven/io.netty/netty-codec@4.1.137.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.1.136.Final/netty-codec-http-4.1.136.Final.jar
-            checksum: sha256:ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
-            path: ${source.dir}/patch/deps/netty-codec-http-4.1.136.Final.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar
+            checksum: sha256:0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
+            path: ${source.dir}/patch/deps/netty-codec-http-4.1.137.Final.jar
             spdx:
               name: netty-codec-http
-              version: 4.1.136.Final
+              version: 4.1.137.Final
               packages:
                 - name: netty-codec-http
-                  purl: pkg:maven/io.netty/netty-codec-http@4.1.136.Final
+                  purl: pkg:maven/io.netty/netty-codec-http@4.1.137.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -302,15 +302,15 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://repo1.maven.org/maven2/io/netty/netty-handler/4.1.136.Final/netty-handler-4.1.136.Final.jar
-            checksum: sha256:54bb1a59f46a3aefd117942e6acee09e555b756776bad731fc06159d89c2da28
-            path: ${source.dir}/patch/deps/netty-handler-4.1.136.Final.jar
+          - url: https://repo1.maven.org/maven2/io/netty/netty-handler/4.1.137.Final/netty-handler-4.1.137.Final.jar
+            checksum: sha256:d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44
+            path: ${source.dir}/patch/deps/netty-handler-4.1.137.Final.jar
             spdx:
               name: netty-handler
-              version: 4.1.136.Final
+              version: 4.1.137.Final
               packages:
                 - name: netty-handler
-                  purl: pkg:maven/io.netty/netty-handler@4.1.136.Final
+                  purl: pkg:maven/io.netty/netty-handler@4.1.137.Final
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -610,18 +610,65 @@ contents:
               done
             }
 
-            # CVE-2026-59901 - netty-codec 4.1.133 -> 4.1.136
-            replace_jars "*/io/netty/netty-codec/*/netty-codec-*.jar" "${source.dir}/patch/deps/netty-codec-4.1.136.Final.jar"
-            # CVE-2026-56745, CVE-2026-55831, CVE-2026-55833, CVE-2026-59899, CVE-2026-56746, CVE-2026-59898, CVE-2026-59921, CVE-2026-50020 - netty-codec-http 4.1.135 -> 4.1.136
-            replace_jars "*/io/netty/netty-codec-http/*/netty-codec-http-*.jar" "${source.dir}/patch/deps/netty-codec-http-4.1.136.Final.jar"
-            # CVE-2026-44249, CVE-2026-45416, CVE-2026-50010 - netty-handler 4.1.134 -> 4.1.136
-            replace_jars "*/io/netty/netty-handler/*/netty-handler-*.jar" "${source.dir}/patch/deps/netty-handler-4.1.136.Final.jar"
+            replace_maven_jar_version() {
+              group_path="$1"
+              artifact="$2"
+              fixed_version="$3"
+              fixed="${source.dir}/patch/deps/${artifact}-${fixed_version}.jar"
+              maven_group=$(echo "${group_path%/${artifact}}" | tr '/' '.')
+
+              find "$base" -path "*/${group_path}/*/${artifact}-*.jar" -type f | while read -r old_jar; do
+                old_version_dir=$(dirname "$old_jar")
+                old_version=$(basename "$old_version_dir")
+                artifact_dir=$(dirname "$old_version_dir")
+                fixed_dir="$artifact_dir/${fixed_version}"
+
+                if [ "$old_version" = "$fixed_version" ]; then
+                  continue
+                fi
+
+                echo "Replacing $old_jar with $fixed_dir/${artifact}-${fixed_version}.jar"
+                rm "$old_jar"
+                rmdir "$old_version_dir" 2> /dev/null || true
+                mkdir -p "$fixed_dir"
+                cp "$fixed" "$fixed_dir/${artifact}-${fixed_version}.jar"
+
+                find "$base/vendor/bundle" \( -name '*_jars.rb' -o -name 'Jars.lock' \) -type f | while read -r ref_file; do
+                  if grep -q "${group_path}/${old_version}/${artifact}-${old_version}" "$ref_file" 2> /dev/null \
+                    || grep -q "require_jar('${maven_group}', '${artifact}', '${old_version}')" "$ref_file" 2> /dev/null \
+                    || grep -q "require_jar(\"${maven_group}\", \"${artifact}\", \"${old_version}\")" "$ref_file" 2> /dev/null; then
+                    sed -i \
+                      -e "s|${group_path}/${old_version}/${artifact}-${old_version}|${group_path}/${fixed_version}/${artifact}-${fixed_version}|g" \
+                      -e "s/require_jar('${maven_group}', '${artifact}', '${old_version}')/require_jar('${maven_group}', '${artifact}', '${fixed_version}')/g" \
+                      -e "s/require_jar(\"${maven_group}\", \"${artifact}\", \"${old_version}\")/require_jar(\"${maven_group}\", \"${artifact}\", \"${fixed_version}\")/g" \
+                      "$ref_file"
+                  fi
+                done
+              done
+            }
+
+            # CVE-2026-59901, CVE-2026-59903 - netty 4.1.136 -> 4.1.137 (Scout keys off maven path version)
+            replace_maven_jar_version "io/netty/netty-codec" netty-codec 4.1.137.Final
+            replace_maven_jar_version "io/netty/netty-codec-http" netty-codec-http 4.1.137.Final
+            replace_maven_jar_version "io/netty/netty-handler" netty-handler 4.1.137.Final
             # CVE-2026-54399 - httpcore5 5.4 -> 5.4.3
-            replace_jars "*/org/apache/httpcomponents/core5/httpcore5/*/httpcore5-*.jar" "${source.dir}/patch/deps/httpcore5-5.4.3.jar"
+            replace_maven_jar_version "org/apache/httpcomponents/core5/httpcore5" httpcore5 5.4.3
             # CVE-2026-54428 - httpcore5-h2 5.4 -> 5.4.3
-            replace_jars "*/org/apache/httpcomponents/core5/httpcore5-h2/*/httpcore5-h2-*.jar" "${source.dir}/patch/deps/httpcore5-h2-5.4.3.jar"
+            replace_maven_jar_version "org/apache/httpcomponents/core5/httpcore5-h2" httpcore5-h2 5.4.3
             # CVE-2026-64607 - httpclient5 -> 5.6.3
-            replace_jars "*/org/apache/httpcomponents/client5/httpclient5/*/httpclient5-*.jar" "${source.dir}/patch/deps/httpclient5-5.6.3.jar"
+            replace_maven_jar_version "org/apache/httpcomponents/client5/httpclient5" httpclient5 5.6.3
+
+            netty_http_remain=$(find "$base" -path "*/io/netty/netty-codec-http/4.1.136.Final/*" -type f | wc -l | tr -d ' ')
+            if [ "${netty_http_remain:-0}" -gt 0 ]; then
+              echo "ERROR: netty-codec-http CVE shim left ${netty_http_remain} 4.1.136.Final jar(s)"
+              exit 1
+            fi
+            netty_http_fixed=$(find "$base" -path "*/io/netty/netty-codec-http/4.1.137.Final/*" -type f | wc -l | tr -d ' ')
+            if [ "${netty_http_fixed:-0}" -eq 0 ]; then
+              echo "ERROR: netty-codec-http CVE shim did not install any 4.1.137.Final jar(s)"
+              exit 1
+            fi
+
             replace_jars "*/org/bouncycastle/bcprov-jdk18on/*/bcprov-jdk18on-*.jar" "${source.dir}/patch/deps/bcprov-jdk18on-1.84.jar"
             replace_jars "*/org/bouncycastle/bcpkix-jdk18on/*/bcpkix-jdk18on-*.jar" "${source.dir}/patch/deps/bcpkix-jdk18on-1.84.jar"
             replace_jars "*/tools/jackson/core/jackson-core/*/jackson-core-*.jar" "${source.dir}/patch/deps/tools-jackson-core-3.1.5.jar"
