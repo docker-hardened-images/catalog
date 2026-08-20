@@ -5,38 +5,38 @@ image: dhi.io/datahub-mae-consumer
 variant: runtime
 tags:
   - "1"
-  - "1.5"
-  - 1.5.0
-  - 1.5.0.7
+  - "1.6"
+  - 1.6.0
+  - 1.6.0.1
   - 1-debian
   - 1-debian13
-  - 1.5-debian
-  - 1.5-debian13
-  - 1.5.0-debian
-  - 1.5.0-debian13
-  - 1.5.0.7-debian
-  - 1.5.0.7-debian13
+  - 1.6-debian
+  - 1.6-debian13
+  - 1.6.0-debian
+  - 1.6.0-debian13
+  - 1.6.0.1-debian
+  - 1.6.0.1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2025-09-25"
 vars:
-  COMMIT_SHA: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+  COMMIT_SHA: 036f89a860a92e8a756eccfc2d46047b52f05877
   DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
   DOCKERIZE_VERSION: 0.24.3
   JAVA_FIPS_SUFFIX: ""
   JAVA_VARIANT: jre
-  JDK_MAJOR_VERSION: "17"
+  JDK_MAJOR_VERSION: "21"
   JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
   JMX_PROMETHEUS_VERSION: 0.20.0
   OTEL_JAVAAGENT_SHA256: 130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500
   OTEL_JAVAAGENT_VERSION: 2.28.0
-  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.5.0.7
-  VERSION: 1.5.0.7
-  VERSION_MAJOR_MINOR_PATCH: 1.5.0
+  SEMVER_VERSION: 1.6.0.1
+  VERSION: 1.6.0.1
+  VERSION_MAJOR_MINOR_PATCH: 1.6.0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -49,10 +49,11 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - curl
-    - eclipse-temurin-17-jre
-    - eclipse-temurin-17-jre-oci-config
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
     - libsnappy1v5
     - tzdata
     - wget
@@ -90,6 +91,11 @@ contents:
             deps:
               - golang.org/x/crypto@v0.52.0
             download: true
+        - name: test dockerize
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
         - name: build dockerize
           uses: go/build@v1
           with:
@@ -121,18 +127,20 @@ contents:
           - gzip
           - sed
           - tar
+          - unzip
+          - zip
           - gradle-8
-          - eclipse-temurin-17-jdk
+          - eclipse-temurin-21-jdk
         files:
-          - url: git+https://github.com/datahub-project/datahub.git#v1.5.0.7
-            checksum: 9fa880ef1890ce1052cc06d5fb3b7f9e114f528c
+          - url: git+https://github.com/datahub-project/datahub.git#v1.6.0.1
+            checksum: 036f89a860a92e8a756eccfc2d46047b52f05877
             path: ${source.dir}/datahub
             spdx:
               name: datahub
-              version: 1.5.0.7
+              version: 1.6.0.1
               packages:
                 - name: datahub
-                  purl: pkg:dhi/datahub-mae-consumer@1.5.0.7
+                  purl: pkg:dhi/datahub-mae-consumer@1.6.0.1
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -141,17 +149,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Maven Central rate-limits Docker Build Cloud egress IPs (HTTP 429).
-            #
-            # Replace `mavenCentral()` with Google's CDN mirror of Maven Central.
-            #
-            # Replace `gradlePluginPortal()` with an inline Maven repository
-            # at plugins.gradle.org/m2/ that restricts metadataSources to
-            # mavenPom() + artifact() only. The default Plugin Portal config
-            # also asks for `.module` (Gradle Module Metadata) files; Plugin
-            # Portal 303-redirects .module requests to repo.maven.apache.org
-            # which 429s. Skipping that lookup is the difference between
-            # success and a 429 failure on every plugin artifact lookup.
             MIRROR='maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
             PORTAL=$'maven {\\n    url "https://plugins.gradle.org/m2/"\\n    metadataSources { mavenPom(); artifact(); ignoreGradleMetadataRedirection() }\\n}'
             find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 \
@@ -169,133 +166,82 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Direct build.gradle version pins are intentionally absent here.
-            # Upstream DataHub v1.5.0.7 already ships spring-boot 3.5.14,
-            # jetty 12.0.34, postgresql 42.7.11, and zookeeper 3.8.6, which
-            # cover the CVEs we previously patched (-42587, -33870, -42584,
-            # -33871 in spring-boot; -2332, -1605 in jetty; -42198 in
-            # postgresql; -24308, -24281 in zookeeper). The resolutionStrategy
-            # block below still handles transitive pins the upstream BOM does
-            # not cover.
-
-            # Force versions of transitive deps the upstream BOM does not
-            # cover. These ride in via Pegasus/Kafka/etc., not via Spring
-            # Boot, so bumping springBootVersion alone is not enough.
-            #
-            # netty 4.1.136.Final fixes CVE-2026-42583, -42579, -42587,
-            #   -33870, -42584, -33871, -47691, -45674, -44249, -45416,
-            #   -44890, -44250, -46340, -44893, -45536, -47244, -45673,
-            #   -44891.
-            #   CVE-2026-42577 in netty-transport-native-epoll requires the
-            #   4.2.x line which is a major bump - handled by a VEX statement,
-            #   not here.
-            # aircompressor 2.0.3 fixes CVE-2025-67721.
-            # spring-webmvc 6.2.19 fixes CVE-2026-41842, -41845 (HIGH),
-            #   -41841, -41843, -41844, -41846, -41853 (MEDIUM). DataHub's
-            #   :metadata-service:configuration submodule pins Spring Framework
-            #   5.3.31; a blanket org.springframework:spring-* force would
-            #   cross the 5->6 major (jakarta namespace migration) and fail
-            #   resolution. Force spring-webmvc alone (not the whole group) to
-            #   avoid that conflict.
-            # log4j-core 2.25.4 fixes CVE-2026-34477, -34478, -34480.
-            # jackson-databind/core 2.21.5 fixes CVE-2026-54512,
-            # CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516,
-            # CVE-2026-54517, CVE-2026-54518, CVE-2026-59889,
-            # GHSA-mhm7-754m-9p8w. Only databind/core publish a 2.21.5 patch;
-            # jackson-annotations tracks the bare 2.21 line, so do not force
-            # the whole group.
-            # jackson-core 2.19.2 shaded inside Hazelcast 5.6.0 remains
-            # unreachable by resolutionStrategy and is covered by VEX.
-            # lz4-java 1.11.1 fixes CVE-2026-59949.
-            # commons-lang3 3.18.0 fixes CVE-2025-48924.
-            # avro 1.11.5 fixes CVE-2025-33042 (avro-compiler).
-            # jakarta.mail 1.6.8 fixes CVE-2025-7962.
-            # logback 1.5.35 fixes CVE-2026-1225, CVE-2026-9828,
-            #   CVE-2026-10532.
             cat >> build.gradle << 'GRADLE'
 
             // ===== DHI CVE remediation: force minimum versions =====
-            // Added by the DHI build pipeline (image/datahub-mae-consumer/...inc.yaml).
-            // Forces minimum versions for transitive deps not pinned by the
-            // upstream Spring Boot BOM, to remediate HIGH/CRITICAL/MEDIUM CVEs.
             allprojects {
+                afterEvaluate {
+                    rootProject.ext['nettyVersion'] = '4.2.16.Final'
+                }
                 configurations.configureEach {
                     resolutionStrategy {
                         force 'at.yawk.lz4:lz4-java:1.11.1'
+                        force 'tools.jackson.core:jackson-core:3.1.4'
+                        force 'tools.jackson.core:jackson-databind:3.1.5'
                         eachDependency { details ->
-                        def req = details.requested
-                        if (req.group == 'io.netty'
-                                && req.name.startsWith('netty-')
-                                && !req.name.startsWith('netty-tcnative')) {
-                            // netty-tcnative-* tracks its own version line
-                            // (2.0.x) - only force core netty-*.
-                            details.useVersion '4.1.136.Final'
-                            details.because 'DHI CVE remediation: CVE-2026-42583, CVE-2026-42579, CVE-2026-42587, CVE-2026-33870, CVE-2026-42584, CVE-2026-33871, CVE-2026-47691, CVE-2026-45674, CVE-2026-44249, CVE-2026-45416, CVE-2026-44890, CVE-2026-44250, CVE-2026-46340, CVE-2026-44893, CVE-2026-45536, CVE-2026-47244, CVE-2026-45673, CVE-2026-44891'
-                        }
-                        if (req.group == 'io.airlift' && req.name == 'aircompressor') {
-                            details.useVersion '2.0.3'
-                            details.because 'DHI CVE remediation: CVE-2025-67721'
-                        }
-                        if (req.group == 'org.apache.logging.log4j'
-                                && req.name.startsWith('log4j-')) {
-                            details.useVersion '2.25.4'
-                            details.because 'DHI CVE remediation: CVE-2026-34477, CVE-2026-34478, CVE-2026-34480'
-                        }
-                        if (req.group == 'com.fasterxml.jackson.core'
-                                && (req.name == 'jackson-databind'
-                                    || req.name == 'jackson-core')) {
-                            details.useVersion '2.21.5'
-                            details.because 'DHI CVE remediation: CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59889, GHSA-mhm7-754m-9p8w'
-                        }
-                        if (req.group == 'at.yawk.lz4'
-                                && req.name == 'lz4-java') {
-                            details.useVersion '1.11.1'
-                            details.because 'DHI CVE remediation: CVE-2026-59949'
-                        }
-                        if (req.group == 'org.apache.commons'
-                                && req.name == 'commons-lang3') {
-                            details.useVersion '3.18.0'
-                            details.because 'DHI CVE remediation: CVE-2025-48924'
-                        }
-                        if (req.group == 'org.apache.avro'
-                                && req.name.startsWith('avro')) {
-                            details.useVersion '1.11.5'
-                            details.because 'DHI CVE remediation: CVE-2025-33042'
-                        }
-                        if (req.group == 'com.sun.mail'
-                                && req.name == 'jakarta.mail') {
-                            details.useVersion '1.6.8'
-                            details.because 'DHI CVE remediation: CVE-2025-7962'
-                        }
-                        if (req.group == 'ch.qos.logback'
-                                && req.name.startsWith('logback-')) {
-                            details.useVersion '1.5.35'
-                            details.because 'DHI CVE remediation: CVE-2026-1225, CVE-2026-9828, CVE-2026-10532'
-                        }
-                        if (req.group == 'org.springframework.kafka'
-                                && req.name.startsWith('spring-kafka')) {
-                            details.useVersion '3.3.16'
-                            details.because 'DHI CVE remediation: CVE-2026-41731, CVE-2026-41726'
-                        }
-                        if (req.group == 'org.springframework'
-                                && req.name == 'spring-webmvc') {
-                            details.useVersion '6.2.19'
-                            details.because 'DHI CVE remediation: CVE-2026-41842, CVE-2026-41845, CVE-2026-41841, CVE-2026-41843, CVE-2026-41844, CVE-2026-41846, CVE-2026-41853'
-                        }
-                        if (req.group == 'org.eclipse.jetty'
-                                && req.name.startsWith('jetty-')) {
-                            details.useVersion '12.0.36'
-                            details.because 'DHI CVE remediation: CVE-2026-10050, CVE-2026-10051, CVE-2026-6790, CVE-2026-8384'
-                        }
-                        if (req.group == 'io.micrometer'
-                                && (req.name == 'micrometer-core'
-                                    || req.name == 'micrometer-observation')) {
-                            details.useVersion '1.15.12'
-                            details.because 'DHI CVE remediation: CVE-2026-40983, CVE-2026-40984'
+                            def req = details.requested
+                            if (req.group != null && req.group.startsWith('com.fasterxml.jackson')
+                                    && req.name != 'jackson-annotations') {
+                                details.useVersion '2.21.5'
+                                details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq, GHSA-R7WM-3CXJ-WFF9, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518'
+                            }
+                            if (req.group == 'tools.jackson.core') {
+                                if (req.name == 'jackson-core') {
+                                    details.useVersion '3.1.4'
+                                    details.because 'DHI CVE remediation: GHSA-R7WM-3CXJ-WFF9, CVE-2026-54512'
+                                } else if (req.name == 'jackson-databind') {
+                                    details.useVersion '3.1.5'
+                                    details.because 'DHI CVE remediation: CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518'
+                                }
+                            } else if (req.group != null && req.group.startsWith('tools.jackson')) {
+                                details.useVersion '3.1.5'
+                                details.because 'DHI CVE remediation: GHSA-R7WM-3CXJ-WFF9, CVE-2026-54512, CVE-2026-54513'
+                            }
+                            if (req.group == 'org.apache.commons' && req.name == 'commons-configuration2'
+                                    && req.version == '2.10.1') {
+                                details.useVersion '2.15.0'
+                                details.because 'DHI CVE remediation: CVE-2026-45205'
+                            }
+                            if (req.group == 'io.opentelemetry' && req.name == 'opentelemetry-extension-trace-propagators'
+                                    && req.version == '1.49.0') {
+                                details.useVersion '1.62.0'
+                                details.because 'DHI CVE remediation: CVE-2026-45292'
+                            }
+                            if (req.group == 'io.netty' && !req.name.startsWith('netty-tcnative')
+                                    && req.version == '4.2.13.Final') {
+                                details.useVersion '4.2.16.Final'
+                                details.because 'DHI CVE remediation: CVE-2026-44891'
+                            }
+                            if (req.group == 'org.springframework.kafka' && req.name == 'spring-kafka'
+                                    && req.version == '4.0.5') {
+                                details.useVersion '4.0.6'
+                                details.because 'DHI CVE remediation: CVE-2026-41731, CVE-2026-41726'
+                            }
+                            if (req.group == 'org.jline' && req.name == 'jline') {
+                                details.useVersion '4.2.1'
+                                details.because 'DHI CVE remediation: GHSA-47qp-hqvx-6r3f, GHSA-2r2c-cx56-8933'
+                            }
+                            if (req.group == 'org.postgresql' && req.name == 'postgresql'
+                                    && req.version == '42.7.11') {
+                                details.useVersion '42.7.12'
+                                details.because 'DHI CVE remediation: CVE-2026-54291'
+                            }
+                            if (req.group == 'ch.qos.logback' && req.name.startsWith('logback-')) {
+                                details.useVersion '1.5.35'
+                                details.because 'DHI CVE remediation: CVE-2026-9828, CVE-2026-10532'
+                            }
+                            if (req.group == 'org.springframework' && req.version == '7.0.7') {
+                                details.useVersion '7.0.8'
+                                details.because 'DHI CVE remediation: CVE-2026-41841, CVE-2026-41842, CVE-2026-41843, CVE-2026-41844, CVE-2026-41845, CVE-2026-41846, CVE-2026-41853'
+                            }
+                            if ((req.group == 'org.lz4' || req.group == 'at.yawk.lz4')
+                                    && req.name == 'lz4-java') {
+                                details.useTarget 'at.yawk.lz4:lz4-java:1.11.1'
+                                details.because 'DHI CVE remediation: CVE-2026-59949'
+                            }
                         }
                     }
                 }
-            }
             }
             GRADLE
         - name: build jar
@@ -304,33 +250,213 @@ contents:
             set -eux -o pipefail
 
             export GRADLE_HOME="/usr/share/java/gradle"
-            export JAVA_HOME="/usr/lib/jvm/temurin-17"
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
             export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
 
-            # Remove any existing Gradle lockfiles to ensure --update-locks
-            # can refresh all pinned versions, including lz4-java 1.11.1
-            # for CVE-2026-59949.
             find . -name 'gradle.lockfile' -delete || true
 
-            # `:assemble` (vs `:build`) skips the `:check` task graph entirely
-            # - no Spotless, no static analysis. Combined with --parallel +
-            # --max-workers=4 this trims ~30 min off the cold build and
-            # keeps us under the Docker Build Cloud 90-min cap.
-            #
-            # `--update-locks` lets Gradle's dependency-locking refresh the
-            # pinned versions for the modules our resolutionStrategy still
-            # forces. The earlier zookeeper / jetty / postgresql / spring-boot
-            # / spring-framework wildcards were dropped here when DataHub
-            # v1.5.0.7's BOM started shipping those at-or-above our targets;
-            # keeping them on this list forced Gradle to re-resolve the
-            # spring-boot 3.5.x dep graph in configure phase, blowing past
-            # the 90-min Docker Build Cloud cap.
             ./gradlew --init-script ${source.dir}/files/init.gradle \
               :metadata-jobs:mae-consumer-job:assemble \
               -x test \
               --parallel --max-workers=4 \
-              --update-locks 'io.netty:*,io.airlift:*,org.eclipse.jetty:*,com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,org.springframework.kafka:*,org.springframework:spring-webmvc,at.yawk.lz4:*,io.micrometer:micrometer-core,io.micrometer:micrometer-observation' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,org.apache.commons:*,io.opentelemetry:*,io.netty:*,org.postgresql:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*' \
               --no-daemon --console=plain
+        - name: rewrite tools.jackson jars in mae-consumer-job
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            JAR=$(readlink -f metadata-jobs/mae-consumer-job/build/libs/mae-consumer-job.jar)
+            test -f "$JAR"
+
+            CORE_VER=3.1.4
+            DATABIND_VER=3.1.5
+            GOOGLE_MIRROR='https://maven-central.storage-download.googleapis.com/maven2'
+            CORE_SHA256='3bda1cd6eff0a8d47bdfcaeae7c2bd5311d6c8ed494ef5f3e51029bb44aa9bdf'
+            DATABIND_SHA256='3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a'
+
+            work=$(mktemp -d)
+            trap 'rm -rf "$work"' EXIT
+
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
+            export PATH="${JAVA_HOME}/bin:${PATH}"
+
+            curl -fsSL -o "$work/jackson-core-${CORE_VER}.jar" \
+              "${GOOGLE_MIRROR}/tools/jackson/core/jackson-core/${CORE_VER}/jackson-core-${CORE_VER}.jar"
+            curl -fsSL -o "$work/jackson-databind-${DATABIND_VER}.jar" \
+              "${GOOGLE_MIRROR}/tools/jackson/core/jackson-databind/${DATABIND_VER}/jackson-databind-${DATABIND_VER}.jar"
+            echo "${CORE_SHA256}  $work/jackson-core-${CORE_VER}.jar" | sha256sum -c -
+            echo "${DATABIND_SHA256}  $work/jackson-databind-${DATABIND_VER}.jar" | sha256sum -c -
+
+            mapfile -t old_entries < <(unzip -Z1 "$JAR" | grep -E '^BOOT-INF/lib/jackson-(core|databind)-3\..+\.jar$' || true)
+            if [ "${#old_entries[@]}" -gt 0 ]; then
+              zip -d "$JAR" "${old_entries[@]}"
+            fi
+
+            mkdir -p "$work/update/BOOT-INF/lib"
+            cp "$work/jackson-core-${CORE_VER}.jar" \
+              "$work/update/BOOT-INF/lib/jackson-core-${CORE_VER}.jar"
+            cp "$work/jackson-databind-${DATABIND_VER}.jar" \
+              "$work/update/BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar"
+            (cd "$work/update" && zip -0 -r "$JAR" \
+              "BOOT-INF/lib/jackson-core-${CORE_VER}.jar" \
+              "BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar")
+
+            unzip -Z1 "$JAR" | grep -Fqx "BOOT-INF/lib/jackson-core-${CORE_VER}.jar"
+            unzip -Z1 "$JAR" | grep -Fqx "BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar"
+            if unzip -Z1 "$JAR" | grep -E '^BOOT-INF/lib/jackson-(core|databind)-3\.1\.2\.jar$'; then
+              echo "ERROR: tools.jackson 3.1.2 still in mae-consumer-job.jar BOOT-INF/lib" >&2
+              exit 1
+            fi
+
+            unzip -p "$JAR" "BOOT-INF/lib/jackson-core-${CORE_VER}.jar" > "$work/extracted-core.jar"
+            unzip -p "$work/extracted-core.jar" \
+              META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
+              | grep -qx "version=${CORE_VER}"
+            unzip -p "$JAR" "BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar" > "$work/extracted-databind.jar"
+            unzip -p "$work/extracted-databind.jar" \
+              META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
+              | grep -qx "version=${DATABIND_VER}"
+
+            patch_nested_hazelcast_jackson() {
+              local nested_entry=$1
+              local nested_name
+              nested_name=$(basename "$nested_entry")
+
+              # Do not use `unzip | grep -q` under pipefail: a match makes unzip
+              # get SIGPIPE (exit 141) and the pipeline looks like "not found".
+              local found=0
+              local entry
+              while IFS= read -r entry; do
+                if [ "$entry" = "$nested_entry" ]; then
+                  found=1
+                  break
+                fi
+              done < <(unzip -Z1 "$JAR")
+              if [ "$found" -ne 1 ]; then
+                return 0
+              fi
+
+              local hz_work="$work/nested-${nested_name}"
+              rm -rf "$hz_work"
+              mkdir -p "$hz_work/hz"
+
+              unzip -p "$JAR" "$nested_entry" > "$hz_work/${nested_name}"
+              unzip -q "$hz_work/${nested_name}" -d "$hz_work/hz"
+
+              if [ ! -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.properties" ]; then
+                return 0
+              fi
+
+              mkdir -p "$work/fixed-core-extract" "$work/fixed-databind-extract"
+              rm -rf "$work/fixed-core-extract" "$work/fixed-databind-extract"
+              mkdir -p "$work/fixed-core-extract" "$work/fixed-databind-extract"
+              unzip -q "$work/jackson-core-${CORE_VER}.jar" -d "$work/fixed-core-extract"
+              unzip -q "$work/jackson-databind-${DATABIND_VER}.jar" -d "$work/fixed-databind-extract"
+
+              rm -rf "$hz_work/hz/com/hazelcast/shaded/tools/jackson/core"
+              rm -rf "$hz_work/hz/com/hazelcast/shaded/tools/jackson/databind"
+              if [ -d "$hz_work/hz/META-INF/versions" ]; then
+                find "$hz_work/hz/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
+                  rm -rf "${verdir}/com/hazelcast/shaded/tools/jackson/core"
+                  rm -rf "${verdir}/com/hazelcast/shaded/tools/jackson/databind"
+                done
+              fi
+
+              mkdir -p "$hz_work/hz/com/hazelcast/shaded/tools/jackson"
+              cp -a "$work/fixed-core-extract/tools/jackson/core" \
+                "$hz_work/hz/com/hazelcast/shaded/tools/jackson/core"
+              cp -a "$work/fixed-databind-extract/tools/jackson/databind" \
+                "$hz_work/hz/com/hazelcast/shaded/tools/jackson/databind"
+
+              if [ -d "$work/fixed-core-extract/META-INF/versions" ]; then
+                find "$work/fixed-core-extract/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
+                  ver=$(basename "$verdir")
+                  if [ -d "$verdir/tools/jackson/core" ]; then
+                    mkdir -p "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson"
+                    cp -a "$verdir/tools/jackson/core" \
+                      "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson/core"
+                  fi
+                done
+              fi
+              if [ -d "$work/fixed-databind-extract/META-INF/versions" ]; then
+                find "$work/fixed-databind-extract/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
+                  ver=$(basename "$verdir")
+                  if [ -d "$verdir/tools/jackson/databind" ]; then
+                    mkdir -p "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson"
+                    cp -a "$verdir/tools/jackson/databind" \
+                      "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson/databind"
+                  fi
+                done
+              fi
+
+              sed -i "s/^version=.*/version=${CORE_VER}/" \
+                "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.properties"
+              sed -i "s/^version=.*/version=${DATABIND_VER}/" \
+                "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.properties"
+              if [ -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.xml" ]; then
+                sed -i "s/<version>3\.1\.2<\/version>/<version>${CORE_VER}<\/version>/" \
+                  "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.xml"
+              fi
+              if [ -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.xml" ]; then
+                sed -i "s/<version>3\.1\.2<\/version>/<version>${DATABIND_VER}<\/version>/" \
+                  "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.xml"
+              fi
+
+              (cd "$hz_work/hz" && jar --create --file "$hz_work/${nested_name}.new" .)
+
+              zip -d "$JAR" "$nested_entry"
+              mkdir -p "$work/nested-update/BOOT-INF/lib"
+              cp "$hz_work/${nested_name}.new" "$work/nested-update/BOOT-INF/lib/${nested_name}"
+              (cd "$work/nested-update" && zip -0 -r "$JAR" "BOOT-INF/lib/${nested_name}")
+
+              unzip -p "$JAR" "$nested_entry" > "$hz_work/${nested_name}.verify"
+              unzip -p "$hz_work/${nested_name}.verify" \
+                META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
+                | grep -qx "version=${CORE_VER}"
+              unzip -p "$hz_work/${nested_name}.verify" \
+                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
+                | grep -qx "version=${DATABIND_VER}"
+              if unzip -p "$hz_work/${nested_name}.verify" \
+                META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
+                | grep -qx 'version=3.1.2'; then
+                echo "ERROR: tools.jackson.core jackson-core still 3.1.2 in ${nested_entry}" >&2
+                exit 1
+              fi
+              if unzip -p "$hz_work/${nested_name}.verify" \
+                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
+                | grep -qx 'version=3.1.2'; then
+                echo "ERROR: tools.jackson.core jackson-databind still 3.1.2 in ${nested_entry}" >&2
+                exit 1
+              fi
+            }
+
+            patch_nested_hazelcast_jackson "BOOT-INF/lib/hazelcast-5.7.0.jar"
+            patch_nested_hazelcast_jackson "BOOT-INF/lib/hazelcast-spring-5.7.0.jar"
+
+            mapfile -t lib_entries < <(unzip -Z1 "$JAR" | grep '^BOOT-INF/lib/.*\.jar$' || true)
+            for lib_entry in "${lib_entries[@]}"; do
+              nested_jar="$work/nested-check.jar"
+              unzip -p "$JAR" "$lib_entry" > "$nested_jar"
+              if unzip -l "$nested_jar" \
+                META-INF/maven/tools.jackson.core/jackson-core/pom.properties > /dev/null 2>&1; then
+                if unzip -p "$nested_jar" \
+                  META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
+                  | grep -qx 'version=3.1.2'; then
+                  echo "ERROR: tools.jackson.core jackson-core 3.1.2 still in ${lib_entry}" >&2
+                  exit 1
+                fi
+              fi
+              if unzip -l "$nested_jar" \
+                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties > /dev/null 2>&1; then
+                if unzip -p "$nested_jar" \
+                  META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
+                  | grep -qx 'version=3.1.2'; then
+                  echo "ERROR: tools.jackson.core jackson-databind 3.1.2 still in ${lib_entry}" >&2
+                  exit 1
+                fi
+              fi
+            done
         - name: stage runtime files
           runs: |
             set -eux -o pipefail
@@ -347,7 +473,6 @@ contents:
             cp docker/monitoring/client-prometheus-config.yaml \
               "${target.dir}/datahub/datahub-mae-consumer/scripts/prometheus-config.yaml"
 
-            # Patched start.sh (absolute paths for bundled Java agents under DHI).
             cp "${source.dir}/files/start.sh" \
               "${target.dir}/datahub/datahub-mae-consumer/scripts/start.sh"
             chmod 0755 "${target.dir}/datahub/datahub-mae-consumer/scripts/start.sh"
@@ -366,8 +491,6 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Use Google's Maven Central mirror - repo1.maven.org rate-limits
-            # the Docker Build Cloud egress IPs (HTTP 429).
             curl -fsSL -o /tmp/jmx_prometheus_javaagent.jar \
               "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
             echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
