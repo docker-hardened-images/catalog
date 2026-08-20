@@ -150,22 +150,26 @@ contents:
             cp "${source.dir}/patch/1.overrides.gradle" \
               "${source.dir}/datahub/dhi-overrides.init.gradle"
         - uses: gradle/mirror@v1
-        - name: append jackson and logback cve forces to build.gradle
+        - name: append transitive cve forces to build.gradle
           work-dir: ${source.dir}/datahub
           runs: |
             set -eux -o pipefail
 
-            # Belt-and-suspenders with dhi-overrides.init.gradle: inline forces
-            # survive dependency-lock refresh the same way as datahub-gms.
             cat >> build.gradle << 'GRADLE'
 
-            // ===== DHI CVE remediation: force jackson and logback minimum versions =====
+            // ===== DHI CVE remediation: force minimum versions =====
             allprojects {
                 configurations.configureEach {
                     resolutionStrategy {
                         force 'at.yawk.lz4:lz4-java:1.11.1'
                         eachDependency { details ->
                             def req = details.requested
+                            if (req.group == 'io.netty'
+                                    && req.name.startsWith('netty-')
+                                    && !req.name.startsWith('netty-tcnative')) {
+                                details.useVersion '4.2.17.Final'
+                                details.because 'DHI CVE remediation: CVE-2026-59902, CVE-2026-59903, CVE-2026-44891'
+                            }
                             if (req.group != null && req.group.startsWith('com.fasterxml.jackson')
                                     && req.name != 'jackson-annotations') {
                                 details.useVersion '2.21.4'
@@ -195,6 +199,27 @@ contents:
                                 details.useTarget 'at.yawk.lz4:lz4-java:1.11.1'
                                 details.because 'DHI CVE remediation: CVE-2026-59949'
                             }
+                            if (req.group == 'io.micrometer'
+                                    && (req.name == 'micrometer-core'
+                                        || req.name.startsWith('micrometer-registry-'))) {
+                                details.useVersion '1.16.6'
+                                details.because 'DHI CVE remediation: CVE-2026-40983, CVE-2026-40984'
+                            }
+                            if (req.group == 'org.apache.httpcomponents.core5'
+                                    && req.name.startsWith('httpcore5')) {
+                                details.useVersion '5.4.3'
+                                details.because 'DHI CVE remediation: CVE-2026-54399, CVE-2026-54428'
+                            }
+                            if (req.group == 'org.apache.httpcomponents.client5'
+                                    && req.name == 'httpclient5') {
+                                details.useVersion '5.6.3'
+                                details.because 'DHI CVE remediation: CVE-2026-64607'
+                            }
+                            if (req.group == 'org.apache.logging.log4j'
+                                    && req.name.startsWith('log4j-')) {
+                                details.useVersion '2.25.5'
+                                details.because 'DHI CVE remediation: CVE-2026-49844'
+                            }
                         }
                     }
                 }
@@ -217,34 +242,16 @@ contents:
             export JAVA_HOME="/usr/lib/jvm/temurin-21"
             export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
 
-            # Stale lockfiles in the persistent `caches:` mount cause
-            # "Timeout waiting to lock journal cache" on the next build
-            # after a crash; PID-matching doesn't help (builders reuse PIDs).
             find /root/.gradle/caches -name '*.lock' -delete 2> /dev/null || true
             find /root/.gradle/caches/journal-* -mindepth 1 -maxdepth 1 \
               -name '*.lock' -delete 2> /dev/null || true
+            find . -name 'gradle.lockfile' -delete || true
 
-            # `:assemble` over `:build -x test -x check`: `-x` skips task
-            # execution but NOT configuration, so `:build` still walks
-            # the test/Spotless task graph across DataHub's many
-            # subprojects and exhausts the builder budget on config alone.
-            # `:assemble` skips that graph entirely. `--no-watch-fs` avoids
-            # journal lock contention on the shared cache mount.
-            # `--update-locks` lets Gradle's dependency-locking refresh
-            # the pinned versions for the modules our resolutionStrategy
-            # forces. Without this, the override.gradle's `useVersion`
-            # calls hit gradle's lockfile and fail with
-            #   "Did not resolve <module>:<old> which has been forced /
-            #    substituted to a different version: <new>".
-            # Patterns mirror the groups force-substituted in
-            # patch/1.overrides.gradle.
             ./gradlew :datahub-upgrade:assemble -x test \
               --no-daemon --no-watch-fs --parallel --max-workers=4 \
-              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,org.apache.commons:*,io.opentelemetry:*,io.netty:*,org.postgresql:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,org.apache.commons:*,io.opentelemetry:*,io.netty:*,org.postgresql:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*,io.micrometer:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:httpclient5,org.apache.logging.log4j:*' \
               --init-script "${source.dir}/datahub/dhi-overrides.init.gradle"
 
-            # Fail loudly if upstream renames the jar path; otherwise
-            # we'd silently ship an empty install step.
             test -f datahub-upgrade/build/libs/datahub-upgrade.jar
         - name: install
           work-dir: ${source.dir}/datahub
