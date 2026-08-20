@@ -1,0 +1,372 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-datahub-mce-consumer
+variant: runtime
+tags:
+  - 1.7.0
+  - 1.7.0-r1
+  - 1.7.0-debian13
+  - 1.7.0-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  BCFIPS_VERSION: 2.1.2
+  BCPKIXFIPS_VERSION: 2.1.11
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.23
+  BCUTILFIPS_VERSION: 2.1.6
+  COMMIT_SHA: 7f81ccbfe27b9acc947f5f600fcf9ddb72138a80
+  GRADLE_VERSION: 8.14.5-1
+  JAVA_VERSION: 21.0.12.8-0
+  JDK_MAJOR_VERSION: "21"
+  JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
+  JMX_PROMETHEUS_VERSION: 0.20.0
+  OTEL_JAVAAGENT_SHA256: 130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500
+  OTEL_JAVAAGENT_VERSION: 2.28.0
+  PACKAGE_HOME: /usr/share/datahub-mce-consumer
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.7"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.7.0
+  VERSION: 1.7.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: datahub-mce-consumer
+      work-dir: ${source.dir}/datahub
+      environment:
+        PACKAGE_FIPS: "0"
+      caches:
+        - path: /root/.gradle
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - gradle-8=8.14.5-1
+        files:
+          - url: git+https://github.com/datahub-project/datahub.git#v1.7.0
+            checksum: 7f81ccbfe27b9acc947f5f600fcf9ddb72138a80
+            path: ${source.dir}/datahub
+            spdx:
+              name: datahub
+              version: 1.7.0
+              packages:
+                - name: datahub
+                  purl: pkg:dhi/datahub-mce-consumer@1.7.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar
+            checksum: sha256:b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+            path: ${source.dir}/patch/deps/jackson-core-2.21.5.jar
+            spdx:
+              name: jackson-core
+              version: 2.21.5
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar
+            checksum: sha256:507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+            path: ${source.dir}/patch/deps/jackson-databind-2.21.5.jar
+            spdx:
+              name: jackson-databind
+              version: 2.21.5
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/tools/jackson/core/jackson-core/3.1.4/jackson-core-3.1.4.jar
+            checksum: sha256:3bda1cd6eff0a8d47bdfcaeae7c2bd5311d6c8ed494ef5f3e51029bb44aa9bdf
+            path: ${source.dir}/patch/deps/tools-jackson-core-3.1.4.jar
+            spdx:
+              name: jackson-core
+              version: 3.1.4
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/tools.jackson.core/jackson-core@3.1.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/tools/jackson/core/jackson-databind/3.1.5/jackson-databind-3.1.5.jar
+            checksum: sha256:3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a
+            path: ${source.dir}/patch/deps/tools-jackson-databind-3.1.5.jar
+            spdx:
+              name: jackson-databind
+              version: 3.1.5
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/tools.jackson.core/jackson-databind@3.1.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install gradle init scripts
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 \
+              ${source.dir}/patch/force-cve-deps.gradle \
+              /root/.gradle/init.d/force-cve-deps.gradle
+        - name: patch maven central for build cloud rate limits
+          runs: |
+            set -eux -o pipefail
+
+            MIRROR='maven { url "https://maven-central.storage-download.googleapis.com/maven2/" }'
+            PORTAL=$'maven {\\n    url "https://plugins.gradle.org/m2/"\\n    metadataSources { mavenPom(); artifact(); ignoreGradleMetadataRedirection() }\\n}'
+            find . \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 \
+              | xargs -0 sed -i \
+                -e "s|mavenCentral()|${MIRROR}|g" \
+                -e "s|gradlePluginPortal()|${PORTAL}|g"
+        - name: rewrite upstream lz4-java 1.10.1 pins to 1.11.1
+          runs: |
+            set -eux -o pipefail
+
+            find . \( -name '*.gradle' -o -name '*.gradle.kts' -o -name 'gradle.lockfile' \) -print0 \
+              | xargs -0 sed -i \
+                -e 's|at\.yawk\.lz4:lz4-java:1\.10\.1|at.yawk.lz4:lz4-java:1.11.1|g'
+        - name: bump vulnerable dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            cat >> build.gradle << 'GRADLE'
+
+            allprojects {
+                configurations.configureEach {
+                    resolutionStrategy {
+                        setForcedModules(forcedModules.findAll {
+                            !(it.group == 'at.yawk.lz4' && it.name == 'lz4-java')
+                        })
+                        force 'at.yawk.lz4:lz4-java:1.11.1'
+                        eachDependency { details ->
+                        def req = details.requested
+                        if (req.group == 'io.netty'
+                                && req.name.startsWith('netty-')
+                                && !req.name.startsWith('netty-tcnative')) {
+                            details.useVersion '4.2.17.Final'
+                            details.because 'DHI CVE remediation: CVE-2026-59902, CVE-2026-59903, CVE-2026-44249, CVE-2026-44250, CVE-2026-44890, CVE-2026-44891, CVE-2026-44892, CVE-2026-44893, CVE-2026-44894, CVE-2026-45416, CVE-2026-45674, CVE-2026-46340, CVE-2026-47691, CVE-2026-45536, CVE-2026-45673, CVE-2026-47244'
+                        }
+                        if (req.group == 'org.springframework.kafka'
+                                && req.name.startsWith('spring-kafka')) {
+                            details.useVersion '4.0.6'
+                            details.because 'DHI CVE remediation: CVE-2026-41726, CVE-2026-41731'
+                        }
+                        if (req.group != null && req.group.startsWith('com.fasterxml.jackson')
+                                && req.name != 'jackson-annotations') {
+                            details.useVersion '2.21.5'
+                            details.because 'DHI CVE remediation: GHSA-72hv-8253-57qq, GHSA-r7wm-3cxj-wff9, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59889, GHSA-mhm7-754m-9p8w, CVE-2026-54515'
+                        }
+                        if (req.group == 'org.postgresql'
+                                && req.name == 'postgresql') {
+                            details.useVersion '42.7.12'
+                            details.because 'DHI CVE remediation: CVE-2026-54291'
+                        }
+                        if (req.group == 'org.eclipse.jetty'
+                                && req.name.startsWith('jetty-')) {
+                            details.useVersion '12.1.10'
+                            details.because 'DHI CVE remediation: CVE-2026-10050, CVE-2026-10051, CVE-2026-6790, CVE-2026-8384'
+                        }
+                        if (req.group == 'ch.qos.logback'
+                                && req.name.startsWith('logback-')) {
+                            details.useVersion '1.5.35'
+                            details.because 'DHI CVE remediation: CVE-2026-9828, CVE-2026-10532'
+                        }
+                        if (req.group == 'org.springframework'
+                                && req.name == 'spring-webmvc') {
+                            details.useVersion '7.0.8'
+                            details.because 'DHI CVE remediation: CVE-2026-41841, CVE-2026-41842, CVE-2026-41843, CVE-2026-41844, CVE-2026-41845, CVE-2026-41846, CVE-2026-41853'
+                        }
+                        if ((req.group == 'org.lz4' || req.group == 'at.yawk.lz4')
+                                && req.name == 'lz4-java') {
+                            details.useTarget 'at.yawk.lz4:lz4-java:1.11.1'
+                            details.because 'DHI CVE remediation: CVE-2026-59949'
+                        }
+                        if (req.group == 'io.micrometer'
+                                && (req.name == 'micrometer-core'
+                                    || req.name.startsWith('micrometer-registry-'))) {
+                            details.useVersion '1.16.6'
+                            details.because 'DHI CVE remediation: CVE-2026-40983, CVE-2026-40984'
+                        }
+                        if (req.group == 'org.apache.httpcomponents.core5'
+                                && req.name.startsWith('httpcore5')) {
+                            details.useVersion '5.4.3'
+                            details.because 'DHI CVE remediation: CVE-2026-54399, CVE-2026-54428'
+                        }
+                        if (req.group == 'org.apache.httpcomponents.client5'
+                                && req.name == 'httpclient5') {
+                            details.useVersion '5.6.3'
+                            details.because 'DHI CVE remediation: CVE-2026-64607'
+                        }
+                        if (req.group == 'org.apache.logging.log4j'
+                                && req.name.startsWith('log4j-')) {
+                            details.useVersion '2.25.5'
+                            details.because 'DHI CVE remediation: CVE-2026-49844'
+                        }
+                        if (req.group == 'com.squareup.wire'
+                                && req.name == 'wire-runtime-jvm') {
+                            details.useVersion '6.3.0'
+                            details.because 'DHI CVE remediation: CVE-2026-45799'
+                        }
+                        if (req.group == 'com.hazelcast'
+                                && req.name == 'hazelcast') {
+                            details.useVersion '5.7.0'
+                            details.because 'DHI CVE remediation: shaded jackson-core in hazelcast 5.6.0 (GHSA-r7wm-3cxj-wff9, GHSA-72hv-8253-57qq)'
+                        }
+                        }
+                    }
+                }
+            }
+            GRADLE
+        - name: build jar
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GRADLE_HOME="/usr/share/java/gradle"
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
+            export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
+
+            find . -name 'gradle.lockfile' -delete || true
+
+            ./gradlew --init-script ${source.dir}/files/init.gradle \
+              :metadata-jobs:mce-consumer-job:assemble \
+              -x test \
+              --parallel --max-workers=4 \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,org.apache.zookeeper:*,org.eclipse.jetty:*,org.postgresql:*,org.springframework.boot:*,org.springframework:*,org.springframework.kafka:*,io.netty:*,io.airlift:*,org.apache.logging.log4j:*,org.apache.commons:*,org.apache.avro:*,com.sun.mail:*,ch.qos.logback:*,at.yawk.lz4:*,io.micrometer:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:*,com.squareup.wire:*,com.hazelcast:*' \
+              --no-daemon --console=plain
+        - name: stage runtime files
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/datahub-mce-consumer/usr/share/datahub-mce-consumer"
+            mkdir -p "${dest}/bin" "${dest}/scripts" "${dest}/resources" "${dest}/lib"
+
+            cp metadata-jobs/mce-consumer-job/build/libs/mce-consumer-job.jar \
+              "${dest}/bin/mce-consumer-job.jar"
+
+            bash "${source.dir}/patch/patch-hazelcast-jackson.sh" \
+              "${dest}/bin/mce-consumer-job.jar" \
+              "${source.dir}/patch/deps"
+
+            cp metadata-models/src/main/resources/entity-registry.yml \
+              "${dest}/resources/entity-registry.yml"
+            cp docker/monitoring/client-prometheus-config.yaml \
+              "${dest}/scripts/prometheus-config.yaml"
+
+            cp "${source.dir}/files/start.sh" "${dest}/scripts/start.sh"
+            chmod 0755 "${dest}/scripts/start.sh"
+        - name: generate fips properties
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${PACKAGE_FIPS}" != "1" ]; then
+              exit 0
+            fi
+
+            BC_CLASSPATH="/usr/lib/bouncycastle/bc-fips-2.1.2.jar:\
+            /usr/lib/bouncycastle/bctls-fips-2.1.23.jar:\
+            /usr/lib/bouncycastle/bcutil-fips-2.1.6.jar:\
+            /usr/lib/bouncycastle/bc-rng-jent-1.3.6.jar:\
+            /usr/lib/bouncycastle/bcpkix-fips-2.1.11.jar"
+
+            cat > "${target.dir}/datahub-mce-consumer/usr/share/datahub-mce-consumer/scripts/datahub-fips.properties" << EOF
+            -Xbootclasspath/a:${BC_CLASSPATH}
+            --add-exports=java.base/sun.security.internal.spec=ALL-UNNAMED
+            --add-exports=java.base/sun.security.provider=ALL-UNNAMED
+            -Dorg.bouncycastle.fips.approved_only=true
+            -Djavax.net.ssl.trustStore=/usr/lib/bouncycastle/cacerts.bcfks
+            -Djavax.net.ssl.trustStoreType=BCFKS
+            -Djavax.net.ssl.trustStorePassword=changeit
+            EOF
+        - name: fetch otel javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/opentelemetry-javaagent.jar \
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.28.0/opentelemetry-javaagent.jar"
+            echo "130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
+            mv /tmp/opentelemetry-javaagent.jar \
+              "${target.dir}/datahub-mce-consumer/usr/share/datahub-mce-consumer/lib/opentelemetry-javaagent.jar"
+        - name: fetch jmx prometheus javaagent
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            curl -fsSL -o /tmp/jmx_prometheus_javaagent.jar \
+              "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
+            echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
+            mv /tmp/jmx_prometheus_javaagent.jar \
+              "${target.dir}/datahub-mce-consumer/usr/share/datahub-mce-consumer/lib/jmx_prometheus_javaagent.jar"
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: datahub-mce-consumer
+            source: ${target.dir}/datahub-mce-consumer/usr/share/datahub-mce-consumer
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - dockerize
+            description: DataHub Metadata Change Event (MCE) Consumer
+            files:
+              - usr/share/datahub-mce-consumer
+            formats:
+              - deb
+            license: Apache-2.0
+            name: datahub-mce-consumer
+            rel: 1
+            root: ${target.dir}/datahub-mce-consumer
+            url: https://datahubproject.io/
+            version: 1.7.0
+      paths:
+        - type: file
+          path: ${source.dir}/files/start.sh
+          uid: 0
+          gid: 0
+          source: package/main/datahub-mce-consumer/files/start.sh
+        - type: file
+          path: ${source.dir}/files/init.gradle
+          uid: 0
+          gid: 0
+          source: package/main/datahub-mce-consumer/files/init.gradle
+        - type: file
+          path: ${source.dir}/patch/patch-hazelcast-jackson.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/datahub-mce-consumer/patch/patch-hazelcast-jackson.sh
+        - type: file
+          path: ${source.dir}/patch/force-cve-deps.gradle
+          uid: 0
+          gid: 0
+          source: package/main/datahub-mce-consumer/patch/force-cve-deps.gradle
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
