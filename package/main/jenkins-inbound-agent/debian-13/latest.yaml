@@ -1,0 +1,190 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-jenkins-inbound-agent
+variant: runtime
+tags:
+  - 3383.vc8881d4b_0e76
+  - 3383.vc8881d4b_0e76-r0
+  - 3383.vc8881d4b_0e76-debian13
+  - 3383.vc8881d4b_0e76-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: c8881d4b0e7634b01d6851ccdfdfad8d9272ad3a
+  DOCKER_AGENT_COMMIT_SHA: 76681d1855814bd830ebfee0a0fe985dec075c32
+  DOCKER_AGENT_VERSION: 3383.vc8881d4b_0e76-2
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  MAVEN_VERSION: 3.9.16
+  PACKAGE_NAME: jenkins-inbound-agent
+  PACKAGE_VERSION: 3383.vc8881d4b~0e76
+  REL: "0"
+  VERSION: 3383.vc8881d4b_0e76
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: jenkins-inbound-agent
+      work-dir: ${source.dir}/remoting
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+        files:
+          - url: git+https://github.com/jenkinsci/remoting.git#3383.vc8881d4b_0e76
+            checksum: c8881d4b0e7634b01d6851ccdfdfad8d9272ad3a
+            path: ${source.dir}/remoting
+            spdx:
+              name: jenkins-remoting
+              version: 3383.vc8881d4b_0e76
+              packages:
+                - name: jenkins-remoting
+                  purl: pkg:dhi/jenkins-remoting@3383.vc8881d4b_0e76
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jenkinsci/docker-agent.git#3383.vc8881d4b_0e76-2
+            checksum: 76681d1855814bd830ebfee0a0fe985dec075c32
+            path: ${source.dir}/docker-agent-76681d1855814bd830ebfee0a0fe985dec075c32
+            spdx:
+              name: jenkins-docker-agent
+              version: 3383.vc8881d4b_0e76
+              packages:
+                - name: jenkins-docker-agent
+                  purl: pkg:github/jenkinsci/docker-agent@76681d1855814bd830ebfee0a0fe985dec075c32
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            spdx:
+              name: maven
+              version: 3.9.16
+              packages:
+                - name: maven
+                  purl: pkg:generic/apache-maven@3.9.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install maven
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/java
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+
+            mkdir -p /usr/local/bin
+            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+              filename=$(basename "$file")
+              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+            done
+        - uses: mvn/mirror@v1
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: build remoting
+          work-dir: ${source.dir}/remoting
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s|<changelist>.*</changelist>|<changelist>3383.vc8881d4b_0e76</changelist>|" pom.xml
+
+            mvn clean install -DskipTests -Dmaven.test.skip=true -Dspotless.check.skip=true
+
+            jar_file="target/remoting-3383.vc8881d4b_0e76.jar"
+            if [ ! -f "$jar_file" ]; then
+              echo "ERROR: JAR file not found: $jar_file" >&2
+              exit 1
+            fi
+            jar xf "$jar_file" META-INF/MANIFEST.MF 2> /dev/null || {
+              echo "ERROR: Could not extract manifest from JAR: $jar_file" >&2
+              exit 1
+            }
+            if ! grep -q "Main-Class:" META-INF/MANIFEST.MF; then
+              echo "ERROR: JAR file missing Main-Class in manifest: $jar_file" >&2
+              cat META-INF/MANIFEST.MF
+              rm -rf META-INF
+              exit 1
+            fi
+            rm -rf META-INF
+        - name: stage agent payload
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/jenkins"
+            install -D -m 0644 "${source.dir}/remoting/target/remoting-3383.vc8881d4b_0e76.jar" \
+              "${target.dir}/usr/share/jenkins/agent.jar"
+            ln -sf agent.jar "${target.dir}/usr/share/jenkins/slave.jar"
+        - name: install entrypoint script
+          work-dir: ${source.dir}/docker-agent-76681d1855814bd830ebfee0a0fe985dec075c32
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            install -m 0755 jenkins-agent "${target.dir}/usr/bin/jenkins-agent"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+              - git
+              - openssh-client
+              - eclipse-temurin-21-jre
+              - eclipse-temurin-21-jre-oci-config
+            description: Jenkins inbound agent for Kubernetes and containerized environments
+            files:
+              - usr
+            formats:
+              - deb
+            license: MIT
+            name: jenkins-inbound-agent
+            rel: 0
+            url: https://www.jenkins.io/doc/book/using/using-agents/
+            version: 3383.vc8881d4b~0e76
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
