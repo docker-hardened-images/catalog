@@ -19,12 +19,17 @@ platforms:
 dates:
   release: "2020-03-08"
 vars:
-  CHECKSUM: 45038980ea7045a548b9b5b5125ef7116312a768
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "1.6"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.6.45
-  VERSION: 1.6.45
+  SUFFIX: -dev
+  VERSION: 1.6.45-0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!dpkg'
     - '!gawk'
@@ -44,6 +49,7 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - diffutils
     - dpkg
@@ -53,84 +59,14 @@ contents:
     - libevent-2.1-7t64
     - libsasl2-2
     - libsasl2-modules
+    - libssl3t64
     - mawk
+    - memcached=1.6.45-0
     - perl-base
     - sed
     - tar
+    - tzdata
     - util-linux
-  builds:
-    - name: memcached
-      contents:
-        packages:
-          - bash
-          - ca-certificates
-          - coreutils
-          - dpkg-dev
-          - findutils
-          - gawk
-          - gcc
-          - grep
-          - gzip
-          - libc-bin
-          - libc6-dev
-          - libevent-dev
-          - libio-socket-ssl-perl
-          - libsasl2-dev
-          - libsasl2-modules
-          - libssl-dev
-          - perl
-          - pkg-config
-          - sed
-        files:
-          - url: https://memcached.org/files/memcached-1.6.45.tar.gz
-            path: ${source.dir}/memcached.tar.gz
-            spdx:
-              name: memcached
-              version: 1.6.45
-              packages:
-                - name: memcached
-                  purl: pkg:dhi/memcached@1.6.45
-                  license: BSD-3-Clause
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: install
-          runs: |
-            set -eux -o pipefail
-
-            echo "45038980ea7045a548b9b5b5125ef7116312a768  memcached.tar.gz" | sha1sum -c -
-            mkdir -p memcached
-            tar -xzvf memcached.tar.gz -C memcached --strip-components=1
-            cd memcached
-
-            mkdir -p "${target.dir}/opt/memcached"
-            gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
-            ./configure \
-              --build="$gnuArch" \
-              --target="$gnuArch" \
-              --host="$gnuArch" \
-              --enable-extstore \
-              --enable-sasl \
-              --enable-sasl-pwdb \
-              --enable-tls \
-              --disable-dependency-tracking \
-              --prefix="${target.dir}/opt/memcached"
-
-            ncpus=$(getconf _NPROCESSORS_ONLN)
-            ncpus=$((ncpus > 6 ? 6 : ncpus))
-
-            make -j"$ncpus"
-            # make test PARALLEL="$ncpus"
-            make install
-      outputs:
-        - source: ${target.dir}/opt/memcached
-          target: /opt/memcached
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -138,10 +74,17 @@ accounts:
     - name: memcached
       uid: 11211
       gid: 11211
+    - name: memcached
+      uid: 11211
+      gid: 11211
     - name: _apt
       uid: 42
       gid: 65532
   groups:
+    - name: memcached
+      gid: 11211
+      members:
+        - memcached
     - name: memcached
       gid: 11211
       members:
@@ -158,10 +101,24 @@ environment:
   DEBIAN_FRONTEND: noninteractive
   MEMCACHED_VERSION: 1.6.45
   PATH: /opt/memcached/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /opt/memcached/bin
+    uid: 11211
+    gid: 11211
+    mode: "0755"
+  - type: symlink
+    path: /opt/memcached/bin/memcached
+    uid: 0
+    gid: 0
+    source: /usr/bin/memcached
 annotations:
   org.opencontainers.image.description: A minimal Memcached image
   org.opencontainers.image.licenses: BSD-3-Clause
 entrypoint:
   - memcached
+cmd:
+  - -u
+  - root
 ports:
   - 11211/tcp
