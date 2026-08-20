@@ -41,15 +41,14 @@ instructions below to create and test a basic functions app without using the CL
 
 ### Create and test a minimal Azure Function
 
-Create a minimal HTTP-triggered function to confirm the Azure Functions Python runtime is operational. First create and
-enter a new directory:
+This example uses Azure Functions host 4 and the Python programming model v2. First create and enter a new directory:
 
 ```
 mkdir my-python-function-app
 cd my-python-function-app
 ```
 
-Next, manually create the following files in the new directory:
+Create the following files:
 
 `host.json`
 
@@ -59,74 +58,44 @@ Next, manually create the following files in the new directory:
 }
 ```
 
-`HttpExample/function.json`
-
-```json
-{
-  "scriptFile": "__init__.py",
-  "bindings": [
-    {
-      "authLevel": "anonymous",
-      "type": "httpTrigger",
-      "direction": "in",
-      "name": "req",
-      "methods": [ "get", "post" ]
-    },
-    {
-      "type": "http",
-      "direction": "out",
-      "name": "$return"
-    }
-  ]
-}
-```
-
-`HttpExample/__init__.py`
+`function_app.py`
 
 ```python
 import logging
 import azure.functions as func
 
-def main(req: func.HttpRequest) -> func.HttpResponse:
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+@app.route(route="hello-world")
+def hello_world(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
     name = req.params.get('name')
-    if not name:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            req_body = {}
-        name = req_body.get('name')
-
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    else:
-        return func.HttpResponse(
-            "This HTTP triggered function executed successfully. "
-            "Pass a name in the query string or in the request body for a personalized response.",
-            status_code=200
-        )
+    return func.HttpResponse(f"Hello, {name or 'Azure'}!")
 ```
 
-Also create the following `Dockerfile` in the same directory. This extends the hardened image, copies in your function
-files, and starts the function host manually without dependending on the Azure Functions CLI. Replace `<tag>` with the
-image variant you want to run.
+`requirements.txt`
+
+```text
+azure-functions
+```
+
+Create the following `Dockerfile`. Keep `/home/site/wwwroot` as `AzureWebJobsScriptRoot`; the image provides the
+corresponding nonroot compatibility path used by Azure-hosted containers. The base image entrypoint starts the Functions
+host, so don't replace it with `python -m azure_functions_worker`.
 
 ```dockerfile
-# Use your hardened Azure Functions Python image
 FROM dhi.io/azure-functions-python:<tag>
 
-# Set the working directory used by Azure Functions
+ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
+    AzureFunctionsJobHost__Logging__Console__IsEnabled=true
+
+COPY requirements.txt /
+RUN pip install --no-cache-dir \
+    --target=/home/site/wwwroot/.python_packages/lib/site-packages \
+    -r /requirements.txt
+
 WORKDIR /home/site/wwwroot
-
-# Copy your function files into the container
-COPY host.json .
-COPY HttpExample ./HttpExample
-
-# Expose the Azure Functions default port
-EXPOSE 80
-
-# Start the function host manually
-CMD ["python", "-m", "azure_functions_worker"]
+COPY host.json function_app.py ./
 ```
 
 #### Build and run the image (with amd64 emulation)
@@ -143,15 +112,11 @@ Then run the container, mapping the port to your local system:
 docker run --platform linux/amd64 -p 8080:80 my-azure-python-func
 ```
 
-You should see logs similar to the following, indicating the Function Host started and the function loaded.
+You should see logs indicating that the Functions host started and loaded one function.
 
 ```
-Hosting environment: Production
-Content root path: /azure-functions-host
-Now listening on: http://[::]:80
-Application started. Press Ctrl+C to shut down.
-info: Host.General[337]
-      Host lock lease acquired by instance ID '0000000000000000000000004FCCEDD2'.
+1 functions loaded
+Job host started
 ```
 
 #### Test the function
@@ -159,13 +124,13 @@ info: Host.General[337]
 Now that the function is running, call the function endpoint to test it.
 
 ```bash
-curl "http://localhost:8080/api/HttpExample?name=Azure"
+curl "http://localhost:8080/api/hello-world?name=Azure"
 ```
 
 You should see the following output if everything is working correctly.
 
 ```
-Hello, Azure. This HTTP triggered function executed successfully.
+Hello, Azure!
 ```
 
 ## Image variants
