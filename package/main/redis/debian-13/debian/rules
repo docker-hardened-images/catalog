@@ -1,0 +1,36 @@
+#!/usr/bin/make -f
+
+-include debian/build-env.mk
+HAS_MODULES ?= false
+LLVM_VERSION ?= 19
+
+ifeq ($(HAS_MODULES),true)
+export PATH := /usr/lib/llvm-$(LLVM_VERSION)/bin:$(PATH)
+BUILD_FLAGS := BUILD_TLS=yes BUILD_WITH_MODULES=yes INSTALL_RUST_TOOLCHAIN=yes DISABLE_WERRORS=yes
+else
+BUILD_FLAGS := BUILD_TLS=yes DISABLE_WERRORS=yes
+endif
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) all $(BUILD_FLAGS) -j$$(nproc)
+
+override_dh_auto_install:
+	$(MAKE) install $(BUILD_FLAGS) PREFIX=$(CURDIR)/debian/tmp/usr
+	install -d $(CURDIR)/debian/tmp/etc/redis
+	cp redis.conf $(CURDIR)/debian/tmp/etc/redis/
+	if [ "$(HAS_MODULES)" = "true" ] && [ -f redis-full.conf ]; then \
+		cp redis-full.conf $(CURDIR)/debian/tmp/etc/redis/; \
+	fi
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_dwz:
+
+override_dh_auto_test:
+	if grep -q '^test-unit:' src/Makefile; then $(MAKE) test-unit $(BUILD_FLAGS); fi
+
+override_dh_auto_clean:
