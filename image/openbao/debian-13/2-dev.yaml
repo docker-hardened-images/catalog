@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2026-02-05"
 vars:
-  COMMIT_SHA: dd9c19c37a878cf4a81b18efb8d6f0599c7da923
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "2.6"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.6.2
-  VERSION: 2.6.2
+  SUFFIX: -dev
+  VERSION: 2.6.2-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -34,6 +35,7 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - bao-dev=2.6.2-1
     - base-files
     - bash
     - ca-certificates
@@ -49,100 +51,6 @@ contents:
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: openbao-go
-      work-dir: /go/src/github.com/openbao/openbao
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - binutils
-          - binutils-gold
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - make
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/openbao/openbao.git#v2.6.2
-            checksum: dd9c19c37a878cf4a81b18efb8d6f0599c7da923
-            path: /go/src/github.com/openbao/openbao
-            spdx:
-              name: openbao
-              version: 2.6.2
-              packages:
-                - name: openbao
-                  purl: pkg:dhi/openbao@2.6.2
-                  license: MPL-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - github.com/Azure/go-ntlmssp@v0.1.1
-              - github.com/cloudflare/circl@v1.6.3
-              - github.com/go-jose/go-jose/v3@v3.0.5
-              - github.com/go-jose/go-jose/v4@v4.1.4
-              - github.com/google/cel-go@v0.29.0
-              - google.golang.org/grpc@v1.82.1
-            download: true
-        - uses: go/hermetic@v1
-        - name: grab static files
-          runs: |
-            set -eux -o pipefail
-
-            cp /go/src/github.com/openbao/openbao/LICENSE "${target.dir}/LICENSE"
-        - name: generate
-          runs: |
-            set -eux -o pipefail
-
-            go generate ./...
-        - name: bootstrap
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Retry bootstrap to handle transient network errors from proxy.golang.org
-            for attempt in 1 2 3; do
-              if make bootstrap; then
-                break
-              elif [ "$attempt" -eq 3 ]; then
-                echo "Bootstrap failed after 3 attempts" >&2
-                exit 1
-              else
-                echo "Bootstrap attempt $attempt failed, retrying..." >&2
-                sleep 5
-              fi
-            done
-        - name: build
-          uses: go/build@v1
-          environment:
-            GOFLAGS: -buildvcs=false
-          with:
-            ldflags:
-              - -X github.com/openbao/openbao/version.fullVersion=2.6.2
-              - -X github.com/openbao/openbao/version.GitCommit=dd9c19c37a878cf4a81b18efb8d6f0599c7da923
-              - -X github.com/openbao/openbao/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
-            output: ${target.dir}/usr/local/bin/bao
-      outputs:
-        - source: ${target.dir}/LICENSE
-          target: /licenses/mozilla.txt
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/bin/bao
-          target: /usr/local/bin/bao
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/openbao
-          target: /opt/docker/sbom/openbao
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -189,6 +97,15 @@ paths:
     uid: 1000
     gid: 1000
     mode: "0755"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/bao
+    uid: 0
+    gid: 0
+    source: /usr/bin/bao
 annotations:
   org.opencontainers.image.description: A minimal OpenBao image
   org.opencontainers.image.licenses: MPL-2.0
