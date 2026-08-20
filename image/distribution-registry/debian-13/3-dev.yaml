@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2025-04-03"
 vars:
-  COMMIT_SHA: 9a8d98b679740cd514aa7e7d84d23d442a5ef54c
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "3.1"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.1.1
-  VERSION: 3.1.1
+  SUFFIX: -dev
+  VERSION: 3.1.1-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,6 +41,7 @@ contents:
     - ca-certificates-bundle
     - coreutils
     - diffutils
+    - distribution-registry-dev=3.1.1-0
     - dpkg
     - findutils
     - grep
@@ -49,107 +51,12 @@ contents:
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: distribution-registry
-      work-dir: /go/src/github.com/distribution/distribution/v3
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/distribution/distribution.git#v3.1.1
-            checksum: 9a8d98b679740cd514aa7e7d84d23d442a5ef54c
-            path: /go/src/github.com/distribution/distribution/v3
-            spdx:
-              name: distribution
-              version: 3.1.1
-              packages:
-                - name: distribution-registry
-                  purl: pkg:golang/github.com/distribution/distribution/v3@3.1.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - golang.org/x/crypto@v0.52.0
-              - golang.org/x/net@v0.56.0
-              - golang.org/x/text@v0.39.0
-              - github.com/klauspost/compress@v1.18.7
-              - go.opentelemetry.io/otel@v1.44.0
-              - google.golang.org/grpc@v1.82.1
-            download: true
-        - name: patch vendored dependencies
-          privileged: true
-          environment:
-            GODEBUG: ""
-            GOFIPS140: ""
-          runs: |
-            set -eux -o pipefail
-
-            # CVE-2026-33186, GHSA-HRXH-6V49-42GF: grpc >=1.82.1
-            # Drop retired grpc/stats/opentelemetry sub-module (folded into grpc >=1.69)
-            # then bump storage to v1.52.0 which is compatible with grpc@v1.82.1
-            go mod edit -droprequire google.golang.org/grpc/stats/opentelemetry
-            go get google.golang.org/grpc@v1.82.1
-            go get cloud.google.com/go/storage@v1.52.0
-            go get google.golang.org/api@v0.214.0
-
-            # CVE-2026-24051: otel/sdk >=1.40.0
-            # CVE-2026-39882, CVE-2026-39883: otel/sdk >=1.43.0
-            # CVE-2026-41178: otel >=1.44.0
-            # Match distribution main branch versions for ecosystem compatibility
-            go get go.opentelemetry.io/otel@v1.44.0
-            go get go.opentelemetry.io/otel/sdk@v1.44.0
-            go get go.opentelemetry.io/otel/trace@v1.44.0
-            go get go.opentelemetry.io/otel/metric@v1.44.0
-            go get go.opentelemetry.io/otel/sdk/metric@v1.44.0
-            go get go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.44.0
-            go get go.opentelemetry.io/contrib/exporters/autoexport@v0.67.0
-            go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.67.0
-            go get go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
-            go get go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.44.0
-            go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
-
-            go mod tidy
-            go mod vendor
-        - name: test
-          runs: |
-            set -eux -o pipefail
-
-            CGO_ENABLED=0 go test -short ./cmd/registry/... -count=1 -v
-        - name: build
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X github.com/distribution/distribution/v3/version.version=v3.1.1
-              - -X github.com/distribution/distribution/v3/version.revision=9a8d98b679740cd514aa7e7d84d23d442a5ef54c
-              - -X github.com/distribution/distribution/v3/version.mainpkg=github.com/distribution/distribution/v3
-            output: ${target.dir}/usr/local/bin/registry
-            packages: ./cmd/registry
-            strip: true
-      outputs:
-        - source: ${target.dir}/usr/local/bin/registry
-          target: /usr/local/bin/registry
-          uid: 0
-          gid: 0
-        - source: /go/src/github.com/distribution/distribution/v3/cmd/registry/config-dev.yml
-          target: /etc/distribution/config.yml
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/distribution
-          target: /opt/docker/sbom/distribution
-          uid: 0
-          gid: 0
+  files:
+    - url: https://raw.githubusercontent.com/distribution/distribution/v3.1.1/cmd/registry/config-dev.yml
+      checksum: sha256:21f5a34a6652d0ddac0977901d318b44164966af98ea83c76b9269057fc26189
+      path: /etc/distribution/config.yml
+      uid: 0
+      gid: 0
 accounts:
   root: true
   run-as: root
@@ -182,11 +89,15 @@ paths:
     uid: 65532
     gid: 65532
     mode: "0770"
-  - type: symlink
-    path: /bin/registry
+  - type: directory
+    path: /usr/local/bin
     uid: 0
     gid: 0
-    source: /usr/local/bin/registry
+  - type: symlink
+    path: /usr/local/bin/registry
+    uid: 0
+    gid: 0
+    source: /usr/bin/registry
 annotations:
   org.opencontainers.image.description: A minimal Distribution Registry image
   org.opencontainers.image.licenses: Apache-2.0
