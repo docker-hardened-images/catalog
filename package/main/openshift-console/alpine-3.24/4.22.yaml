@@ -1,0 +1,440 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-openshift-console
+variant: runtime
+tags:
+  - 4.22.10-alpine3.24
+  - 4.22.10-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-09"
+vars:
+  COMMIT_SHA: c62b7cd934ccfdc9171a874b3bf15d9683f1cb24
+  CONSOLE_IMAGE_DIGEST: sha256:abf6a369ce2fb8b0e1bfe5690ba582ad4b7af34edc71b1bb034ed37ffe40308c
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: openshift-console
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "4.22"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.22.10
+  VERSION: 4.22.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: openshift-console
+      work-dir: /go/src/github.com/openshift/console
+      caches:
+        - path: /go/src/github.com/openshift/console/frontend/.yarn/cache
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - nodejs-22
+        files:
+          - url: git+https://github.com/openshift/console.git#c62b7cd934ccfdc9171a874b3bf15d9683f1cb24
+            checksum: c62b7cd934ccfdc9171a874b3bf15d9683f1cb24
+            path: /go/src/github.com/openshift/console
+            spdx:
+              name: openshift-console
+              version: 4.22.10
+              packages:
+                - name: openshift-console
+                  purl: pkg:golang/github.com/openshift/console@4.22.10
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.53.0
+              - golang.org/x/net@v0.56.0
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/mod@v0.40.0
+              - google.golang.org/grpc@v1.82.1
+              - github.com/klauspost/compress@v1.18.7
+              - github.com/containerd/containerd@v1.7.33
+              - github.com/go-git/go-billy/v5@v5.9.0
+              - github.com/go-git/go-git/v5@v5.19.2
+              - oras.land/oras-go/v2@v2.6.2
+              - github.com/go-viper/mapstructure/v2@v2.4.0
+              - helm.sh/helm/v3@v3.20.2
+              - github.com/google/cel-go@v0.30.0
+            download: true
+            tidy: true
+        - name: apply source patches
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patches/i18n-locales-path-traversal-4.22.patch
+              - ${source.dir}/patches/remove-unstable-mask-4.22.patch
+        - name: re-vendor and verify
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+            CGO_ENABLED=0 go build -mod=vendor -o /dev/null ./cmd/bridge
+        - name: build bridge
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            extra-args: -mod=vendor
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/openshift/console/pkg/version.Version=4.22.10
+            output: ${target.dir}/usr/lib/openshift-console/bin/bridge
+            packages: ./cmd/bridge
+        - name: build bridge dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            extra-args: -mod=vendor
+            fips: false
+            ldflags:
+              - -X github.com/openshift/console/pkg/version.Version=4.22.10
+            output: ${target.dir}/usr/lib/openshift-console/bin/bridge-dev
+            packages: ./cmd/bridge
+            strip: false
+        - name: bump frontend deps
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd frontend
+            YARN="node $(awk '/yarnPath:/{print $2}' .yarnrc.yml)"
+
+            cat > /tmp/bump-tool.js << 'BUMPS'
+            const fs = require('fs');
+            const [bumpsFile, mode] = process.argv.slice(2);
+            const bumps = JSON.parse(fs.readFileSync(bumpsFile));
+            const lockVersions = () => {
+              const map = {};
+              for (const block of fs.readFileSync('yarn.lock', 'utf8').split(/\n\n+/)) {
+                const lines = block.split('\n');
+                const key = lines[0] || '';
+                if (!key.endsWith(':')) continue;
+                const ver = (lines.find((l) => l.startsWith('  version: ')) || '').slice(11).trim();
+                if (!ver) continue;
+                for (const d of key.replace(/^"|"?:$/g, '').split(', ')) {
+                  const i = d.lastIndexOf('@');
+                  if (i <= 0) continue;
+                  const name = d.slice(0, i);
+                  (map[name] = map[name] || []).includes(ver) || map[name].push(ver);
+                }
+              }
+              return map;
+            };
+            const lockDescriptors = () => {
+              const set = new Set();
+              for (const block of fs.readFileSync('yarn.lock', 'utf8').split(/\n\n+/)) {
+                const key = (block.split('\n')[0] || '');
+                if (!key.endsWith(':')) continue;
+                for (const d of key.replace(/^"|"?:$/g, '').split(', ')) set.add(d);
+              }
+              return set;
+            };
+            if (mode === 'apply') {
+              const descriptors = lockDescriptors();
+              let badSelector = false;
+              for (const b of bumps) {
+                if (b.allow_downgrade) continue;
+                for (const r of (b.resolutions || [])) {
+                  if (r.indexOf('@', 1) < 0) continue;
+                  if (!descriptors.has(r)) {
+                    console.error('ERROR: resolutions selector ' + r + ' (for ' + b.package + '@' + b.version + ') matches no descriptor in the pristine yarn.lock, so the override would be inert - upstream changed the dependent declared range; update or drop the selector');
+                    badSelector = true;
+                  }
+                }
+              }
+              if (badSelector) process.exit(1);
+              const all = lockVersions();
+              const snap = {};
+              for (const b of bumps) snap[b.package] = all[b.package] || [];
+              fs.writeFileSync('/tmp/bump-before.json', JSON.stringify(snap));
+              const m = JSON.parse(fs.readFileSync('package.json'));
+              m.resolutions = m.resolutions || {};
+              for (const b of bumps)
+                for (const r of (b.resolutions || [b.package])) m.resolutions[r] = b.version;
+              fs.writeFileSync('package.json', JSON.stringify(m, null, 2));
+            } else {
+              const before = JSON.parse(fs.readFileSync('/tmp/bump-before.json'));
+              const after = lockVersions();
+              const cmp = (a, b) => {
+                const pa = a.split(/[.+-]/).map((x) => (/^\d+$/.test(x) ? +x : x));
+                const pb = b.split(/[.+-]/).map((x) => (/^\d+$/.test(x) ? +x : x));
+                for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+                  if ((pa[i] ?? 0) < (pb[i] ?? 0)) return -1;
+                  if ((pa[i] ?? 0) > (pb[i] ?? 0)) return 1;
+                }
+                return 0;
+              };
+              let failed = false;
+              for (const b of bumps) {
+                if (b.allow_downgrade) continue;
+                const was = before[b.package] || [];
+                if (!was.length) {
+                  console.error('ERROR: bump entry ' + b.package + '@' + b.version + ' matches nothing in the tree - update or drop it');
+                  failed = true;
+                  continue;
+                }
+                const now = after[b.package] || [];
+                const major = (v) => String(v).split('.')[0];
+                for (const v of was) {
+                  if (b.resolutions && major(v) !== major(b.version)) continue;
+                  if (!now.includes(v) && cmp(v, b.version) > 0) {
+                    console.error('ERROR: upstream ships ' + b.package + '@' + v + ', newer than the ' + b.version + ' override - raise or drop the bump entry');
+                    failed = true;
+                  }
+                }
+              }
+              process.exit(failed ? 1 : 0);
+            }
+            BUMPS
+
+            node /tmp/bump-tool.js ${source.dir}/patches/yarn-patches-4.22.json apply
+            ${YARN} install --mode=update-lockfile
+            node /tmp/bump-tool.js ${source.dir}/patches/yarn-patches-4.22.json verify
+
+            sed -i 's/ unstable_useTransitions={false}/ useTransitions={false}/' public/components/app.tsx
+            ! grep -E 'unstable_mask|unstable_useTransitions' public/components/app.tsx
+        - name: build and stage frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+              CYPRESS_INSTALL_BINARY=0 \
+              NODE_ENV=production \
+              NODE_OPTIONS=--max-old-space-size=4096
+
+            cd frontend
+            YARN="node $(awk '/yarnPath:/{print $2}' .yarnrc.yml)"
+            ${YARN} install --immutable
+            ${YARN} run build
+            cd ..
+
+            mkdir -p \
+              ${target.dir}/usr/share/openshift-console/static \
+              ${target.dir}/usr/share/openshift-console/static-dev
+            cp -a frontend/public/dist/. ${target.dir}/usr/share/openshift-console/static/
+            cp -a frontend/public/dist/. ${target.dir}/usr/share/openshift-console/static-dev/
+
+            find ${target.dir}/usr/share/openshift-console/static -name '*.map' -delete
+            find ${target.dir}/usr/share/openshift-console/static \( -name '*.js' -o -name '*.css' \) \
+              -exec sed -i -E '/^[[:space:]]*\/[*/][#@][[:space:]]*sourceMappingURL=/d' {} +
+
+            mkdir -p \
+              ${target.dir}/usr/share/openshift-console/graphql \
+              ${target.dir}/usr/share/openshift-console/graphql-dev
+            cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql/schema.graphql
+            cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql-dev/schema.graphql
+        - name: generate frontend sbom
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd frontend
+            YARN="node $(awk '/yarnPath:/{print $2}' .yarnrc.yml)"
+
+            node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("package.json"));delete m.scripts.postinstall;fs.writeFileSync("package.json",JSON.stringify(m,null,2))'
+            WORKSPACES=$(${YARN} workspaces list --json | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -v integration-tests | grep -vx eslint-plugin-console)
+            ${YARN} workspaces focus --production ${WORKSPACES}
+
+            export SBOM_NAME=openshift-console-frontend SBOM_VERSION=4.22.10
+            node - << 'GENSPDX' > /tmp/frontend-sbom.json
+            const fs = require('fs'), path = require('path');
+            const docName = process.env.SBOM_NAME, docVersion = process.env.SBOM_VERSION;
+            const seen = new Map(), work = [];
+            function collect(nm) {
+              let ents;
+              try { ents = fs.readdirSync(nm, { withFileTypes: true }); } catch { return; }
+              for (const e of ents) {
+                if (e.name.startsWith('.')) continue;
+                const dir = path.join(nm, e.name);
+                if (e.name.startsWith('@')) {
+                  let subs;
+                  try { subs = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+                  for (const s of subs) if (!s.name.startsWith('.')) work.push(path.join(dir, s.name));
+                } else {
+                  work.push(dir);
+                }
+              }
+            }
+            collect('node_modules');
+            while (work.length) {
+              const dir = work.pop();
+              let st;
+              try { st = fs.lstatSync(dir); } catch { continue; }
+              if (st.isSymbolicLink() || !st.isDirectory()) continue;
+              let m = null;
+              try { m = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'))); } catch {}
+              if (m && m.name && typeof m.version === 'string') {
+                const purl = 'pkg:npm/' + m.name.replace('@', '%40') + '@' + m.version;
+                const license = (typeof m.license === 'string' && m.license.trim() && /^[A-Za-z0-9 ().+-]+$/.test(m.license))
+                  ? m.license : 'NOASSERTION';
+                if (!seen.has(purl)) seen.set(purl, { name: m.name, version: m.version, purl, license });
+              }
+              const nested = path.join(dir, 'node_modules');
+              if (fs.existsSync(nested)) collect(nested);
+            }
+            const packages = [...seen.values()]
+              .sort((a, b) => a.purl < b.purl ? -1 : 1)
+              .map((p) => ({
+                name: p.name,
+                SPDXID: ('SPDXRef-' + p.name + '-' + p.version).replace(/[^A-Za-z0-9.-]/g, '-'),
+                versionInfo: p.version,
+                downloadLocation: 'NOASSERTION',
+                filesAnalyzed: false,
+                licenseConcluded: p.license,
+                licenseDeclared: p.license,
+                externalRefs: [{
+                  referenceCategory: 'PACKAGE-MANAGER',
+                  referenceType: 'purl',
+                  referenceLocator: p.purl,
+                }],
+              }));
+            if (!packages.length) { console.error('no packages found under node_modules'); process.exit(1); }
+            const doc = {
+              spdxVersion: 'SPDX-2.3',
+              dataLicense: 'CC0-1.0',
+              SPDXID: 'SPDXRef-' + docName,
+              name: 'SPDX document for ' + docName + ' ' + docVersion,
+              documentNamespace: docName + '-' + docVersion,
+              creationInfo: {
+                creators: ['Organization: Docker, Inc.', 'Tool: dhi/build'],
+                created: '1970-01-01T00:00:00Z',
+              },
+              packages,
+            };
+            process.stdout.write(JSON.stringify(doc, null, 1) + '\n');
+            GENSPDX
+            cd ..
+
+            node - /tmp/frontend-sbom.json ${source.dir}/patches/yarn-patches-4.22.json << 'CHECK'
+            const fs = require('fs');
+            const [sbomPath, bumpsPath] = process.argv.slice(2);
+            const sbom = JSON.parse(fs.readFileSync(sbomPath));
+            const bumps = JSON.parse(fs.readFileSync(bumpsPath));
+            const prod = new Map();
+            for (const p of sbom.packages || [])
+              for (const ref of p.externalRefs || []) {
+                const m = /^pkg:npm\/(.+)@([^@]+)$/.exec(ref.referenceLocator || '');
+                if (!m) continue;
+                const name = decodeURIComponent(m[1]);
+                (prod.get(name) || prod.set(name, new Set()).get(name)).add(m[2]);
+              }
+            const cmp = (a, b) => {
+              const pa = a.split(/[.+-]/).map((x) => (/^\d+$/.test(x) ? +x : x));
+              const pb = b.split(/[.+-]/).map((x) => (/^\d+$/.test(x) ? +x : x));
+              for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+                if ((pa[i] ?? 0) < (pb[i] ?? 0)) return -1;
+                if ((pa[i] ?? 0) > (pb[i] ?? 0)) return 1;
+              }
+              return 0;
+            };
+            const major = (v) => String(v).split('.')[0];
+            let failed = false;
+            for (const b of bumps) {
+              if (b.allow_downgrade) continue;
+              const vers = prod.get(b.package);
+              if (!vers || !vers.has(b.version)) {
+                console.error('ERROR: bump ' + b.package + '@' + b.version +
+                  (vers ? ' did not land in the production closure (it ships ' + [...vers].join(', ') + ')'
+                        : ' targets a package absent from the shipped bundle') +
+                  ' - the override only affects dev-only instances; retarget it at the shipped descriptor or drop it');
+                failed = true;
+                continue;
+              }
+              for (const v of vers) {
+                if (v === b.version) continue;
+                if (b.resolutions && major(v) !== major(b.version)) continue;
+                if (cmp(v, b.version) < 0) {
+                  console.error('ERROR: bump ' + b.package + '@' + b.version + ' landed, but ' +
+                    b.package + '@' + v + ' still ships alongside it - a descriptor escaped the ' +
+                    'override, so the vulnerable instance survives; extend the resolutions to ' +
+                    'cover it or add a separate entry for that line');
+                  failed = true;
+                }
+              }
+            }
+            if (failed) process.exit(1);
+            CHECK
+
+            install -D -m 0644 /tmp/frontend-sbom.json \
+              "${target.dir}/opt/docker/sbom/openshift-console-frontend/.spdx.openshift-console-frontend.json"
+            install -D -m 0644 /tmp/frontend-sbom.json \
+              "${target.dir}/opt/docker/sbom-dev/openshift-console-frontend/.spdx.openshift-console-frontend.json"
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenShift Cluster Console UI — bridge server and web assets
+            files:
+              - usr/lib/openshift-console/bin/bridge
+              - usr/share/openshift-console/static
+              - usr/share/openshift-console/graphql/schema.graphql
+              - opt/docker/sbom
+            license: Apache-2.0
+            name: openshift-console
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/lib/openshift-console/bin/bridge
+                    source: usr/lib/openshift-console/bin/bridge-dev
+                  - path: usr/share/openshift-console/static
+                    source: usr/share/openshift-console/static-dev
+                  - path: usr/share/openshift-console/graphql/schema.graphql
+                    source: usr/share/openshift-console/graphql-dev/schema.graphql
+                  - path: opt/docker/sbom
+                    source: opt/docker/sbom-dev
+                name: openshift-console-dev
+            url: https://github.com/openshift/console
+            version: 4.22.10
+      paths:
+        - type: file
+          path: ${source.dir}/patches/yarn-patches-4.22.json
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/openshift-console/patch/yarn-patches-4.22.json
+        - type: file
+          path: ${source.dir}/patches/remove-unstable-mask-4.22.patch
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/openshift-console/patch/remove-unstable-mask-4.22.patch
+        - type: file
+          path: ${source.dir}/patches/i18n-locales-path-traversal-4.22.patch
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/openshift-console/patch/i18n-locales-path-traversal-4.22.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
