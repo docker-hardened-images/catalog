@@ -1,32 +1,40 @@
-// repo1.maven.org 429s Docker Build Cloud egress IPs: mirror Maven Central via Google;
-// plugin portal .module lookups redirect there too, hence pom+artifact metadataSources.
+// gradle/mirror@v1 configures the authenticated Maven Central mirror.
+// Add only the non-Central repositories required by DataHub and retain the
+// restricted Plugin Portal metadata lookup.
 
-def GOOGLE_MAVEN_MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
 def PLUGIN_PORTAL = 'https://plugins.gradle.org/m2/'
+// Pegasus/GMA artifacts (e.g. com.linkedin.pegasus:data) are not on Maven Central.
+def LINKEDIN_OPEN_SOURCE = 'https://linkedin.jfrog.io/artifactory/open-source'
+def CONFLUENT = 'https://packages.confluent.io/maven'
+
+def configureRepos = { container ->
+    container.maven {
+        name 'Confluent'
+        url CONFLUENT
+    }
+    container.maven {
+        name 'LinkedInOpenSource'
+        url LINKEDIN_OPEN_SOURCE
+    }
+    container.maven {
+        name 'GradlePluginPortalNoModule'
+        url PLUGIN_PORTAL
+        metadataSources {
+            mavenPom()
+            artifact()
+            ignoreGradleMetadataRedirection()
+        }
+    }
+}
 
 allprojects {
     buildscript {
         repositories {
-            maven {
-                name 'GoogleMavenCentralMirror'
-                url GOOGLE_MAVEN_MIRROR
-            }
-            maven {
-                name 'GradlePluginPortalNoModule'
-                url PLUGIN_PORTAL
-                metadataSources {
-                    mavenPom()
-                    artifact()
-                    ignoreGradleMetadataRedirection()
-                }
-            }
+            configureRepos delegate
         }
     }
     repositories {
-        maven {
-            name 'GoogleMavenCentralMirror'
-            url GOOGLE_MAVEN_MIRROR
-        }
+        configureRepos delegate
     }
 
     // Set UTF-8 encoding for Java compilation to handle Unicode characters
@@ -41,19 +49,7 @@ allprojects {
 beforeSettings { settings ->
     settings.pluginManagement {
         repositories {
-            maven {
-                name 'GoogleMavenCentralMirror'
-                url GOOGLE_MAVEN_MIRROR
-            }
-            maven {
-                name 'GradlePluginPortalNoModule'
-                url PLUGIN_PORTAL
-                metadataSources {
-                    mavenPom()
-                    artifact()
-                    ignoreGradleMetadataRedirection()
-                }
-            }
+            configureRepos delegate
         }
     }
 }
@@ -62,10 +58,7 @@ settingsEvaluated { settings ->
     try {
         settings.dependencyResolutionManagement {
             repositories {
-                maven {
-                    name 'GoogleMavenCentralMirror'
-                    url GOOGLE_MAVEN_MIRROR
-                }
+                configureRepos delegate
             }
         }
     } catch (Throwable ignored) {
