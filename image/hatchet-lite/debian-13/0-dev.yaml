@@ -19,12 +19,10 @@ platforms:
 dates:
   release: "2025-08-04"
 vars:
-  COMMIT_SHA: 933de4252c80f8ff0e65a9b8a534d73d985acf83
-  PNPM_VERSION: 10.16.1
   SEMVER_MAJOR_MINOR_VERSION: "0.102"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.102.0
-  VERSION: 0.102.0
+  VERSION: 0.102.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,177 +38,18 @@ contents:
     - ca-certificates
     - ca-certificates-bundle
     - coreutils
+    - dash
     - diffutils
     - dpkg
     - findutils
     - grep
+    - hatchet-lite=0.102.0-0
     - libc-bin
     - mawk
     - perl-base
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: hatchet-frontend
-      work-dir: ${source.dir}/hatchet/frontend/app
-      environment:
-        CI: "true"
-        PNPM_HOME: /pnpm
-      caches:
-        - path: /pnpm/store
-      contents:
-        packages:
-          - python3
-          - base-files
-          - bash
-          - ca-certificates
-          - coreutils
-          - findutils
-          - git
-          - libc6
-          - libstdc++6
-          - mawk
-          - nodejs-24
-          - node-corepack
-          - npm
-          - sed
-          - yarn-classic
-        files:
-          - url: git+https://github.com/hatchet-dev/hatchet.git#v0.102.0
-            checksum: 933de4252c80f8ff0e65a9b8a534d73d985acf83
-            path: ${source.dir}/hatchet
-            spdx:
-              name: hatchet-frontend
-              version: 0.102.0
-              packages:
-                - name: hatchet-frontend
-                  purl: pkg:dhi/hatchet-frontend@0.102.0
-                  license: MIT
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: generate docs index
-          work-dir: ${source.dir}/hatchet/frontend/snippets
-          runs: |
-            set -eux -o pipefail
-
-            python3 generate.py
-        - name: install dependencies
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            corepack enable
-            corepack prepare pnpm@10.16.1 --activate
-            pnpm install --frozen-lockfile
-            pnpm store prune
-        - name: build frontend
-          runs: |
-            set -eux -o pipefail
-
-            pnpm run build
-        - name: stage assets
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/static-assets
-            cp -a dist/. ${target.dir}/static-assets/
-      outputs:
-        - source: ${target.dir}/static-assets
-          target: /static-assets
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/hatchet-frontend
-          target: /opt/docker/sbom/hatchet-frontend
-          uid: 0
-          gid: 0
-    - name: hatchet
-      work-dir: /go/src/github.com/hatchet-dev/hatchet
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/hatchet-dev/hatchet.git#v0.102.0
-            checksum: 933de4252c80f8ff0e65a9b8a534d73d985acf83
-            path: /go/src/github.com/hatchet-dev/hatchet
-            spdx:
-              name: hatchet
-              version: 0.102.0
-              packages:
-                - name: hatchet
-                  purl: pkg:golang/github.com/hatchet-dev/hatchet@0.102.0
-                  license: MIT
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - github.com/getkin/kin-openapi@v0.144.0
-              - github.com/google/cel-go@v0.29.0
-              - github.com/klauspost/compress@v1.18.7
-              - github.com/slack-go/slack@v0.23.1
-              - go.opentelemetry.io/otel@v1.44.0
-              - google.golang.org/grpc@v1.82.1
-            download: true
-        - name: test
-          runs: |
-            set -eux -o pipefail
-
-            # Narrow to the three binaries we ship. ./cmd/hatchet-cli includes a flaky
-            # concurrent-file-lock test (TestConcurrentOperationsWithLock) that fails
-            # under xsmall-runner contention; that binary isn't built into this image.
-            CGO_ENABLED=0 go test -short -count=1 -v \
-              ./cmd/hatchet-lite/... \
-              ./cmd/hatchet-admin/... \
-              ./cmd/hatchet-migrate/...
-        - name: build hatchet-lite
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X main.Version=v0.102.0
-            output: ${target.dir}/usr/local/bin/hatchet-lite
-            packages: ./cmd/hatchet-lite
-        - name: build hatchet-admin
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X github.com/hatchet-dev/hatchet/cmd/hatchet-admin/cli.Version=v0.102.0
-            output: ${target.dir}/usr/local/bin/hatchet-admin
-            packages: ./cmd/hatchet-admin
-        - name: build hatchet-migrate
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X main.Version=v0.102.0
-            output: ${target.dir}/usr/local/bin/hatchet-migrate
-            packages: ./cmd/hatchet-migrate
-      outputs:
-        - source: ${target.dir}/usr/local/bin/hatchet-lite
-          target: /usr/local/bin/hatchet-lite
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/bin/hatchet-admin
-          target: /usr/local/bin/hatchet-admin
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/bin/hatchet-migrate
-          target: /usr/local/bin/hatchet-migrate
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/hatchet
-          target: /opt/docker/sbom/hatchet
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -241,12 +80,36 @@ environment:
   LITE_RUNTIME_PORT: "8888"
   LITE_STATIC_ASSET_DIR: /static-assets
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/hatchet-lite
+    uid: 0
+    gid: 0
+    source: /usr/bin/hatchet-lite
+  - type: symlink
+    path: /usr/local/bin/hatchet-admin
+    uid: 0
+    gid: 0
+    source: /usr/bin/hatchet-admin
+  - type: symlink
+    path: /usr/local/bin/hatchet-migrate
+    uid: 0
+    gid: 0
+    source: /usr/bin/hatchet-migrate
   - type: file
     path: /usr/local/bin/docker-entrypoint.sh
     uid: 0
     gid: 0
     mode: "0755"
     source: image/hatchet-lite/bin/docker-entrypoint.sh
+  - type: symlink
+    path: /static-assets
+    uid: 0
+    gid: 0
+    source: /usr/share/hatchet-lite/static-assets
   - type: directory
     path: /config
     uid: 65532
