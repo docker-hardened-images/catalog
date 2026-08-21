@@ -19,7 +19,7 @@ mkdir -p "${TARGET_DIR}/usr/lib" "${TARGET_DIR}/usr/bin"
 cd "${SRC}"
 
 "${PYTHON_BIN}" -m venv --without-pip "${VENV}"
-"${PYTHON_BIN}" -m pip --python "${VENV}/bin/python" install --no-cache-dir --upgrade "pip==26.1.2"
+"${PYTHON_BIN}" -m pip --python "${VENV}/bin/python" install --no-cache-dir --upgrade "pip==26.2"
 "${VENV}/bin/python" -m pip install --no-cache-dir .
 "${VENV}/bin/python" -m pip install --no-cache-dir "urllib3==2.7.0"
 "${VENV}/bin/python" -m pip install --no-cache-dir "cryptography==50.0.0"
