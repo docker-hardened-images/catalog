@@ -4,7 +4,7 @@ image: dhi.io/pkg-scout-cli
 variant: runtime
 tags:
   - 1.23.1-alpine3.23
-  - 1.23.1-r4-alpine3.23
+  - 1.23.1-r5-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,7 +13,7 @@ vars:
   DHI_TEST_APK_PACKAGES: scout-cli_
   GOLANG_VERSION: 1.26.7-r0
   PACKAGE_NAME: scout-cli
-  REL: "4"
+  REL: "5"
   SEMVER_MAJOR_MINOR_VERSION: "1.23"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.23.1
@@ -48,31 +48,44 @@ contents:
           uses: go/bump@v1
           with:
             deps:
-              - github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
-              - github.com/aws/aws-sdk-go-v2/service/s3@v1.99.0
+              - github.com/aquasecurity/trivy@v0.71.0
               - github.com/cloudflare/circl@v1.6.3
-              - github.com/containerd/containerd/v2@v2.2.5
-              - github.com/go-git/go-git/v5@v5.19.1
+              - github.com/containerd/containerd/v2@v2.3.2
+              - github.com/go-git/go-git/v5@v5.19.2
               - github.com/hashicorp/go-getter@v1.8.6
               - github.com/in-toto/in-toto-golang@v0.11.0
-              - github.com/sigstore/fulcio@v1.8.6
-              - github.com/sigstore/rekor@v1.5.2
               - github.com/sigstore/sigstore/pkg/signature/kms/aws@v1.10.9
               - github.com/sigstore/sigstore/pkg/signature/kms/azure@v1.10.9
               - github.com/sigstore/sigstore/pkg/signature/kms/gcp@v1.10.9
               - github.com/sigstore/sigstore/pkg/signature/kms/hashivault@v1.10.9
-              - github.com/sigstore/sigstore-go@v1.2.1
+              - github.com/sigstore/fulcio@v1.8.6
+              - github.com/sigstore/rekor@v1.5.2
               - github.com/sigstore/timestamp-authority/v2@v2.1.2
+              - github.com/sigstore/sigstore-go@v1.2.1
               - github.com/yuin/goldmark@v1.7.17
-              - helm.sh/helm/v3@v3.20.2
               - oras.land/oras-go/v2@v2.6.2
+              - helm.sh/helm/v3@v3.20.2
             replaces:
               - github.com/sigstore/sigstore=github.com/sigstore/sigstore@v1.10.9
             tidy: true
         - uses: go/hermetic@v1
+        - name: patch trivy applier api
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/a\.ApplyLayers(/a.ApplyLayers(context.Background(), /' internal/sbom/trivy/trivy.go
+            grep -q '"context"' internal/sbom/trivy/trivy.go || sed -i '/^import (/a\    "context"' internal/sbom/trivy/trivy.go
+            sed -i 's/xhttp\.SetDefaultTransport(desktop\.ProxyTransport())/xhttp.SetDefaultTransport(desktopTransport{})/' internal/sbom/trivy/trivy.go
+            if ! grep -q 'type desktopTransport struct' internal/sbom/trivy/trivy.go; then
+              awk '/^func initializeCache\(\)/ && !done { print "type desktopTransport struct{}\n"; print "func (desktopTransport) Build(opts ...xhttp.TransportOption) http.RoundTripper {\n\treturn desktop.ProxyTransport()\n}\n"; done=1 } { print }' internal/sbom/trivy/trivy.go > internal/sbom/trivy/trivy.go.tmp
+              mv internal/sbom/trivy/trivy.go.tmp internal/sbom/trivy/trivy.go
+            fi
+            grep -q '"net/http"' internal/sbom/trivy/trivy.go || sed -i '/^import (/a\    "net/http"' internal/sbom/trivy/trivy.go
+            gofmt -w internal/sbom/trivy/trivy.go
         - name: build
           uses: go/build@v1
           with:
+            experiments: jsonv2
             fips: false
             ldflags:
               - -X github.com/docker/scout-cli-plugin/internal/version.version=1.23.1
@@ -82,6 +95,7 @@ contents:
         - name: build dev
           uses: go/build@v1
           with:
+            experiments: jsonv2
             fips: false
             ldflags:
               - -X github.com/docker/scout-cli-plugin/internal/version.version=1.23.1
@@ -102,7 +116,7 @@ contents:
               - usr/bin/docker-scout
             license: Apache-2.0
             name: scout-cli
-            rel: 4
+            rel: 5
             subpackages:
               - files:
                   - path: usr/bin/docker-scout
