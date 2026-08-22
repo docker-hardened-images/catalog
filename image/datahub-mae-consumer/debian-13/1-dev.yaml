@@ -155,6 +155,54 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar
+            checksum: sha256:b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+            path: ${source.dir}/patch/deps/jackson-core-2.21.5.jar
+            spdx:
+              name: jackson-core
+              version: 2.21.5
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar
+            checksum: sha256:507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+            path: ${source.dir}/patch/deps/jackson-databind-2.21.5.jar
+            spdx:
+              name: jackson-databind
+              version: 2.21.5
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.21.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/tools/jackson/core/jackson-core/3.1.4/jackson-core-3.1.4.jar
+            checksum: sha256:3bda1cd6eff0a8d47bdfcaeae7c2bd5311d6c8ed494ef5f3e51029bb44aa9bdf
+            path: ${source.dir}/patch/deps/tools-jackson-core-3.1.4.jar
+            spdx:
+              name: jackson-core
+              version: 3.1.4
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/tools.jackson.core/jackson-core@3.1.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/tools/jackson/core/jackson-databind/3.1.5/jackson-databind-3.1.5.jar
+            checksum: sha256:3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a
+            path: ${source.dir}/patch/deps/tools-jackson-databind-3.1.5.jar
+            spdx:
+              name: jackson-databind
+              version: 3.1.5
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/tools.jackson.core/jackson-databind@3.1.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - name: patch maven central for build cloud rate limits
           runs: |
@@ -277,7 +325,7 @@ contents:
               --parallel --max-workers=4 \
               --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,org.apache.commons:*,org.apache.httpcomponents.client5:*,io.opentelemetry:*,io.netty:*,org.postgresql:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*' \
               --no-daemon --console=plain
-        - name: rewrite tools.jackson jars in mae-consumer-job
+        - name: patch jackson in mae-consumer-job
           privileged: true
           runs: |
             set -eux -o pipefail
@@ -287,9 +335,7 @@ contents:
 
             CORE_VER=3.1.4
             DATABIND_VER=3.1.5
-            GOOGLE_MIRROR='https://maven-central.storage-download.googleapis.com/maven2'
-            CORE_SHA256='3bda1cd6eff0a8d47bdfcaeae7c2bd5311d6c8ed494ef5f3e51029bb44aa9bdf'
-            DATABIND_SHA256='3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a'
+            PATCH_DIR="${source.dir}/patch/deps"
 
             work=$(mktemp -d)
             trap 'rm -rf "$work"' EXIT
@@ -297,22 +343,15 @@ contents:
             export JAVA_HOME="/usr/lib/jvm/temurin-21"
             export PATH="${JAVA_HOME}/bin:${PATH}"
 
-            curl -fsSL -o "$work/jackson-core-${CORE_VER}.jar" \
-              "${GOOGLE_MIRROR}/tools/jackson/core/jackson-core/${CORE_VER}/jackson-core-${CORE_VER}.jar"
-            curl -fsSL -o "$work/jackson-databind-${DATABIND_VER}.jar" \
-              "${GOOGLE_MIRROR}/tools/jackson/core/jackson-databind/${DATABIND_VER}/jackson-databind-${DATABIND_VER}.jar"
-            echo "${CORE_SHA256}  $work/jackson-core-${CORE_VER}.jar" | sha256sum -c -
-            echo "${DATABIND_SHA256}  $work/jackson-databind-${DATABIND_VER}.jar" | sha256sum -c -
-
             mapfile -t old_entries < <(unzip -Z1 "$JAR" | grep -E '^BOOT-INF/lib/jackson-(core|databind)-3\..+\.jar$' || true)
             if [ "${#old_entries[@]}" -gt 0 ]; then
               zip -d "$JAR" "${old_entries[@]}"
             fi
 
             mkdir -p "$work/update/BOOT-INF/lib"
-            cp "$work/jackson-core-${CORE_VER}.jar" \
+            cp "${PATCH_DIR}/tools-jackson-core-${CORE_VER}.jar" \
               "$work/update/BOOT-INF/lib/jackson-core-${CORE_VER}.jar"
-            cp "$work/jackson-databind-${DATABIND_VER}.jar" \
+            cp "${PATCH_DIR}/tools-jackson-databind-${DATABIND_VER}.jar" \
               "$work/update/BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar"
             (cd "$work/update" && zip -0 -r "$JAR" \
               "BOOT-INF/lib/jackson-core-${CORE_VER}.jar" \
@@ -325,154 +364,9 @@ contents:
               exit 1
             fi
 
-            unzip -p "$JAR" "BOOT-INF/lib/jackson-core-${CORE_VER}.jar" > "$work/extracted-core.jar"
-            unzip -p "$work/extracted-core.jar" \
-              META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
-              | grep -qx "version=${CORE_VER}"
-            unzip -p "$JAR" "BOOT-INF/lib/jackson-databind-${DATABIND_VER}.jar" > "$work/extracted-databind.jar"
-            unzip -p "$work/extracted-databind.jar" \
-              META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
-              | grep -qx "version=${DATABIND_VER}"
-
-            patch_nested_hazelcast_jackson() {
-              local nested_entry=$1
-              local nested_name
-              nested_name=$(basename "$nested_entry")
-
-              # Do not use `unzip | grep -q` under pipefail: a match makes unzip
-              # get SIGPIPE (exit 141) and the pipeline looks like "not found".
-              local found=0
-              local entry
-              while IFS= read -r entry; do
-                if [ "$entry" = "$nested_entry" ]; then
-                  found=1
-                  break
-                fi
-              done < <(unzip -Z1 "$JAR")
-              if [ "$found" -ne 1 ]; then
-                return 0
-              fi
-
-              local hz_work="$work/nested-${nested_name}"
-              rm -rf "$hz_work"
-              mkdir -p "$hz_work/hz"
-
-              unzip -p "$JAR" "$nested_entry" > "$hz_work/${nested_name}"
-              unzip -q "$hz_work/${nested_name}" -d "$hz_work/hz"
-
-              if [ ! -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.properties" ]; then
-                return 0
-              fi
-
-              mkdir -p "$work/fixed-core-extract" "$work/fixed-databind-extract"
-              rm -rf "$work/fixed-core-extract" "$work/fixed-databind-extract"
-              mkdir -p "$work/fixed-core-extract" "$work/fixed-databind-extract"
-              unzip -q "$work/jackson-core-${CORE_VER}.jar" -d "$work/fixed-core-extract"
-              unzip -q "$work/jackson-databind-${DATABIND_VER}.jar" -d "$work/fixed-databind-extract"
-
-              rm -rf "$hz_work/hz/com/hazelcast/shaded/tools/jackson/core"
-              rm -rf "$hz_work/hz/com/hazelcast/shaded/tools/jackson/databind"
-              if [ -d "$hz_work/hz/META-INF/versions" ]; then
-                find "$hz_work/hz/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
-                  rm -rf "${verdir}/com/hazelcast/shaded/tools/jackson/core"
-                  rm -rf "${verdir}/com/hazelcast/shaded/tools/jackson/databind"
-                done
-              fi
-
-              mkdir -p "$hz_work/hz/com/hazelcast/shaded/tools/jackson"
-              cp -a "$work/fixed-core-extract/tools/jackson/core" \
-                "$hz_work/hz/com/hazelcast/shaded/tools/jackson/core"
-              cp -a "$work/fixed-databind-extract/tools/jackson/databind" \
-                "$hz_work/hz/com/hazelcast/shaded/tools/jackson/databind"
-
-              if [ -d "$work/fixed-core-extract/META-INF/versions" ]; then
-                find "$work/fixed-core-extract/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
-                  ver=$(basename "$verdir")
-                  if [ -d "$verdir/tools/jackson/core" ]; then
-                    mkdir -p "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson"
-                    cp -a "$verdir/tools/jackson/core" \
-                      "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson/core"
-                  fi
-                done
-              fi
-              if [ -d "$work/fixed-databind-extract/META-INF/versions" ]; then
-                find "$work/fixed-databind-extract/META-INF/versions" -mindepth 1 -maxdepth 1 -type d | while read -r verdir; do
-                  ver=$(basename "$verdir")
-                  if [ -d "$verdir/tools/jackson/databind" ]; then
-                    mkdir -p "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson"
-                    cp -a "$verdir/tools/jackson/databind" \
-                      "$hz_work/hz/META-INF/versions/${ver}/com/hazelcast/shaded/tools/jackson/databind"
-                  fi
-                done
-              fi
-
-              sed -i "s/^version=.*/version=${CORE_VER}/" \
-                "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.properties"
-              sed -i "s/^version=.*/version=${DATABIND_VER}/" \
-                "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.properties"
-              if [ -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.xml" ]; then
-                sed -i "s/<version>3\.1\.2<\/version>/<version>${CORE_VER}<\/version>/" \
-                  "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-core/pom.xml"
-              fi
-              if [ -f "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.xml" ]; then
-                sed -i "s/<version>3\.1\.2<\/version>/<version>${DATABIND_VER}<\/version>/" \
-                  "$hz_work/hz/META-INF/maven/tools.jackson.core/jackson-databind/pom.xml"
-              fi
-
-              (cd "$hz_work/hz" && jar --create --file "$hz_work/${nested_name}.new" .)
-
-              zip -d "$JAR" "$nested_entry"
-              mkdir -p "$work/nested-update/BOOT-INF/lib"
-              cp "$hz_work/${nested_name}.new" "$work/nested-update/BOOT-INF/lib/${nested_name}"
-              (cd "$work/nested-update" && zip -0 -r "$JAR" "BOOT-INF/lib/${nested_name}")
-
-              unzip -p "$JAR" "$nested_entry" > "$hz_work/${nested_name}.verify"
-              unzip -p "$hz_work/${nested_name}.verify" \
-                META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
-                | grep -qx "version=${CORE_VER}"
-              unzip -p "$hz_work/${nested_name}.verify" \
-                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
-                | grep -qx "version=${DATABIND_VER}"
-              if unzip -p "$hz_work/${nested_name}.verify" \
-                META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
-                | grep -qx 'version=3.1.2'; then
-                echo "ERROR: tools.jackson.core jackson-core still 3.1.2 in ${nested_entry}" >&2
-                exit 1
-              fi
-              if unzip -p "$hz_work/${nested_name}.verify" \
-                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
-                | grep -qx 'version=3.1.2'; then
-                echo "ERROR: tools.jackson.core jackson-databind still 3.1.2 in ${nested_entry}" >&2
-                exit 1
-              fi
-            }
-
-            patch_nested_hazelcast_jackson "BOOT-INF/lib/hazelcast-5.7.0.jar"
-            patch_nested_hazelcast_jackson "BOOT-INF/lib/hazelcast-spring-5.7.0.jar"
-
-            mapfile -t lib_entries < <(unzip -Z1 "$JAR" | grep '^BOOT-INF/lib/.*\.jar$' || true)
-            for lib_entry in "${lib_entries[@]}"; do
-              nested_jar="$work/nested-check.jar"
-              unzip -p "$JAR" "$lib_entry" > "$nested_jar"
-              if unzip -l "$nested_jar" \
-                META-INF/maven/tools.jackson.core/jackson-core/pom.properties > /dev/null 2>&1; then
-                if unzip -p "$nested_jar" \
-                  META-INF/maven/tools.jackson.core/jackson-core/pom.properties \
-                  | grep -qx 'version=3.1.2'; then
-                  echo "ERROR: tools.jackson.core jackson-core 3.1.2 still in ${lib_entry}" >&2
-                  exit 1
-                fi
-              fi
-              if unzip -l "$nested_jar" \
-                META-INF/maven/tools.jackson.core/jackson-databind/pom.properties > /dev/null 2>&1; then
-                if unzip -p "$nested_jar" \
-                  META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
-                  | grep -qx 'version=3.1.2'; then
-                  echo "ERROR: tools.jackson.core jackson-databind 3.1.2 still in ${lib_entry}" >&2
-                  exit 1
-                fi
-              fi
-            done
+            bash "${source.dir}/patch/patch-hazelcast-jackson.sh" \
+              "$JAR" \
+              "$PATCH_DIR"
         - name: stage runtime files
           runs: |
             set -eux -o pipefail
@@ -523,6 +417,12 @@ contents:
           uid: 0
           gid: 0
           source: image/datahub-mae-consumer/files/init.gradle
+        - type: file
+          path: ${source.dir}/patch/patch-hazelcast-jackson.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: image/datahub-mae-consumer/patch/patch-hazelcast-jackson.sh
       outputs:
         - source: ${target.dir}/datahub/datahub-mae-consumer
           target: /datahub/datahub-mae-consumer
