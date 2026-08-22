@@ -61,12 +61,23 @@ NGINX_CONFIGURE_ARGS := \
 # Configure the debug build (into objs-debug) first, then the production build
 # (default objs) last. nginx regenerates the root Makefile on each configure to
 # point at the last builddir, so `make`/`make install` operate on the production
-# build; the debug binary is built explicitly via its own Makefile. The njs
-# dynamic module is only added to the production build (the debug binary loads
+# build; the debug binary is built explicitly via its own Makefile. Third-party
+# dynamic modules are only added to the production build (the debug binary loads
 # modules at runtime through --with-compat).
+#
+# ngx_brotli's config hard-codes deps/brotli as the location of the Brotli
+# headers and refuses to configure without them, so the pinned google/brotli
+# source (v1.1.0, the same release Debian trixie's libbrotli ships) is staged
+# into that path. The library itself is linked from the system libbrotli-dev.
 override_dh_auto_configure:
+	rm -rf ngx_brotli/deps/brotli
+	cp -a brotli-src ngx_brotli/deps/brotli
 	cd nginx-src && ./auto/configure --builddir=objs-debug --with-debug $(NGINX_CONFIGURE_ARGS)
-	cd nginx-src && ./auto/configure $(NGINX_CONFIGURE_ARGS) --add-dynamic-module=../njs/nginx
+	cd nginx-src && ./auto/configure $(NGINX_CONFIGURE_ARGS) \
+		--add-dynamic-module=../njs/nginx \
+		--add-dynamic-module=../ngx_brotli \
+		--add-dynamic-module=../ngx_uploadprogress \
+		--add-dynamic-module=../ngx_vts
 
 override_dh_auto_build:
 	cd nginx-src && make -j$$(nproc)
@@ -107,6 +118,14 @@ override_dh_auto_install:
 		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_js_module.so
 	install -Dm644 nginx-src/objs/ngx_stream_js_module.so \
 		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_stream_js_module.so
+	install -Dm644 nginx-src/objs/ngx_http_brotli_filter_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_brotli_filter_module.so
+	install -Dm644 nginx-src/objs/ngx_http_brotli_static_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_brotli_static_module.so
+	install -Dm644 nginx-src/objs/ngx_http_uploadprogress_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_uploadprogress_module.so
+	install -Dm644 nginx-src/objs/ngx_http_vhost_traffic_status_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_vhost_traffic_status_module.so
 	install -Dm644 nginx-otel/build/ngx_otel_module.so \
 		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_otel_module.so
 
