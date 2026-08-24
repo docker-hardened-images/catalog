@@ -69,6 +69,11 @@ Important environment variables for the examples above:
 Refer to the upstream LiteLLM documentation for advanced provider configuration, database migrations, virtual keys, and
 enterprise settings.
 
+## Alpine variant
+
+The Alpine variant omits the optional `pyroscope-io` proxy telemetry dependency because upstream does not publish a
+compatible musl wheel. Use the Debian variant if you require Pyroscope proxy telemetry.
+
 ## Non-hardened images vs. Docker Hardened Images
 
 The upstream `ghcr.io/berriai/litellm-database` image runs as root. The Docker Hardened Image runtime variant runs as a
