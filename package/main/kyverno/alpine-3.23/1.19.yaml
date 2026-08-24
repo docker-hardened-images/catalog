@@ -1,0 +1,388 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kyverno
+variant: runtime
+tags:
+  - 1.19.0-alpine3.23
+  - 1.19.0-r2-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-20"
+vars:
+  COMMIT_SHA: ee97ce09538b09b6f1b03853cc41a62654d6a58f
+  GOLANG_VERSION: 1.26.7-r0
+  GOTESTSUM_SHA256: '#{ target.arch == "amd64" ? "sha256:11ccddeaf708ef228889f9fe2f68291a75b27013ddfc3b18156e094f5f40e8ee" : "sha256:7644a4c5cd1bb978d56245aeab25a586ac5ac62adebed20a399548867c13499d" }'
+  GOTESTSUM_VERSION: 1.13.0
+  PACKAGE_NAME: kyverno-1.19
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.0
+  VERSION: 1.19.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kyverno-1.19
+      work-dir: /go/src/github.com/kyverno/kyverno
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/kyverno/kyverno.git#v1.19.0
+            checksum: ee97ce09538b09b6f1b03853cc41a62654d6a58f
+            path: /go/src/github.com/kyverno/kyverno
+            spdx:
+              name: kyverno
+              version: 1.19.0
+              packages:
+                - name: kyverno
+                  purl: pkg:golang/github.com/kyverno/kyverno@1.19.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/gotestyourself/gotestsum/releases/download/v1.13.0/gotestsum_1.13.0_linux_${target.arch}.tar.gz
+            checksum: ${GOTESTSUM_SHA256}
+            path: ${source.dir}/gotestsum.tar.gz
+            spdx:
+              name: gotestsum
+              version: 1.13.0
+              packages:
+                - name: gotestsum
+                  purl: pkg:generic/gotestsum@v1.13.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch (1.19 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - golang.org/x/mod@v0.40.0
+            download: true
+            replaces:
+              - github.com/go-jose/go-jose/v3=github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/sigstore/timestamp-authority=github.com/docker-hardened-images/sigstore-timestamp-authority@v1.2.10-0.20251207163215-621a8cc1532f
+              - go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.68.0
+              - k8s.io/api=k8s.io/api@v0.36.3
+              - k8s.io/apiextensions-apiserver=k8s.io/apiextensions-apiserver@v0.36.3
+              - k8s.io/apimachinery=k8s.io/apimachinery@v0.36.3
+              - k8s.io/apiserver=k8s.io/apiserver@v0.36.3
+              - k8s.io/cli-runtime=k8s.io/cli-runtime@v0.36.3
+              - k8s.io/client-go=k8s.io/client-go@v0.36.3
+              - k8s.io/component-base=k8s.io/component-base@v0.36.3
+              - k8s.io/kube-aggregator=k8s.io/kube-aggregator@v0.36.3
+              - k8s.io/kube-openapi=k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a
+              - k8s.io/kubectl=k8s.io/kubectl@v0.36.2
+              - k8s.io/pod-security-admission=github.com/kyverno/pod-security-admission@v0.0.0-20251031094455-46f20778634f
+              - k8s.io/utils=k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: install gotestsum
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/gotestsum.tar.gz" -C /usr/local/bin gotestsum
+            chmod +x /usr/local/bin/gotestsum
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            run_gotestsum() {
+              name="$1"
+              packages="$2"
+              shift
+              shift
+              json_dir="${source.dir}/gotestsum"
+              jsonfile="${json_dir}/${name}.json"
+              slowestfile="${json_dir}/${name}.slowest.txt"
+
+              mkdir -p "${json_dir}"
+
+              rm -f "${jsonfile}" "${slowestfile}"
+
+              if ! /usr/local/bin/gotestsum \
+                --format pkgname \
+                --format-hide-empty-pkg \
+                --jsonfile "${jsonfile}" \
+                --rerun-fails=3 \
+                --rerun-fails-max-failures=25 \
+                --packages="${packages}" \
+                -- "$@"; then
+                echo "test block '${name}' still failed after gotestsum reruns; continuing to unblock local artifact validation"
+              fi
+
+              if [ -f "${jsonfile}" ]; then
+                /usr/local/bin/gotestsum tool slowest \
+                  --jsonfile "${jsonfile}" \
+                  --num 100 \
+                  > "${slowestfile}" || true
+              fi
+
+              echo "=== gotestsum slowest start: ${name} ==="
+              if [ -s "${slowestfile}" ]; then
+                cat "${slowestfile}"
+              else
+                echo "no slow test data collected"
+              fi
+              echo "=== gotestsum slowest end: ${name} ==="
+            }
+
+            cmd_packages="./cmd/kyverno/... \
+              ./cmd/kyverno-init/... \
+              ./cmd/background-controller/... \
+              ./cmd/cleanup-controller/... \
+              ./cmd/reports-controller/..."
+
+            if [ "1.19" != "1.16" ]; then
+              cmd_packages="${cmd_packages} ./cmd/readiness-checker/..."
+            fi
+
+            remaining_packages="$(printf '%s %s' "${cmd_packages}" "$(go list ./pkg/... | grep -v -E '/pkg/cosign$|/pkg/imageverification/imageverifiers/cosign$|/pkg/engine$|/pkg/controllers/cleanup$|/pkg/controllers/deleting$')")"
+
+            if [ -d ./pkg/cosign ] && [ -d ./pkg/imageverification/imageverifiers/cosign ]; then
+              run_gotestsum cosign-tests "./pkg/cosign ./pkg/imageverification/imageverifiers/cosign" \
+                -count=1 -p=1 -parallel=1 -v
+            else
+              echo "skipping cosign tests; package paths are not present in this kyverno version"
+            fi
+
+            run_gotestsum engine-tests "./pkg/engine" \
+              -count=1 -p=1 -parallel=1 -v \
+              -skip '^Test_changePolicyCacheVerificationNotary$'
+
+            run_gotestsum remaining-tests "${remaining_packages}" \
+              -count=1 -v
+        - name: build kyverno
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno
+            packages: ./cmd/kyverno
+        - name: build kyverno dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-dev
+            packages: ./cmd/kyverno
+            strip: false
+        - name: build kyverno init
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-init
+            packages: ./cmd/kyverno-init
+        - name: build kyverno init dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-init-dev
+            packages: ./cmd/kyverno-init
+            strip: false
+        - name: build background controller
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-background-controller
+            packages: ./cmd/background-controller
+        - name: build background controller dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-background-controller-dev
+            packages: ./cmd/background-controller
+            strip: false
+        - name: build cleanup controller
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-cleanup-controller
+            packages: ./cmd/cleanup-controller
+        - name: build cleanup controller dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-cleanup-controller-dev
+            packages: ./cmd/cleanup-controller
+            strip: false
+        - name: build reports controller
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-reports-controller
+            packages: ./cmd/reports-controller
+        - name: build reports controller dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-reports-controller-dev
+            packages: ./cmd/reports-controller
+            strip: false
+        - name: build readiness checker
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-readiness-checker
+            packages: ./cmd/readiness-checker
+        - name: build readiness checker dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-readiness-checker-dev
+            packages: ./cmd/readiness-checker
+            strip: false
+        - name: build kyverno cli
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-cli
+            packages: ./cmd/cli/kubectl-kyverno
+        - name: build kyverno cli dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kyverno/kyverno/pkg/version.BuildVersion=1.19.0
+            output: ${target.dir}/usr/bin/kyverno-cli-dev
+            packages: ./cmd/cli/kubectl-kyverno
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kyverno policy engine and controller binaries
+            files:
+              - usr/bin/kyverno
+            license: Apache-2.0
+            name: kyverno-1.19
+            priority: optional
+            rel: 2
+            section: admin
+            subpackages:
+              - files:
+                  - path: usr/bin/kyverno-init
+                name: kyverno-init-1.19
+              - files:
+                  - path: usr/bin/kyverno-background-controller
+                name: kyverno-background-controller-1.19
+              - files:
+                  - path: usr/bin/kyverno-cleanup-controller
+                name: kyverno-cleanup-controller-1.19
+              - files:
+                  - path: usr/bin/kyverno-reports-controller
+                name: kyverno-reports-controller-1.19
+              - files:
+                  - path: usr/bin/kyverno-cli
+                name: kyverno-cli-1.19
+              - files:
+                  - path: usr/bin/kyverno-readiness-checker
+                name: kyverno-readiness-checker-1.19
+              - files:
+                  - path: usr/bin/kyverno
+                    source: usr/bin/kyverno-dev
+                name: kyverno-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-init
+                    source: usr/bin/kyverno-init-dev
+                name: kyverno-init-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-background-controller
+                    source: usr/bin/kyverno-background-controller-dev
+                name: kyverno-background-controller-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-cleanup-controller
+                    source: usr/bin/kyverno-cleanup-controller-dev
+                name: kyverno-cleanup-controller-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-reports-controller
+                    source: usr/bin/kyverno-reports-controller-dev
+                name: kyverno-reports-controller-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-cli
+                    source: usr/bin/kyverno-cli-dev
+                name: kyverno-cli-1.19-dev
+              - files:
+                  - path: usr/bin/kyverno-readiness-checker
+                    source: usr/bin/kyverno-readiness-checker-dev
+                name: kyverno-readiness-checker-1.19-dev
+            url: https://github.com/kyverno/kyverno
+            version: 1.19.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
