@@ -4,7 +4,7 @@ image: dhi.io/pkg-valkey-operator
 variant: runtime
 tags:
   - 0.5.0-alpine3.24
-  - 0.5.0-r3-alpine3.24
+  - 0.5.0-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,10 +13,12 @@ vars:
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.7-r0
   PACKAGE_NAME: valkey-operator
-  REL: "3"
+  REDIS_EXPORTER_REFERENCE: dhi/redis-exporter:1.89.0-debian13@sha256:7b5ec8314e1657f208c2e68a43190bc02306a141528bf7acbd316344b162b7a2
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "0.5"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.5.0
+  VALKEY_REFERENCE: dhi/valkey:9.1.1-debian13@sha256:a78d417bc5d7932247c5bd0564091bed8e211c8f9c9bb7f683a166b2447b2083
   VERSION: 0.5.0
 contents:
   repositories:
@@ -38,8 +40,8 @@ contents:
           - ca-certificates-bundle
           - coreutils
           - findutils
+          - gettext-envsubst
           - mawk
-          - sed
           - golang-1.26=1.26.7-r0
           - golang-1.26-oci-config=1.26.7-r0
         files:
@@ -56,6 +58,25 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: default the exporter and server sidecars to DHI images
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-default-images.patch
+        - name: interpolate DHI image references into patched defaults
+          runs: |
+            set -eux -o pipefail
+
+            export VALKEY_REFERENCE="dhi/valkey:9.1.1-debian13@sha256:a78d417bc5d7932247c5bd0564091bed8e211c8f9c9bb7f683a166b2447b2083"
+            export REDIS_EXPORTER_REFERENCE="dhi/redis-exporter:1.89.0-debian13@sha256:7b5ec8314e1657f208c2e68a43190bc02306a141528bf7acbd316344b162b7a2"
+
+            file=internal/controller/valkeycluster_controller.go
+            envsubst '$VALKEY_REFERENCE $REDIS_EXPORTER_REFERENCE' < "$file" > "$file.tmp"
+            mv "$file.tmp" "$file"
+
+            grep -qF "$VALKEY_REFERENCE" "$file"
+            grep -qF "$REDIS_EXPORTER_REFERENCE" "$file"
         - name: update go dependencies
           uses: go/bump@v2
           with:
@@ -93,7 +114,7 @@ contents:
               - usr/bin/manager
             license: Apache-2.0
             name: valkey-operator
-            rel: 3
+            rel: 2
             subpackages:
               - files:
                   - path: usr/bin/manager
@@ -101,6 +122,12 @@ contents:
                 name: valkey-operator-dev
             url: https://github.com/valkey-io/valkey-operator
             version: 0.5.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/dhi-default-images.patch
+          uid: 0
+          gid: 0
+          source: package/main/valkey-operator/alpine-3.24/patch/dhi-default-images.patch
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
