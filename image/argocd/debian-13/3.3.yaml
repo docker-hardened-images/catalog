@@ -17,11 +17,10 @@ dates:
   release: "2025-11-04"
 vars:
   ARGOCD_USER_ID: "999"
-  COMMIT_SHA: a0a99e187cb6126ef0f3be82d90705513d8f6f3e
   SEMVER_MAJOR_MINOR_VERSION: "3.3"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.3.14
-  VERSION: 3.3.14
+  VERSION: 3.3.14-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -31,8 +30,9 @@ contents:
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
+    - argocd-3.3=3.3.14-1
     - base-files
-    - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - dash
     - git
@@ -48,156 +48,6 @@ contents:
     - tini
     - tzdata
     - yq-go
-  builds:
-    - name: argocd-go
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - curl
-          - git
-          - git-lfs
-          - gnupg
-          - gpg
-          - gpg-agent
-          - grep
-          - gzip
-          - helm-3
-          - kustomize
-          - openssh-client
-          - sed
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - util-linux
-          - golang-1.26
-          - findutils
-          - mawk
-          - base-files
-          - ca-certificates
-          - libc6
-          - libstdc++6
-          - nodejs-24
-          - node-corepack
-          - npm
-          - yarn-classic
-        files:
-          - url: git+https://github.com/argoproj/argo-cd.git#v3.3.14
-            checksum: a0a99e187cb6126ef0f3be82d90705513d8f6f3e
-            path: /go/src/github.com/argoproj/argo-cd/v3
-            spdx:
-              name: argocd
-              version: 3.3.14
-              packages:
-                - name: argocd
-                  purl: pkg:dhi/argocd@3.3.14
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: patch-go (3.3 only)
-          uses: go/bump@v2
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3
-          caches:
-            - path: /go/pkg/mod
-          with:
-            deps:
-              - golang.org/x/text@v0.39.0
-              - golang.org/x/net@v0.56.0
-              - github.com/cloudflare/circl@v1.6.3
-              - github.com/go-git/go-git/v5@v5.19.2
-              - github.com/klauspost/compress@v1.18.7
-              - github.com/moby/spdystream@v0.5.1
-              - github.com/slack-go/slack@v0.23.1
-              - go.mongodb.org/mongo-driver@v1.17.7
-              - go.opentelemetry.io/otel@v1.44.0
-              - go.opentelemetry.io/otel/sdk@v1.43.0
-              - google.golang.org/grpc@v1.82.1
-              - oras.land/oras-go/v2@v2.6.2
-            replaces:
-              - oras.land/oras-go/v2=oras.land/oras-go/v2@v2.6.2
-            tidy: true
-        - name: patch-node
-          uses: yarn/bump@v2
-          caches:
-            - path: /usr/local/share/.cache/yarn
-          with:
-            bumps: ${source.dir}/patches/yarn-patches-3.3.json
-            yarn-root: /go/src/github.com/argoproj/argo-cd/v3/ui
-        - name: build-ui (yarn)
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
-          privileged: true
-          caches:
-            - path: /usr/local/share/.cache/yarn
-          runs: |
-            set -eux -o pipefail
-
-            yarn
-            yarn run build
-        - name: prepare ui for sbom (yarn)
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3/ui
-          privileged: true
-          caches:
-            - path: /usr/local/share/.cache/yarn
-          runs: |
-            set -eux -o pipefail
-
-            rm -rf node_modules
-            # tsx is included in the dependencies of argocd-ui but should not.
-            yarn remove tsx
-            # Issue opened: https://github.com/argoproj/argo-cd/issues/24978
-            yarn remove react-hot-loader # CVE-2025-57352
-            yarn install --production
-        - name: ui-sbom
-          uses: sbom@v1
-          with:
-            prefix: argocd-ui
-            source: /go/src/github.com/argoproj/argo-cd/v3/ui
-        - name: build
-          uses: go/build@v1
-          work-dir: /go/src/github.com/argoproj/argo-cd/v3
-          environment:
-            GODEBUG: tarinsecurepath=0,zipinsecurepath=0
-          caches:
-            - path: /go/pkg/mod
-          with:
-            ldflags:
-              - -extldflags '-static'
-              - -X github.com/argoproj/argo-cd/v3/common.version=3.3.14
-              - -X github.com/argoproj/argo-cd/v3/common.gitTag=v3.3.14
-              - -X github.com/argoproj/argo-cd/v3/common.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
-              - -X github.com/argoproj/argo-cd/v3/common.gitCommit=a0a99e187cb6126ef0f3be82d90705513d8f6f3e
-              - -X github.com/argoproj/argo-cd/v3/common.gitTreeState=clean
-              - -X github.com/argoproj/argo-cd/v3/common.kubectlVersion=$(go list -m k8s.io/client-go | head -n 1 | rev | cut -d' ' -f1 | rev)
-            output: ${target.dir}/usr/local/bin/argocd
-            packages: ./cmd
-      paths:
-        - type: file
-          path: /src/patches/yarn-patches-3.3.json
-          uid: 0
-          gid: 0
-          source: image/argocd/patch/yarn-patches-3.3.json
-      outputs:
-        - source: ${target.dir}/usr/local/bin/argocd
-          target: /usr/local/bin/argocd
-          uid: 0
-          gid: 0
-        - source: /go/src/github.com/argoproj/argo-cd/v3/hack/gpg-wrapper.sh
-          target: /usr/local/bin/gpg-wrapper.sh
-          uid: 0
-          gid: 0
-        - source: /go/src/github.com/argoproj/argo-cd/v3/hack/git-verify-wrapper.sh
-          target: /usr/local/bin/git-verify-wrapper.sh
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/argocd
-          target: /opt/docker/sbom/argocd
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/argocd-ui
-          target: /opt/docker/sbom/argocd-ui
-          uid: 0
-          gid: 0
 accounts:
   run-as: "999"
   users:
@@ -220,6 +70,25 @@ os-release:
 environment:
   ARGOCD_USER_ID: "999"
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/argocd
+    uid: 0
+    gid: 0
+    source: /usr/bin/argocd
+  - type: symlink
+    path: /usr/local/bin/gpg-wrapper.sh
+    uid: 0
+    gid: 0
+    source: /usr/bin/gpg-wrapper.sh
+  - type: symlink
+    path: /usr/local/bin/git-verify-wrapper.sh
+    uid: 0
+    gid: 0
+    source: /usr/bin/git-verify-wrapper.sh
   - type: symlink
     path: /usr/local/bin/helm
     uid: 0
