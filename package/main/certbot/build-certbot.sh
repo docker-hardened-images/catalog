@@ -27,8 +27,8 @@ cd "${CERTBOT_SRC}"
   ./acme \
   ./certbot
 
-# CVE-2026-8643 (26.1.1 -> 26.1.2)
-"${VENV}/bin/python3" -m pip install --no-cache-dir --upgrade pip==26.1.2
+# CVE-2026-8643 (26.1.1 -> 26.1.2); CVE-2026-13346 (26.1.2 -> 26.2)
+"${VENV}/bin/python3" -m pip install --no-cache-dir --upgrade pip==26.2
 
 find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \)
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
