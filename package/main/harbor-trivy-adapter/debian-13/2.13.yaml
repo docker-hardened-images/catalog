@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-harbor-trivy-adapter
+variant: runtime
+tags:
+  - 2.13.5
+  - 2.13.5-r0
+  - 2.13.5-debian13
+  - 2.13.5-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-04-09"
+vars:
+  COMMIT_SHA: ffae54219c89f7f486f17694681232dd70787db1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-0
+  PACKAGE_NAME: harbor-trivy-adapter-2.13
+  REL: "0"
+  SCANNER_TRIVY_ADAPTER_COMMIT_SHA: d2f5ee1a63099f432cdcf4b36542a59524f420a4
+  SCANNER_TRIVY_ADAPTER_VERSION: 0.35.1
+  SEMVER_MAJOR_MINOR_VERSION: "2.13"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.13.5
+  VERSION: 2.13.5
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: harbor-trivy-adapter-2.13
+      work-dir: /go/src/github.com/goharbor/harbor-scanner-trivy
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.7-0
+          - golang-1.26-oci-config=1.26.7-0
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/goharbor/harbor-scanner-trivy.git#v0.35.1
+            checksum: d2f5ee1a63099f432cdcf4b36542a59524f420a4
+            path: /go/src/github.com/goharbor/harbor-scanner-trivy
+            spdx:
+              name: harbor-scanner-trivy
+              version: 0.35.1
+              packages:
+                - name: harbor-scanner-trivy
+                  purl: pkg:golang/github.com/goharbor/harbor-scanner-trivy/cmd/scanner-trivy@0.35.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch (2.13 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/mod@v0.40.0
+              - github.com/containerd/containerd@v1.7.32
+              - github.com/docker/docker@v28.0.0+incompatible
+              - github.com/redis/go-redis/v9@v9.6.3
+            download: true
+        - name: test registry authentication
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./pkg/trivy -run '^TestNewTargetRegistryAuth$'
+        - name: build scanner-trivy
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.35.1
+              - -X main.commit=d2f5ee1a63099f432cdcf4b36542a59524f420a4
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/scanner-trivy
+            packages: ./cmd/scanner-trivy
+        - name: build scanner-trivy dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=0.35.1
+              - -X main.commit=d2f5ee1a63099f432cdcf4b36542a59524f420a4
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/scanner-trivy-dev
+            packages: ./cmd/scanner-trivy
+            strip: false
+            trimpath: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Harbor Trivy scanner adapter
+            files:
+              - usr/bin/scanner-trivy
+            formats:
+              - deb
+            license: Apache-2.0
+            name: harbor-trivy-adapter-2.13
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/scanner-trivy
+                    source: usr/bin/scanner-trivy-dev
+                name: harbor-trivy-adapter-2.13-dev
+            url: https://goharbor.io/
+            version: 2.13.5
+      paths:
+        - type: file
+          path: /go/src/github.com/goharbor/harbor-scanner-trivy/pkg/trivy/target_auth_test.go
+          uid: 0
+          gid: 0
+          source: package/main/harbor-trivy-adapter/tests/target_auth_test.go
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
