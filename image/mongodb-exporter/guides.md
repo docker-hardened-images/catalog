@@ -88,8 +88,9 @@ Available environment variables:
 - MONGODB_URI: MongoDB connection URI (e.g., mongodb://user:pass@host:27017/admin)
 - MONGODB_USER: MongoDB username (alternative to including in URI)
 - MONGODB_PASSWORD: MongoDB password (alternative to including in URI)
-- WEB_LISTEN_ADDRESS: Address to listen on (default: :9216)
-- WEB_TELEMETRY_PATH: Path for metrics (default: /metrics)
+
+To customize the listen address or metrics path, use the `--web.listen-address` and `--web.telemetry-path` command-line
+flags. These settings don't have environment variable equivalents.
 
 ## Common Use Cases
 
@@ -203,23 +204,22 @@ docker run -d \
 
 Complete monitoring stack with MongoDB, MongoDB Exporter, and Prometheus:
 
+This local example leaves MongoDB authentication disabled and doesn't publish its port. Configure authentication before
+adapting the stack for production use.
+
 ```yaml
 services:
   mongodb:
     image: dhi.io/mongodb:<tag>-dev
     container_name: mongodb
-    command: --bind_ip_all --auth
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
+    platform: linux/amd64
+    command: --bind_ip_all
     volumes:
       - mongodb_data:/data/db
     networks:
       - monitoring
     healthcheck:
-      test: ["CMD", "mongosh", "-u", "admin", "-p", "password", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -231,7 +231,7 @@ services:
     ports:
       - "9216:9216"
     command:
-      - --mongodb.uri=mongodb://admin:password@mongodb:27017/admin
+      - --mongodb.uri=mongodb://mongodb:27017
       - --collector.dbstats
       - --collector.collstats
       - --collector.topmetrics
@@ -240,26 +240,20 @@ services:
         condition: service_healthy
     networks:
       - monitoring
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9216/metrics"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
   prometheus:
-    image: dockerdevrel/dhi-prometheus:<tag>
+    image: dhi.io/prometheus:3
     container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - prometheus_data:/var/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.path=/var/prometheus'
     depends_on:
-      mongodb-exporter:
-        condition: service_healthy
+      - mongodb-exporter
     networks:
       - monitoring
 
@@ -367,8 +361,9 @@ multi-stage Dockerfile. These images typically:
 - Include a shell and package manager
 - Are used to build or compile applications
 
-**Note:** The MongoDB Exporter DHI currently only provides runtime variants as the exporter is distributed as a
-pre-built binary.
+**FIPS variants** include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 
