@@ -1,4 +1,4 @@
-## About OpenEBS LVM LocalPV
+## About OpenEBS LVM LocalPV Driver
 
 OpenEBS LVM LocalPV is a CSI (Container Storage Interface) driver for dynamic provisioning of Kubernetes local
 persistent volumes using LVM (Logical Volume Manager). It provides a lightweight storage solution where the volume, LVM
