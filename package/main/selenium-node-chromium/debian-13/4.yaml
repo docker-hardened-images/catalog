@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-selenium-node-chromium
+variant: runtime
+tags:
+  - 4.47.0
+  - 4.47.0-r0
+  - 4.47.0-debian13
+  - 4.47.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-10-13"
+vars:
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 9.1.0
+  COMMIT_SHA: 9175ed94d83e87cc3abeb7c9fd91367d17849d35
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  PACKAGE_NAME: selenium-node-chromium
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.47"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.47.0
+  VERSION: 4.47.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: selenium-node-chromium
+      work-dir: ${source.dir}/selenium
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+      caches:
+        - path: /bazel-disk-cache
+        - path: /bazel-repo-cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - python3
+          - unzip
+          - zip
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+        files:
+          - url: git+https://github.com/SeleniumHQ/selenium.git#selenium-4.47.0
+            checksum: 9175ed94d83e87cc3abeb7c9fd91367d17849d35
+            path: ${source.dir}/selenium
+            spdx:
+              name: selenium
+              version: 4.47.0
+              packages:
+                - name: selenium-server
+                  purl: pkg:maven/org.seleniumhq.selenium/selenium-server@4.47.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/9.1.0/bazel-9.1.0-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/9.1.0/bazel-9.1.0-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            spdx:
+              name: bazel
+              version: 9.1.0
+              packages:
+                - name: bazel
+                  purl: pkg:github/bazelbuild/bazel@9.1.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: bump bundled netty in the maven lockfile
+          work-dir: ${source.dir}/selenium
+          runs: |
+            set -eux -o pipefail
+
+            python3 - "${source.dir}/patch/netty-bump.json" java/maven_install.json << 'PY'
+            import json, sys
+
+            spec_path, lock_path = sys.argv[1], sys.argv[2]
+            spec = json.load(open(spec_path))
+            lock = json.load(open(lock_path))
+
+            for artifact, pin in spec.items():
+                entry = lock["artifacts"][artifact]
+                entry["version"] = pin["version"]
+                entry["shasums"]["jar"] = pin["shasums"]["jar"]
+                if "sources" in entry["shasums"] and pin["shasums"].get("sources"):
+                    entry["shasums"]["sources"] = pin["shasums"]["sources"]
+
+            json.dump(lock, open(lock_path, "w"), indent=2, sort_keys=False)
+            print(f"bumped {len(spec)} io.netty artifacts")
+
+            mod = open("MODULE.bazel").read()
+            flipped = mod.replace("fail_if_repin_required = True", "fail_if_repin_required = False")
+            assert flipped != mod, "fail_if_repin_required flag not found in MODULE.bazel"
+            open("MODULE.bazel", "w").write(flipped)
+            print("relaxed fail_if_repin_required for the netty bump")
+            PY
+        - name: build selenium-server
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat > /tmp/bazel-downloader.cfg << 'CFG'
+            rewrite .*repo1\.maven\.org/maven2/(.*) maven-central.storage-download.googleapis.com/maven2/$1
+            CFG
+
+            /opt/bazel/bin/bazel \
+              build \
+              --disk_cache=/bazel-disk-cache \
+              --repository_cache=/bazel-repo-cache \
+              --downloader_config=/tmp/bazel-downloader.cfg \
+              --curses=no \
+              --color=no \
+              --repo_env=RULES_JVM_EXTERNAL_FETCH_SOURCES=false \
+              //java/src/org/openqa/selenium/grid:selenium_server_deploy.jar
+
+            install -d "${target.dir}/usr/share/selenium-node-chromium"
+            install -m 0644 \
+              bazel-bin/java/src/org/openqa/selenium/grid/selenium_server_deploy.jar \
+              "${target.dir}/usr/share/selenium-node-chromium/selenium-server.jar"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: selenium-server
+            purl: pkg:maven/org.seleniumhq.selenium/selenium-server@4.47.0
+            version: 4.47.0
+        - uses: dhi/build-pkg:0
+          with:
+            description: Selenium Grid server deploy jar for Chromium node images
+            files:
+              - usr/share/selenium-node-chromium/selenium-server.jar
+            formats:
+              - deb
+            license: Apache-2.0
+            name: selenium-node-chromium
+            rel: 0
+            url: https://www.selenium.dev/
+            version: 4.47.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/netty-bump.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/selenium-node-chromium/patch/netty-bump.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
