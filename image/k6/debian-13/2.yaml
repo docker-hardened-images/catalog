@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2026-05-11"
 vars:
-  COMMIT_SHA: 00a9a1b7f552d6bb4337278b10ae25aac0f4e666
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "2.2"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.2.0
-  VERSION: 2.2.0
+  SUFFIX: ""
+  VERSION: 2.2.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -32,78 +33,8 @@ contents:
   packages:
     - base-files
     - ca-certificates-bundle
+    - k6-2=2.2.0-0
     - tzdata
-  builds:
-    - name: k6
-      work-dir: /go/src/github.com/grafana/k6
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/grafana/k6.git#v2.2.0
-            checksum: 00a9a1b7f552d6bb4337278b10ae25aac0f4e666
-            path: /go/src/github.com/grafana/k6
-            spdx:
-              name: k6
-              version: 2.2.0
-              packages:
-                - name: k6
-                  purl: pkg:golang/github.com/grafana/k6@2.2.0
-                  license: AGPL-3.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies (2 only)
-          uses: go/bump@v2
-          with:
-            deps: []
-        - name: test
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Exclude browser packages from the test list
-            PKGS=$(go list ./... | grep -v "internal/js/modules/k6/browser")
-
-            # Skip flaky tests with otel SDK v1.40.0+ (REST API port races worsen at v1.43.0).
-            SKIP_TESTS="TestMachineReadableSummary|TestEventSystemError|TestEventLoopDoesntCrossIterations|TestEventLoopCrossScenario|TestEventLoop|TestRelativeLogPathWithSetupAndTeardown|TestAbortedByUserWithRestAPI|TestEventSystemOK|TestActiveVUsCount|TestRampingVUsHandleRemainingVUs|TestVURunInterrupt|TestVUStateTagsSafeConcurrent|TestConstantArrivalRateRunCorrectTiming|TestWrongEnvVarIterations|TestExecutionInfoVUSharing"
-            if [ "${target.fips}" = "true" ]; then
-              # FIPS rejects TLS 1.0/1.1, CBC cipher suites, and certain ECC curves
-              SKIP_TESTS="${SKIP_TESTS}|TestRequestAndBatchTLS"
-              # Non-deterministic tar timestamps under FIPS builder
-              SKIP_TESTS="${SKIP_TESTS}|TestUploadTest"
-            fi
-
-            for i in {1..5}; do
-              if CGO_ENABLED=0 go test -count=1 $PKGS -skip "$SKIP_TESTS"; then
-                exit 0
-              fi
-              echo "Retry $i/5..."
-              sleep 2
-            done
-
-            exit 1
-        - name: build
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/usr/local/bin/k6
-      outputs:
-        - source: ${target.dir}/usr/local/bin/k6
-          target: /usr/local/bin/k6
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/k6
-          target: /opt/docker/sbom/k6
-          uid: 0
-          gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -123,6 +54,16 @@ os-release:
   pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/k6
+    uid: 0
+    gid: 0
+    source: /usr/bin/k6
 annotations:
   org.opencontainers.image.description: A minimal Grafana k6 image
   org.opencontainers.image.licenses: AGPL-3.0
