@@ -19,14 +19,14 @@ platforms:
 dates:
   release: "2025-04-16"
 vars:
-  COMMIT_SHA: f92a24e4fd2b52c72739c4a1f4f9bb6424bf5731
-  GOLANG_VERSION: 1.26.7-1
-  NGINX_AGENT_COMMIT_SHA: 4a95e5301c7d06a6b7c75971868bd508b724dfab
-  NGINX_AGENT_VERSION: 3.8.0
+  FLAVORED_SUFFIX: -dev
+  RUNTIME_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "5.5"
   SEMVER_MAJOR_VERSION: "5"
   SEMVER_VERSION: 5.5.4
-  VERSION: 5.5.4
+  SETCAP_DEV_SUFFIX: -dev
+  SUFFIX: ""
+  VERSION: 5.5.4-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -37,8 +37,10 @@ contents:
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - dash
     - diffutils
@@ -58,12 +60,15 @@ contents:
     - libstdc++6
     - libxml2
     - mawk
+    - nginx-ingress-dev=5.5.4-0
+    - nginx-ingress=5.5.4-0
     - nginx-mainline
     - nginx-mainline-module-njs
     - nginx-mainline-module-otel
     - opentelemetry-cpp
     - perl-base
     - sed
+    - tzdata
     - util-linux
     - zlib1g
   builds:
@@ -108,172 +113,39 @@ contents:
           target: /etc/nginx
           uid: 101
           gid: 0
-    - name: build nginx-agent
-      work-dir: /go/src/github.com/nginx/agent
-      caches:
-        - path: /go/pkg/mod
+    - name: setcap nginx-ingress
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-security.gpg] http://dhi.io/deb/debian/security trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+          - https://dhi.io/keyring/dhi-deb-sec-gpg.D46852F6925E9F71.key
         packages:
           - bash
-          - ca-certificates-bundle
           - coreutils
-          - golang-1.26=1.26.7-1
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/nginx/agent.git#v3.8.0
-            checksum: 4a95e5301c7d06a6b7c75971868bd508b724dfab
-            path: /go/src/github.com/nginx/agent
-            spdx:
-              name: nginx-agent
-              version: 3.8.0
-              packages:
-                - name: nginx-agent
-                  purl: pkg:golang/nginx/agent@3.8.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: bump go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - golang.org/x/crypto@v0.52.0
-              - github.com/antchfx/xpath@v1.3.6
-              - github.com/google/cel-go@v0.30.0
-              - github.com/klauspost/compress@v1.18.7
-              - go.opentelemetry.io/collector/pdata/xpdata@v0.148.0
-              - go.opentelemetry.io/contrib/bridges/otelzap@v0.20.0
-              - go.opentelemetry.io/otel/log@v0.21.0
-              - go.opentelemetry.io/otel/sdk@v1.44.0
-              - go.opentelemetry.io/otel/sdk/log@v0.21.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
-              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
-              - google.golang.org/grpc@v1.83.1
-              - github.com/prometheus/prometheus@v0.311.3
-            download: true
-            replaces:
-              - go.opentelemetry.io/otel/log=go.opentelemetry.io/otel/log@v0.21.0
-              - go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.21.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
-              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog=go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
-        - uses: go/hermetic@v1
-        - name: build go
-          uses: go/build@v1
-          with:
-            extra-args: -pgo=default.pgo
-            ldflags:
-              - -X main.version=3.8.0
-              - -X main.commit=4a95e5301c7d06a6b7c75971868bd508b724dfab
-              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
-            output: ${target.dir}/nginx-agent
-            packages: ./cmd/agent
-        - name: setup config
-          runs: |
-            set -eux -o pipefail
-
-            cp -a /go/src/github.com/nginx/agent/nginx-agent.conf "${target.dir}/nginx-agent.conf"
-      outputs:
-        - source: ${target.dir}/nginx-agent
-          target: /usr/bin/nginx-agent
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/nginx-agent.conf
-          target: /etc/nginx-agent/nginx-agent.conf
-          uid: 0
-          gid: 0
-          mode: "0640"
-        - source: /opt/docker/sbom/nginx-agent
-          target: /opt/docker/sbom/nginx-agent
-          uid: 0
-          gid: 0
-    - name: nginx-ingress
-      work-dir: /go/src/github.com/nginx/kubernetes-ingress
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - git
           - libcap2-bin
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26=1.26.7-1
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/nginx/kubernetes-ingress.git#v5.5.4
-            checksum: f92a24e4fd2b52c72739c4a1f4f9bb6424bf5731
-            path: /go/src/github.com/nginx/kubernetes-ingress
-            spdx:
-              name: nginx-ingress
-              version: 5.5.4
-              packages:
-                - name: nginx-ingress
-                  purl: pkg:golang/nginx/nginx-ingress@5.5.4
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
+          - nginx-ingress=5.5.4-0
+          - nginx-ingress-dev=5.5.4-0
       pipeline:
-        - name: bump go dependencies
-          uses: go/bump@v2
-          with:
-            deps:
-              - github.com/go-jose/go-jose/v4@v4.1.4
-              - github.com/google/cel-go@v0.30.0
-              - github.com/klauspost/compress@v1.18.7
-              - go.opentelemetry.io/otel/sdk@v1.44.0
-              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
-              - google.golang.org/grpc@v1.83.1
-            download: true
-        - uses: go/hermetic@v1
-        - name: build go
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/nginx-ingress
-            packages: ./cmd/nginx-ingress
         - name: setcap
           runs: |
             set -eux -o pipefail
 
-            setcap 'cap_net_bind_service=+ep' "${target.dir}/nginx-ingress"
-            setcap -v 'cap_net_bind_service=+ep' "${target.dir}/nginx-ingress"
-        - name: setup dirs and configs
-          runs: |
-            set -eux -o pipefail
+            setcap 'cap_net_bind_service=+ep' /usr/bin/nginx-ingress
+            setcap -v 'cap_net_bind_service=+ep' /usr/bin/nginx-ingress
 
-            mkdir -p "${target.dir}/etc/nginx/njs"
-            cp -a internal/configs/njs/* "${target.dir}/etc/nginx/njs"
-
-            mkdir -p "${target.dir}/configs"
-            cp -a internal/configs/version1/nginx.ingress.tmpl \
-              internal/configs/version1/nginx.tmpl \
-              internal/configs/version2/nginx.virtualserver.tmpl \
-              internal/configs/version2/nginx.transportserver.tmpl \
-              "${target.dir}/configs"
+            chmod 0640 /etc/nginx-agent/nginx-agent.conf
       outputs:
-        - source: ${target.dir}/nginx-ingress
-          target: /nginx-ingress
-          uid: 101
-          gid: 0
-        - source: ${target.dir}/etc/nginx/njs
-          target: /etc/nginx/njs
-          uid: 101
-          gid: 0
-        - source: ${target.dir}/configs/*
-          target: /
-          uid: 101
-          gid: 0
-        - source: /opt/docker/sbom/nginx-ingress
-          target: /opt/docker/sbom/nginx-ingress
+        - source: /usr/bin/nginx-ingress
+          target: /usr/bin/nginx-ingress
           uid: 0
           gid: 0
+        - source: /etc/nginx-agent/nginx-agent.conf
+          target: /etc/nginx-agent/nginx-agent.conf
+          uid: 0
+          gid: 0
+          mode: "0640"
 accounts:
   root: true
   run-as: root
@@ -301,6 +173,31 @@ environment:
   BUILD_OS: debian
   DEBIAN_FRONTEND: noninteractive
 paths:
+  - type: symlink
+    path: /nginx-ingress
+    uid: 0
+    gid: 0
+    source: /usr/bin/nginx-ingress
+  - type: symlink
+    path: /nginx.ingress.tmpl
+    uid: 0
+    gid: 0
+    source: /usr/share/nginx-ingress/nginx.ingress.tmpl
+  - type: symlink
+    path: /nginx.tmpl
+    uid: 0
+    gid: 0
+    source: /usr/share/nginx-ingress/nginx.tmpl
+  - type: symlink
+    path: /nginx.virtualserver.tmpl
+    uid: 0
+    gid: 0
+    source: /usr/share/nginx-ingress/nginx.virtualserver.tmpl
+  - type: symlink
+    path: /nginx.transportserver.tmpl
+    uid: 0
+    gid: 0
+    source: /usr/share/nginx-ingress/nginx.transportserver.tmpl
   - type: directory
     path: /etc/nginx-agent
     uid: 101
