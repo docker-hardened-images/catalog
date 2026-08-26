@@ -1,0 +1,224 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kiali-server
+variant: runtime
+tags:
+  - 2.30.0-alpine3.24
+  - 2.30.0-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 6fcf742cace51c3c44ed208054ca99d64f423032
+  GOLANG_VERSION: 1.26.7-r0
+  NODEJS_VERSION: 24.19.0-r0
+  PACKAGE_NAME: kiali-server
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.30"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.30.0
+  VERSION: 2.30.0
+  YARN_VERSION: 4.12.0-r0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kiali-server
+      work-dir: /go/src/github.com/kiali/kiali
+      caches:
+        - path: /root/.cache/go-build
+        - path: /root/.yarn
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - nodejs-24=24.19.0-r0
+          - npm
+          - yarn-berry=4.12.0-r0
+        files:
+          - url: git+https://github.com/kiali/kiali.git#v2.30.0
+            checksum: 6fcf742cace51c3c44ed208054ca99d64f423032
+            path: /go/src/github.com/kiali/kiali
+            spdx:
+              name: kiali
+              version: 2.30.0
+              packages:
+                - name: kiali
+                  purl: pkg:golang/github.com/kiali/kiali@2.30.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - golang.org/x/text@v0.41.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: bump frontend yarn deps
+          work-dir: /go/src/github.com/kiali/kiali/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export HUSKY=0
+            export CYPRESS_INSTALL_BINARY=0
+            export YARN_ENABLE_TELEMETRY=false
+            export BUMPS_FILE="${source.dir}/patch/yarn-bumps.json"
+
+            node << 'NODE'
+            const fs = require("fs");
+            const bumps = JSON.parse(fs.readFileSync(process.env.BUMPS_FILE, "utf8"));
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.resolutions = pkg.resolutions || {};
+            for (const b of bumps) {
+              const keys =
+                b.resolutions && b.resolutions.length
+                  ? b.resolutions
+                  : [b.package];
+              for (const key of keys) {
+                pkg.resolutions[key] = b.version;
+              }
+            }
+            fs.writeFileSync(
+              "package.json",
+              JSON.stringify(pkg, null, 2) + "\n"
+            );
+            NODE
+
+            yarn install
+            yarn run build
+        - name: prepare frontend for sbom
+          work-dir: /go/src/github.com/kiali/kiali/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export HUSKY=0
+            export CYPRESS_INSTALL_BINARY=0
+            export YARN_ENABLE_TELEMETRY=false
+
+            rm -rf node_modules
+            # Berry focus runs lifecycle scripts; strip build/postinstall/prepare so
+            # prod focus does not invoke eslint/i18next/rsbuild (openshift-console).
+            node << 'NODE'
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            for (const key of ["build", "postinstall", "prepare"]) {
+              delete pkg.scripts[key];
+            }
+            fs.writeFileSync(
+              "package.json",
+              JSON.stringify(pkg, null, 2) + "\n"
+            );
+            NODE
+            # Standalone frontend package (own yarn.lock, no workspaces field).
+            yarn workspaces focus --production
+
+            find node_modules -type d -name '@esbuild' -exec rm -rf {} + 2> /dev/null || true
+            find node_modules -type d -name 'esbuild' -exec rm -rf {} + 2> /dev/null || true
+            rm -rf node_modules/@typescript node_modules/typescript
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: kiali-frontend
+            source: /go/src/github.com/kiali/kiali/frontend/node_modules
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            export GOPATH="${GOPATH:-/go}"
+            export GOMODCACHE="${GOMODCACHE:-${GOPATH}/pkg/mod}"
+            export GOCACHE="${GOCACHE:-/root/.cache/go-build}"
+            mkdir -p "$GOMODCACHE" "$GOCACHE"
+
+            go test -tags exclude_frontend -count=1 ./util/... ./log/...
+        - name: stamp module version
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /go/src/dhi-kiali-build
+            cd /go/src/dhi-kiali-build
+            go mod init dhi.build.kiali
+            go mod edit -go="$(grep '^go ' /go/src/github.com/kiali/kiali/go.mod | awk '{print $2}')"
+            go mod edit -require=github.com/kiali/kiali@v2.30.0+incompatible
+            go mod edit -replace=github.com/kiali/kiali=/go/src/github.com/kiali/kiali
+            cp /go/src/github.com/kiali/kiali/go.sum go.sum
+        - name: build kiali
+          uses: go/build@v1
+          work-dir: /go/src/dhi-kiali-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -X github.com/kiali/kiali/cmd.version=v2.30.0
+              - -X github.com/kiali/kiali/cmd.commitHash=6fcf742cace51c3c44ed208054ca99d64f423032
+              - -X github.com/kiali/kiali/cmd.goVersion=$(go version | awk '{print $3}')
+            output: ${target.dir}/usr/bin/kiali
+            packages: github.com/kiali/kiali
+        - name: build kiali dev
+          uses: go/build@v1
+          work-dir: /go/src/dhi-kiali-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -X github.com/kiali/kiali/cmd.version=v2.30.0
+              - -X github.com/kiali/kiali/cmd.commitHash=6fcf742cace51c3c44ed208054ca99d64f423032
+              - -X github.com/kiali/kiali/cmd.goVersion=$(go version | awk '{print $3}')
+            output: ${target.dir}/usr/bin/kiali-dev
+            packages: github.com/kiali/kiali
+            strip: false
+        - name: verify module version
+          runs: |
+            set -eux -o pipefail
+
+            go version -m "${target.dir}/usr/bin/kiali" | grep -F $'mod\tgithub.com/kiali/kiali\tv2.30.0+incompatible'
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kiali console for Istio service mesh
+            files:
+              - usr/bin/kiali
+            license: Apache-2.0
+            name: kiali-server
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/kiali
+                    source: usr/bin/kiali-dev
+                name: kiali-server-dev
+            url: https://github.com/kiali/kiali
+            version: 2.30.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/yarn-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/kiali-server/patch/yarn-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
