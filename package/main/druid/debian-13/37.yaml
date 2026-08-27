@@ -1,0 +1,308 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-druid
+variant: runtime
+tags:
+  - 37.0.0
+  - 37.0.0-r0
+  - 37.0.0-debian13
+  - 37.0.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-28"
+vars:
+  COMMIT_SHA: b206640c830bc2c3bdc2867cfb317c902a0e1acb
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  MAVEN_VERSION: 3.9.16
+  NODEJS_VERSION: 24.19.0-0
+  PACKAGE_HOME: /usr/share/druid
+  PACKAGE_NAME: druid-37
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "37.0"
+  SEMVER_MAJOR_VERSION: "37"
+  SEMVER_VERSION: 37.0.0
+  VERSION: 37.0.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: druid
+      work-dir: ${source.dir}/druid
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+        MAVEN_ARGS: -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=5 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 -Daether.connector.http.retryHandler.count=5
+        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+        MAVEN_OPTS: -Xmx3g
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - findutils
+          - grep
+          - gzip
+          - node-corepack
+          - nodejs-24=24.19.0-0
+          - npm
+          - python3
+          - python3-yaml
+          - sed
+          - tar
+          - unzip
+        files:
+          - url: git+https://github.com/apache/druid.git#druid-37.0.0
+            checksum: b206640c830bc2c3bdc2867cfb317c902a0e1acb
+            path: ${source.dir}/druid
+            spdx:
+              name: druid
+              version: 37.0.0
+              packages:
+                - name: druid
+                  purl: pkg:github/apache/druid@37.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            spdx:
+              name: maven
+              version: 3.9.16
+              packages:
+                - name: maven
+                  purl: pkg:generic/apache-maven@3.9.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install maven
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/java
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+
+            mkdir -p /usr/local/bin
+            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+              filename=$(basename "$file")
+              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+            done
+        - uses: mvn/mirror@v1
+        - name: use gcs mirror when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              mkdir -p /root/.m2
+              printf '%s\n' \
+                '<?xml version="1.0" encoding="UTF-8"?>' \
+                '<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">' \
+                '  <mirrors>' \
+                '    <mirror>' \
+                '      <id>google-maven-central</id>' \
+                '      <name>GCS Maven Central mirror</name>' \
+                '      <url>https://maven-central.storage-download.googleapis.com/maven2/</url>' \
+                '      <mirrorOf>central</mirrorOf>' \
+                '    </mirror>' \
+                '  </mirrors>' \
+                '</settings>' \
+                > /root/.m2/settings.xml
+            fi
+        - name: patch deps
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps-37.0.json
+            dependencies-key: dependencyManagement.dependencies
+            downgrade: false
+            mvn-root: ${source.dir}/druid
+            properties: ${source.dir}/patch/mvn-properties-37.0.json
+        - name: prune unused extensions from build
+          runs: |
+            set -eux -o pipefail
+
+            EXCLUDE_MODULES=(
+              "extensions-contrib/ambari-metrics-emitter"
+              "extensions-contrib/cassandra-storage"
+              "extensions-contrib/aliyun-oss-extensions"
+              "extensions-contrib/cloudfiles-extensions"
+              "extensions-contrib/graphite-emitter"
+              "extensions-contrib/redis-cache"
+              "extensions-contrib/thrift-extensions"
+              "extensions-contrib/druid-iceberg-extensions"
+              "extensions-contrib/druid-deltalake-extensions"
+              "extensions-contrib/druid-ranger-security"
+              "extensions-core/testing-tools"
+              "extensions-core/hdfs-storage"
+              "extensions-core/druid-kerberos"
+              "extensions-core/avro-extensions"
+              "extensions-core/orc-extensions"
+              "extensions-core/parquet-extensions"
+              "extensions-core/druid-pac4j"
+            )
+
+            EXCLUDE_ARTIFACTS=(
+              "ambari-metrics-emitter"
+              "druid-cassandra-storage"
+              "druid-cloudfiles-extensions"
+              "aliyun-oss-extensions"
+              "graphite-emitter"
+              "druid-redis-cache"
+              "druid-thrift-extensions"
+              "druid-iceberg-extensions"
+              "druid-deltalake-extensions"
+              "druid-ranger-security"
+              "druid-testing-tools"
+              "druid-hdfs-storage"
+              "druid-kerberos"
+              "druid-avro-extensions"
+              "druid-orc-extensions"
+              "druid-parquet-extensions"
+              "druid-pac4j"
+            )
+
+            for m in "${EXCLUDE_MODULES[@]}"; do
+              esc=${m//\//\\/}
+              sed -i "/<module>${esc}<\/module>/d" pom.xml
+            done
+
+            for a in "${EXCLUDE_ARTIFACTS[@]}"; do
+              sed -i "/<argument>-c<\/argument>/{N;/<argument>org\.apache\.druid\.extensions[^<]*:${a}<\/argument>/d}" distribution/pom.xml
+            done
+        - name: build druid
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn install -B -ff -U --no-transfer-progress \
+              -Pdist,bundle-contrib-exts \
+              -Pskip-static-checks,skip-tests \
+              -Dmaven.javadoc.skip=true \
+              -T1C
+        - name: extract distribution
+          runs: |
+            set -eux -o pipefail
+
+            DIST_FILE=$(find distribution/target -name "apache-druid-37.0.0-bin.tar.gz" | head -1)
+            if [ -z "$DIST_FILE" ]; then
+              echo "Distribution tarball not found" >&2
+              exit 1
+            fi
+
+            mkdir -p "${target.dir}/usr/share/druid"
+            tar -xzf "$DIST_FILE" \
+              --strip-components=1 \
+              -C "${target.dir}/usr/share/druid"
+        - name: remove unused extensions
+          runs: |
+            set -eux -o pipefail
+
+            for ext in \
+              ambari-metrics-emitter \
+              druid-testing-tools \
+              druid-cassandra-storage \
+              aliyun-oss-extensions \
+              druid-cloudfiles-extensions \
+              graphite-emitter \
+              druid-redis-cache \
+              druid-thrift-extensions \
+              druid-iceberg-extensions \
+              druid-deltalake-extensions \
+              druid-ranger-security \
+              druid-hdfs-storage \
+              druid-kerberos \
+              druid-avro-extensions \
+              druid-orc-extensions \
+              druid-parquet-extensions \
+              druid-pac4j; do
+              rm -rf "${target.dir}/usr/share/druid/extensions/${ext}"
+
+              find "${target.dir}/usr/share/druid/conf" \
+                -type f -name common.runtime.properties \
+                -exec sed -i \
+                -e "s/\"${ext}\", *//g" \
+                -e "s/, *\"${ext}\"//g" \
+                -e "s/\"${ext}\"//g" \
+                {} +
+            done
+        - name: remove hadoop dependencies
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf "${target.dir}/usr/share/druid/hadoop-dependencies"
+        - name: remove legacy transitive jars
+          runs: |
+            set -eux -o pipefail
+
+            find "${target.dir}/usr/share/druid" \
+              \( -name 'netty-3*.jar' \
+              -o -name 'derby-*.jar' \
+              -o -name 'derbyclient-*.jar' \
+              -o -name 'derbynet-*.jar' \
+              -o -name 'derbytools-*.jar' \
+              -o -name 'log4j-1.2.17.jar' \
+              \) -delete
+        - name: install scripts
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            install -m 0755 distribution/docker/druid.sh "${target.dir}/usr/bin/druid.sh"
+            install -m 0755 distribution/docker/peon.sh "${target.dir}/usr/bin/peon.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+            description: Apache Druid real-time analytics database
+            files:
+              - usr
+            formats:
+              - deb
+            license: Apache-2.0
+            name: druid-37
+            rel: 0
+            url: https://druid.apache.org/
+            version: 37.0.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-37.0.json
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/mvn-properties-37.0.json
+        - type: file
+          path: ${source.dir}/patch/mvn-deps-37.0.json
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/mvn-deps-37.0.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
