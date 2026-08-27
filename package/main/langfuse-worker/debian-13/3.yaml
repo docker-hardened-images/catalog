@@ -1,0 +1,198 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-langfuse-worker
+variant: runtime
+tags:
+  - 3.225.5-0
+  - 3.225.5-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-12-09"
+vars:
+  COMMIT_SHA: a914a47f357f5d1cf5611e1387ea68678410c671
+  DHI_REL: "0"
+  DHI_VERSION: 3.225.5-0
+  NODEJS_MAJOR: "24"
+  NODEJS_VERSION: 24.19.0-0
+  PNPM_VERSION: 11.4.0
+  SEMVER_MAJOR_MINOR_VERSION: "3.225"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.225.5
+  TURBO_VERSION: 2.9.14
+  VERSION: 3.225.5
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: langfuse-worker deb
+      work-dir: ${source.dir}/langfuse-worker
+      environment:
+        CI: "true"
+        DOCKER_BUILD: "1"
+        PNPM_HOME: /pnpm
+        PNPM_VERSION: 11.4.0
+        SEMVER_MAJOR_VERSION: "3"
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - git
+          - nodejs-24=24.19.0-0
+          - npm
+          - node-corepack
+          - yq
+        files:
+          - url: git+https://github.com/langfuse/langfuse.git#v3.225.5
+            checksum: a914a47f357f5d1cf5611e1387ea68678410c671
+            path: ${source.dir}/src
+            spdx:
+              name: langfuse-worker
+              version: 3.225.5
+              packages:
+                - name: langfuse-worker
+                  purl: pkg:github/langfuse/langfuse@3.225.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prune and patch worker source
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/src"
+
+            corepack enable
+            corepack prepare pnpm@11.4.0 --activate
+            npm install -g --no-package-lock --no-save turbo@2.9.14
+            export PATH="$(npm config get prefix)/bin:${PATH}"
+
+            turbo prune --scope=worker --docker
+
+            cd ./out
+            cp -a json/. .
+            # overlay full source before patching package.json, else it clobbers the override
+            cp -a full/. .
+
+            # CVE remediation via pnpm overrides; build installs non-frozen
+            node -e '
+              const fs = require("fs");
+              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              p.pnpm = p.pnpm || {};
+              Object.assign(p.pnpm.overrides = p.pnpm.overrides || {}, {
+                "axios": "1.18.0", // CVE-2026-44486,44487,44488,44492,44494,44496 (HIGH), GHSA-gcfj-64vw-6mp9, GHSA-f4gw-2p7v-4548, GHSA-hcpx-6fm6-wx23, GHSA-42h9-826w-cgv3, GHSA-7q8q-rj6j-mhjq, GHSA-jqh4-m9w3-8hp9, GHSA-mmx7-hfxf-jppx, GHSA-mwf2-3pr3-8698, GHSA-pmv8-rq9r-6j72, GHSA-xj6q-8x83-jv6g
+                // range selector: bare @0.1 missed the express-nested 0.1.10 on pnpm 9
+                "path-to-regexp@<0.1.13": "0.1.13", // CVE-2024-52798, CVE-2026-4867 (HIGH, ReDoS)
+                "handlebars": "4.7.9", // CVE-2026-33937 (CRIT),33938,33939,33940,33941 (HIGH)
+                "kysely": "0.28.17", // CVE-2026-32763,33468,44635 (HIGH, SQLi)
+                "nodemailer": "9.0.1", // CVE-2025-14874 (HIGH), GHSA-p6gq-j5cr-w38f, GHSA-r7g4-qg5f-qqm2, GHSA-268h-hp4c-crq3, GHSA-wqvq-jvpq-h66f, GHSA-vvjj-xcjg-gr5g, GHSA-c7w3-x93f-qmm8
+                "next-auth@>=4.0.0 <4.24.15": "4.24.15", // GHSA-7rqj-j65f-68wh (CRIT), GHSA-xmf8-cvqr-rfgj (HIGH), GHSA-x445-f3h2-j279 (MEDIUM)
+                "path-to-regexp@8": "8.4.0", // CVE-2026-4926 (HIGH, ReDoS), CVE-2026-4923
+                "js-yaml@4": "4.3.1", // CVE-2026-53550 (ReDoS), CVE-2026-59869, GHSA-5p4m-2wfm-xmqj
+                "uuid@>=9.0.0 <11.1.1": "11.1.1", // CVE-2026-41907
+                "uuid@>=13.0.0 <13.0.1": "13.0.1", // CVE-2026-41907
+                "nanoid@>=3.0.0 <3.3.17": "3.3.17", // CVE-2026-67213, CVE-2026-67214 (HIGH, infinite loop DoS)
+                "@opentelemetry/core@2": "2.8.0", // CVE-2026-54285 (DoS)
+                "protobufjs@7": "7.6.5", // CVE-2026-54269 (uncontrolled recursion), CVE-2026-59877
+                "lodash": "4.18.1", // CVE-2025-13465, CVE-2026-2950 (MEDIUM, prototype pollution)
+                "postcss@>=8.0.0 <8.5.23": "8.5.23", // CVE-2026-41305 (MEDIUM, XSS), CVE-2026-45623, CVE-2026-69153, GHSA-r28c-9q8g-f849 (HIGH)
+                "@babel/runtime@7": "7.26.10", // CVE-2025-27789 (MEDIUM, ReDoS)
+                "cookie@<0.7.0": "0.7.0", // CVE-2024-47764 (LOW, CRLF injection)
+                "qs@<6.15.2": "6.15.2", // CVE-2025-15284, CVE-2026-2391, CVE-2026-8723 (MEDIUM, DoS)
+                "fast-xml-parser@>=4.0.0 <5.7.0": "5.7.0", // CVE-2026-27942, CVE-2026-33349, CVE-2026-41650 (MEDIUM, comment/CDATA injection)
+                "fast-uri@>=3.0.0 <3.1.5": "3.1.5", // CVE-2026-18446 (HIGH)
+                "undici@>=7.0.0 <7.29.0": "7.29.0", // CVE-2026-13697, CVE-2026-14643, CVE-2026-15157, CVE-2026-16728, CVE-2026-16729
+                "yaml@>=1.0.0 <1.10.3": "1.10.3", // CVE-2026-33532 (MEDIUM, stack overflow)
+                "yaml@>=2.0.0 <2.8.3": "2.8.3", // CVE-2026-33532 (MEDIUM, stack overflow)
+                "dd-trace@>=5.0.0 <=5.100.0": "5.101.0", // CVE-2026-50272 (HIGH, DoS)
+                "brace-expansion@>=2.0.0 <2.1.4": "2.1.4", // CVE-2026-13149, CVE-2026-14257, CVE-2026-69152 (HIGH)
+                "body-parser@>=1.0.0 <1.20.6": "1.20.6", // CVE-2026-12590 (LOW)
+                "@smithy/config-resolver@>=4.0.0 <4.4.0": "4.4.0", // GHSA-6475-r3vj-m8vf (LOW)
+              });
+              const patchedDependencies = p.pnpm.patchedDependencies || {};
+              if (patchedDependencies["next-auth@4.24.11"]) {
+                patchedDependencies["next-auth@4.24.15"] = patchedDependencies["next-auth@4.24.11"];
+                delete patchedDependencies["next-auth@4.24.11"];
+                p.pnpm.patchedDependencies = patchedDependencies;
+              }
+              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            '
+
+            # pnpm 10+ (v3 builds with pnpm 11) no longer reads "pnpm.overrides" from
+            # package.json -- it reads overrides from pnpm-workspace.yaml. Mirror the
+            # same map into the workspace file so the CVE pins apply on the v3 line too;
+            # the v2 line (pnpm 9) keeps reading them from package.json above.
+            PNPM_OVERRIDES="$(
+              node -e '
+                const fs = require("fs");
+                const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+                process.stdout.write(JSON.stringify((p.pnpm || {}).overrides || {}));
+              '
+            )"
+            export PNPM_OVERRIDES
+            yq -y -i \
+              '.overrides = ((.overrides // {}) * (env.PNPM_OVERRIDES | fromjson))' \
+              pnpm-workspace.yaml
+            if yq -e '.patchedDependencies."next-auth@4.24.14"' pnpm-workspace.yaml > /dev/null; then
+              yq -y -i \
+                '.patchedDependencies."next-auth@4.24.15" = .patchedDependencies."next-auth@4.24.14" | del(.patchedDependencies."next-auth@4.24.14")' \
+                pnpm-workspace.yaml
+            fi
+
+            # stage pruned workspace as the deb source tree
+            rm -rf "${source.dir}/langfuse-worker/worker-src"
+            mkdir -p "${source.dir}/langfuse-worker/worker-src"
+            cp -a . "${source.dir}/langfuse-worker/worker-src/"
+        - name: prepare debian metadata
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/langfuse-worker"
+            # per-major name: substitute in control + changelog (dpkg reads the
+            # source name from changelog), then rename the matching .install
+            sed -i "s/@MAJOR@/3/g" debian/control.in debian/changelog
+            mv debian/control.in debian/control
+            mv debian/langfuse-worker.install "debian/langfuse-worker-3.install"
+        - uses: dpkg/bump@v1
+          with:
+            version: 3.225.5-0
+        - name: configure pnpm to allow recently-published packages
+          runs: |
+            set -eux -o pipefail
+
+            # pnpm minimumReleaseAge policy blocks fast-uri@3.1.5 (published 2026-07-31)
+            # for CVE-2026-18446 remediation; add it to the exclude list.
+            # pnpm >=10 reads minimumReleaseAge from pnpm-workspace.yaml, not .npmrc.
+            yq -y -i '.minimumReleaseAgeExclude += ["fast-uri@3.1.5", "nanoid@3.3.17"]' "${source.dir}/langfuse-worker/worker-src/pnpm-workspace.yaml"
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/langfuse-worker/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/langfuse-worker/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

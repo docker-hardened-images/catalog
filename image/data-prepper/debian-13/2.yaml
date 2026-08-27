@@ -1,0 +1,232 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Data Prepper 2.x
+image: dhi.io/data-prepper
+variant: runtime
+tags:
+  - "2"
+  - "2.16"
+  - 2.16.0
+  - 2-debian
+  - 2-debian13
+  - 2.16-debian
+  - 2.16-debian13
+  - 2.16.0-debian
+  - 2.16.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-10-10"
+vars:
+  COMMIT_SHA: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
+  JAVA_BUILD_MAJOR_VERSION: "11"
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_HOME: /usr/lib/jvm/temurin-17
+  JAVA_VARIANT: jre
+  JDK_MAJOR_VERSION: "17"
+  SEMVER_MAJOR_MINOR_VERSION: "2.16"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.16.0
+  VERSION: 2.16.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - bc
+    - ca-certificates
+    - coreutils
+    - eclipse-temurin-17-jre
+    - eclipse-temurin-17-jre-oci-config
+    - gettext-base
+    - mawk
+    - sed
+    - tzdata
+  builds:
+    - name: data-prepper
+      work-dir: ${source.dir}/data-prepper
+      environment:
+        GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
+        JAVA_HOME: /usr/lib/jvm/temurin-11
+        JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
+        LANG: C.UTF-8
+        LC_ALL: C.UTF-8
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - eclipse-temurin-11-jdk
+          - findutils
+          - grep
+          - gzip
+          - patch
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/opensearch-project/data-prepper.git#2.16.0
+            checksum: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
+            path: ${source.dir}/data-prepper
+            spdx:
+              name: opensearch-data-prepper
+              version: 2.16.0
+              packages:
+                - name: opensearch-data-prepper
+                  purl: pkg:github/opensearch-project/data-prepper@2.16.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply cve-bump patch
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/cve-bumps.patch
+        - name: build distribution
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # `assemble` builds the runnable linux distribution and skips the
+            # integration test suite (developer_guide.md).
+            ./gradlew --no-daemon --console=plain :release:archives:linux:assemble
+        - name: stage distribution
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/data-prepper"
+            # The installDist output mirrors the upstream linux tarball layout
+            # (bin/data-prepper wrapper, lib/, config/, pipelines/). The arch
+            # suffix (x64/arm64) is part of the dir name, so glob it.
+            INSTALL=$(find "${source.dir}/data-prepper/release/archives/linux/build/install" \
+              -maxdepth 1 -type d -name 'opensearch-data-prepper-*-linux-*' | head -1)
+            test -n "${INSTALL}"
+            cp -a "${INSTALL}/." "${target.dir}/usr/share/data-prepper/"
+        - name: generate default keystore
+          runs: |
+            set -eux -o pipefail
+
+            # Generate the insecure eval-only PKCS12 keystore at build time
+            # instead of committing key material to the repo. ssl:true in the
+            # default config still serves a self-signed cert out of the box;
+            # operators replace it (and the admin/admin basic auth) before any
+            # non-development use. storepass==keypass because PKCS12 does not
+            # support a distinct key password.
+            keytool -genkeypair \
+              -alias data-prepper \
+              -keyalg RSA -keysize 2048 \
+              -storetype PKCS12 \
+              -storepass password -keypass password \
+              -dname "CN=data-prepper" \
+              -validity 3650 \
+              -keystore "${target.dir}/usr/share/data-prepper/keystore.p12"
+
+            # Root-owned, world-readable: the nonroot runtime reads the keystore
+            # but cannot rewrite it. The rest of the install dir stays root-owned
+            # (from the build) for the same reason.
+            chmod 0644 "${target.dir}/usr/share/data-prepper/keystore.p12"
+      paths:
+        - type: file
+          path: ${source.dir}/cve-bumps.patch
+          uid: 0
+          gid: 0
+          source: image/data-prepper/patches/cve-bumps.patch
+      outputs:
+        - source: ${target.dir}/usr/share/data-prepper
+          target: /usr/share/data-prepper
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/opensearch-data-prepper
+          target: /opt/docker/sbom/opensearch-data-prepper
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/share/data-prepper
+environment:
+  DATA_PREPPER_PATH: /usr/share/data-prepper
+  JAVA_HOME: /usr/lib/jvm/temurin-17
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /usr/share/data-prepper/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: file
+    path: /usr/share/data-prepper/config/data-prepper-config.yaml
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/data-prepper/files/default-data-prepper-config.yaml
+  - type: file
+    path: /usr/share/data-prepper/pipelines/pipelines.yaml
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/data-prepper/files/default-pipelines.yaml
+  - type: directory
+    path: /usr/share/data-prepper/log/data-prepper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/log/data-prepper
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Data Prepper image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/share/data-prepper/bin/data-prepper
+ports:
+  - 4900/tcp

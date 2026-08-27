@@ -1,0 +1,31 @@
+Subject: Replace rev-based byte-swap in health_check.sh with pure bash
+Filename: dhi-health-check-drop-rev-dependency.patch
+DHI definition: package/main/opentelemetry-ebpf-reducer/debian-13/0.yaml (patch@v1)
+
+Not an upstream-known issue - found during DHI packaging. health_check.sh's
+little-endian byte-swap pipes through `rev` (from util-linux), which the DHI
+image's runtime/FIPS variants don't ship (only the dev variant does, per
+docs/create-and-use-a-package.md's minimal-runtime-package guidance). Without
+`rev`, that pipeline stage fails silently under `set -e` alone (no `pipefail`),
+so the script sends a malformed health-check packet while `nc` still exits 0 -
+an always-green liveness/readiness probe on non-dev variants. Replaced with an
+equivalent pure-bash byte-swap using only substring indexing, verified to
+produce identical output for representative inputs.
+
+DHI PR: https://github.com/docker-hardened-images/definitions-external/pull/623
+
+diff --git a/reducer/health_check.sh b/reducer/health_check.sh
+--- a/reducer/health_check.sh
++++ b/reducer/health_check.sh
+@@ -12,7 +12,10 @@
+   padding_size="$((byte_pad * 2))"
+   hex_number="$(echo "obase=16;ibase=10;${number}"|bc)"
+   padded_hex_number="$(printf "%${padding_size}s" "${hex_number}" | tr ' ' 0)"
+-  little_endian_hex_number="$(echo "${padded_hex_number}" | rev | sed -e 's/\(.\)\(.\)/\2\1/g')"
++  little_endian_hex_number=""
++  for ((i = ${#padded_hex_number} - 2; i >= 0; i -= 2)); do
++    little_endian_hex_number+="${padded_hex_number:i:2}"
++  done
+   # bash regexes aren't cutting it so we go with sed
+   # shellcheck disable=SC2001
+   formatted_hex_number="$(echo "${little_endian_hex_number}" | sed -e 's/../\\x&/g')"

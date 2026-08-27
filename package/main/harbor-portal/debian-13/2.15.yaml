@@ -1,0 +1,128 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-harbor-portal
+variant: runtime
+tags:
+  - 2.15.2
+  - 2.15.2-r1
+  - 2.15.2-debian13
+  - 2.15.2-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-19"
+vars:
+  COMMIT_SHA: 080b0220574cc853ae1e2946ce7a5610ba855757
+  PACKAGE_NAME: harbor-portal-2.15
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.15"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.15.2
+  VERSION: 2.15.2
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: harbor-portal
+      work-dir: ${source.dir}/goharbor/harbor
+      caches:
+        - path: /root/.npm
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - python3-setuptools
+          - sed
+          - yq
+          - yarn-classic
+        files:
+          - url: git+https://github.com/goharbor/harbor.git#v2.15.2
+            checksum: 080b0220574cc853ae1e2946ce7a5610ba855757
+            path: ${source.dir}/goharbor/harbor
+            spdx:
+              name: harbor-portal
+              version: 2.15.2
+              packages:
+                - name: harbor-portal
+                  purl: pkg:github/goharbor/harbor@2.15.2#src/portal
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: copy swagger file
+          runs: |
+            set -eux -o pipefail
+
+            cp api/v2.0/swagger.yaml src/portal/swagger.yaml
+        - name: npm install
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install --unsafe-perm
+            npm run postinstall
+
+            npm run generate-build-timestamp
+        - name: build node portal
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          runs: |
+            set -eux -o pipefail
+
+            node --max_old_space_size=2048 'node_modules/@angular/cli/bin/ng' build --configuration production
+        - name: build node swagger
+          work-dir: ${source.dir}/goharbor/harbor/src/portal/app-swagger-ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install
+            npm run build
+        - name: build swagger
+          work-dir: ${source.dir}/goharbor/harbor/src/portal
+          runs: |
+            set -eux -o pipefail
+
+            yq . swagger.yaml > dist/swagger.json
+        - name: stage static assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/harbor-portal"
+            cp -a "${source.dir}/goharbor/harbor/src/portal/dist/." "${target.dir}/usr/share/harbor-portal/"
+            cp -a "${source.dir}/goharbor/harbor/src/portal/app-swagger-ui/dist/." "${target.dir}/usr/share/harbor-portal/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Harbor Portal web interface static assets
+            files:
+              - usr/share/harbor-portal
+            formats:
+              - deb
+            license: Apache-2.0
+            name: harbor-portal-2.15
+            rel: 1
+            url: https://goharbor.io/
+            version: 2.15.2
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,243 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Calico CNI 3.32.x
+image: dhi.io/calico-cni
+variant: runtime
+tags:
+  - "3"
+  - "3.32"
+  - 3.32.1
+  - v3.32.1
+  - 3-debian
+  - 3-debian13
+  - 3.32-debian
+  - 3.32-debian13
+  - 3.32.1-debian
+  - 3.32.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  CNI_PLUGINS_COMMIT_SHA: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+  CNI_PLUGINS_VERSION: v1.9.1
+  COMMIT_SHA: 0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+  SEMVER_MAJOR_MINOR_VERSION: "3.32"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.32.1
+  VERSION: 3.32.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: calico-cni
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.25
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.32.1
+            checksum: 0ca9d1b93644778cafdf1812f3dda02ac0c361e8
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico-cni
+              version: 3.32.1
+              packages:
+                - name: calico
+                  purl: pkg:golang/github.com/projectcalico/calico@v3.32.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (3.32 only)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            deps:
+              - golang.org/x/crypto@v0.54.0
+              - github.com/google/cel-go@v0.30.0
+              - github.com/klauspost/compress@v1.18.7
+              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - go.opentelemetry.io/otel@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+              - github.com/containernetworking/plugins@v1.9.0
+            download: true
+        - name: test calico cni
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test \
+              $(go list ./... | grep -v -E '(pkg/install|tests)')
+        - name: build calico install binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X 'main.VERSION=v3.32.1'
+            output: ${target.dir}/opt/cni/bin/install
+            packages: ./cmd/install
+        - name: build calico cni binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico/cni-plugin
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -X 'main.VERSION=v3.32.1'
+              - -X 'github.com/projectcalico/calico/pkg/buildinfo.Version=v3.32.1'
+            output: ${target.dir}/opt/cni/bin/calico
+            packages: ./cmd/calico
+      outputs:
+        - source: ${target.dir}/opt/cni/bin/install
+          target: /opt/cni/bin/install
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/cni/bin/calico
+          target: /opt/cni/bin/calico
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/calico-cni
+          target: /opt/docker/sbom/calico-cni
+          uid: 0
+          gid: 0
+    - name: containernetworking-plugins
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.25
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/containernetworking/plugins.git#v1.9.1
+            checksum: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+            path: /go/src/github.com/containernetworking/plugins
+            spdx:
+              name: containernetworking-plugins
+              version: v1.9.1
+              packages:
+                - name: containernetworking-plugins
+                  purl: pkg:golang/github.com/containernetworking/plugins@v1.9.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: remove vendor directory
+          work-dir: /go/src/github.com/containernetworking/plugins
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf vendor
+        - name: download cni plugins dependencies (3.32 only)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            deps:
+              - golang.org/x/crypto@v0.54.0
+              - golang.org/x/net@v0.56.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: build ipam host-local plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/host-local
+            packages: ./plugins/ipam/host-local
+        - name: build main loopback plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/loopback
+            packages: ./plugins/main/loopback
+        - name: build meta portmap plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/portmap
+            packages: ./plugins/meta/portmap
+        - name: build meta tuning plugin
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containernetworking/plugins
+          with:
+            ldflags:
+              - -X 'github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1'
+            output: ${target.dir}/usr/local/bin/cni/bin/tuning
+            packages: ./plugins/meta/tuning
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cni/bin/host-local
+          target: /opt/cni/bin/host-local
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/loopback
+          target: /opt/cni/bin/loopback
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/portmap
+          target: /opt/cni/bin/portmap
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/cni/bin/tuning
+          target: /opt/cni/bin/tuning
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/containernetworking-plugins
+          target: /opt/docker/sbom/containernetworking-plugins
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /opt/cni/bin/calico-ipam
+    uid: 0
+    gid: 0
+    source: /opt/cni/bin/calico
+annotations:
+  org.opencontainers.image.description: A minimal Calico CNI image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /opt/cni/bin/install

@@ -1,0 +1,209 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Rundeck 6.x
+image: dhi.io/rundeck
+variant: runtime
+tags:
+  - "6"
+  - "6.1"
+  - 6.1.0
+  - 6-debian
+  - 6-debian13
+  - 6.1-debian
+  - 6.1-debian13
+  - 6.1.0-debian
+  - 6.1.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-03"
+vars:
+  COMMIT_SHA: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+  FLAVORED_SUFFIX: ""
+  SEMVER_MAJOR_MINOR_VERSION: "6.1"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.1.0
+  SUFFIX: ""
+  VERSION: 6.1.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - coreutils
+    - curl
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - gawk
+    - grep
+    - hostname
+    - libc6
+    - libstdc++6
+    - openssh-client
+    - remco
+    - sed
+    - tini
+    - tzdata
+    - unzip
+    - util-linux
+    - uuid-runtime
+  builds:
+    - name: rundeck
+      work-dir: ${source.dir}/rundeck
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - grep
+          - ca-certificates
+          - eclipse-temurin-21-jdk
+          - nodejs-24
+          - npm
+        files:
+          - url: git+https://github.com/rundeck/rundeck.git#660dce23aca2697e16e4590c5d84e3f70c5a2632
+            checksum: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+            path: ${source.dir}/rundeck
+            spdx:
+              name: rundeck
+              version: 6.1.0
+              packages:
+                - name: rundeck
+                  purl: pkg:github/rundeck/rundeck@6.1.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build war and ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export JAVA_HOME=/usr/lib/jvm/temurin-21
+            export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
+            export NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+            export CIRCLE_TAG=v6.1.0
+            export CI=true
+
+            node --version
+
+            find . -name .npmrc -exec sed -i \
+              -e '/@pagerduty:registry=/d' -e '/_authToken/d' {} +
+            find . -name package-lock.json -exec \
+              sed -i 's#https://npm.artifacts.pd-internal.com/npm/#https://registry.npmjs.org/#g' {} +
+
+            ./gradlew --no-daemon --stacktrace :rundeckapp:bootWar -x test
+        - name: install rundeck
+          runs: |
+            set -eux -o pipefail
+
+            war=$(find rundeckapp/build/libs -name 'rundeck-*.war' | sort -V | tail -1)
+            [ -n "$war" ] || {
+              echo "no rundeck war produced by the build" >&2
+              exit 1
+            }
+
+            app="${target.dir}/home/rundeck"
+            mkdir -p "$app/docker-lib" "$app/etc" "$app/container-plugins" \
+              "$app/libext" "$app/server/config" "$app/server/data" \
+              "$app/var/logs" "$app/user-assets" "${target.dir}/etc/remco"
+
+            export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
+            java -jar "$war" --installonly --basedir "$app"
+            cp "$war" "$app/rundeck.war"
+
+            cp -a docker/official/remco/. "${target.dir}/etc/remco/"
+            cp -a docker/official/lib/. "$app/docker-lib/"
+            cp -a docker/official/etc/. "$app/etc/"
+      outputs:
+        - source: ${target.dir}/home/rundeck
+          target: /home/rundeck
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/remco
+          target: /etc/remco
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/rundeck
+environment:
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  PATH: /usr/lib/jvm/temurin-21/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  RUNDECK_HOME: /home/rundeck
+paths:
+  - type: directory
+    path: /home/rundeck/server/data
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/var/logs
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/server/config
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/etc
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/libext
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/user-assets
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+annotations:
+  org.opencontainers.image.description: A minimal Rundeck image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - docker-lib/entry.sh
+ports:
+  - 4440/tcp

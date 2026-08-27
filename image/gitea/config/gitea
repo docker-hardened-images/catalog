@@ -1,0 +1,45 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Derived from go-gitea/gitea docker/rootless/usr/local/bin/gitea.
+# Adapted for DHI: the binary is installed by the gitea Hardened System
+# Package at /usr/bin/gitea instead of /app/gitea/gitea.
+
+GITEA="/usr/bin/gitea"
+WORK_DIR="/var/lib/gitea"
+APP_INI="/etc/gitea/app.ini"
+
+# gitea refuses to run as root; drop to git first so this wrapper also works
+# under `docker exec` in the dev variant, which defaults to root.
+if [ "$(id -u)" -eq 0 ]; then
+	if command -v gosu >/dev/null 2>&1; then
+		exec gosu git /usr/local/bin/gitea "$@"
+	fi
+	exec setpriv --reuid=1000 --regid=1000 --clear-groups /usr/local/bin/gitea "$@"
+fi
+
+APP_INI_SET=""
+for i in "$@"; do
+	case "$i" in
+	"-c")
+		APP_INI_SET=1
+		;;
+	"-c="*)
+		APP_INI_SET=1
+		;;
+	"--config")
+		APP_INI_SET=1
+		;;
+	"--config="*)
+		APP_INI_SET=1
+		;;
+	*)
+	;;
+	esac
+done
+
+if [ -z "$APP_INI_SET" ]; then
+	CONF_ARG=("-c" "${GITEA_APP_INI:-$APP_INI}")
+fi
+
+# Provide docker defaults
+GITEA_WORK_DIR="${GITEA_WORK_DIR:-$WORK_DIR}" exec -a "$0" "$GITEA" "${CONF_ARG[@]}" "$@"

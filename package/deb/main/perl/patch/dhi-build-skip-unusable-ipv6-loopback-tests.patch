@@ -1,0 +1,152 @@
+Origin: DHI-internal (DHI build harness)
+Description: Skip IPv6 loopback tests when the builder cannot connect to ::1.
+ The DHI BuildKit environment can allow IPv6 bind probes while timing out on
+ actual local ::1 connects. These upstream tests otherwise hang for the OS
+ connect timeout. Keep the tests active when a real IPv6 loopback connection
+ succeeds, and skip only when the build environment cannot support it.
+Forwarded: not-needed (DHI build environment workaround only)
+
+--- a/cpan/IO-Socket-IP/t/04local-client-v6.t
++++ b/cpan/IO-Socket-IP/t/04local-client-v6.t
+@@ -23,6 +23,29 @@
+    diag( "Testing with IN6ADDR_LOOPBACK=$IN6ADDR_LOOPBACK_HOST; this may be because of odd networking" );
+ }
+ my $IN6ADDR_LOOPBACK_HEX = unpack "H*", $IN6ADDR_LOOPBACK;
++
++sub ipv6_loopback_connects {
++   my $server = IO::Socket::IP->new(
++      Listen => 1,
++      LocalHost => "::1",
++      LocalPort => "0",
++      Type => Socket::SOCK_STREAM(),
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $client = IO::Socket::IP->new(
++      PeerHost => "::1",
++      PeerService => $server->sockport,
++      Type => Socket::SOCK_STREAM(),
++      Timeout => 5,
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $accepted = $server->accept or return 0;
++   return 1;
++}
++
++ipv6_loopback_connects() or plan skip_all => "Unable to connect to ::1";
+ 
+ # Unpack just ip6_addr and port because other fields might not match end to end
+ sub unpack_sockaddr_in6_addrport { 
+--- a/cpan/IO-Socket-IP/t/05local-server-v6.t
++++ b/cpan/IO-Socket-IP/t/05local-server-v6.t
+@@ -23,6 +23,29 @@
+    diag( "Testing with IN6ADDR_LOOPBACK=$IN6ADDR_LOOPBACK_HOST; this may be because of odd networking" );
+ }
+ my $IN6ADDR_LOOPBACK_HEX = unpack "H*", $IN6ADDR_LOOPBACK;
++
++sub ipv6_loopback_connects {
++   my $server = IO::Socket::IP->new(
++      Listen => 1,
++      LocalHost => "::1",
++      LocalPort => "0",
++      Type => Socket::SOCK_STREAM(),
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $client = IO::Socket::IP->new(
++      PeerHost => "::1",
++      PeerService => $server->sockport,
++      Type => Socket::SOCK_STREAM(),
++      Timeout => 5,
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $accepted = $server->accept or return 0;
++   return 1;
++}
++
++ipv6_loopback_connects() or plan skip_all => "Unable to connect to ::1";
+ 
+ # Unpack just ip6_addr and port because other fields might not match end to end
+ sub unpack_sockaddr_in6_addrport { 
+--- a/cpan/IO-Socket-IP/t/06local-cross-v6.t
++++ b/cpan/IO-Socket-IP/t/06local-cross-v6.t
+@@ -9,6 +9,29 @@
+ 
+ eval { IO::Socket::IP->new( LocalHost => "::1" ) } or
+    plan skip_all => "Unable to bind to ::1";
++
++sub ipv6_loopback_connects {
++   my $server = IO::Socket::IP->new(
++      Listen => 1,
++      LocalHost => "::1",
++      LocalPort => "0",
++      Type => Socket::SOCK_STREAM(),
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $client = IO::Socket::IP->new(
++      PeerHost => "::1",
++      PeerService => $server->sockport,
++      Type => Socket::SOCK_STREAM(),
++      Timeout => 5,
++      GetAddrInfoFlags => 0,
++   ) or return 0;
++
++   my $accepted = $server->accept or return 0;
++   return 1;
++}
++
++ipv6_loopback_connects() or plan skip_all => "Unable to connect to ::1";
+ 
+ foreach my $socktype (qw( SOCK_STREAM SOCK_DGRAM )) {
+    my $testserver = IO::Socket::IP->new(
+--- a/cpan/libnet/t/nntp_ipv6.t
++++ b/cpan/libnet/t/nntp_ipv6.t
+@@ -40,6 +40,13 @@
+ my $port = $srv->sockport;
+ note("server on $host port $port");
+ 
++my $probe = $inet6class->new(PeerAddr => $host, PeerPort => $port, Timeout => 5);
++plan skip_all => "Unable to connect to ::1" if ! $probe;
++my $probe_server = $srv->accept;
++plan skip_all => "Unable to accept connection on ::1" if ! $probe_server;
++$probe->close;
++$probe_server->close;
++
+ plan tests => 1;
+ 
+ defined( my $pid = fork()) or die "fork failed: $!";
+--- a/cpan/libnet/t/pop3_ipv6.t
++++ b/cpan/libnet/t/pop3_ipv6.t
+@@ -39,6 +39,13 @@
+ my $saddr = "[".$srv->sockhost."]".':'.$srv->sockport;
+ note("server on $saddr");
+ 
++my $probe = $inet6class->new(PeerAddr => $srv->sockhost, PeerPort => $srv->sockport, Timeout => 5);
++plan skip_all => "Unable to connect to ::1" if ! $probe;
++my $probe_server = $srv->accept;
++plan skip_all => "Unable to accept connection on ::1" if ! $probe_server;
++$probe->close;
++$probe_server->close;
++
+ plan tests => 1;
+ 
+ defined( my $pid = fork()) or die "fork failed: $!";
+--- a/cpan/libnet/t/smtp_ipv6.t
++++ b/cpan/libnet/t/smtp_ipv6.t
+@@ -39,6 +39,13 @@
+ my $saddr = "[".$srv->sockhost."]".':'.$srv->sockport;
+ note("server on $saddr");
+ 
++my $probe = $inet6class->new(PeerAddr => $srv->sockhost, PeerPort => $srv->sockport, Timeout => 5);
++plan skip_all => "Unable to connect to ::1" if ! $probe;
++my $probe_server = $srv->accept;
++plan skip_all => "Unable to accept connection on ::1" if ! $probe_server;
++$probe->close;
++$probe_server->close;
++
+ plan tests => 1;
+ 
+ defined( my $pid = fork()) or die "fork failed: $!";

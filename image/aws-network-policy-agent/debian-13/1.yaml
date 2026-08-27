@@ -1,0 +1,187 @@
+# syntax=dhi.io/build:2-debian13
+
+name: AWS Network Policy Agent 1.x
+image: dhi.io/aws-network-policy-agent
+variant: runtime
+tags:
+  - "1"
+  - "1.4"
+  - 1.4.1
+  - 1-debian
+  - 1-debian13
+  - 1.4-debian
+  - 1.4-debian13
+  - 1.4.1-debian
+  - 1.4.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-19"
+vars:
+  COMMIT_SHA: 3816fa4e3a6ac477c7ae19d043342c15daffaa8d
+  FLAVORED_SUFFIX: ""
+  SEMVER_MAJOR_MINOR_VERSION: "1.4"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.4.1
+  SUFFIX: ""
+  VERSION: 1.4.1-3
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - aws-network-policy-agent-cli=1.4.1-3
+    - aws-network-policy-agent-cliv6=1.4.1-3
+    - aws-network-policy-agent=1.4.1-3
+    - base-files
+    - ca-certificates-bundle
+    - libc6
+    - tzdata
+  builds:
+    - name: ebpf-objects
+      work-dir: /go/src/github.com/aws/aws-network-policy-agent
+      contents:
+        packages:
+          - bpftool
+          - clang
+          - libbpf-dev
+          - llvm
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - tar
+          - xz-utils
+        files:
+          - url: git+https://github.com/aws/aws-network-policy-agent.git#v1.4.1
+            checksum: 3816fa4e3a6ac477c7ae19d043342c15daffaa8d
+            path: /go/src/github.com/aws/aws-network-policy-agent
+            spdx:
+              name: aws-network-policy-agent
+              version: 1.4.1
+              packages:
+                - name: aws-network-policy-agent
+                  purl: pkg:golang/github.com/aws/aws-network-policy-agent@1.4.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: generate vmlinux.h
+          runs: |
+            set -eux -o pipefail
+
+            case "$(uname -m)" in
+              x86_64) BTF_ARCHIVE="${source.dir}/vmlinux-amd64.btf.tar.xz" ;;
+              aarch64) BTF_ARCHIVE="${source.dir}/vmlinux-arm64.btf.tar.xz" ;;
+              *)
+                echo "unsupported architecture for ebpf-objects build: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+
+            tar -xJf "$BTF_ARCHIVE" -C /tmp
+            BTF_FILE="$(find /tmp -maxdepth 1 -name '*.btf' -print -quit)"
+            bpftool btf dump file "$BTF_FILE" format c > pkg/ebpf/c/vmlinux.h
+        - name: build BPF programs
+          runs: |
+            set -eux -o pipefail
+
+            ARCH=$(uname -m | sed 's/x86_64/amd64/g; s/aarch64/arm64/g')
+            EBPF_DIR=./pkg/ebpf/c
+            CLANG_INCLUDE="-I../../."
+            CLANG_FLAGS="${CLANG_INCLUDE} -g -O2 -Wall -fpie -target bpf -DCORE -D__BPF_TRACING__"
+
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v4events.bpf.c -o ${EBPF_DIR}/v4events.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_x86 -c ${EBPF_DIR}/v6events.bpf.c -o ${EBPF_DIR}/v6events.bpf.o
+
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4ingress.bpf.c -o ${EBPF_DIR}/tc.v4ingress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4egress.bpf.c -o ${EBPF_DIR}/tc.v4egress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6ingress.bpf.c -o ${EBPF_DIR}/tc.v6ingress.bpf.o
+            clang ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6egress.bpf.c -o ${EBPF_DIR}/tc.v6egress.bpf.o
+      paths:
+        - type: file
+          path: ${source.dir}/vmlinux-amd64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: image/aws-network-policy-agent/bpf/vmlinux-amd64.btf.tar.xz
+        - type: file
+          path: ${source.dir}/vmlinux-arm64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: image/aws-network-policy-agent/bpf/vmlinux-arm64.btf.tar.xz
+      outputs:
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/tc.v4ingress.bpf.o
+          target: /tc.v4ingress.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/tc.v4egress.bpf.o
+          target: /tc.v4egress.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/tc.v6ingress.bpf.o
+          target: /tc.v6ingress.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/tc.v6egress.bpf.o
+          target: /tc.v6egress.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/v4events.bpf.o
+          target: /v4events.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+        - source: /go/src/github.com/aws/aws-network-policy-agent/pkg/ebpf/c/v6events.bpf.o
+          target: /v6events.bpf.o
+          uid: 0
+          gid: 0
+          mode: "0644"
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /controller
+    uid: 0
+    gid: 0
+    source: /usr/bin/aws-network-policy-agent
+  - type: symlink
+    path: /aws-eks-na-cli
+    uid: 0
+    gid: 0
+    source: /usr/bin/cli
+  - type: symlink
+    path: /aws-eks-na-cli-v6
+    uid: 0
+    gid: 0
+    source: /usr/bin/cliv6
+annotations:
+  org.opencontainers.image.description: A minimal AWS Network Policy Agent image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /controller

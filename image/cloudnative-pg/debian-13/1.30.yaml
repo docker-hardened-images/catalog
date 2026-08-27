@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-debian13
+
+name: CloudNativePG 1.30.x
+image: dhi.io/cloudnative-pg
+variant: runtime
+tags:
+  - "1"
+  - "1.30"
+  - 1.30.0
+  - 1-debian
+  - 1-debian13
+  - 1.30-debian
+  - 1.30-debian13
+  - 1.30.0-debian
+  - 1.30.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-29"
+  end-of-life: "2026-09-30"
+vars:
+  COMMIT_SHA: 4b5e244a7d031f67e025c83c1555e7726ecbbfa1
+  SEMVER_MAJOR_MINOR_VERSION: "1.30"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.30.0
+  VERSION: 1.30.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: cloudnative-pg
+      work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - make
+          - ca-certificates-bundle
+          - golang-1.26
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/cloudnative-pg/cloudnative-pg.git#v1.30.0
+            checksum: 4b5e244a7d031f67e025c83c1555e7726ecbbfa1
+            path: /go/src/github.com/cloudnative-pg/cloudnative-pg
+            spdx:
+              name: cloudnative-pg
+              version: 1.30.0
+              packages:
+                - name: cloudnative-pg
+                  purl: pkg:golang/github.com/cloudnative-pg/cloudnative-pg@1.30.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.30 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/text@v0.39.0
+              - github.com/moby/spdystream@v0.5.1
+              - google.golang.org/grpc@v1.82.1
+            tidy: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # The pkg/management/postgres Ginkgo suite panics inside barman-cloud
+            # backup command setup under this build environment.
+            go test ./pkg/... -count=1 -timeout 10m -skip '^TestPostgres$'
+        - name: create operator directory
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/operator
+        - name: build manager for amd64
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            extra-env: GOOS=linux GOARCH=amd64
+            ldflags:
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=1.30.0
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit=4b5e244a7d031f67e025c83c1555e7726ecbbfa1
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
+            output: ${target.dir}/operator/manager_amd64
+            packages: ./cmd/manager
+        - name: build manager for arm64
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            extra-env: GOOS=linux GOARCH=arm64
+            ldflags:
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=1.30.0
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit=4b5e244a7d031f67e025c83c1555e7726ecbbfa1
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
+            output: ${target.dir}/operator/manager_arm64
+            packages: ./cmd/manager
+      outputs:
+        - source: ${target.dir}/operator
+          target: /operator
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/cloudnative-pg
+          target: /opt/docker/sbom/cloudnative-pg
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /manager
+    uid: 0
+    gid: 0
+    source: /operator/manager_${target.arch}
+annotations:
+  org.opencontainers.image.description: A minimal CloudNativePG operator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /manager

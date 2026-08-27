@@ -1,0 +1,36 @@
+Subject: Fix ambiguous fmt::format_to() call under GCC 14 in util/ip_address.h
+Filename: dhi-fmt-ambiguous-format-to.patch
+DHI definition: package/main/opentelemetry-ebpf-reducer/debian-13/0.yaml (patch@v1)
+
+Not an upstream-known issue (v0.11.0 was never built with GCC 14) and not
+tied to a public upstream bug report - found and fixed during DHI packaging.
+The fmt::formatter<IPv6Address>::format() specialization calls an unqualified
+format_to() that bundled fmt v9 (vendored via spdlog, see
+https://github.com/gabime/spdlog/tree/master/include/spdlog/fmt/bundled)
+resolves ambiguously under our GCC 14 toolchain (two overloads match equally
+well). Worked around with a plain std::copy, since the call's only job is
+copying a pre-computed string into the output iterator.
+
+DHI PR: https://github.com/docker-hardened-images/definitions-external/pull/623
+
+diff --git a/util/ip_address.h b/util/ip_address.h
+--- a/util/ip_address.h
++++ b/util/ip_address.h
+@@ -14,6 +14,7 @@
+
+ #include <spdlog/fmt/fmt.h>
+
++#include <algorithm>
+ #include <array>
+ #include <iostream>
+ #include <netinet/in.h>
+@@ -116,7 +117,8 @@
+
+   template <typename FormatContext> auto format(const IPv6Address &p, FormatContext &ctx)
+   {
+-    return format_to(ctx.out(), "{}", p.str());
++    auto s = p.str();
++    return std::copy(s.begin(), s.end(), ctx.out());
+   }
+ };
+ } // namespace fmt

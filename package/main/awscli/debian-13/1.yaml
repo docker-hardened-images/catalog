@@ -1,0 +1,131 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-awscli
+variant: runtime
+tags:
+  - 1.46.0
+  - 1.46.0-r0
+  - 1.46.0-debian13
+  - 1.46.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 8233a63cd1e50e8c36da109bb624cb832942a32b
+  PACKAGE_NAME: awscli-1
+  PYTHON_VERSION: 3.13.15-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.46"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.46.0
+  VERSION: 1.46.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: awscli
+      work-dir: ${source.dir}
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - ca-certificates
+          - coreutils
+          - unzip
+          - python-3.13=3.13.15-0
+          - python-3.13-dev=3.13.15-0
+          - python3.13-venv
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - bash
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - sed
+          - build-essential
+        files:
+          - url: https://s3.amazonaws.com/aws-cli/awscli-bundle-1.46.0.zip
+            path: ${source.dir}/awscli.zip
+            spdx:
+              name: awscli
+              version: 1.46.0
+              packages:
+                - name: awscli
+                  purl: pkg:dhi/awscli@1.46.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare python for bundle installer
+          runs: |
+            set -eux -o pipefail
+
+            ln -sf "$(command -v python3.13)" /usr/bin/python
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            unzip -q awscli.zip
+            ./awscli-bundle/install -i "${target.dir}/usr/lib/awscli-1"
+            ln -sf /usr/bin/python3.13 "${target.dir}/usr/lib/awscli-1/bin/python"
+        - name: bump
+          work-dir: ${target.dir}/usr/lib/awscli-1
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/lib/awscli-1/bin/python -m pip install --upgrade 'pyasn1>=0.6.2' 'urllib3>=2.6.3'
+        - name: cleanup dependencies
+          work-dir: ${target.dir}/usr/lib/awscli-1
+          runs: |
+            set -eux -o pipefail
+
+            ${target.dir}/usr/lib/awscli-1/bin/python -m pip uninstall -y setuptools setuptools-scm wheel
+        - name: fix paths
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s|${target.dir}/usr/lib/awscli-1/bin/python|/usr/lib/awscli-1/bin/python|g" \
+              "${target.dir}/usr/lib/awscli-1/bin/aws"
+        - name: add usr/bin/aws symlink
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -sf "../lib/awscli-1/bin/aws" "${target.dir}/usr/bin/aws"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.13
+              - groff-base
+              - less
+              - libffi8
+              - ncurses-base
+              - ncurses-bin
+              - zlib1g
+              - libstdc++6
+            description: Unified Amazon Web Services command line interface (v1)
+            files:
+              - usr/lib/awscli-1
+              - usr/bin/aws
+            formats:
+              - deb
+            license: Apache-2.0
+            name: awscli-1
+            rel: 0
+            url: https://aws.amazon.com/cli/
+            version: 1.46.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

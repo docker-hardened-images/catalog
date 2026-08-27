@@ -1,0 +1,90 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Valkey Helm chart 0.x
+image: dhi.io/valkey-chart
+variant: helm
+tags:
+  - 0.11.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: dbcf6a6093cab69ef174ed0c1bb679ba92d0bf2d
+  CHART_HELM_NAME: valkey-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_VERSION: 4.1.4-2
+  REDIS_EXPORTER_REFERENCE: dhi/redis-exporter:1.89.0-debian13@sha256:c330d0457285747933a33094af5e5cabddf96548197a67b4a5610cd6f985505c
+  SEMVER_MAJOR_MINOR_VERSION: "0.11"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.11.0
+  VALKEY_REFERENCE: dhi/valkey:9.1.1-debian13@sha256:49e9541e9c1e84d528cbd29eef54c98db96dc237d794e2d6d984c20acaf91569
+  VERSION: 0.11.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: valkey
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/valkey-io/valkey-helm.git#valkey-0.11.0
+            checksum: dbcf6a6093cab69ef174ed0c1bb679ba92d0bf2d
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/valkey
+          with:
+            chart:
+              appRef: valkey
+              description: Docker Hardened Images Helm chart for Valkey
+              images:
+                - name: valkey
+                  ref: dhi/valkey:9.1.1-debian13@sha256:49e9541e9c1e84d528cbd29eef54c98db96dc237d794e2d6d984c20acaf91569
+                - name: redis-exporter
+                  ref: dhi/redis-exporter:1.89.0-debian13@sha256:c330d0457285747933a33094af5e5cabddf96548197a67b4a5610cd6f985505c
+              name: valkey-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/valkey-io/valkey-helm
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/valkey
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          with:
+            chart: ${source.dir}/helm-charts/valkey
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts
+          with:
+            chart: valkey
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: ${source.dir}/helm-charts/valkey
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/valkey/config

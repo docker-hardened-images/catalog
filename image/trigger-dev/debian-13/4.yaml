@@ -1,0 +1,431 @@
+# syntax=dhi.io/build:2-debian13
+
+name: trigger.dev 4.x
+image: dhi.io/trigger-dev
+variant: runtime
+tags:
+  - "4"
+  - "4.5"
+  - 4.5.12
+  - 4-debian
+  - 4-debian13
+  - 4.5-debian
+  - 4.5-debian13
+  - 4.5.12-debian
+  - 4.5.12-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-04"
+vars:
+  COMMIT_SHA: ce40d0259fead12ac2bad8fc6f8ca574b221228a
+  GOLANG_REFERENCE: dhi/golang:1.26.7-debian13-dev@sha256:9b6a8e0bd0b59b7f4d32920da7be6dca232ebbcc52c2413b90901772f640758b
+  GOOSE_COMMIT_SHA: 520411a16119bd3b332613d1ff8312c4cc249673
+  GOOSE_VERSION: 3.27.3
+  SEMVER_MAJOR_MINOR_VERSION: "4.5"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.5.12
+  VERSION: 4.5.12
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - dash
+    - dumb-init
+    - grep
+    - libc6
+    - libgomp1
+    - libstdc++6
+    - netbase
+    - netcat-openbsd
+    - nodejs-24
+    - sed
+    - tzdata
+  builds:
+    - name: goose
+      work-dir: /go/src/github.com/pressly/goose
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/pressly/goose.git#v3.27.3
+            checksum: 520411a16119bd3b332613d1ff8312c4cc249673
+            path: /go/src/github.com/pressly/goose
+            spdx:
+              name: goose
+              version: 3.27.3
+              packages:
+                - name: goose
+                  purl: pkg:golang/github.com/pressly/goose/v3@3.27.3
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - go.opentelemetry.io/otel@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags: -X main.version=3.27.3 -X main.gitCommit=520411a16119bd3b332613d1ff8312c4cc249673
+            output: ${target.dir}/usr/local/bin/goose
+            packages: ./cmd/goose
+      outputs:
+        - source: ${target.dir}/usr/local/bin/goose
+          target: /usr/local/bin/goose
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/goose
+          target: /opt/docker/sbom/goose
+          uid: 0
+          gid: 0
+    - name: trigger-dev
+      work-dir: /triggerdotdev
+      caches:
+        - path: /root/.local/share/pnpm/store
+      contents:
+        packages:
+          - base-files
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - g++
+          - gcc
+          - git
+          - libc6
+          - libstdc++6
+          - make
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - python3
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/triggerdotdev/trigger.dev.git#v4.5.12
+            checksum: ce40d0259fead12ac2bad8fc6f8ca574b221228a
+            path: /triggerdotdev
+            spdx:
+              name: trigger-dev
+              version: 4.5.12
+              packages:
+                - name: trigger-dev
+                  purl: pkg:dhi/trigger-dev@4.5.12
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@10.33.2 --activate
+
+            # CVE remediation: pin vulnerable transitive deps via pnpm.overrides.
+            # Mirrors the kyverno-policy-reporter-ui pattern. Each line lists the
+            # CVE count it clears (verified via `dhi def cves --vex` against
+            # v4.4.4 with the phantom-binary purge applied below). The track
+            # regex matches any v4.N.M, so this guard trips on a new upstream
+            # minor (e.g. v4.6.0) to force a conscious re-validation of these
+            # overrides against the new minor's lockfile before auto-bumping.
+            if [ "$(printf '%s\n%s' "4.5.12" '4.5.999' | sort -V | tail -1)" != '4.5.999' ]; then
+              echo "VERSION 4.5.12 exceeds reviewed baseline 4.5.x — re-validate the pnpm.overrides below before proceeding"
+              exit 1
+            fi
+
+            pnpm pkg set pnpm.overrides.tar=">=7.5.21"                 # 22 HIGH + 1 MEDIUM (GHSA-r292-9mhp-454m, fixed 7.5.21)
+            pnpm pkg set pnpm.overrides.minimatch=">=9.0.7"            # 12 HIGH (10.x breaks brace-expansion ESM/CJS compat)
+            pnpm pkg set pnpm.overrides.fast-xml-parser=">=5.5.6"      # 10 CRITICAL+HIGH
+            pnpm pkg set pnpm.overrides.effect=">=3.20.0"              # 5 HIGH
+            pnpm pkg set pnpm.overrides.next=">=15.5.15"               # 5 CRITICAL+HIGH (transitive only; webapp uses Remix)
+            pnpm pkg set pnpm.overrides.ws=">=8.20.1"                  # 3 HIGH + 1 MEDIUM (CVE-2026-45736)
+            pnpm pkg set pnpm.overrides.glob=">=11.1.0"                # 3 HIGH
+            pnpm pkg set pnpm.overrides.tar-fs=">=3.1.1"               # 2 HIGH (CVE-2025-23234)
+            pnpm pkg set pnpm.overrides.systeminformation=">=5.31.6"   # 2 HIGH + 1 HIGH (CVE-2026-44724)
+            pnpm pkg set pnpm.overrides.picomatch=">=4.0.4"            # 2 HIGH (CVE-2026-33671/2)
+            pnpm pkg set pnpm.overrides.jsonpath-plus=">=10.3.0"       # 2 CRITICAL+HIGH (CVE-2024-21534)
+            pnpm pkg set pnpm.overrides.flatted=">=3.4.2"              # 2 HIGH
+            pnpm pkg set pnpm.overrides.fastify=">=5.8.5"              # 2 HIGH
+            pnpm pkg set pnpm.overrides.cross-spawn=">=7.0.6"          # 2 HIGH (CVE-2024-21538)
+            pnpm pkg set pnpm.overrides.semver=">=7.5.4"               # 1 HIGH (CVE-2022-25883)
+            pnpm pkg set pnpm.overrides.lodash=">=4.18.0"              # 1 HIGH (Scout fix is 4.18.0, not 4.17.x)
+            pnpm pkg set pnpm.overrides.lodash-es=">=4.18.0"           # 1 HIGH
+            pnpm pkg set pnpm.overrides.hono=">=4.12.34"               # 1 HIGH + 3 MEDIUM (CVE-2026-59895/59896/59897, fixed 4.12.27), 1 MEDIUM (CVE-2026-69207 CORS ReDoS, fixed 4.12.34)
+            pnpm pkg set pnpm.overrides.express-rate-limit=">=8.2.2"   # 1 HIGH
+            pnpm pkg set pnpm.overrides.defu=">=6.1.5"                 # 1 HIGH
+            pnpm pkg set pnpm.overrides.crypto-js=">=4.2.0"            # 1 CRITICAL (GHSA-xwcq-pm8m-c4vf)
+            pnpm pkg set pnpm.overrides.basic-ftp=">=5.2.0"            # 1 CRITICAL
+            pnpm pkg set pnpm.overrides.axios=">=1.18.0"               # 1 HIGH (CVE-2026-42264 prototype pollution), 1 MEDIUM (CVE-2026-42044); >=1.18.0 also clears GHSA-gcfj-64vw-6mp9 + 9 MEDIUM (GHSA-hcpx/f4gw/xj6q/pmv8/mwf2/mmx7/jqh4/7q8q/42h9)
+            pnpm pkg set pnpm.overrides.cookie=">=0.7.2"               # 1 MEDIUM (CVE-2024-47764)
+            pnpm pkg set pnpm.overrides.serialize-javascript=">=7.0.5" # 1 HIGH (GHSA-5c6j-r48x-rmvq), 1 MEDIUM (CVE-2026-34043)
+            pnpm pkg set pnpm.overrides.fast-uri=">=3.1.4"             # 4 HIGH (CVE-2026-6321 path-traversal, CVE-2026-6322 interp-conflict, CVE-2026-13676, CVE-2026-16221; 3.1.4 fixes the latter two)
+            pnpm pkg set pnpm.overrides.fast-xml-builder=">=1.1.7"     # 1 HIGH (CVE-2026-44665 XXE), 1 MEDIUM (CVE-2026-44664 XPath inj)
+            pnpm pkg set pnpm.overrides.langsmith=">=0.6.0"            # 1 HIGH (CVE-2026-45134), 2 MEDIUM (CVE-2026-40190, CVE-2026-41182)
+            pnpm pkg set pnpm.overrides.tmp=">=0.2.6 <0.2.7"           # 2 HIGH (CVE-2026-44705), 1 LOW (CVE-2025-54798); avoid 0.2.7 minimumReleaseAge
+            pnpm pkg set pnpm.overrides.js-cookie=">=3.0.7"            # 1 HIGH (CVE-2026-46625)
+            pnpm pkg set pnpm.overrides.tough-cookie=">=4.1.3"         # 1 MEDIUM (CVE-2023-26136)
+            pnpm pkg set pnpm.overrides.ajv=">=8.18.0"                 # 1 MEDIUM (CVE-2025-69873)
+            pnpm pkg set pnpm.overrides.jsondiffpatch=">=0.7.2"        # 1 MEDIUM (CVE-2025-9910)
+            pnpm pkg set pnpm.overrides.ip-address=">=10.3.1 <10.5.0"  # 1 MEDIUM (CVE-2026-42338), 1 HIGH (CVE-2026-69192, fixed 10.3.1) + 2 MEDIUM (CVE-2026-69198, CVE-2026-54272)
+            pnpm pkg set pnpm.overrides.qs=">=6.15.2"                  # 1 MEDIUM (CVE-2026-8723), 1 LOW (CVE-2026-2391)
+            pnpm pkg set pnpm.overrides.send=">=0.19.0"                # 1 LOW (CVE-2024-43799)
+            pnpm pkg set pnpm.overrides.ai=">=5.0.52"                  # 1 LOW (CVE-2025-48985)
+            pnpm pkg set pnpm.overrides.webpack=">=5.104.1"            # 1 MEDIUM (CVE-2024-43788), 2 LOW (CVE-2025-68157/68458)
+            pnpm pkg set pnpm.overrides.on-headers=">=1.1.0"           # 1 LOW (CVE-2025-7339)
+            pnpm pkg set pnpm.overrides.joi=">=18.2.1"                 # 1 MEDIUM (CVE-2026-48038)
+            pnpm pkg set pnpm.overrides.nodemailer=">=9.0.1"           # 1 HIGH + 2 MEDIUM (GHSA-p6gq-j5cr-w38f)
+            pnpm pkg set pnpm.overrides.tmp=">=0.2.7"                  # 1 HIGH (CVE-2026-49982)
+            pnpm pkg set pnpm.overrides.dompurify=">=3.4.11"           # 5 MEDIUM (GHSA-76mc-f452-cxcm, CVE-2026-49459, CVE-2026-49458, GHSA-cmwh-pvxp-8882, CVE-2026-49978)
+            pnpm pkg set pnpm.overrides.word-wrap=">=1.2.4"            # 1 MEDIUM (CVE-2023-26115)
+            pnpm pkg set pnpm.overrides.graphql=">=16.8.1"             # 1 MEDIUM (CVE-2023-26144)
+            pnpm pkg set pnpm.overrides.prismjs=">=1.30.0"             # 1 MEDIUM (CVE-2024-53382)
+            pnpm pkg set pnpm.overrides.morgan=">=1.11.0"              # 1 MEDIUM (CVE-2026-5078)
+
+            # NOTE: nanoid overrides use scoped selectors (nanoid@3.3.8, nanoid@5)
+            # because @trigger.dev/core pins `nanoid: "3.3.8"` exactly — broad
+            # >=5.0.9 breaks CJS (TS1479), and unscoped ^3/^5 selectors do not
+            # match an exact pin. A separate nanoid 5.0.6 resolution may still
+            # exist for CVE-2024-55565 (see vex/trigger-dev/nanoid.vex.json).
+            # mdast-util-to-hast: upstream has both 12.3.0 (used by remix-mdx,
+            # which imports the `all` export removed in 13.x) and 13.2.0 (the
+            # CVE-vulnerable one). Scope per-major via the jq block below so
+            # only the 13.x consumer gets the fix.
+            pnpm pkg set pnpm.overrides.mermaid=">=11.15.0" # 4 MEDIUM (CVE-2026-41148/41149/41150/41159)
+            # uuid: upstream's lockfile has 6 different majors (3/8/9/10/11/14).
+            # CVE-2026-41907 affects only 11.1.0; the fix is 11.1.1 in the same
+            # major. Scope per-major via the jq block below so we don't break
+            # callers pinning the older majors.
+            # NOTE: @octokit/* packages need scoped overrides via jq below due to
+            # major version bumps. postcss also needs per-major scoping.
+
+            # NOTE: brace-expansion is scoped to @5 in the jq block below.
+            # An unscoped pin to v1 breaks minimatch 10.x's named ESM imports,
+            # so only the 5.x consumer (CVE-2026-13149) is pinned to 5.0.7;
+            # the v1/v2/v4 resolutions used by other consumers are left intact.
+
+            # Names containing `/` (scoped), `.` (e.g. socket.io-parser), or
+            # version selectors (e.g. minimatch@^10) cannot use `pnpm pkg set`'s
+            # dot-path syntax — those characters are interpreted as path
+            # separators and produce malformed nested objects. Set those keys
+            # directly via jq.
+            # Scoped overrides handled below (jq doesn't support inline comments):
+            # - @opentelemetry/exporter-prometheus, @opentelemetry/sdk-node: 1 HIGH CVE-2026-44902 (both)
+            # - @babel/runtime: 1 MEDIUM CVE-2025-27789 across 7.20.7/7.22.5/7.24.5/7.26.7 (fix 7.26.10)
+            cat package.json | jq '
+              .pnpm.overrides["socket.io-parser"] = ">=4.2.7"                     |
+              .pnpm.overrides["minimatch@^10"] = ">=10.2.3"                       |
+              .pnpm.overrides["path-to-regexp@^0"] = "0.1.13"                     |
+              .pnpm.overrides["path-to-regexp@^1"] = "1.9.0"                      |
+              .pnpm.overrides["path-to-regexp@^6"] = "6.3.0"                      |
+              .pnpm.overrides["path-to-regexp@^8"] = "8.4.0"                      |
+              .pnpm.overrides["@remix-run/router"] = ">=1.23.2"                   |
+              .pnpm.overrides["@remix-run/react"] = ">=2.17.3"                    |
+              .pnpm.overrides["@remix-run/node"] = ">=2.17.2"                     |
+              .pnpm.overrides["@remix-run/server-runtime"] = ">=2.17.5"           |
+              .pnpm.overrides["react-router"] = "6.30.4"                          | # CVE-2026-53666/53669 (react-router) + CVE-2026-53668 (react-router-dom) fixed only in 7.18.0, a breaking major incompatible with the Remix v2 stack (@remix-run/router 1.x pins react-router 6.x). VEX under_investigation — see vex/trigger-dev/react-router.vex.json
+              .pnpm.overrides["@modelcontextprotocol/sdk"] = ">=1.26.0"           |
+              .pnpm.overrides["@hono/node-server"] = ">=1.19.10"                  |
+              .pnpm.overrides["@opentelemetry/exporter-prometheus"] = ">=0.217.0" |
+              .pnpm.overrides["@opentelemetry/sdk-node"] = ">=0.217.0"            |
+              .pnpm.overrides["@babel/runtime"] = ">=7.26.10"                     |
+              .pnpm.overrides["mdast-util-to-hast@^13"] = ">=13.2.1"              |
+              .pnpm.overrides["uuid@^9"] = ">=9.0.1"                              |
+              .pnpm.overrides["uuid@^11"] = ">=11.1.1"                            |
+              .pnpm.overrides["postcss@^6"] = ">=6.0.23"                          |
+              .pnpm.overrides["postcss@^7"] = ">=7.0.36"                          |
+              .pnpm.overrides["postcss@^8"] = ">=8.5.10"                          |
+              .pnpm.overrides["@octokit/endpoint"] = ">=10.1.3"                   |
+              .pnpm.overrides["@octokit/request-error"] = ">=6.1.7"               |
+              .pnpm.overrides["@hapi/wreck"] = ">=18.1.1"                         |
+              .pnpm.overrides["@grpc/grpc-js"] = ">=1.12.7"                       |
+              .pnpm.overrides["@smithy/config-resolver"] = ">=4.4.0"              |
+              .pnpm.overrides["form-data@^2"] = "2.5.6"                           | # 1 HIGH (CVE-2026-12143)
+              .pnpm.overrides["form-data@^3"] = "3.0.5"                           | # 1 HIGH (CVE-2026-12143)
+              .pnpm.overrides["form-data@^4"] = "4.0.6"                           | # 1 HIGH (CVE-2026-12143)
+              .pnpm.overrides["undici@7"] = "^7.28.0"                             | # 3 HIGH (CVE-2026-6734, CVE-2026-12151, CVE-2026-9697)
+              .pnpm.overrides["undici@>=5 <7"] = "^6.28.0"                        | # 4 HIGH (CVE-2026-2229, CVE-2026-1526, CVE-2026-12151, CVE-2026-12151), 3 MEDIUM (CVE-2026-16728, CVE-2026-16729, CVE-2026-15157 fixed 6.28.0)
+              .pnpm.overrides["protobufjs@7"] = "7.6.5"                           | # 1 CRITICAL, 4 HIGH (CVE-2026-44289/44290/44291/44293), CVE-2026-59877, CVE-2026-54269; scoped @7 + exact value so pnpm does not resolve >= to the 8.x major
+              .pnpm.overrides["engine.io@6"] = "6.6.7"                            | # 1 HIGH (CVE-2026-59725)
+              .pnpm.overrides["brace-expansion@5"] = "5.0.9"                      | # 3 HIGH (CVE-2026-13149, CVE-2026-14257 fixed 5.0.8, CVE-2026-69152 fixed 5.0.9); scoped so minimatch 10.x ESM imports keep their v1/v2/v4 resolutions
+              .pnpm.overrides["@opentelemetry/core@2"] = "2.8.0"                  | # 1 MEDIUM (CVE-2026-54285); 1.x consumer left to VEX (fix is major-only, high risk)
+              .pnpm.overrides["body-parser@2"] = "2.3.0"                          | # 1 LOW CVE-2026-12590, v2 line fixed 2.3.0. The v1 line 1.20.3 is pinned exactly by express 4.x and is not overridable via a pnpm version selector: neither a scoped @1 range nor an exact @1.20.3 selector matches an exact express pin, same limitation documented for nanoid/js-yaml above. Left to VEX; CVE-2026-12590 is LOW; see vex/trigger-dev/body-parser.vex.json
+              .pnpm.overrides["js-yaml@3"] = "3.15.1"                             | # GHSA-5p4m-2wfm-xmqj (fixed 3.15.1); exact-version value (range values are not applied by the pnpm version selector — see js-yaml note)
+              .pnpm.overrides["js-yaml@4"] = "4.3.1"                              | # GHSA-5p4m-2wfm-xmqj (fixed 4.3.1); supersedes prior 4.3.0 pin
+              .pnpm.overrides["nanoid@3.3.8"] = "3.3.18"                         | # CVE-2026-67213/67214 (@trigger.dev/core exact pin; scoped selector matches literal 3.3.8)
+              .pnpm.overrides["nanoid@5"] = "5.1.16"                             | # CVE-2026-67213/67214 (5.x transitive consumer; 5.1.16 clears both)
+              .pnpm.overrides["@jsonhero/json-infer-types>ip-address"] = ">=10.3.1 <10.5.0"  # 1 HIGH (CVE-2026-69192), 2 MEDIUM (CVE-2026-69198, CVE-2026-54272); upstream pins this parent>child selector to ^10.2.0, which outranks the bare ip-address override
+            ' > package.json.tmp && mv package.json.tmp package.json
+            # NOTE: @conform-to/{dom,zod} CVE-2024-32866 left unfixed —
+            # bumping to 1.1.1 (Scout's suggested fix) drops the legacy
+            # `parse` export that trigger.dev's webapp imports. VEX target.
+
+            # Update the lockfile with new overrides, so the existing sha pins
+            # for dependencies that haven't been explicitly overridden are maintained
+            pnpm install --lockfile-only --ignore-scripts
+
+            # Install dependencies
+            pnpm install --frozen-lockfile --ignore-scripts
+            pnpx prisma@6.14.0 generate --schema internal-packages/database/prisma/schema.prisma
+            pnpx prisma@6.14.0 generate --schema internal-packages/run-ops-database/prisma/schema.prisma
+        - name: build webapp
+          runs: |
+            set -eux -o pipefail
+
+            # Sentry sourcemap upload no-ops without SENTRY_AUTH_TOKEN; we then
+            # delete the .map files that upstream's upload path would itself
+            # delete after a successful upload.
+            pnpm run build --filter=webapp...
+            rm -rf apps/webapp/build/*.map
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules apps/*/node_modules internal-packages/*/node_modules packages/*/node_modules
+            corepack enable
+            corepack prepare pnpm@10.23.0 --activate
+            pnpm install --prod --no-frozen-lockfile
+
+            # Phantom-binary purge — same pattern kyverno-policy-reporter-ui uses
+            # for esbuild. These npm packages ship platform-specific compiled
+            # binaries (Go/Rust) that surface as pkg:golang/* CVEs in the SBOM
+            # even though they're never invoked at runtime:
+            #
+            # - @esbuild/<platform> and esbuild  -> bundled Go binary, build tool only
+            # - @swc/core-<platform>             -> bundled Rust binary, build tool only
+            # - @sentry/cli, @sentry+cli-<arch>  -> bundled Go binary; we no-op the
+            #                                       sourcemap upload (no SENTRY_AUTH_TOKEN)
+            # - @depot/cli's <platform> binaries -> only used by Trigger.dev cloud's
+            #                                       deploy path; the webapp imports
+            #                                       the JS shim but self-hosted
+            #                                       instances never invoke the binary
+            # - @typescript/typescript-<platform> -> native tsc binary (Go-compiled);
+            #                                       build-time only; surfaces as
+            #                                       phantom pkg:golang/stdlib CVEs in SBOM
+            #
+            # Each find matches both the workspace symlink view (e.g.
+            # node_modules/@esbuild/<platform>) AND pnpm's content-addressable
+            # store (e.g. node_modules/.pnpm/@esbuild+<platform>@<ver>) — the
+            # latter is where the actual binary lives in pnpm-installed trees.
+            find node_modules -type d \( -name 'esbuild' -o -name 'esbuild@*' \) -exec rm -rf {} + 2> /dev/null || true
+            find node_modules -type d \( -name '@esbuild' -o -name '@esbuild+*' \) -exec rm -rf {} + 2> /dev/null || true
+            # Remove @swc/core platform binaries (Rust-compiled) but keep
+            # @swc/helpers (pure JS, needed transitively by @react-aria).
+            find node_modules/.pnpm -maxdepth 1 -type d \( -name '@swc+core@*' -o -name '@swc+core-*' \) -exec rm -rf {} + 2> /dev/null || true
+            rm -rf node_modules/@swc/core node_modules/.pnpm/node_modules/@swc/core 2> /dev/null || true
+            find node_modules -type d -name '@next+swc-*' -exec rm -rf {} + 2> /dev/null || true
+            find node_modules -type d \( -name '@sentry+cli*' \) -exec rm -rf {} + 2> /dev/null || true
+            rm -rf node_modules/@sentry/cli 2> /dev/null || true
+            # @depot/cli's <platform> packages ship the Go binary; we also
+            # need to remove bin/depot from the main @depot/cli package
+            # itself (where install.js downloads it post-install). Keep the
+            # JS shim (webapp imports @depot/cli at module init) and
+            # @depot/sdk-node (JS-only — webapp imports it too).
+            find node_modules/.pnpm -maxdepth 1 -type d -name '@depot+cli-*' -exec rm -rf {} + 2> /dev/null || true
+            find node_modules -path '*/@depot/cli/bin/depot' -type f -exec rm -f {} + 2> /dev/null || true
+            find node_modules/.pnpm -maxdepth 1 -type d -name '@typescript+typescript-*' -exec rm -rf {} + 2> /dev/null || true
+        - name: dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: trigger-dev-deps
+            source: /triggerdotdev/node_modules
+        - name: copy app files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/triggerdotdev"
+            cp -a node_modules "${target.dir}/triggerdotdev/"
+            cp -a apps "${target.dir}/triggerdotdev/"
+            cp -a internal-packages "${target.dir}/triggerdotdev/"
+            cp -a packages "${target.dir}/triggerdotdev/"
+            cp package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json "${target.dir}/triggerdotdev/"
+            if [ -d patches ]; then cp -a patches "${target.dir}/triggerdotdev/"; fi
+
+            # The build container runs as root, so cp -a preserves 0:0 on the
+            # entire tree. The runtime user is nonroot (65532), and the
+            # entrypoint writes to apps/webapp/prisma at startup; flip the tree
+            # over so the runtime user owns it.
+            chown -R 65532:65532 "${target.dir}/triggerdotdev"
+      outputs:
+        - source: ${target.dir}/triggerdotdev
+          target: /triggerdotdev
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/trigger-dev
+          target: /opt/docker/sbom/trigger-dev
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/trigger-dev-deps
+          target: /opt/docker/sbom/trigger-dev-deps
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /triggerdotdev
+environment:
+  BUILD_APP_VERSION: v4.5.12
+  NODE_ENV: production
+  TZ: UTC
+paths:
+  - type: directory
+    path: /triggerdotdev
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /triggerdotdev/scripts/entrypoint.sh
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+    source: image/trigger-dev/scripts/entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Trigger.dev image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/dumb-init
+cmd:
+  - /triggerdotdev/scripts/entrypoint.sh
+ports:
+  - 3000/tcp

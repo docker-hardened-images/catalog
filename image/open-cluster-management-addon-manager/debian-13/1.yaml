@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Open Cluster Management Addon Manager 1.x
+image: dhi.io/open-cluster-management-addon-manager
+variant: runtime
+tags:
+  - "1"
+  - "1.3"
+  - 1.3.1
+  - 1-debian
+  - 1-debian13
+  - 1.3-debian
+  - 1.3-debian13
+  - 1.3.1-debian
+  - 1.3.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-30"
+vars:
+  COMMIT_SHA: 805fa6103d8bc1761dbc9cb4e420def42703ec53
+  SEMVER_MAJOR_MINOR_VERSION: "1.3"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.3.1
+  VERSION: 1.3.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: addon
+      work-dir: /go/src/github.com/open-cluster-management-io/ocm
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/open-cluster-management-io/ocm.git#v1.3.1
+            checksum: 805fa6103d8bc1761dbc9cb4e420def42703ec53
+            path: /go/src/github.com/open-cluster-management-io/ocm
+            spdx:
+              name: open-cluster-management-addon-manager
+              version: 1.3.1
+              packages:
+                - name: ocm
+                  purl: pkg:golang/github.com/open-cluster-management-io/ocm@1.3.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: remove vendor directory
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf vendor
+        - name: patch
+          uses: go/bump@v2
+          privileged: true
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - golang.org/x/text@v0.39.0
+              - github.com/google/cel-go@v0.30.0
+              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+              - helm.sh/helm/v3@v3.20.2
+            download: true
+        - name: re-vendor
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # install integration test deps
+            go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+            source <($(go env GOPATH)/bin/setup-envtest use 1.31 -p env)
+
+            # Skip tests that become unstable with the bumped Kubernetes deps:
+            # TestRunController assumes a connection-refused path, and
+            # TestStopUnusedManagers can hang waiting for fake informer cache sync.
+            CGO_ENABLED=0 go test ./cmd/addon/... ./pkg/addon/... -skip "^(TestRunController|TestStopUnusedManagers)$"
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X open-cluster-management.io/ocm/pkg/version.versionFromGit=1.3.1
+              - -X open-cluster-management.io/ocm/pkg/version.commitFromGit=805fa6103d8bc1761dbc9cb4e420def42703ec53
+            output: ${target.dir}/usr/local/bin/addon
+            packages: ./cmd/addon
+      outputs:
+        - source: ${target.dir}/usr/local/bin/addon
+          target: /usr/local/bin/addon
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/open-cluster-management-addon-manager
+          target: /opt/docker/sbom/open-cluster-management-addon-manager
+          uid: 0
+          gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /addon
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/addon
+annotations:
+  org.opencontainers.image.description: A minimal Open Cluster Management Addon Manager image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /addon
+  - manager

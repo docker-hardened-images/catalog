@@ -1,0 +1,118 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-cosign
+variant: runtime
+tags:
+  - 2.6.5-alpine3.23
+  - 2.6.5-r4-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 3e82f50a2839855693aacf7b3d0e7e2f30774cb4
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: cosign-2
+  REL: "4"
+  SEMVER_MAJOR_MINOR_VERSION: "2.6"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.6.5
+  VERSION: 2.6.5
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cosign-2
+      work-dir: /go/src/github.com/sigstore/cosign
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/sigstore/cosign.git#v2.6.5
+            checksum: 3e82f50a2839855693aacf7b3d0e7e2f30774cb4
+            path: /go/src/github.com/sigstore/cosign
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (2 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - github.com/in-toto/in-toto-golang@v0.11.0
+              - github.com/sigstore/fulcio@v1.8.6
+              - github.com/sigstore/rekor@v1.5.2
+              - github.com/sigstore/sigstore-go@v1.2.1
+            replaces:
+              - github.com/sigstore/timestamp-authority/v2=github.com/sigstore/timestamp-authority/v2@v2.1.0
+              - google.golang.org/genproto=google.golang.org/genproto@v0.0.0-20231002182017-d307bd883b97
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test (2 only)
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            go test -skip 'TestImportPrivateKey/invalid' ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/sigstore/cosign/version.Version=2.6.5
+              - -X sigs.k8s.io/release-utils/version.gitVersion=2.6.5
+              - -X sigs.k8s.io/release-utils/version.gitCommit=3e82f50a2839855693aacf7b3d0e7e2f30774cb4
+              - -X sigs.k8s.io/release-utils/version.gitTreeState=clean
+              - -X sigs.k8s.io/release-utils/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/cosign
+            packages: ./cmd/cosign
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/sigstore/cosign/version.Version=2.6.5
+              - -X sigs.k8s.io/release-utils/version.gitVersion=2.6.5
+              - -X sigs.k8s.io/release-utils/version.gitCommit=3e82f50a2839855693aacf7b3d0e7e2f30774cb4
+              - -X sigs.k8s.io/release-utils/version.gitTreeState=clean
+              - -X sigs.k8s.io/release-utils/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/cosign-dev
+            packages: ./cmd/cosign
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Container signing tool with support for ephemeral keys and Sigstore signing
+            files:
+              - usr/bin/cosign
+            license: Apache-2.0
+            name: cosign-2
+            priority: "200"
+            provides: cosign=$pkg_full_version
+            rel: 4
+            replaces: cosign
+            subpackages:
+              - files:
+                  - path: usr/bin/cosign
+                    source: usr/bin/cosign-dev
+                name: cosign-2-dev
+            url: https://github.com/sigstore/cosign
+            version: 2.6.5
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

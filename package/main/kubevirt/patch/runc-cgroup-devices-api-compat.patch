@@ -1,0 +1,100 @@
+--- a/pkg/virt-handler/cgroup/cgroup_v1_manager.go	2026-03-16 16:32:02
++++ b/pkg/virt-handler/cgroup/cgroup_v1_manager.go	2026-03-16 16:57:05
+@@ -20,17 +20,16 @@
+ package cgroup
+ 
+ import (
+-	"bytes"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"strconv"
++	"strings"
+ 
+ 	"kubevirt.io/client-go/log"
+ 
+-	cgroup_devices "github.com/opencontainers/runc/libcontainer/cgroups/devices"
+ 	"github.com/opencontainers/runc/libcontainer/devices"
+ 
+ 	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+@@ -107,6 +106,49 @@
+ 	return V1
+ }
+ 
++func parseDeviceLine(line string) (*devices.Rule, error) {
++	var t, majMin, perms string
++	if _, err := fmt.Sscanf(line, "%s %s %s", &t, &majMin, &perms); err != nil {
++		return nil, err
++	}
++	rule := &devices.Rule{Permissions: devices.Permissions(perms), Allow: true}
++	switch t {
++	case "a":
++		rule.Type, rule.Major, rule.Minor = 'a', -1, -1
++		return rule, nil
++	case "b":
++		rule.Type = devices.BlockDevice
++	case "c":
++		rule.Type = devices.CharDevice
++	default:
++		return nil, fmt.Errorf("unknown device type %q", t)
++	}
++	parts := strings.SplitN(majMin, ":", 2)
++	if len(parts) != 2 {
++		return nil, fmt.Errorf("invalid major:minor %q", majMin)
++	}
++	for i, s := range parts {
++		if s == "*" {
++			if i == 0 {
++				rule.Major = -1
++			} else {
++				rule.Minor = -1
++			}
++		} else {
++			v, err := strconv.ParseInt(s, 10, 64)
++			if err != nil {
++				return nil, err
++			}
++			if i == 0 {
++				rule.Major = v
++			} else {
++				rule.Minor = v
++			}
++		}
++	}
++	return rule, nil
++}
++
+ func getCurrentlyDefinedRules(runcManager runc_cgroups.Manager) ([]*devices.Rule, error) {
+ 	devicesPath, ok := runcManager.GetPaths()["devices"]
+ 	if !ok {
+@@ -119,17 +161,18 @@
+ 		return nil, fmt.Errorf("error reading current rules: %v", err)
+ 	}
+ 
+-	emulator, err := cgroup_devices.EmulatorFromList(bytes.NewBufferString(currentRulesStr))
+-	if err != nil {
+-		return nil, fmt.Errorf("error creating emulator out of current rules: %v", err)
++	var rules []*devices.Rule
++	for _, line := range strings.Split(strings.TrimSpace(currentRulesStr), "\n") {
++		if line == "" {
++			continue
++		}
++		rule, err := parseDeviceLine(line)
++		if err != nil {
++			return nil, fmt.Errorf("error parsing devices.list: %v", err)
++		}
++		rules = append(rules, rule)
+ 	}
+-
+-	currentRules, err := emulator.Rules()
+-	if err != nil {
+-		return nil, fmt.Errorf("error getting rules from emulator: %v", err)
+-	}
+-
+-	return currentRules, nil
++	return rules, nil
+ }
+ 
+ func (v *v1Manager) GetCpuSet() (string, error) {

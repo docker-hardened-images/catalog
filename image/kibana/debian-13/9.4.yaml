@@ -1,0 +1,322 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kibana 9.4.x
+image: dhi.io/kibana
+variant: runtime
+tags:
+  - "9"
+  - "9.4"
+  - 9.4.5
+  - 9-debian
+  - 9-debian13
+  - 9.4-debian
+  - 9.4-debian13
+  - 9.4.5-debian
+  - 9.4.5-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-05"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  COMMIT_SHA: bc80ff828630b51dd591207f43a54ea5ebf53270
+  GO_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  NODE_BINARIES_EXTRA_SUBDIR: glibc-217
+  NODE_BINARIES_SUBDIR: default
+  NODE_DEB_VERSION: 24.19.0-0
+  NODE_MAJOR_VERSION: "24"
+  NODE_VERSION: 24.19.0
+  SEMVER_MAJOR_MINOR_VERSION: "9.4"
+  SEMVER_MAJOR_VERSION: "9"
+  SEMVER_VERSION: 9.4.5
+  VERSION: 9.4.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - coreutils
+    - findutils
+    - grep
+    - libstdc++6
+    - tini
+    - tzdata
+  builds:
+    - name: kibana
+      contents:
+        packages:
+          - bash
+          - gzip
+          - jq
+          - base-files
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/elastic/kibana.git#v9.4.5
+            checksum: bc80ff828630b51dd591207f43a54ea5ebf53270
+            path: ${source.dir}/kibana
+            spdx:
+              name: kibana
+              version: 9.4.5
+              packages:
+                - name: kibana
+                  purl: pkg:dhi/kibana@9.4.5
+                  license: Apache-2.0
+            uid: 65532
+            gid: 65532
+      pipeline:
+        - name: update node engine
+          work-dir: ${source.dir}/kibana
+          runs: |
+            set -eux -o pipefail
+
+            ls -la package.json
+
+            REQUIRED_VERSION=$(sed -nr "s/\"node\": \"([0-9]+)\.[0-9]+\.[0-9]+\".*/\1/p" package.json | tr -d " ")
+            if [ "$REQUIRED_VERSION" != "24" ]; then
+              echo "Error: upstream requirement for Node v$REQUIRED_VERSION not met by build v24."
+              echo "Error: if version change is intentional, update this version verification logic."
+              exit 1
+            fi
+
+            sed -ir "s/\"node\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"node\": \"$(node --version | sed 's/^v//')\"/g" package.json
+        - name: bump yarn deps (9.4)
+          uses: yarn/bump@v2
+          run-as: "65532"
+          privileged: true
+          with:
+            bumps: ${source.dir}/patches/yarn-patches_9.4.json
+            yarn-root: ${source.dir}/kibana
+        - name: force vulnerable lockfile bumps (9.4)
+          run-as: "65532"
+          work-dir: ${source.dir}/kibana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            sed -i '/^undici@\^6\.21\.1, undici@\^6\.21\.2:/,/^$/{
+              s|^  version "6\.[0-9.]*"$|  version "6.28.0"|
+              s|^  resolved ".*undici-6\.[0-9.]*\.tgz#.*"$|  resolved "https://registry.yarnpkg.com/undici/-/undici-6.28.0.tgz#9f0e385744fef5021d6596c5bccd783f61193c1c"|
+              s|^  integrity sha512-.*$|  integrity sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==|
+            }' yarn.lock
+
+            sed -i '/^js-yaml@[^:]*\^4\.[0-9]*\.[0-9]*[^:]*:/,/^$/d' yarn.lock
+
+            sed -i '/^brace-expansion@\^1\.1\.7:/,/^$/{
+              s|^  version "1.1.1[56]"$|  version "1.1.18"|
+              s|^  resolved ".*brace-expansion-1.1.1[56].tgz#.*"$|  resolved "https://registry.yarnpkg.com/brace-expansion/-/brace-expansion-1.1.18.tgz#3ce74d89885136be1535341f8c3d4425c29a5cab"|
+              s|^  integrity sha512-.*$|  integrity sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==|
+            }' yarn.lock
+
+            sed -i '/^brace-expansion@\^5\.0\.2, brace-expansion@\^5\.0\.5:/,/^$/{
+              s|^  version "5.0.[78]"$|  version "5.0.9"|
+              s|^  resolved ".*brace-expansion-5.0.[78].tgz#.*"$|  resolved "https://registry.yarnpkg.com/brace-expansion/-/brace-expansion-5.0.9.tgz#7c72438809b5fa5babf54199a1f1c281a6984fcf"|
+              s|^  integrity sha512-.*$|  integrity sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==|
+            }' yarn.lock
+
+            yarn install --package-lock-only
+        - name: build kibana
+          work-dir: ${source.dir}/kibana
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            echo "startup --batch" > .bazelrc.user
+
+            mkdir -p ~/.moon/plugins/toolchains
+            export MOON_TOOLCHAIN_FORCE_GLOBALS=1
+
+            yarn kbn bootstrap
+
+            NODE_RUNTIME_VERSION="$(node --version | sed 's/^v//')"
+            populate_node_extract() {
+              local variant="$1"
+              local platform="$2"
+              local extract="${source.dir}/kibana/.node_binaries/${NODE_RUNTIME_VERSION}/${variant}/${platform}/extract"
+
+              mkdir -p "${extract}/bin"
+              cp -a /usr/bin/node "${extract}/bin/node"
+              node << EOF
+            const fs = require('fs');
+            const https = require('https');
+            const url = 'https://raw.githubusercontent.com/nodejs/node/v${NODE_RUNTIME_VERSION}/LICENSE';
+            https.get(url, (res) => {
+              if (res.statusCode !== 200) {
+                console.error('failed to download Node LICENSE:', res.statusCode);
+                process.exit(1);
+              }
+              const chunks = [];
+              res.on('data', (chunk) => chunks.push(chunk));
+              res.on('end', () => fs.writeFileSync('${extract}/LICENSE', Buffer.concat(chunks)));
+            }).on('error', (err) => {
+              console.error(err);
+              process.exit(1);
+            });
+            EOF
+            }
+            for node_subdir in default glibc-217; do
+              if [ -z "${node_subdir}" ]; then
+                continue
+              fi
+              populate_node_extract "${node_subdir}" "linux-x64"
+              if [ ${NODE_ARCH} != "x64" ]; then
+                populate_node_extract "${node_subdir}" "linux-${NODE_ARCH}"
+              fi
+            done
+
+            node --no-experimental-require-module -- \
+              scripts/build --skip-os-packages --skip-initialize \
+              --skip-docker-cloud-fips --skip-docker-contexts --skip-docker-ubi \
+              --skip-docker-wolfi --skip-docker-cloud --skip-docker-cloud-fips \
+              --skip-docker-serverless --skip-docker-fips
+
+            KBN_DIST="${source.dir}/kibana/build/default/kibana-9.4.5-SNAPSHOT-linux-${GO_ARCH}"
+            if [ ! -x "${KBN_DIST}/bin/kibana" ]; then
+              cd "${source.dir}/kibana"
+              KBN_VERSION="9.4.5" KBN_GO_ARCH="${GO_ARCH}" \
+                node --no-experimental-require-module scripts/render-bin-scripts.js
+            fi
+
+            mkdir -p "${target.dir}/opt/kibana/kibana-9.4.5"
+
+            cp -r "${KBN_DIST}"/* "${target.dir}/opt/kibana/kibana-9.4.5"
+
+            cd "${target.dir}/opt/kibana/kibana-9.4.5"
+            rm -rf data
+      paths:
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.1.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.1.json
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.2.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.2.json
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.3.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.3.json
+        - type: file
+          path: ${source.dir}/patches/yarn-patches_9.4.json
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/yarn-patches_9.4.json
+        - type: file
+          path: ${source.dir}/patches/expr-eval_9.1.patch
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/patch/expr-eval_9.1.patch
+        - type: file
+          path: ${source.dir}/kibana/scripts/render-bin-scripts.js
+          uid: 65532
+          gid: 65532
+          mode: "0444"
+          source: image/kibana/scripts/render-bin-scripts.js
+      accounts:
+        run-as: node
+        users:
+          - name: node
+            uid: 65532
+            gid: 65532
+      outputs:
+        - source: ${target.dir}/opt/kibana/kibana-9.4.5
+          target: /opt/kibana/kibana-9.4.5
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kibana
+          target: /opt/docker/sbom/kibana
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  ELASTIC_CONTAINER: "true"
+  KIBANA_VERSION: 9.4.5
+  PATH: /opt/kibana/kibana-9.4.5/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /usr/share
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/share/kibana
+    uid: 0
+    gid: 0
+    source: /opt/kibana/kibana-9.4.5
+  - type: directory
+    path: /opt/kibana/kibana-9.4.5/data
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/kibana-docker
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/kibana/bin/kibana-docker
+  - type: file
+    path: /opt/kibana/kibana-9.4.5/config/kibana.yml
+    uid: 65532
+    gid: 65532
+    mode: "0644"
+    source: image/kibana/config/kibana.yml
+  - type: symlink
+    path: /usr/local/bin/tini
+    uid: 0
+    gid: 0
+    source: /usr/bin/tini
+annotations:
+  org.opencontainers.image.description: A minimal Kibana image
+  org.opencontainers.image.licenses: Elastic-License-2.0
+entrypoint:
+  - /usr/local/bin/tini
+  - --
+cmd:
+  - /usr/local/bin/kibana-docker
+ports:
+  - 5601/tcp

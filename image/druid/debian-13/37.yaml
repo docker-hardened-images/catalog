@@ -1,0 +1,334 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache Druid 37.x
+image: dhi.io/druid
+variant: runtime
+tags:
+  - "37"
+  - "37.0"
+  - 37.0.0
+  - 37-debian
+  - 37-debian13
+  - 37.0-debian
+  - 37.0-debian13
+  - 37.0.0-debian
+  - 37.0.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-28"
+vars:
+  COMMIT_SHA: b206640c830bc2c3bdc2867cfb317c902a0e1acb
+  DRUID_HOME: /opt/druid
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  JAVA_VARIANT: jre
+  JDK_MAJOR_VERSION: "21"
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:e058ca155be95f0a0153c8c2175a80f4653f1da28acb079132db9ae7319801eb
+  MAVEN_VERSION: 3.9.16
+  SEMVER_MAJOR_MINOR_VERSION: "37.0"
+  SEMVER_MAJOR_VERSION: "37"
+  SEMVER_VERSION: 37.0.0
+  VERSION: 37.0.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - grep
+    - iproute2
+    - procps
+    - sed
+  builds:
+    - name: druid
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:e058ca155be95f0a0153c8c2175a80f4653f1da28acb079132db9ae7319801eb
+      work-dir: ${source.dir}/druid
+      environment:
+        MAVEN_ARGS: -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=5 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 -Daether.connector.http.retryHandler.count=5
+        MAVEN_OPTS: -Xmx3g
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - curl
+          - grep
+          - gzip
+          - python3
+          - python3-yaml
+          - sed
+          - tar
+          - unzip
+        files:
+          - url: git+https://github.com/apache/druid.git#druid-37.0.0
+            checksum: b206640c830bc2c3bdc2867cfb317c902a0e1acb
+            path: ${source.dir}/druid
+            spdx:
+              name: druid
+              version: 37.0.0
+              packages:
+                - name: druid
+                  purl: pkg:github/apache/druid@37.0.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch deps
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps-37.0.json
+            dependencies-key: dependencyManagement.dependencies
+            downgrade: false
+            mvn-root: ${source.dir}/druid
+            properties: ${source.dir}/patch/mvn-properties-37.0.json
+        - name: configure maven mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.m2
+            cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
+        - name: prune unused extensions from build
+          runs: |
+            set -eux -o pipefail
+
+            # Maven module paths to exclude from the reactor.
+            EXCLUDE_MODULES=(
+              "extensions-contrib/cassandra-storage"
+              "extensions-contrib/aliyun-oss-extensions"
+              "extensions-contrib/cloudfiles-extensions"
+              "extensions-core/testing-tools"
+              "extensions-core/hdfs-storage"
+              "extensions-core/druid-kerberos"
+            )
+
+            # Maven artifactIds referenced by distribution/pom.xml pull-deps.
+            EXCLUDE_ARTIFACTS=(
+              "druid-cassandra-storage"
+              "druid-cloudfiles-extensions"
+              "aliyun-oss-extensions"
+              "druid-testing-tools"
+              "druid-hdfs-storage"
+              "druid-kerberos"
+            )
+
+            for m in "${EXCLUDE_MODULES[@]}"; do
+              # Escape forward slash for sed.
+              esc=${m//\//\\/}
+              sed -i "/<module>${esc}<\/module>/d" pom.xml
+            done
+
+            for a in "${EXCLUDE_ARTIFACTS[@]}"; do
+              # Each pull-deps entry is an <argument>-c</argument> followed by
+              # an <argument>...:${a}</argument>. Remove both lines together.
+              sed -i "/<argument>-c<\/argument>/{N;/<argument>org\.apache\.druid\.extensions[^<]*:${a}<\/argument>/d}" distribution/pom.xml
+            done
+        - name: build druid
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Use --no-transfer-progress instead of -q: same noise reduction
+            # (no per-byte progress) but preserves the underlying Aether/Wagon
+            # error stack traces when artifact resolution actually fails.
+            # -U forces a re-check of any release artifact whose previous
+            # fetch failed (Maven otherwise caches the failure for 24h).
+            mvn install -B -ff -U --no-transfer-progress \
+              -Pdist,bundle-contrib-exts \
+              -Pskip-static-checks,skip-tests \
+              -Dmaven.javadoc.skip=true \
+              -T1C
+        - name: extract distribution
+          runs: |
+            set -eux -o pipefail
+
+            DIST_FILE=$(find distribution/target -name "apache-druid-37.0.0-bin.tar.gz" | head -1)
+            if [ -z "$DIST_FILE" ]; then
+              echo "Distribution tarball not found" >&2
+              exit 1
+            fi
+
+            mkdir -p "${target.dir}/opt/druid"
+            tar -xzf "$DIST_FILE" \
+              --strip-components=1 \
+              -C "${target.dir}/opt/druid"
+
+            chown -R 1000:1000 "${target.dir}/opt/druid"
+        - name: remove unused extensions
+          runs: |
+            set -eux -o pipefail
+
+            # These extensions are removed to reduce CVE surface area.
+            # Users can add them back via pull-deps in the -dev image. See guides.md.
+            #
+            # Contrib extensions (high CVE transitive dep trees, legacy or niche use cases):
+            #   druid-cassandra-storage     - uses Astyanax (archived 2021), targets Cassandra 1.x
+            #   aliyun-oss-extensions       - Alibaba-specific, not needed in most deployments
+            #   druid-cloudfiles-extensions - Rackspace Cloud Files is near end-of-life
+            #   druid-testing-tools         - test infrastructure, not for production use
+            #   druid-hdfs-storage          - HDFS deep storage, brings in Hadoop + Netty 3.x (20+ CVEs)
+            #
+            # Core extensions (specialized, not needed in most deployments):
+            #   druid-kerberos              - Kerberos auth, only for Kerberized Hadoop environments
+            for ext in \
+              druid-testing-tools \
+              druid-cassandra-storage \
+              aliyun-oss-extensions \
+              druid-cloudfiles-extensions \
+              druid-hdfs-storage \
+              druid-kerberos; do
+              rm -rf "${target.dir}/opt/druid/extensions/${ext}"
+
+              # Also strip the extension from any bundled
+              # druid.extensions.loadList defaults so the image starts cleanly
+              # with its own conf/ directory. Upstream's quickstart configs
+              # reference druid-hdfs-storage by default.
+              find "${target.dir}/opt/druid/conf" \
+                -type f -name common.runtime.properties \
+                -exec sed -i \
+                -e "s/\"${ext}\", *//g" \
+                -e "s/, *\"${ext}\"//g" \
+                -e "s/\"${ext}\"//g" \
+                {} +
+            done
+        - name: install scripts
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/local/bin"
+            install -m 0755 distribution/docker/druid.sh "${target.dir}/usr/local/bin/druid.sh"
+            install -m 0755 distribution/docker/peon.sh "${target.dir}/usr/local/bin/peon.sh"
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-37.0.json
+          uid: 0
+          gid: 0
+          source: image/druid/patch/mvn-properties-37.0.json
+        - type: file
+          path: ${source.dir}/patch/mvn-deps-37.0.json
+          uid: 0
+          gid: 0
+          source: image/druid/patch/mvn-deps-37.0.json
+      outputs:
+        - source: ${target.dir}/opt/druid
+          target: /opt/druid
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/druid.sh
+          target: /usr/local/bin/druid.sh
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/peon.sh
+          target: /usr/local/bin/peon.sh
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  run-as: druid
+  users:
+    - name: druid
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: druid
+      gid: 1000
+      members:
+        - druid
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/druid
+environment:
+  DRUID_HOME: /opt/druid
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /usr/lib/jvm/temurin-21/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: directory
+    path: /opt/druid/var
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /opt/shared
+    uid: 1000
+    gid: 1000
+    mode: "0775"
+  - type: symlink
+    path: /druid.sh
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/druid.sh
+  - type: symlink
+    path: /peon.sh
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/peon.sh
+annotations:
+  org.opencontainers.image.description: A minimal Apache Druid image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /druid.sh
+ports:
+  - "8081"
+  - "8082"
+  - "8083"
+  - "8090"
+  - "8091"
+  - "8888"

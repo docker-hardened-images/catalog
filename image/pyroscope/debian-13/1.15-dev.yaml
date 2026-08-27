@@ -1,0 +1,199 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Pyroscope 1.15.x (dev)
+image: dhi.io/pyroscope
+variant: dev
+tags:
+  - 1.15-dev
+  - 1.15.3-dev
+  - 1.15-debian-dev
+  - 1.15-debian13-dev
+  - 1.15.3-debian-dev
+  - 1.15.3-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: c7f6f34e8b697db6ae09771e983638cfcdb67c1a
+  SEMVER_MAJOR_MINOR_VERSION: "1.15"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.15.3
+  VERSION: 1.15.3
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: pyroscope-go
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26
+          - grep
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/grafana/pyroscope.git#v1.15.3
+            checksum: c7f6f34e8b697db6ae09771e983638cfcdb67c1a
+            path: /go/src/github.com/grafana/pyroscope
+            spdx:
+              name: pyroscope
+              version: 1.15.3
+              packages:
+                - name: pyroscope
+                  purl: pkg:golang/github.com/grafana/pyroscope@1.15.3
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.15 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/mod@v0.40.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/klauspost/compress@v1.18.7
+              - go.etcd.io/etcd/client/pkg/v3@v3.5.33
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel/log@v0.19.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - go.opentelemetry.io/otel/sdk/log@v0.19.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.19.0
+              - google.golang.org/grpc@v1.83.1
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+            replaces:
+              - go.opentelemetry.io/otel/log=go.opentelemetry.io/otel/log@v0.19.0
+              - go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.19.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog=go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.19.0
+            tidy: true
+        - name: patch 1.15 filterAndGroupBlocks clock
+          uses: patch@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/handlers-time-fix-1.15.patch
+        - name: test
+          work-dir: /go/src/github.com/grafana/pyroscope
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Skip TestDLQRecovery: upstream flake (~17% CI failure rate) where the mockdiscovery
+            # expectations aren't all met before the assertion runs. TestDLQRecoveryMock covers
+            # the same DLQ recovery logic without the race.
+            # Skip TestLoader_ShouldCacheIndexNotFoundOnBackgroundUpdates: flaky metrics
+            # assertion under golang 1.26 during image builds.
+            CGO_ENABLED=0 go test -v -count=1 -skip '^TestDLQRecovery$|^TestLoader_ShouldCacheIndexNotFoundOnBackgroundUpdates$' $(go list ./... ./lidia/... | grep -v /test/integration)
+        - name: build pyroscope
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            output: ${target.dir}/usr/local/bin/pyroscope
+            packages: ./cmd/pyroscope
+        - name: build profilecli
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/pyroscope
+          with:
+            output: ${target.dir}/usr/local/bin/profilecli
+            packages: ./cmd/profilecli
+      paths:
+        - type: file
+          path: ${source.dir}/patch/handlers-time-fix-1.15.patch
+          uid: 0
+          gid: 0
+          source: image/pyroscope/debian-13/patch/handlers-time-fix-1.15.patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin/pyroscope
+          target: /usr/bin/pyroscope
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/local/bin/profilecli
+          target: /usr/bin/profilecli
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/grafana/pyroscope/cmd/pyroscope/pyroscope.yaml
+          target: /etc/pyroscope/config.yaml
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/pyroscope
+          target: /opt/docker/sbom/pyroscope
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: pyroscope
+      uid: 10001
+      gid: 10001
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: pyroscope
+      gid: 10001
+      members:
+        - pyroscope
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /data
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+  - type: directory
+    path: /data-compactor
+    uid: 10001
+    gid: 10001
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Grafana Pyroscope image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/bin/pyroscope
+cmd:
+  - -config.file=/etc/pyroscope/config.yaml
+ports:
+  - 4040/tcp

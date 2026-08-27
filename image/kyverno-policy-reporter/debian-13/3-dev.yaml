@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kyverno Policy Reporter 3.x (dev)
+image: dhi.io/kyverno-policy-reporter
+variant: dev
+tags:
+  - 3-dev
+  - 3.10-dev
+  - 3.10.0-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.10-debian-dev
+  - 3.10-debian13-dev
+  - 3.10.0-debian-dev
+  - 3.10.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-31"
+vars:
+  COMMIT_SHA: dca6fb5136d05bff3401a98219af331508d75338
+  SEMVER_MAJOR_MINOR_VERSION: "3.10"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.10.0
+  VERSION: 3.10.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: kyverno-policy-reporter
+      work-dir: /go/src/github.com/kyverno/policy-reporter
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/kyverno/policy-reporter.git#v3.10.0
+            checksum: dca6fb5136d05bff3401a98219af331508d75338
+            path: /go/src/github.com/kyverno/policy-reporter
+            spdx:
+              name: kyverno-policy-reporter
+              version: 3.10.0
+              packages:
+                - name: kyverno-policy-reporter
+                  purl: pkg:golang/github.com/kyverno/policy-reporter@3.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - golang.org/x/mod@v0.40.0
+              - filippo.io/edwards25519@v1.2.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+            replaces:
+              - github.com/sigstore/timestamp-authority=github.com/docker-hardened-images/sigstore-timestamp-authority@v1.2.10-0.20251207163215-621a8cc1532f
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Skip Test_DatabaseValuesFromSecret which expects a mounted secret file that doesn't exist in the build environment
+            # Skip Test_StoreListener which has a flaky/broken test case (Remove_Deleted_Report)
+            CGO_ENABLED=1 go test -skip '^(Test_DatabaseValuesFromSecret|Test_StoreListener)$' ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X github.com/kyverno/policy-reporter/cmd/version.BuildVersion=3.10.0
+            output: ${target.dir}/usr/local/bin/kyverno-policy-reporter
+            tags: sqlite_unlock_notify
+      outputs:
+        - source: ${target.dir}/usr/local/bin/kyverno-policy-reporter
+          target: /usr/local/bin/kyverno-policy-reporter
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kyverno-policy-reporter
+          target: /opt/docker/sbom/kyverno-policy-reporter
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Kyverno Policy Reporter image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/kyverno-policy-reporter
+  - run
+ports:
+  - 8080/tcp

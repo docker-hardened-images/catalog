@@ -1,0 +1,206 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-containerd-io
+variant: runtime
+tags:
+  - 2.3.4
+  - 2.3.4-r2
+  - 2.3.4-debian13
+  - 2.3.4-r2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-30"
+vars:
+  COMMIT_SHA: db8809540e1a7a9da5d518876894933ff55692ab
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-1
+  REL: "2"
+  RUNC_COMMIT_SHA: bb14dabeb7185bb72c8c86735d090dcb20f36587
+  RUNC_VERSION: 1.4.3
+  SEMVER_MAJOR_MINOR_VERSION: "2.3"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.3.4
+  VERSION: 2.3.4
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: containerd.io deb
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - golang-1.26=1.26.7-1
+          - golang-1.26-oci-config=1.26.7-1
+          - libc6-dev
+          - libseccomp-dev
+          - pkg-config
+        files:
+          - url: git+https://github.com/containerd/containerd.git#v2.3.4
+            checksum: db8809540e1a7a9da5d518876894933ff55692ab
+            path: /go/src/github.com/containerd/containerd/v2
+            spdx:
+              name: containerd
+              version: 2.3.4
+              packages:
+                - name: containerd
+                  purl: pkg:golang/github.com/containerd/containerd/v2@2.3.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/opencontainers/runc.git#v1.4.3
+            checksum: bb14dabeb7185bb72c8c86735d090dcb20f36587
+            path: /go/src/github.com/opencontainers/runc
+            spdx:
+              name: runc
+              version: 1.4.3
+              packages:
+                - name: runc
+                  purl: pkg:golang/github.com/opencontainers/runc@1.4.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update containerd go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/containerd/containerd/v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - golang.org/x/text@v0.40.0
+              - golang.org/x/net@v0.57.0
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.44.0
+              - google.golang.org/grpc@v1.83.0
+              - github.com/cilium/ebpf@v0.22.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.44.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
+            download: true
+        - name: test containerd after dependency updates
+          work-dir: /go/src/github.com/containerd/containerd/v2
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -count=1 -timeout=5m -tags urfave_cli_no_docs ./cmd/containerd ./cmd/ctr
+            CGO_ENABLED=1 go test -count=1 -timeout=5m -tags "urfave_cli_no_docs no_grpc" ./cmd/containerd-shim-runc-v2
+        - name: update runc go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/opencontainers/runc
+          with:
+            deps:
+              - golang.org/x/net@v0.56.0
+              - github.com/opencontainers/cgroups@v0.1.0
+              - github.com/cilium/ebpf@v0.22.0
+            download: true
+        - name: test runc after dependency updates
+          work-dir: /go/src/github.com/opencontainers/runc
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -count=1 -timeout=5m -tags "seccomp urfave_cli_no_docs" .
+        - name: build containerd
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containerd/containerd/v2
+          with:
+            cgo_enabled: 1
+            extra-args: -buildmode=pie
+            ldflags:
+              - -X github.com/containerd/containerd/v2/version.Version=v2.3.4
+              - -X github.com/containerd/containerd/v2/version.Revision=db8809540e1a7a9da5d518876894933ff55692ab
+              - -X github.com/containerd/containerd/v2/version.Package=github.com/containerd/containerd/v2
+            output: ${target.dir}/usr/bin/containerd
+            packages: ./cmd/containerd
+            tags: urfave_cli_no_docs
+        - name: build ctr
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containerd/containerd/v2
+          with:
+            cgo_enabled: 1
+            extra-args: -buildmode=pie
+            ldflags:
+              - -X github.com/containerd/containerd/v2/version.Version=v2.3.4
+              - -X github.com/containerd/containerd/v2/version.Revision=db8809540e1a7a9da5d518876894933ff55692ab
+              - -X github.com/containerd/containerd/v2/version.Package=github.com/containerd/containerd/v2
+            output: ${target.dir}/usr/bin/ctr
+            packages: ./cmd/ctr
+            tags: urfave_cli_no_docs
+        - name: build containerd-shim-runc-v2
+          uses: go/build@v1
+          work-dir: /go/src/github.com/containerd/containerd/v2
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X github.com/containerd/containerd/v2/version.Version=v2.3.4
+              - -X github.com/containerd/containerd/v2/version.Revision=db8809540e1a7a9da5d518876894933ff55692ab
+              - -X github.com/containerd/containerd/v2/version.Package=github.com/containerd/containerd/v2
+              - -extldflags=-static
+            output: ${target.dir}/usr/bin/containerd-shim-runc-v2
+            packages: ./cmd/containerd-shim-runc-v2
+            tags: urfave_cli_no_docs,no_grpc
+        - name: build runc
+          uses: go/build@v1
+          work-dir: /go/src/github.com/opencontainers/runc
+          with:
+            cgo_enabled: 1
+            extra-args: -buildmode=pie
+            ldflags:
+              - -X main.gitCommit=bb14dabeb7185bb72c8c86735d090dcb20f36587
+            output: ${target.dir}/usr/bin/runc
+            packages: .
+            strip: false
+            tags: seccomp,urfave_cli_no_docs
+        - name: stage containerd.io packaging assets
+          runs: |
+            set -eux -o pipefail
+
+            cp -a "${source.dir}/assets/etc" "${target.dir}/"
+            cp -a "${source.dir}/assets/lib" "${target.dir}/"
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: containerd, runc
+            depends:
+              - libc6
+              - libseccomp2
+            description: An open and reliable container runtime
+            files:
+              - etc/containerd/config.toml
+              - lib/systemd/system/containerd.service
+              - usr/bin/containerd
+              - usr/bin/containerd-shim-runc-v2
+              - usr/bin/ctr
+              - usr/bin/runc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: containerd.io
+            provides: containerd, runc
+            rel: 2
+            replaces: containerd, runc
+            url: https://containerd.io
+            version: 2.3.4
+      paths:
+        - type: directory
+          path: ${source.dir}/assets
+          uid: 0
+          gid: 0
+          source: package/main/containerd-io/debian-13/assets
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

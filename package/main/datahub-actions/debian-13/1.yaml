@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-datahub-actions
+variant: runtime
+tags:
+  - 1.6.0.1
+  - 1.6.0.1-r1
+  - 1.6.0.1-debian13
+  - 1.6.0.1-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  ACRYL_DATAHUB_ACTIONS_SDIST_CHECKSUM: sha256:7a9a50ad224ea1827c2689731bbedd8dd836133738641236ee0f28a4fa8d651f
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 036f89a860a92e8a756eccfc2d46047b52f05877
+  EXTRAS: all
+  PYTHON_MAJOR_MINOR_VERSION: "3.10"
+  PYTHON_MINOR: "3.10"
+  PYTHON_VERSION: 3.10.21-0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0.1
+  UV_VERSION: 0.12.6
+  VERSION: 1.6.0.1
+  VERSION_MAJOR_MINOR_PATCH: 1.6.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: datahub-actions
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - cargo
+          - coreutils
+          - diffutils
+          - findutils
+          - g++
+          - grep
+          - gzip
+          - libaio-dev
+          - libffi-dev
+          - libkrb5-dev
+          - libldap2-dev
+          - librdkafka-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libstdc++6
+          - libxml2-dev
+          - libxslt1-dev
+          - pkg-config
+          - sed
+          - tar
+          - unixodbc-dev
+          - libpython-3.10-minimal=3.10.21-0
+          - libpython-3.10-stdlib=3.10.21-0
+          - libpython-3.10=3.10.21-0
+          - libpython-3.10-dev=3.10.21-0
+          - python-3.10-minimal=3.10.21-0
+          - python-3.10=3.10.21-0
+          - python-3.10-dev=3.10.21-0
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.6/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/source/a/acryl-datahub-actions/acryl_datahub_actions-1.6.0.1.tar.gz
+            checksum: sha256:7a9a50ad224ea1827c2689731bbedd8dd836133738641236ee0f28a4fa8d651f
+            path: ${source.dir}/acryl_datahub_actions.tar.gz
+            spdx:
+              name: acryl-datahub-actions
+              version: 1.6.0.1
+              packages:
+                - name: acryl-datahub-actions
+                  purl: pkg:pypi/acryl-datahub-actions@1.6.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/datahub-project/datahub.git#v1.6.0.1
+            checksum: 036f89a860a92e8a756eccfc2d46047b52f05877
+            path: ${source.dir}/datahub-src
+            spdx:
+              name: datahub
+              version: 1.6.0.1
+              packages:
+                - name: datahub
+                  purl: pkg:github/datahub-project/datahub@v1.6.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" \
+              PYTHON_BIN=/usr/bin/python3.10 EXTRAS="all"
+            bash "${source.dir}/build-venv.sh"
+        - name: install datahub-actions configs from the monorepo checkout
+          work-dir: ${source.dir}/datahub-src/docker/datahub-actions
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/etc/datahub/actions/system/conf \
+              ${target.dir}/usr/share/datahub-actions/scripts
+
+            install -m 0755 start.sh ${target.dir}/usr/share/datahub-actions/scripts/start.sh
+
+            install -m 0644 config/executor.yaml \
+              config/doc_propagation_action.yaml \
+              config/slack_action.yaml \
+              config/teams_action.yaml \
+              ${target.dir}/etc/datahub/actions/system/conf/
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: datahub-actions
+            source: ${target.dir}/usr/lib/datahub-actions
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.10
+              - bash
+              - curl
+              - libaio1t64
+              - libffi8
+              - libkrb5-3
+              - libldap2
+              - libodbc2
+              - librdkafka1
+              - libsasl2-2
+              - unixodbc
+            description: DataHub Actions framework
+            files:
+              - usr/lib/datahub-actions
+              - usr/bin/datahub-actions
+              - etc/datahub
+              - usr/share/datahub-actions
+            formats:
+              - deb
+            license: Apache-2.0
+            name: datahub-actions
+            rel: 1
+            url: https://github.com/datahub-project/datahub
+            version: 1.6.0.1
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/datahub-actions/build-venv.sh
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

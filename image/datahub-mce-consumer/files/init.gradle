@@ -1,0 +1,87 @@
+// gradle/mirror@v1 configures the authenticated Maven Central mirror.
+// Add only the non-Central repositories required by DataHub and retain the
+// restricted Plugin Portal metadata lookup.
+
+def PLUGIN_PORTAL = 'https://plugins.gradle.org/m2/'
+// Pegasus/GMA artifacts (e.g. com.linkedin.pegasus:data) are not on Maven Central.
+def LINKEDIN_OPEN_SOURCE = 'https://linkedin.jfrog.io/artifactory/open-source'
+def CONFLUENT = 'https://packages.confluent.io/maven'
+
+def configureRepos = { container ->
+    container.maven {
+        name 'Confluent'
+        url CONFLUENT
+    }
+    container.maven {
+        name 'LinkedInOpenSource'
+        url LINKEDIN_OPEN_SOURCE
+    }
+    container.maven {
+        name 'GradlePluginPortalNoModule'
+        url PLUGIN_PORTAL
+        metadataSources {
+            mavenPom()
+            artifact()
+            ignoreGradleMetadataRedirection()
+        }
+    }
+}
+
+allprojects {
+    buildscript {
+        repositories {
+            configureRepos delegate
+        }
+    }
+    repositories {
+        configureRepos delegate
+    }
+
+    // Set UTF-8 encoding for Java compilation to handle Unicode characters
+    // in source files (em dashes, arrows, etc. in comments). Without this,
+    // javac defaults to the platform encoding (US-ASCII in the build
+    // environment) and fails on unmappable characters.
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement {
+        repositories {
+            configureRepos delegate
+        }
+    }
+}
+
+settingsEvaluated { settings ->
+    try {
+        settings.dependencyResolutionManagement {
+            repositories {
+                configureRepos delegate
+            }
+        }
+    } catch (Throwable ignored) {
+        // dependencyResolutionManagement is Gradle 6.8+ only.
+    }
+}
+
+// Force CVE-remediated dependency versions at resolution time.
+// CVE-2026-59949 (lz4-java Out-of-bounds Read) -> force lz4-java to 1.11.1.
+// Using init script instead of inline build.gradle force because DataHub's
+// committed Gradle lockfiles pin dependency versions, and the init script
+// force is applied during lock resolution.
+allprojects {
+    configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            def grp = details.requested.group
+            def name = details.requested.name
+
+            // lz4-java -> 1.11.1 (CVE-2026-59949)
+            if (grp == "at.yawk.lz4" && name == "lz4-java") {
+                details.useVersion("1.11.1")
+                details.because("CVE-2026-59949: Out-of-bounds Read")
+            }
+        }
+    }
+}

@@ -1,0 +1,150 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-openssl
+variant: runtime
+tags:
+  - 3.5.7-1-deb13u2-dhi0
+  - 3.5.7-1-deb13u2-dhi0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  DEBIAN_DEBIAN_CHECKSUM: sha256:593a47654ead460a3b609503733f80bef552ff0802799d3b47784faacc50809f
+  DEBIAN_DEBIAN_FILENAME: openssl_3.5.7-1~deb13u2.debian.tar.xz
+  DEBIAN_DEBIAN_URL: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7-1~deb13u2.debian.tar.xz
+  DEBIAN_DSC_CHECKSUM: sha256:25904642004d30c5c3da4642a72a7d09f8d9eb6e5ce62dab53c0371114faf8f2
+  DEBIAN_DSC_FILENAME: openssl_3.5.7-1~deb13u2.dsc
+  DEBIAN_DSC_URL: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7-1~deb13u2.dsc
+  DEBIAN_FILENAME_VERSION: 3.5.7-1~deb13u2
+  DEBIAN_ORIG_ASC_CHECKSUM: sha256:d3d082bee3f658c31db53af625eceecf29d777c7010394bed5787ebcc98abdf2
+  DEBIAN_ORIG_ASC_URL: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7.orig.tar.gz.asc
+  DEBIAN_ORIG_CHECKSUM: sha256:a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+  DEBIAN_ORIG_FILENAME: openssl_3.5.7.orig.tar.gz
+  DEBIAN_ORIG_URL: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7.orig.tar.gz
+  DEBIAN_VERSION: 3.5.7-1~deb13u2
+  DHI_REL: "0"
+  DHI_VERSION: 3.5.7-1~deb13u2+dhi0
+  TAG_VERSION: 3.5.7-1-deb13u2-dhi0
+  UPSTREAM_VERSION: 3.5.7
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: openssl deb
+      work-dir: ${source.dir}/openssl
+      contents:
+        packages:
+          - debhelper
+          - dpkg-dev
+          - libzstd-dev
+          - perl
+          - quilt
+          - util-linux
+          - zlib1g-dev
+        files:
+          - url: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7-1~deb13u2.dsc
+            checksum: sha256:25904642004d30c5c3da4642a72a7d09f8d9eb6e5ce62dab53c0371114faf8f2
+            path: ${source.dir}/openssl_3.5.7-1~deb13u2.dsc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7.orig.tar.gz
+            checksum: sha256:a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+            path: ${source.dir}/openssl_3.5.7.orig.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7.orig.tar.gz.asc
+            checksum: sha256:d3d082bee3f658c31db53af625eceecf29d777c7010394bed5787ebcc98abdf2
+            path: ${source.dir}/openssl_3.5.7.orig.tar.gz.asc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian-security/pool/updates/main/o/openssl/openssl_3.5.7-1~deb13u2.debian.tar.xz
+            checksum: sha256:593a47654ead460a3b609503733f80bef552ff0802799d3b47784faacc50809f
+            path: ${source.dir}/openssl_3.5.7-1~deb13u2.debian.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: dpkg/source@v1
+          work-dir: ${source.dir}
+          with:
+            file: openssl_3.5.7-1~deb13u2.dsc
+            path: openssl
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Rebuild
+            version: 3.5.7-1~deb13u2+dhi0
+        - uses: dpkg/build@v1
+          environment:
+            DEB_BUILD_PROFILES: noudeb
+          with:
+            args: -uc -us -d
+        - name: stage OCI config snippets for openssl
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/config"
+            cat > "${target.dir}/opt/docker/config/openssl-provider-fips.yaml" << EOF
+            environment:
+              OPENSSL_CONF: /usr/lib/ssl/openssl.cnf
+              OPENSSL_MODULES: /usr/lib/${ARCH}-linux-gnu/ossl-modules
+            EOF
+        - name: build OCI config split .debs for openssl
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            build_oci_config_deb() {
+              pkg_name="$1"
+              provides="$2"
+              description="$3"
+              yaml_src="$4"
+              yaml_dest="$5"
+              depends_pkg="$6"
+
+              stage="${source.dir}/oci-config-stage/${pkg_name}"
+              rm -rf "${stage}"
+              mkdir -p "${stage}/DEBIAN" "${stage}/$(dirname "${yaml_dest}")"
+
+              install -m 0644 "${yaml_src}" "${stage}/${yaml_dest}"
+
+              cat > "${stage}/DEBIAN/control" << EOF
+            Package: ${pkg_name}
+            Source: openssl
+            Version: 3.5.7-1~deb13u2+dhi0
+            Architecture: all
+            Maintainer: Docker Hardened Images <dhi@docker.com>
+            Section: libs
+            Priority: optional
+            Depends: ${depends_pkg} (>= 3.5.7-1~deb13u2)
+            Provides: ${provides}
+            Homepage: https://docker.com/dhi
+            Description: ${description}
+             Ships a DHI build-time configuration snippet (environment) that
+             downstream image definitions consume via apt-get install ${pkg_name}.
+             Mirrors the apk openssl-provider-fips-oci-config subpackage.
+            EOF
+
+              dpkg-deb --root-owner-group --build "${stage}" "${source.dir}/"
+
+              mkdir -p /debian/deb
+              cp -p "${source.dir}/${pkg_name}_3.5.7-1~deb13u2+dhi0_all.deb" /debian/deb/
+            }
+
+            build_oci_config_deb \
+              "openssl-provider-fips-oci-config" \
+              "openssl-fips-oci-config, openssl-provider-fips-oci-config" \
+              "FIPS-mode OCI build-time configuration snippet for openssl" \
+              "${target.dir}/opt/docker/config/openssl-provider-fips.yaml" \
+              "opt/docker/config/openssl-provider-fips.yaml" \
+              "openssl-provider-fips"
+
+            ls -la /debian/deb/openssl-provider-fips-oci-config*.deb
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

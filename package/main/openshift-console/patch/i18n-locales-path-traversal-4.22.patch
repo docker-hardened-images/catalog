@@ -1,0 +1,33 @@
+Reject path traversal in the /locales/resource.json i18n handler (CVE-2024-7631).
+The handler joins the lng and ns query params into a filesystem path and serves
+the result with http.ServeFile, which lets a "../"-laden lng escape the locales
+directory and read arbitrary .json files off the pod. Legitimate locale codes and
+plugin namespaces never contain a path separator or "..", so reject those before
+the join and return the same 400 the handler already uses for bad parameters.
+Advisory: https://access.redhat.com/security/cve/cve-2024-7631
+Handler at the pinned commit: https://github.com/openshift/console/blob/c62b7cd934ccfdc9171a874b3bf15d9683f1cb24/pkg/plugins/handlers.go
+
+diff --git a/pkg/plugins/handlers.go b/pkg/plugins/handlers.go
+index ae664f41..dd45fc96 100644
+--- a/pkg/plugins/handlers.go
++++ b/pkg/plugins/handlers.go
+@@ -111,6 +111,19 @@ func (p *PluginsHandler) HandleI18nResources(w http.ResponseWriter, r *http.Requ
+ 		return
+ 	}
+ 
++	// The 'lng' (locale code) and 'ns' (plugin namespace) parameters are joined
++	// into a filesystem path below; a path separator or ".." segment would let a
++	// request escape the locales directory and read arbitrary .json files off the
++	// pod. Legitimate locale codes and plugin namespaces never contain either, so
++	// reject them outright.
++	if strings.ContainsAny(lang, `/\`) || strings.Contains(lang, "..") ||
++		strings.ContainsAny(namespace, `/\`) || strings.Contains(namespace, "..") {
++		errMsg := fmt.Sprintf("GET request %q has an invalid 'lng' or 'ns' query parameter", r.URL.String())
++		klog.Error(errMsg)
++		serverutils.SendResponse(w, http.StatusBadRequest, serverutils.ApiError{Err: errMsg})
++		return
++	}
++
+ 	if !strings.HasPrefix(namespace, "plugin__") {
+ 		http.ServeFile(w, r, path.Join(p.PublicDir, "locales", lang, fmt.Sprintf("%s.json", namespace)))
+ 		return

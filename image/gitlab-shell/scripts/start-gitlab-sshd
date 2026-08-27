@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -e
+
+CONFIG_DIR="${GITLAB_SHELL_DIR:-/srv/gitlab-shell}"
+HOST_KEY_DIR="${GITLAB_SHELL_HOST_KEY_DIR:-${CONFIG_DIR}/hostkeys}"
+SECRET_FILE="${GITLAB_SHELL_SECRET_FILE:-${CONFIG_DIR}/.gitlab_shell_secret}"
+
+mkdir -p "${HOST_KEY_DIR}"
+
+# Generate SSH host keys if none were mounted. gitlab-sshd reads them from the
+# paths listed under sshd.host_key_files in config.yml. In Kubernetes these are
+# normally mounted from a Secret; the generation below is the standalone/dev
+# fallback so the server can boot out of the box.
+for type in ed25519 rsa ecdsa; do
+  key="${HOST_KEY_DIR}/ssh_host_${type}_key"
+  if [ ! -f "${key}" ]; then
+    ssh-keygen -q -t "${type}" -f "${key}" -N "" -C "gitlab-sshd"
+  fi
+done
+
+# gitlab-sshd authenticates to the GitLab internal API with a shared secret.
+# Provide an ephemeral one if the operator did not mount a real secret so the
+# server can start; replace it with your GitLab instance's secret in production
+# (mount your own config.yml + secret file over /srv/gitlab-shell).
+if [ ! -f "${SECRET_FILE}" ]; then
+  # umask 077 so the credential is created 0600 (owner-only) with no
+  # world-readable window between creation and a later chmod.
+  (umask 077; head -c 32 /dev/urandom | base64 | tr -d '\n' > "${SECRET_FILE}")
+fi
+
+exec gitlab-sshd -config-dir "${CONFIG_DIR}"

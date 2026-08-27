@@ -1,0 +1,107 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-redis-upstream
+variant: runtime
+tags:
+  - 8.10.1-0
+  - 8.10.1-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  COMMIT_SHA: 3399357e7c17b668289386b8a15a3037bc4527b1
+  DHI_REL: "0"
+  DHI_VERSION: 8.10.1-0
+  HAS_MODULES: "false"
+  LLVM_VERSION: "21"
+  PACKAGE_NAME: redis-8.10
+  REDIS_LICENSE: AGPL-3.0-only
+  SEMVER_MAJOR_MINOR: "8.10"
+  VERSION: 8.10.1
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: redis deb
+      work-dir: ${source.dir}/redis
+      contents:
+        packages:
+          - build-essential
+          - ca-certificates
+          - debhelper
+          - dpkg-dev
+          - libssl-dev
+          - pkg-config
+          - python3
+        files:
+          - url: git+https://github.com/redis/redis.git#8.10.1
+            checksum: 3399357e7c17b668289386b8a15a3037bc4527b1
+            path: ${source.dir}/redis
+            spdx:
+              name: redis
+              version: 8.10.1
+              packages:
+                - name: redis
+                  purl: pkg:github/redis/redis@8.10.1
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            arch="$(uname -m)"
+            if [ "$arch" = aarch64 ]; then
+              jemallocFlags="--build=aarch64-linux-gnu --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-linux-gnu --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' '${source.dir}/redis/deps/Makefile'
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' '${source.dir}/redis/deps/Makefile'
+            grep -F "cd jemalloc && ./configure $jemallocFlags " '${source.dir}/redis/deps/Makefile'
+        - name: patch config
+          runs: |
+            set -eux -o pipefail
+
+            echo 'include /etc/redis/conf.d/*.conf' >> '${source.dir}/redis/redis.conf'
+        - name: prepare debian packaging
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s/@PKG@/redis-8.10/g" debian/control.in debian/changelog
+            mv debian/control.in debian/control
+            mv debian/server.install "debian/redis-8.10-server.install"
+            mv debian/tools.install "debian/redis-8.10-tools.install"
+            mv debian/sentinel.install "debian/redis-8.10-sentinel.install"
+
+            if [ "false" = "true" ]; then
+              printf '%s\n' etc/redis/redis-full.conf usr/lib/redis/modules >> "debian/redis-8.10-server.install"
+            fi
+
+            printf 'HAS_MODULES := %s\nLLVM_VERSION := %s\n' "false" "21" > debian/build-env.mk
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 8.10.1-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/redis/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/redis/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

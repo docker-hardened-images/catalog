@@ -1,0 +1,416 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Langfuse 3.x (dev)
+image: dhi.io/langfuse
+variant: dev
+tags:
+  - 3-dev
+  - 3.225-dev
+  - 3.225.5-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.225-debian-dev
+  - 3.225-debian13-dev
+  - 3.225.5-debian-dev
+  - 3.225.5-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-12-09"
+vars:
+  COMMIT_SHA: a914a47f357f5d1cf5611e1387ea68678410c671
+  MIGRATE_COMMIT_SHA: 89e308c340a2c069c3260f268307d38a7db88227
+  MIGRATE_VERSION: 4.19.1
+  PNPM_VERSION: 11.1.3
+  PRISMA_VERSION: 6.19.3
+  SEMVER_MAJOR_MINOR_VERSION: "3.225"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.225.5
+  TURBO_VERSION: 2.9.14
+  VERSION: 3.225.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - dash
+    - diffutils
+    - dpkg
+    - dumb-init
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libgomp1
+    - libstdc++6
+    - mawk
+    - netbase
+    - nodejs-24
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: golang-migrate
+      work-dir: /go/src/github.com/golang-migrate/migrate
+      environment:
+        TURBO_TELEMETRY_DISABLED: "1"
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/golang-migrate/migrate.git#v4.19.1
+            checksum: 89e308c340a2c069c3260f268307d38a7db88227
+            path: /go/src/github.com/golang-migrate/migrate
+            spdx:
+              name: golang-migrate
+              version: 4.19.1
+              packages:
+                - name: golang-migrate
+                  purl: pkg:golang/github.com/golang-migrate/migrate/v4@v4.19.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: build migrate
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/migrate
+            packages: ./cmd/migrate
+            tags: clickhouse
+      outputs:
+        - source: ${target.dir}/usr/bin/migrate
+          target: /usr/bin/migrate
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/golang-migrate
+          target: /opt/docker/sbom/golang-migrate
+          uid: 0
+          gid: 0
+    - name: langfuse
+      work-dir: ${source.dir}/langfuse
+      environment:
+        CI: "true"
+        DOCKER_BUILD: "1"
+        NEXT_MANUAL_SIG_HANDLE: "true"
+        NEXT_TELEMETRY_DISABLED: "1"
+        PNPM_HOME: /pnpm
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+          - yq-go
+        files:
+          - url: git+https://github.com/langfuse/langfuse.git#v3.225.5
+            checksum: a914a47f357f5d1cf5611e1387ea68678410c671
+            path: ${source.dir}/langfuse
+            spdx:
+              name: langfuse
+              version: 3.225.5
+              packages:
+                - name: langfuse
+                  purl: pkg:github/langfuse/langfuse@3.225.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build and stage web (v3)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@11.1.3 --activate
+            npm install -g --no-package-lock --no-save turbo@2.9.14
+            export PATH="$(npm config get prefix)/bin:${PATH}"
+
+            turbo prune --scope=web --docker
+
+            cd ./out
+            cp -a json/. .
+            cp -a full/. .
+
+            # Repin packageManager to pnpm 11.1.3: corepack would
+            # otherwise honor the upstream pnpm 9.5.0 and downgrade, but turbo
+            # needs the field present to resolve the workspace, so set (not drop)
+            # it. Runs after the full copy, which restores the upstream value.
+            npm pkg set packageManager=pnpm@11.1.3
+
+            # No uuid@11 override: oci-common@2.127.0 deep-imports uuid/v1
+            # (removed in 11.x); CVE-2026-41907 stays MED.
+            #
+            # langfuse v3 declares its overrides in pnpm-workspace.yaml. Under
+            # pnpm >=10 (this build uses 11.1.3), once that file has an
+            # `overrides` key pnpm reads overrides ONLY from there — a
+            # `pnpm.overrides` block in package.json is silently ignored. So the
+            # bumps below must be merged into pnpm-workspace.yaml (alongside the
+            # upstream esbuild/zod entries), not written to package.json.
+            #
+            # Also relax minimumReleaseAge: upstream gates installs to versions
+            # published >5 days ago (allow-listing only the few it needs). Our
+            # CVE pins are audited, so drop the gate rather than maintain a
+            # parallel minimumReleaseAgeExclude list.
+            yq -i '.minimumReleaseAge = 0' pnpm-workspace.yaml
+            yq -i '.overrides."axios" = "1.16.0"' pnpm-workspace.yaml                               # CVE-2026-44494, CVE-2026-44492, CVE-2026-44495, CVE-2026-44490 (HIGH/MED)
+            yq -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml                             # CVE-2026-6321, CVE-2026-6322, CVE-2026-18446 (HIGH)
+            yq -i '.overrides."nanoid" = "3.3.18"' pnpm-workspace.yaml                              # CVE-2026-67213, CVE-2026-67214 (HIGH)
+            yq -i '.overrides."langsmith" = "0.6.0"' pnpm-workspace.yaml                            # CVE-2026-45134 (HIGH), CVE-2026-40190, CVE-2026-41182 (MED)
+            yq -i '.overrides."nodemailer" = "9.0.1"' pnpm-workspace.yaml                           # GHSA-p6gq-j5cr-w38f (HIGH), GHSA-vvjj-xcjg-gr5g (MED), GHSA-c7w3-x93f-qmm8 (LOW)
+            yq -i '.overrides."brace-expansion" = "5.0.5"' pnpm-workspace.yaml                      # CVE-2026-33750 (MED)
+            yq -i '.overrides."brace-expansion@2" = "2.1.4"' pnpm-workspace.yaml                    # CVE-2026-33750 (MED), CVE-2026-13149, CVE-2026-69152 (HIGH)
+            yq -i '.overrides."js-yaml@3" = "3.15.1"' pnpm-workspace.yaml                           # GHSA-5p4m-2wfm-xmqj (HIGH)
+            yq -i '.overrides."js-yaml@4" = "4.3.1"' pnpm-workspace.yaml                            # GHSA-5p4m-2wfm-xmqj (HIGH)
+            yq -i '.overrides."fast-xml-parser" = "5.7.0"' pnpm-workspace.yaml                      # CVE-2026-41650 (MED)
+            yq -i '.overrides."qs" = "6.15.2"' pnpm-workspace.yaml                                  # CVE-2026-8723 (MED), CVE-2026-2391 (LOW)
+            yq -i '.overrides."@tootallnate/once" = "3.0.1"' pnpm-workspace.yaml                    # CVE-2026-3449 (LOW)
+            yq -i '.overrides."protobufjs" = "7.6.5"' pnpm-workspace.yaml                           # CVE-2026-45740 (MED), CVE-2026-44288..44294 (HIGH/MED), CVE-2026-59877 (MED)
+            yq -i '.overrides."@protobufjs/utf8" = "1.1.1"' pnpm-workspace.yaml                     # CVE-2026-44288 (MED)
+            yq -i '.overrides."postcss" = "8.5.23"' pnpm-workspace.yaml                             # CVE-2026-41305, CVE-2026-69153 (MED), GHSA-r28c-9q8g-f849 (HIGH)
+            yq -i '.overrides."form-data" = "4.0.6"' pnpm-workspace.yaml                            # CVE-2025-7783 (CRITICAL), CVE-2026-12143 (HIGH)
+            yq -i '.overrides."follow-redirects" = "1.16.0"' pnpm-workspace.yaml                    # GHSA-r4q5-vmmm-2653 (MED)
+            yq -i '.overrides."@babel/runtime" = "7.29.2"' pnpm-workspace.yaml                      # CVE-2025-27789 (MED)
+            yq -i '.overrides."@babel/core" = "7.29.6"' pnpm-workspace.yaml                         # CVE-2026-49356 (LOW)
+            yq -i '.overrides."@opentelemetry/exporter-prometheus" = "0.217.0"' pnpm-workspace.yaml # CVE-2026-44902 (HIGH)
+            yq -i '.overrides."@opentelemetry/sdk-node" = "0.217.0"' pnpm-workspace.yaml            # CVE-2026-44902 (HIGH)
+            yq -i '.overrides."shell-quote" = "1.9.0"' pnpm-workspace.yaml                          # CVE-2026-9277 (CRITICAL), CVE-2026-13311 (HIGH)
+            yq -i '.overrides."esbuild" = "0.28.1"' pnpm-workspace.yaml                             # GHSA-gv7w-rqvm-qjhr (HIGH)
+            yq -i '.overrides."@grpc/grpc-js" = ">=1.14.4"' pnpm-workspace.yaml                     # CVE-2026-48068, CVE-2026-48069 (HIGH)
+            yq -i '.overrides."dompurify" = "3.4.13"' pnpm-workspace.yaml                           # CVE-2026-49458, CVE-2026-49459, CVE-2026-49978, GHSA-76mc-f452-cxcm, GHSA-gvmj-g25r-r7wr, GHSA-vxr8-fq34-vvx9, GHSA-55q2-fjhq-7xh7, GHSA-c2j3-45gr-mqc4 (MED/LOW)
+            yq -i '.overrides."@opentelemetry/core" = "2.8.0"' pnpm-workspace.yaml                  # CVE-2026-54285 (MED)
+            yq -i '.overrides."@opentelemetry/propagator-jaeger" = "2.9.0"' pnpm-workspace.yaml     # CVE-2026-59892 (HIGH)
+            yq -i '.overrides."sharp" = "0.35.0"' pnpm-workspace.yaml                               # GHSA-f88m-g3jw-g9cj (HIGH)
+            yq -i 'del(.patchedDependencies."next-auth@4.24.14")' pnpm-workspace.yaml               # remove upstream patch to allow upgrade
+            yq -i '.overrides."next-auth" = "4.24.15"' pnpm-workspace.yaml                          # GHSA-XMF8-CVQR-RFGJ
+
+            # Update the lockfile with overrides
+            pnpm install ---lockfile-only --ignore-scripts
+
+            # Install updated dependencies
+            pnpm install ---frozen-lockfile --ignore-scripts
+
+            # Scope Next's trace root to the pruned monorepo; otherwise it
+            # walks up to /src/langfuse and blows the trace memory budget.
+            rm -f /src/langfuse/pnpm-workspace.yaml /src/langfuse/pnpm-lock.yaml
+
+            # Next 16 defaults to Turbopack which OOM-kills on a constrained
+            # build container; force webpack.
+            node -e '
+              const fs = require("fs");
+              const f = "./web/package.json";
+              const p = JSON.parse(fs.readFileSync(f, "utf8"));
+              p.scripts.build = p.scripts.build.replace(/(\s|^)next build(\s|$)/, "$1next build --webpack$2");
+              fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
+            '
+
+            # next.config.mjs patches:
+            #   cpus:1, workerThreads:false — bound static-page worker pool (avoid exit 137).
+            #   esmExternals:"loose" — webpack require() ESM-only deps (uuid@14 etc.).
+            #   outputFileTracingExcludes — drop @esbuild/* (embedded Go stdlib CVE cluster).
+            #   outputFileTracingRoot — pin to out/ (parent of web/) so standalone keeps
+            #     web/server.js layout; entrypoint expects /app/web/server.js.
+            #   typescript.ignoreBuildErrors — upstream CI already typechecks. Next 16 rejects
+            #     `eslint:` in config so it's skipped.
+            #   withSentryConfig bypass — without SENTRY_AUTH_TOKEN, Sentry's webpack
+            #     plugin adds wrapping + map work for nothing; trims memory pressure.
+            #     Runtime `Sentry.init(...)` in app code is unaffected.
+            node -e '
+              const fs = require("fs");
+              const f = "./web/next.config.mjs";
+              let s = fs.readFileSync(f, "utf8");
+              const extra = "cpus: 1, workerThreads: false, esmExternals: \"loose\",";
+              if (/experimental:\s*\{/.test(s)) {
+                s = s.replace(/experimental:\s*\{/, "experimental: { " + extra);
+              } else {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  experimental: { " + extra + " },");
+              }
+              if (!/outputFileTracingExcludes:/.test(s)) {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  outputFileTracingExcludes: { \"*\": [\"node_modules/@esbuild/**\"] },");
+              }
+              if (!/outputFileTracingRoot:/.test(s)) {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  outputFileTracingRoot: new URL(\"..\", import.meta.url).pathname,");
+              }
+              if (!/typescript:\s*\{/.test(s)) {
+                s = s.replace(/const nextConfig = \{/, "const nextConfig = {\n  typescript: { ignoreBuildErrors: true },");
+              }
+              s = s.replace(/export\s+default\s+withSentryConfig\([^]*$/, "export default nextConfig;\n");
+              fs.writeFileSync(f, s);
+            '
+
+            # Page-gen worker inherits NODE_OPTIONS; cpus:1 bounds it to one
+            # worker, so main + worker fit the 128 GB host with room to spare.
+            # v3.178's bundle OOMs the old 3584 MB cap; raise the ceiling.
+            HEAP_MB=$(node -e 'console.log(Math.min(8192, Math.floor(require("os").totalmem()/1024/1024*0.45)))')
+            NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" \
+              NEXT_IGNORE_BUILD_ERRORS=true \
+              turbo run build --filter=web... --concurrency=1
+
+            mkdir -p "${target.dir}/opt/prisma"
+            npm install -g --no-package-lock --no-save \
+              --prefix "${target.dir}/opt/prisma" \
+              prisma@6.19.3
+
+            # Runtime image has no /usr/bin/env.
+            find "${target.dir}/opt/prisma" -type f \
+              \( -name '*.js' -o -name 'prisma' \) \
+              -exec sed -i '1s|^#!/usr/bin/env node$|#!/usr/local/bin/node|' {} +
+
+            mkdir -p "${target.dir}/app/web/.next" \
+              "${target.dir}/app/packages/shared/scripts"
+
+            cp -a ./web/.next/standalone/. "${target.dir}/app/"
+            cp -a ./web/.next/static "${target.dir}/app/web/.next/static"
+            cp -a ./web/public "${target.dir}/app/web/public"
+
+            cp -a ./packages/shared/prisma "${target.dir}/app/packages/shared/prisma"
+
+            # entrypoint runs up.sh as `sh up.sh` (shebang bypassed) under
+            # runtime dash; POSIX-ify before staging.
+            if [ -f ./packages/shared/clickhouse/scripts/up.sh ]; then
+              sed -i -E \
+                -e 's| && source | \&\& . |g' \
+                -e 's|&> /dev/null|>/dev/null 2>\&1|g' \
+                -e 's|" == "|" = "|g' \
+                ./packages/shared/clickhouse/scripts/up.sh
+            fi
+            cp -a ./packages/shared/clickhouse "${target.dir}/app/packages/shared/clickhouse"
+
+            cp ./web/next.config.mjs "${target.dir}/app/next.config.mjs"
+            cp ./web/package.json "${target.dir}/app/package.json"
+
+            cp ./web/entrypoint.sh "${target.dir}/app/web/entrypoint.sh"
+            chmod +x "${target.dir}/app/web/entrypoint.sh"
+
+            # Drop v3's bash+sed credential strip — runtime is dash, no sed.
+            # False positives on partially-encoded passwords are acceptable
+            # (advisory hint, prints only on migration fail).
+            sed -i -E \
+              -e 's|_stripped=\$\(printf.*"\$_val".*sed.*\)|_stripped="$_val"|' \
+              -e 's|_stripped=\$\(printf.*"\$_pass".*sed.*\)|_stripped="$_pass"|' \
+              "${target.dir}/app/web/entrypoint.sh"
+
+            cp ./packages/shared/scripts/cleanup.sql \
+              "${target.dir}/app/packages/shared/scripts/cleanup.sql"
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 65532
+          gid: 65532
+        - source: ${target.dir}/opt/prisma
+          target: /opt/prisma
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/langfuse
+          target: /opt/docker/sbom/langfuse
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  HOSTNAME: 0.0.0.0
+  NEXT_MANUAL_SIG_HANDLE: "true"
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: production
+  PATH: /opt/prisma/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PORT: "3000"
+paths:
+  - type: directory
+    path: /app
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/node
+    uid: 0
+    gid: 0
+    source: /usr/bin/node
+  - type: symlink
+    path: /usr/local/bin/entrypoint.sh
+    uid: 0
+    gid: 0
+    source: /app/web/entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Langfuse image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - dumb-init
+  - --
+  - /usr/local/bin/entrypoint.sh
+cmd:
+  - node
+  - ./web/server.js
+  - --keepAliveTimeout
+  - "110000"
+ports:
+  - 3000/tcp

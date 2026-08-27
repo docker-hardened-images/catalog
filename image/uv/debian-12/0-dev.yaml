@@ -1,0 +1,183 @@
+# syntax=dhi.io/build:2-debian12
+
+name: uv 0.x (dev)
+image: dhi.io/uv
+variant: dev
+tags:
+  - 0-debian12-dev
+  - 0.12-debian12-dev
+  - 0.12.5-debian12-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BASE_DIGEST: sha256:0e73ed3d81e289fd7fe83ab13e1b7b5f2cfac435e4fe1a55c780a9dfc776cb9c
+  BASE_TAG: 20250419-glibc-debian12
+  COMMIT_SHA: 210d1f6785e95a8c8c0d53e284408c9be1134700
+  RUST_REFERENCE: dhi/rust:1.98.0-debian12-sfw-dev@sha256:de1b4dd259e23a4339e464b5f5757efca63120f16b46bf044c7205cbd5e5eeaf
+  SEMVER_MAJOR_MINOR_VERSION: "0.12"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.12.5
+  VERSION: 0.12.5
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - git
+    - grep
+    - libc-bin
+    - libgcc-s1
+    - libstdc++6
+    - mawk
+    - perl-base
+    - readline-common
+    - sed
+    - util-linux
+  builds:
+    - name: uv
+      uses: dhi.io/rust:1.98.0-debian12-sfw-dev@sha256:de1b4dd259e23a4339e464b5f5757efca63120f16b46bf044c7205cbd5e5eeaf
+      contents:
+        packages:
+          - ca-certificates
+          - cmake
+          - libssl-dev
+          - pkg-config
+        files:
+          - url: git+https://github.com/astral-sh/uv.git#0.12.5
+            checksum: 210d1f6785e95a8c8c0d53e284408c9be1134700
+            path: ${source.dir}/uv-210d1f6785e95a8c8c0d53e284408c9be1134700
+            spdx:
+              name: uv
+              version: 0.12.5
+              packages:
+                - name: uv
+                  purl: pkg:dhi/uv@0.12.5
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install cargo-auditable cargo-audit
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo install cargo-auditable cargo-audit
+        - name: bump cargo dependencies
+          work-dir: ${source.dir}/uv-210d1f6785e95a8c8c0d53e284408c9be1134700
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-4w2j-m93h-cj5j → quinn-proto ≥0.11.15
+            cargo update --package quinn-proto --precise 0.11.15
+
+            # RUSTSEC-2026-0186 → memmap2 ≥0.9.11
+            cargo update --package memmap2 --precise 0.9.11
+
+            # RUSTSEC-2026-0190 → anyhow ≥1.0.103
+            cargo update --package anyhow --precise 1.0.103
+
+            # RUSTSEC-2026-0204 → crossbeam-epoch ≥0.9.20
+            cargo update --package crossbeam-epoch --precise 0.9.20
+
+            # RUSTSEC-2026-0221 → event-listener ≥5.4.2
+            cargo update --package event-listener --precise 5.4.2
+
+            # GHSA-q83h-524g-xf6h → h2 ≥0.4.16
+            cargo update --package h2 --precise 0.4.16
+        - name: build
+          work-dir: ${source.dir}/uv-210d1f6785e95a8c8c0d53e284408c9be1134700
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo auditable build --release
+      outputs:
+        - source: ${source.dir}/uv-210d1f6785e95a8c8c0d53e284408c9be1134700/target/release/uv
+          target: /usr/local/bin/uv
+          uid: 0
+          gid: 0
+        - source: ${source.dir}/uv-210d1f6785e95a8c8c0d53e284408c9be1134700/target/release/uvx
+          target: /usr/local/bin/uvx
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/uv
+          target: /opt/docker/sbom/uv
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian12@sha256:0e73ed3d81e289fd7fe83ab13e1b7b5f2cfac435e4fe1a55c780a9dfc776cb9c
+      includes:
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "12"
+  version-codename: bookworm
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 12 (bookworm)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /io
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  UV_VERSION: 0.12.5
+paths:
+  - type: directory
+    path: /io
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: symlink
+    path: /uv
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/uv
+  - type: symlink
+    path: /uvx
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/uvx
+annotations:
+  org.opencontainers.image.description: A minimal uv image - An extremely fast Python package installer and resolver
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /usr/local/bin/uv

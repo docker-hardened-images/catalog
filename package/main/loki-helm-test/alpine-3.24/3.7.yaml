@@ -1,0 +1,140 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-loki-helm-test
+variant: runtime
+tags:
+  - 3.7.6-alpine3.24
+  - 3.7.6-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-26"
+vars:
+  COMMIT_SHA: 5003600d7c787b5f047c8d1b0198559471b0caa5
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: loki-helm-test-3.7
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "3.7"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.7.6
+  VERSION: 3.7.6
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: loki-helm-test-3.7
+      work-dir: /go/src/github.com/grafana/loki
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - make
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/grafana/loki.git#v3.7.6
+            checksum: 5003600d7c787b5f047c8d1b0198559471b0caa5
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki
+              version: 3.7.6
+              packages:
+                - name: loki
+                  purl: pkg:golang/github.com/grafana/loki@3.7.6
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: build helm-test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            make clean
+            make BUILD_IN_CONTAINER=false helm-test
+            install -Dm755 production/helm/loki/src/helm-test/helm-test "${target.dir}/usr/bin/helm-test"
+        - name: build helm-test dev
+          runs: |
+            set -eux -o pipefail
+
+            if [ "$(printf '%s' "3.7.6" | cut -d. -f1)" = "2" ]; then
+              vprefix="github.com/grafana/loki/pkg/util/build"
+            else
+              vprefix="github.com/grafana/loki/v3/pkg/util/build"
+            fi
+
+            git_branch="$(git rev-parse --abbrev-ref HEAD)"
+            git_revision="$(git rev-parse --short HEAD)"
+            build_date="$(date -ud "@${SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"
+
+            ldflags="-X ${vprefix}.Branch=${git_branch}"
+            ldflags="${ldflags} -X ${vprefix}.Version=3.7.6"
+            ldflags="${ldflags} -X ${vprefix}.Revision=${git_revision}"
+            ldflags="${ldflags} -X ${vprefix}.BuildUser=dhi@build"
+            ldflags="${ldflags} -X ${vprefix}.BuildDate=${build_date}"
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            CGO_ENABLED=0 go test \
+              -gcflags "all=-N -l" \
+              -ldflags "${ldflags}" \
+              --tags=helm_test,netgo \
+              -c -o "${target.dir}/usr/bin/helm-test-dev" \
+              ./production/helm/loki/src/helm-test
+        - uses: dhi/build-pkg:0
+          with:
+            description: Grafana Loki Helm chart test binary
+            files:
+              - usr/bin/helm-test
+            license: AGPL-3.0
+            name: loki-helm-test-3.7
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/helm-test
+                    source: usr/bin/helm-test-dev
+                name: loki-helm-test-3.7-dev
+            url: https://github.com/grafana/loki/tree/main/production/helm/loki/src/helm-test
+            version: 3.7.6
+      paths:
+        - type: file
+          path: ${source.dir}/patch/canary_test_3.6.patch
+          uid: 0
+          gid: 0
+          source: package/main/loki-helm-test/patch/canary_test_3.6.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

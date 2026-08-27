@@ -1,0 +1,115 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Temporal Helm chart 0.x
+image: dhi.io/temporalio-chart
+variant: helm
+tags:
+  - 0.74.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: f45aaf0383978350e8fdb81d7de57f238e0e3e7f
+  CHART_HELM_NAME: temporalio-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  GRAFANA_CHART_REFERENCE: dhi/grafana-chart:12.11.2@sha256:67e7a223bf510f58625f4d087f679595fec09b163b08250c74305dbeb4d927fb
+  HELM_VERSION: 4.1.4-2
+  PROMETHEUS_CHART_REFERENCE: dhi/prometheus-chart:28.16.0@sha256:7ab475070a6e0b8d9456cd0efb0727d3aedc1d7f9c5726438c35c416e2b2b770
+  SEMVER_MAJOR_MINOR_VERSION: "0.74"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.74.0
+  TEMPORALIO_ADMIN_TOOLS_REFERENCE: dhi/temporalio-admin-tools:1.29.7-cli-1.8.2-debian13@sha256:72a5c306c1949ee29f8c8838ce49035196619bf5d482b2df001baacf9eb50f34
+  TEMPORALIO_SERVER_REFERENCE: dhi/temporalio-server:1.29.7-cli-1.8.2-debian13@sha256:fb0948dc853dc21dec5af559f7f4a2e4376179295978e3916680bce6b53e4c03
+  TEMPORALIO_UI_REFERENCE: dhi/temporalio-ui:2.53.3-debian13@sha256:0c43bb4f00ba7c15eec91c335b70e921148b1bc5822286fc6584b78ce4229e4d
+  VERSION: 0.74.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: temporalio
+      work-dir: ${source.dir}/helm-charts/charts/temporal
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - yq-go
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/temporalio/helm-charts.git#temporal-0.74.0
+            checksum: f45aaf0383978350e8fdb81d7de57f238e0e3e7f
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          with:
+            chart:
+              appRef: temporalio-server
+              dependencies:
+                - alias: prometheus
+                  condition: prometheus.enabled
+                  name: prometheus
+                  ref: dhi/prometheus-chart:28.16.0@sha256:7ab475070a6e0b8d9456cd0efb0727d3aedc1d7f9c5726438c35c416e2b2b770
+                - alias: grafana
+                  condition: grafana.enabled
+                  name: grafana
+                  ref: dhi/grafana-chart:12.11.2@sha256:67e7a223bf510f58625f4d087f679595fec09b163b08250c74305dbeb4d927fb
+              description: Docker Hardened Images Helm chart for TemporalIO
+              images:
+                - name: temporalio-server
+                  ref: dhi/temporalio-server:1.29.7-cli-1.8.2-debian13@sha256:fb0948dc853dc21dec5af559f7f4a2e4376179295978e3916680bce6b53e4c03
+                - name: temporalio-admin-tools
+                  ref: dhi/temporalio-admin-tools:1.29.7-cli-1.8.2-debian13@sha256:72a5c306c1949ee29f8c8838ce49035196619bf5d482b2df001baacf9eb50f34
+                - name: temporalio-ui
+                  ref: dhi/temporalio-ui:2.53.3-debian13@sha256:0c43bb4f00ba7c15eec91c335b70e921148b1bc5822286fc6584b78ce4229e4d
+              name: temporalio-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/temporalio/helm-charts
+            cmd: prepare
+            registry: dhi.io
+        - name: update values
+          uses: yq/patch@v1
+          with:
+            file: values.yaml
+            patches:
+              - del(.cassandra)
+              - del(.elasticsearch)
+        - name: patch chart values
+          uses: helm/rudder@v1
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: helm login
+          uses: helm/login@v1
+          with:
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          privileged: true
+          with:
+            chart: .
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          with:
+            chart: .
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: .
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/temporalio/config-0

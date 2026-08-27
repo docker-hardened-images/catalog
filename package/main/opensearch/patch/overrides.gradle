@@ -1,0 +1,156 @@
+// Gradle init script: CVE-remediated dependency versions at resolution time.
+//
+// Upstream version catalog for OpenSearch 3.8.x (example tag context):
+// https://github.com/opensearch-project/OpenSearch/blob/3.8.0/gradle/libs.versions.toml
+//
+// Mirrors the Elasticsearch DHI pattern (per-minor overrides + --init-script):
+// deterministic eachDependency substitutions for versions this upstream line ships.
+
+def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+
+def mirrorMavenCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && (repo.url.toString() == "https://repo.maven.apache.org/maven2/"
+                || repo.url.toString() == "https://repo1.maven.org/maven2/")) {
+        repo.setUrl(mavenCentralMirror)
+    }
+}
+
+def restrictOpenSearchCiSnapshots = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && repo.url.toString() == "https://ci.opensearch.org/ci/dbc/snapshots/maven/") {
+        repo.content {
+            includeGroupByRegex("org\\.opensearch(\\..*)?")
+        }
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement.resolutionStrategy.eachPlugin { plugin ->
+        if (plugin.requested.id.id == "com.diffplug.spotless") {
+            plugin.useModule("com.diffplug.spotless:spotless-plugin-gradle:${plugin.requested.version}")
+        }
+    }
+    settings.pluginManagement.repositories.clear()
+    settings.pluginManagement.repositories.maven {
+        name = "GCS Maven Central mirror"
+        url = mavenCentralMirror
+    }
+    settings.pluginManagement.repositories.gradlePluginPortal()
+}
+
+settingsEvaluated { settings ->
+    settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+    settings.dependencyResolutionManagement.repositories.configureEach(restrictOpenSearchCiSnapshots)
+}
+
+allprojects {
+    buildscript.repositories.configureEach(mirrorMavenCentral)
+    buildscript.repositories.configureEach(restrictOpenSearchCiSnapshots)
+    buildscript.repositories.whenObjectAdded(mirrorMavenCentral)
+    buildscript.repositories.whenObjectAdded(restrictOpenSearchCiSnapshots)
+    repositories.configureEach(mirrorMavenCentral)
+    repositories.configureEach(restrictOpenSearchCiSnapshots)
+    repositories.whenObjectAdded(mirrorMavenCentral)
+    repositories.whenObjectAdded(restrictOpenSearchCiSnapshots)
+
+    configurations.all {
+        resolutionStrategy {
+            force "org.apache.httpcomponents.core5:httpcore5:5.4.3"
+            force "org.apache.httpcomponents.core5:httpcore5-h2:5.4.3"
+            force "org.apache.httpcomponents.core5:httpcore5-reactive:5.4.3"
+            force "org.apache.httpcomponents.client5:httpclient5:5.6.3"
+
+            eachDependency { details ->
+            def grp = details.requested.group
+            def ver = details.requested.version
+
+            // log4j 2.25.3/2.25.4 -> 2.25.5 (CVE-2026-34477, CVE-2026-34478, CVE-2026-34480,
+            // CVE-2026-49844)
+            if (grp == "org.apache.logging.log4j"
+                    && (ver == "2.25.3" || ver == "2.25.4")) {
+                details.useVersion("2.25.5")
+                details.because("CVE remediation: pin log4j")
+            }
+
+            // Netty 4.2.12-4.2.16.Final -> 4.2.17.Final (CVE-2026-55831, CVE-2026-55833,
+            // CVE-2026-56745, CVE-2026-56816, CVE-2026-59901, CVE-2026-59903)
+            if (grp == "io.netty" && (ver == "4.2.12.Final" || ver == "4.2.13.Final"
+                    || ver == "4.2.14.Final" || ver == "4.2.15.Final"
+                    || ver == "4.2.16.Final")) {
+                details.useVersion("4.2.17.Final")
+                details.because("CVE remediation: pin netty")
+            }
+
+            // httpcore5 modules 5.4.x -> 5.4.3 (CVE-2026-54399, CVE-2026-54428)
+            if (grp == "org.apache.httpcomponents.core5"
+                    && (ver == "5.4" || ver == "5.4.0" || ver == "5.4.1"
+                        || ver == "5.4.2")) {
+                details.useVersion("5.4.3")
+                details.because("CVE remediation: pin httpcore5")
+            }
+
+            // httpclient5 5.6.x -> 5.6.3 (CVE-2026-40542, CVE-2026-64607)
+            if (grp == "org.apache.httpcomponents.client5"
+                    && (ver == "5.6" || ver == "5.6.0" || ver == "5.6.1"
+                        || ver == "5.6.2")) {
+                details.useVersion("5.6.3")
+                details.because("CVE remediation: pin httpclient5")
+            }
+
+            // Jackson 2.21.x -> 2.22.x (CVE-2026-54512)
+            if (grp == "com.fasterxml.jackson.core"
+                    && details.requested.name == "jackson-annotations"
+                    && (ver == "2.21" || ver == "2.21.4")) {
+                details.useVersion("2.22")
+                details.because("CVE remediation: align Jackson family")
+            }
+            if (grp == "com.fasterxml.jackson.core"
+                    && (details.requested.name == "jackson-core"
+                        || details.requested.name == "jackson-databind")
+                    && (ver == "2.21.2" || ver == "2.21.3" || ver == "2.21.4")) {
+                details.useVersion("2.22.1")
+                details.because("CVE remediation: align Jackson family")
+            }
+            if (grp == "com.fasterxml.jackson.core"
+                    && (details.requested.name == "jackson-core"
+                        || details.requested.name == "jackson-databind")
+                    && ver == "2.22.0") {
+                details.useVersion("2.22.1")
+                details.because("CVE remediation: align Jackson family")
+            }
+            if ((grp == "com.fasterxml.jackson"
+                    || grp == "com.fasterxml.jackson.datatype"
+                    || grp == "com.fasterxml.jackson.dataformat")
+                    && (ver == "2.21.2" || ver == "2.21.3" || ver == "2.21.4")) {
+                details.useVersion("2.22.1")
+                details.because("CVE remediation: align Jackson family")
+            }
+            if ((grp == "com.fasterxml.jackson"
+                    || grp == "com.fasterxml.jackson.datatype"
+                    || grp == "com.fasterxml.jackson.dataformat")
+                    && ver == "2.22.0") {
+                details.useVersion("2.22.1")
+                details.because("CVE remediation: align Jackson family")
+            }
+
+            // Jackson 3.x (tools.jackson) 3.1.3 -> 3.1.4
+            // (CVE-2026-54512 through CVE-2026-54518; jackson-databind fixed in 3.1.4)
+            if ((grp == "tools.jackson.core"
+                    || grp == "tools.jackson.dataformat"
+                    || grp == "tools.jackson.datatype"
+                    || grp == "tools.jackson")
+                    && ver == "3.1.3") {
+                details.useVersion("3.1.4")
+                details.because("CVE remediation: align Jackson 3.x family")
+            }
+
+            // jsoup 1.15.3 / 1.19.1 -> 1.23.1 (CVE-2026-71497)
+            if (grp == "org.jsoup" && (ver == "1.15.3" || ver == "1.19.1")) {
+                details.useVersion("1.23.1")
+                details.because("CVE remediation: pin jsoup")
+            }
+            }
+        }
+    }
+}

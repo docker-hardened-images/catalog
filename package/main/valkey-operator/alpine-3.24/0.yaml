@@ -1,0 +1,137 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-valkey-operator
+variant: runtime
+tags:
+  - 0.5.0-alpine3.24
+  - 0.5.0-r6-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: d46e70a523d941ff312952bb00bb3c542a4b61b5
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: valkey-operator
+  REDIS_EXPORTER_REFERENCE: dhi/redis-exporter:1.89.0-debian13@sha256:c330d0457285747933a33094af5e5cabddf96548197a67b4a5610cd6f985505c
+  REL: "6"
+  SEMVER_MAJOR_MINOR_VERSION: "0.5"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.5.0
+  VALKEY_REFERENCE: dhi/valkey:9.1.1-debian13@sha256:49e9541e9c1e84d528cbd29eef54c98db96dc237d794e2d6d984c20acaf91569
+  VERSION: 0.5.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: valkey-operator
+      work-dir: /go/src/github.com/valkey-io/valkey-operator
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gettext-envsubst
+          - mawk
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/valkey-io/valkey-operator.git#v0.5.0
+            checksum: d46e70a523d941ff312952bb00bb3c542a4b61b5
+            path: /go/src/github.com/valkey-io/valkey-operator
+            spdx:
+              name: valkey-operator
+              version: 0.5.0
+              packages:
+                - name: valkey-operator
+                  purl: pkg:golang/github.com/valkey-io/valkey-operator@0.5.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: default the exporter and server sidecars to DHI images
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-default-images.patch
+        - name: interpolate DHI image references into patched defaults
+          runs: |
+            set -eux -o pipefail
+
+            export VALKEY_REFERENCE="dhi/valkey:9.1.1-debian13@sha256:49e9541e9c1e84d528cbd29eef54c98db96dc237d794e2d6d984c20acaf91569"
+            export REDIS_EXPORTER_REFERENCE="dhi/redis-exporter:1.89.0-debian13@sha256:c330d0457285747933a33094af5e5cabddf96548197a67b4a5610cd6f985505c"
+
+            file=internal/controller/valkeycluster_controller.go
+            envsubst '$VALKEY_REFERENCE $REDIS_EXPORTER_REFERENCE' < "$file" > "$file.tmp"
+            mv "$file.tmp" "$file"
+
+            grep -qF "$VALKEY_REFERENCE" "$file"
+            grep -qF "$REDIS_EXPORTER_REFERENCE" "$file"
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/sys@v0.46.0
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/net@v0.56.0
+              - github.com/google/cel-go@v0.30.0
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -v -count=1 ./api/... ./internal/valkey/...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/manager
+            packages: ./cmd
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/manager-dev
+            packages: ./cmd
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes operator for managing Valkey on Kubernetes
+            files:
+              - usr/bin/manager
+            license: Apache-2.0
+            name: valkey-operator
+            rel: 6
+            subpackages:
+              - files:
+                  - path: usr/bin/manager
+                    source: usr/bin/manager-dev
+                name: valkey-operator-dev
+            url: https://github.com/valkey-io/valkey-operator
+            version: 0.5.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/dhi-default-images.patch
+          uid: 0
+          gid: 0
+          source: package/main/valkey-operator/alpine-3.24/patch/dhi-default-images.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,134 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-rundeck
+variant: runtime
+tags:
+  - 6.1.0
+  - 6.1.0-r1
+  - 6.1.0-debian13
+  - 6.1.0-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-03"
+vars:
+  COMMIT_SHA: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  NODEJS_VERSION: 24.20.0-0
+  PACKAGE_HOME: /usr/share/rundeck
+  PACKAGE_NAME: rundeck
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "6.1"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.1.0
+  VERSION: 6.1.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: rundeck
+      work-dir: ${source.dir}/rundeck
+      caches:
+        - path: /root/.gradle
+        - path: /root/.npm
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - sed
+          - grep
+          - ca-certificates
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - nodejs-24=24.20.0-0
+          - npm
+        files:
+          - url: git+https://github.com/rundeck/rundeck.git#660dce23aca2697e16e4590c5d84e3f70c5a2632
+            checksum: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+            path: ${source.dir}/rundeck
+            spdx:
+              name: rundeck
+              version: 6.1.0
+              packages:
+                - name: rundeck
+                  purl: pkg:github/rundeck/rundeck@6.1.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build war and ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export JAVA_HOME=/usr/lib/jvm/temurin-21
+            export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
+            export NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+            export CIRCLE_TAG=v6.1.0
+            export CI=true
+
+            node --version
+
+            find . -name .npmrc -exec sed -i \
+              -e '/@pagerduty:registry=/d' -e '/_authToken/d' {} +
+            find . -name package-lock.json -exec \
+              sed -i 's#https://npm.artifacts.pd-internal.com/npm/#https://registry.npmjs.org/#g' {} +
+
+            ./gradlew --no-daemon --stacktrace :rundeckapp:bootWar -x test
+        - name: install rundeck
+          runs: |
+            set -eux -o pipefail
+
+            war=$(find rundeckapp/build/libs -name 'rundeck-*.war' | sort -V | tail -1)
+            [ -n "$war" ] || {
+              echo "no rundeck war produced by the build" >&2
+              exit 1
+            }
+
+            app="${target.dir}/usr/share/rundeck"
+            mkdir -p "$app/docker-lib" "$app/etc" "$app/container-plugins" \
+              "$app/libext" "$app/server/config" "$app/server/data" \
+              "$app/var/logs" "$app/user-assets" "${target.dir}/etc/remco"
+
+            export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
+            java -jar "$war" --installonly --basedir "$app"
+            cp "$war" "$app/rundeck.war"
+
+            cp -a docker/official/remco/. "${target.dir}/etc/remco/"
+            cp -a docker/official/lib/. "$app/docker-lib/"
+            cp -a docker/official/etc/. "$app/etc/"
+
+            for dir in container-plugins libext server/data var/logs user-assets; do
+              touch "$app/${dir}/.keep"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+            description: Rundeck open-source automation server
+            files:
+              - usr
+              - etc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: rundeck
+            rel: 1
+            url: https://www.rundeck.com/
+            version: 6.1.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

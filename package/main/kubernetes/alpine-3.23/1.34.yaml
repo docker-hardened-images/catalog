@@ -1,0 +1,363 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kubernetes
+variant: runtime
+tags:
+  - 1.34.11-alpine3.23
+  - 1.34.11-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-27"
+  end-of-life: "2026-10-28"
+vars:
+  COMMIT_SHA: 3a634765b787dd069f7f714fa77d767cb7d43795
+  FILEPATH_SECUREJOIN_VERSION: ""
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  REL: "1"
+  SELINUX_VERSION: v1.13.0
+  SEMVER_MAJOR_MINOR_VERSION: "1.34"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.34.11
+  VERSION: 1.34.11
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubernetes
+      work-dir: /go/src/k8s.io/kubernetes
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - jq
+          - make
+          - rsync
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/kubernetes/kubernetes.git#v1.34.11
+            checksum: 3a634765b787dd069f7f714fa77d767cb7d43795
+            path: /go/src/k8s.io/kubernetes
+            spdx:
+              name: kubernetes
+              version: 1.34.11
+              packages:
+                - name: kubernetes
+                  purl: pkg:golang/k8s.io/kubernetes@1.34.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: pin dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./hack/pin-dependency.sh golang.org/x/crypto v0.52.0
+            ./hack/pin-dependency.sh go.opentelemetry.io/otel v1.44.0 # CVE-2026-41178
+            ./hack/pin-dependency.sh go.opentelemetry.io/otel/sdk v1.44.0 # CVE-2026-41178
+            ./hack/pin-dependency.sh go.opentelemetry.io/contrib/instrumentation/github.com/emicklei/go-restful/otelrestful v0.44.0 # CVE-2023-45142, CVE-2023-25151, CVE-2022-21698
+            ./hack/pin-dependency.sh github.com/google/cel-go v0.30.0 # GHSA-gcjh-h69q-9w9g
+            ./hack/pin-dependency.sh google.golang.org/grpc v1.82.1
+            ./hack/pin-dependency.sh golang.org/x/net v0.56.0 # CVE-2026-33814, CVE-2026-46600
+            ./hack/pin-dependency.sh golang.org/x/text v0.39.0 # CVE-2026-56852
+            ./hack/pin-dependency.sh go.etcd.io/etcd/client/pkg/v3 v3.6.14 # CVE-2026-73500
+            # k8s 1.33 kubelet still imports securejoin.OpenInRoot/Reopen, so
+            # only pin selinux on release lines that compile with securejoin v0.6+.
+            if [ -n "v1.13.0" ]; then
+              ./hack/pin-dependency.sh github.com/opencontainers/selinux "v1.13.0" # CVE-2025-52881
+            fi
+            # filepath-securejoin is normally resolved transitively. Allow a
+            # per-release override (e.g. to lock the top-level API kubelet uses)
+            # when something else in the graph forces an incompatible upgrade.
+            if [ -n "" ]; then
+              ./hack/pin-dependency.sh github.com/cyphar/filepath-securejoin ""
+            fi
+
+            export TMP_DIR="$(mktemp -d /tmp/update-vendor.XXXX)"
+            dump_update_vendor_log() {
+              status=$?
+              if [ "${status}" -ne 0 ] && [ -f "${TMP_DIR}/update-vendor.log" ]; then
+                echo "=== update-vendor.log start ==="
+                cat "${TMP_DIR}/update-vendor.log"
+                echo "=== update-vendor.log end ==="
+              fi
+              exit "${status}"
+            }
+            trap dump_update_vendor_log EXIT
+            ./hack/update-vendor.sh
+            trap - EXIT
+        - name: clean git state
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git add -A
+            git -c user.name=build -c user.email=build@build commit -q -m "dependency updates" --no-verify
+            git tag -f "v1.34.11"
+        - uses: go/hermetic@v1
+        - name: build kube-apiserver
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-apiserver
+            packages: ./cmd/kube-apiserver
+        - name: build kube-apiserver dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-apiserver-dev
+            packages: ./cmd/kube-apiserver
+            strip: false
+        - name: build kube-controller-manager
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-controller-manager
+            packages: ./cmd/kube-controller-manager
+        - name: build kube-controller-manager dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-controller-manager-dev
+            packages: ./cmd/kube-controller-manager
+            strip: false
+        - name: build cloud-controller-manager
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/cloud-controller-manager
+            packages: ./cmd/cloud-controller-manager
+        - name: build cloud-controller-manager dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/cloud-controller-manager-dev
+            packages: ./cmd/cloud-controller-manager
+            strip: false
+        - name: build kube-scheduler
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-scheduler
+            packages: ./cmd/kube-scheduler
+        - name: build kube-scheduler dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-scheduler-dev
+            packages: ./cmd/kube-scheduler
+            strip: false
+        - name: build kube-proxy
+          uses: go/build@v1
+          with:
+            extra-args: -installsuffix=static
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-proxy
+            packages: ./cmd/kube-proxy
+        - name: build kube-proxy dev
+          uses: go/build@v1
+          with:
+            extra-args: -installsuffix=static
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kube-proxy-dev
+            packages: ./cmd/kube-proxy
+            strip: false
+        - name: build kubeadm
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubeadm
+            packages: ./cmd/kubeadm
+        - name: build kubeadm dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubeadm-dev
+            packages: ./cmd/kubeadm
+            strip: false
+        - name: build kubelet
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            CGO_ENABLED=0 GOLDFLAGS= make WHAT=cmd/kubelet DBG=0
+            install -D -m 0755 _output/bin/kubelet '${target.dir}/usr/bin/kubelet'
+        - name: build kubelet dev
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG='fips140=on'
+              export GOFIPS140=v1.0.0
+            fi
+
+            CGO_ENABLED=0 GOLDFLAGS= make WHAT=cmd/kubelet DBG=1
+            install -D -m 0755 _output/bin/kubelet '${target.dir}/usr/bin/kubelet-dev'
+        - name: build kubectl
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubectl
+            packages: ./cmd/kubectl
+        - name: build kubectl dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubectl-dev
+            packages: ./cmd/kubectl
+            strip: false
+        - name: build kubectl-convert
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubectl-convert
+            packages: ./cmd/kubectl-convert
+        - name: build kubectl-convert dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X k8s.io/component-base/version.gitVersion=v1.34.11
+              - -X k8s.io/component-base/version.gitCommit=3a634765b787dd069f7f714fa77d767cb7d43795
+            output: ${target.dir}/usr/bin/kubectl-convert-dev
+            packages: ./cmd/kubectl-convert
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes control plane and node binaries
+            files:
+              - usr/bin/kube-apiserver
+            license: Apache-2.0
+            name: kube-apiserver-1.34
+            priority: optional
+            rel: 1
+            section: admin
+            subpackages:
+              - files:
+                  - path: usr/bin/kube-controller-manager
+                name: kube-controller-manager-1.34
+              - files:
+                  - path: usr/bin/cloud-controller-manager
+                name: cloud-controller-manager-1.34
+              - files:
+                  - path: usr/bin/kube-scheduler
+                name: kube-scheduler-1.34
+              - files:
+                  - path: usr/bin/kube-proxy
+                name: kube-proxy-1.34
+              - files:
+                  - path: usr/bin/kubeadm
+                name: kubeadm-1.34
+              - files:
+                  - path: usr/bin/kubelet
+                name: kubelet-1.34
+              - files:
+                  - path: usr/bin/kubectl
+                  - path: usr/bin/kubectl-convert
+                name: kubectl-1.34
+              - files:
+                  - path: usr/bin/kube-apiserver
+                    source: usr/bin/kube-apiserver-dev
+                name: kube-apiserver-1.34-dev
+              - files:
+                  - path: usr/bin/kube-controller-manager
+                    source: usr/bin/kube-controller-manager-dev
+                name: kube-controller-manager-1.34-dev
+              - files:
+                  - path: usr/bin/cloud-controller-manager
+                    source: usr/bin/cloud-controller-manager-dev
+                name: cloud-controller-manager-1.34-dev
+              - files:
+                  - path: usr/bin/kube-scheduler
+                    source: usr/bin/kube-scheduler-dev
+                name: kube-scheduler-1.34-dev
+              - files:
+                  - path: usr/bin/kube-proxy
+                    source: usr/bin/kube-proxy-dev
+                name: kube-proxy-1.34-dev
+              - files:
+                  - path: usr/bin/kubeadm
+                    source: usr/bin/kubeadm-dev
+                name: kubeadm-1.34-dev
+              - files:
+                  - path: usr/bin/kubelet
+                    source: usr/bin/kubelet-dev
+                name: kubelet-1.34-dev
+              - files:
+                  - path: usr/bin/kubectl
+                    source: usr/bin/kubectl-dev
+                  - path: usr/bin/kubectl-convert
+                    source: usr/bin/kubectl-convert-dev
+                name: kubectl-1.34-dev
+            url: https://github.com/kubernetes/kubernetes
+            version: 1.34.11
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

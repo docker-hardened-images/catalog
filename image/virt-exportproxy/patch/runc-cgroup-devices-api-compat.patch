@@ -1,0 +1,138 @@
+Subject: [PATCH] Adapt KubeVirt cgroup devices parsing for runc v1.2.x
+# Source:
+# - local compatibility patch pattern already used by
+#   image/virt-api/patch/runc-cgroup-devices-api-compat.patch
+#   image/virt-handler/patch/runc-cgroup-devices-api-compat.patch
+#   image/virt-launcher/patch/runc-cgroup-devices-api-compat.patch
+#
+# How this patch was generated:
+# - started from the existing DHI compatibility patch already used by the
+#   sibling KubeVirt images above
+# - compared that patch against the upstream KubeVirt v1.8.1 source file
+#   pkg/virt-handler/cgroup/cgroup_v1_manager.go
+# - kept the same code change because virt-exportproxy 1.8.1 still compiles
+#   that package into its dependency graph
+# - useful commands for reproducing the comparison:
+#   git clone --depth 1 --branch v1.8.1 https://github.com/kubevirt/kubevirt.git /tmp/kubevirt-1.8.1
+#   git apply --check image/virt-exportproxy/patch/runc-cgroup-devices-api-compat.patch
+#   go -C /tmp/kubevirt-1.8.1 list -deps ./cmd/virt-exportproxy
+#
+# Why this patch is needed:
+# - the 1.8 line bumps github.com/opencontainers/runc to v1.2.8 for
+#   CVE-2025-31133, CVE-2025-52565, and CVE-2025-52881
+# - KubeVirt v1.8.1 still calls the removed
+#   cgroup_devices.EmulatorFromList helper in
+#   pkg/virt-handler/cgroup/cgroup_v1_manager.go
+# - without this compatibility patch, the 1.8 build fails during
+#   go test ./cmd/virt-exportproxy/... with:
+#   undefined: cgroup_devices.EmulatorFromList
+#
+# What this patch does:
+# - replaces the removed runc helper with a local parser for devices.list
+#   entries, matching the proven DHI workaround already used by sibling
+#   KubeVirt images
+#
+# Validation:
+# - local virt-exportproxy 1.8 and 1.8-dev builds succeeded after applying
+#   this patch alongside the runc v1.2.8 bump
+---
+--- a/pkg/virt-handler/cgroup/cgroup_v1_manager.go	2026-03-16 16:32:02
++++ b/pkg/virt-handler/cgroup/cgroup_v1_manager.go	2026-03-16 16:57:05
+@@ -20,17 +20,16 @@
+ package cgroup
+ 
+ import (
+-	"bytes"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"strconv"
++	"strings"
+ 
+ 	"kubevirt.io/client-go/log"
+ 
+-	cgroup_devices "github.com/opencontainers/runc/libcontainer/cgroups/devices"
+ 	"github.com/opencontainers/runc/libcontainer/devices"
+ 
+ 	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+@@ -107,6 +106,49 @@
+ 	return V1
+ }
+ 
++func parseDeviceLine(line string) (*devices.Rule, error) {
++	var t, majMin, perms string
++	if _, err := fmt.Sscanf(line, "%s %s %s", &t, &majMin, &perms); err != nil {
++		return nil, err
++	}
++	rule := &devices.Rule{Permissions: devices.Permissions(perms), Allow: true}
++	switch t {
++	case "a":
++		rule.Type, rule.Major, rule.Minor = 'a', -1, -1
++		return rule, nil
++	case "b":
++		rule.Type = devices.BlockDevice
++	case "c":
++		rule.Type = devices.CharDevice
++	default:
++		return nil, fmt.Errorf("unknown device type %q", t)
++	}
++	parts := strings.SplitN(majMin, ":", 2)
++	if len(parts) != 2 {
++		return nil, fmt.Errorf("invalid major:minor %q", majMin)
++	}
++	for i, s := range parts {
++		if s == "*" {
++			if i == 0 {
++				rule.Major = -1
++			} else {
++				rule.Minor = -1
++			}
++		} else {
++			v, err := strconv.ParseInt(s, 10, 64)
++			if err != nil {
++				return nil, err
++			}
++			if i == 0 {
++				rule.Major = v
++			} else {
++				rule.Minor = v
++			}
++		}
++	}
++	return rule, nil
++}
++
+ func getCurrentlyDefinedRules(runcManager runc_cgroups.Manager) ([]*devices.Rule, error) {
+ 	devicesPath, ok := runcManager.GetPaths()["devices"]
+ 	if !ok {
+@@ -119,17 +161,18 @@
+ 		return nil, fmt.Errorf("error reading current rules: %v", err)
+ 	}
+ 
+-	emulator, err := cgroup_devices.EmulatorFromList(bytes.NewBufferString(currentRulesStr))
+-	if err != nil {
+-		return nil, fmt.Errorf("error creating emulator out of current rules: %v", err)
++	var rules []*devices.Rule
++	for _, line := range strings.Split(strings.TrimSpace(currentRulesStr), "\n") {
++		if line == "" {
++			continue
++		}
++		rule, err := parseDeviceLine(line)
++		if err != nil {
++			return nil, fmt.Errorf("error parsing devices.list: %v", err)
++		}
++		rules = append(rules, rule)
+ 	}
+-
+-	currentRules, err := emulator.Rules()
+-	if err != nil {
+-		return nil, fmt.Errorf("error getting rules from emulator: %v", err)
+-	}
+-
+-	return currentRules, nil
++	return rules, nil
+ }
+ 
+ func (v *v1Manager) GetCpuSet() (string, error) {

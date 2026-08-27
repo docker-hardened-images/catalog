@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Open Cluster Management Work 1.x
+image: dhi.io/open-cluster-management-work
+variant: runtime
+tags:
+  - "1"
+  - "1.3"
+  - 1.3.1
+  - 1-debian
+  - 1-debian13
+  - 1.3-debian
+  - 1.3-debian13
+  - 1.3.1-debian
+  - 1.3.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-30"
+vars:
+  COMMIT_SHA: 805fa6103d8bc1761dbc9cb4e420def42703ec53
+  SEMVER_MAJOR_MINOR_VERSION: "1.3"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.3.1
+  VERSION: 1.3.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: open-cluster-management-work
+      work-dir: /go/src/open-cluster-management.io/ocm
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/open-cluster-management-io/ocm.git#v1.3.1
+            checksum: 805fa6103d8bc1761dbc9cb4e420def42703ec53
+            path: /go/src/open-cluster-management.io/ocm
+            spdx:
+              name: open-cluster-management-work
+              version: 1.3.1
+              packages:
+                - name: open-cluster-management-work
+                  purl: pkg:golang/open-cluster-management.io/ocm@1.3.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - github.com/google/cel-go@v0.30.0
+              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+              - helm.sh/helm/v3@v3.20.2
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            # Run work unit tests; exclude packages that require envtest (hub, spoke, controllers) and webhook
+            go test -short $(go list ./pkg/work/... | grep -v -e /controllers -e /webhook -e /hub -e /spoke) -count=1 -v
+        - name: build open-cluster-management-work
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X open-cluster-management.io/ocm/pkg/version.versionFromGit=v1.3.1
+              - -X open-cluster-management.io/ocm/pkg/version.commitFromGit=805fa6103d8bc1761dbc9cb4e420def42703ec53
+            output: ${target.dir}/usr/local/bin/open-cluster-management-work
+            packages: ./cmd/work
+      outputs:
+        - source: ${target.dir}/usr/local/bin/open-cluster-management-work
+          target: /usr/local/bin/open-cluster-management-work
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/open-cluster-management-work
+          target: /opt/docker/sbom/open-cluster-management-work
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: symlink
+    path: /work
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/open-cluster-management-work
+annotations:
+  org.opencontainers.image.description: A minimal Open Cluster Management Work image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /work
+  - manager

@@ -1,0 +1,154 @@
+# syntax=dhi.io/build:2-debian13
+
+name: x509-certificate-exporter 4.x (dev)
+image: dhi.io/x509-certificate-exporter
+variant: dev
+tags:
+  - 4-dev
+  - 4.2-dev
+  - 4.2.0-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.2-debian-dev
+  - 4.2-debian13-dev
+  - 4.2.0-debian-dev
+  - 4.2.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-06"
+vars:
+  BUILD_TIME_LDFLAG: github.com/enix/x509-certificate-exporter/v4/internal/product.buildTime
+  COMMIT_SHA: 8bab222d43bad953d1dbab2bd7f6fd77ae70e1cb
+  REVISION_LDFLAG: github.com/enix/x509-certificate-exporter/v4/internal/product.gitCommit
+  SEMVER_MAJOR_MINOR_VERSION: "4.2"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.2.0
+  VERSION: 4.2.0
+  VERSION_LDFLAG: github.com/enix/x509-certificate-exporter/v4/internal/product.version
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: x509-certificate-exporter
+      work-dir: /go/src/github.com/enix/x509-certificate-exporter
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/enix/x509-certificate-exporter.git#v4.2.0
+            checksum: 8bab222d43bad953d1dbab2bd7f6fd77ae70e1cb
+            path: /go/src/github.com/enix/x509-certificate-exporter
+            spdx:
+              name: x509-certificate-exporter
+              version: 4.2.0
+              packages:
+                - name: x509-certificate-exporter
+                  purl: pkg:golang/github.com/enix/x509-certificate-exporter/v4@4.2.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (4 only)
+          uses: go/bump@v1
+          with:
+            deps: []
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          work-dir: /go/src/github.com/enix/x509-certificate-exporter
+          runs: |
+            set -eux -o pipefail
+
+            # Upstream v4.0.0 has a symlink watcher regression in unit tests, and
+            # its PKCS#12 tests use SHA-1 fixtures that fail in any FIPS context.
+            SKIP_TESTS="TestSkipUnchangedSymlinkTargetSwap"
+            if [ "${target.fips}" = "true" ]; then
+              SKIP_TESTS="${SKIP_TESTS}|TestAllParseWithExporter|TestParseChain"
+            fi
+
+            go test -short ./... -skip "${SKIP_TESTS}"
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/enix/x509-certificate-exporter
+          with:
+            ldflags:
+              - -X github.com/enix/x509-certificate-exporter/v4/internal/product.version=4.2.0
+              - -X github.com/enix/x509-certificate-exporter/v4/internal/product.gitCommit=8bab222d43bad953d1dbab2bd7f6fd77ae70e1cb
+              - -X github.com/enix/x509-certificate-exporter/v4/internal/product.buildTime=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: /usr/local/bin/x509-certificate-exporter
+            packages: ./cmd/x509-certificate-exporter
+            tags:
+              - netgo
+              - osusergo
+      outputs:
+        - source: /usr/local/bin/x509-certificate-exporter
+          target: /usr/local/bin/x509-certificate-exporter
+          uid: 0
+          gid: 0
+          mode: "0555"
+        - source: /opt/docker/sbom/x509-certificate-exporter
+          target: /opt/docker/sbom/x509-certificate-exporter
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal x509-certificate-exporter image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /usr/local/bin/x509-certificate-exporter
+ports:
+  - 9793/tcp

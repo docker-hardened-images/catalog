@@ -1,0 +1,136 @@
+#!/usr/bin/make -f
+
+DEB_CFLAGS := $(shell dpkg-buildflags --get CFLAGS) $(shell dpkg-buildflags --get CPPFLAGS)
+DEB_LDFLAGS := $(shell dpkg-buildflags --get LDFLAGS)
+
+# Configure flags shared by the production and debug nginx builds. Upstream ships
+# a second binary, nginx-debug, built from the same sources with --with-debug
+# (verbose debug logging) in the same package. --with-compat is kept on both so
+# the same dynamic modules load in either binary, matching upstream which ships a
+# single set of modules for nginx and nginx-debug.
+NGINX_CONFIGURE_ARGS := \
+	--prefix=/etc/nginx \
+	--sbin-path=/usr/sbin/nginx \
+	--modules-path=/usr/lib/nginx/modules \
+	--conf-path=/etc/nginx/nginx.conf \
+	--error-log-path=/var/log/nginx/error.log \
+	--http-log-path=/var/log/nginx/access.log \
+	--pid-path=/run/nginx.pid \
+	--lock-path=/run/nginx.lock \
+	--http-client-body-temp-path=/var/cache/nginx/client_temp \
+	--http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+	--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+	--http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+	--http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+	--user=nginx \
+	--group=nginx \
+	--with-compat \
+	--with-threads \
+	--with-file-aio \
+	--with-http_ssl_module \
+	--with-http_v2_module \
+	--with-http_v3_module \
+	--with-http_realip_module \
+	--with-http_addition_module \
+	--with-http_sub_module \
+	--with-http_dav_module \
+	--with-http_flv_module \
+	--with-http_mp4_module \
+	--with-http_gunzip_module \
+	--with-http_gzip_static_module \
+	--with-http_random_index_module \
+	--with-http_secure_link_module \
+	--with-http_stub_status_module \
+	--with-http_auth_request_module \
+	--with-http_slice_module \
+	--with-http_xslt_module=dynamic \
+	--with-http_image_filter_module=dynamic \
+	--with-http_perl_module=dynamic \
+	--with-mail \
+	--with-mail_ssl_module \
+	--with-stream \
+	--with-stream_realip_module \
+	--with-stream_ssl_module \
+	--with-stream_ssl_preread_module \
+	--with-cc-opt="$(DEB_CFLAGS)" \
+	--with-ld-opt="$(DEB_LDFLAGS)"
+
+%:
+	dh $@
+
+# Configure the debug build (into objs-debug) first, then the production build
+# (default objs) last. nginx regenerates the root Makefile on each configure to
+# point at the last builddir, so `make`/`make install` operate on the production
+# build; the debug binary is built explicitly via its own Makefile. Third-party
+# dynamic modules are only added to the production build (the debug binary loads
+# modules at runtime through --with-compat).
+#
+# ngx_brotli's config hard-codes deps/brotli as the location of the Brotli
+# headers and refuses to configure without them, so the pinned google/brotli
+# source (v1.1.0, the same release Debian trixie's libbrotli ships) is staged
+# into that path. The library itself is linked from the system libbrotli-dev.
+override_dh_auto_configure:
+	rm -rf ngx_brotli/deps/brotli
+	cp -a brotli-src ngx_brotli/deps/brotli
+	cd nginx-src && ./auto/configure --builddir=objs-debug --with-debug $(NGINX_CONFIGURE_ARGS)
+	cd nginx-src && ./auto/configure $(NGINX_CONFIGURE_ARGS) \
+		--add-dynamic-module=../njs/nginx \
+		--add-dynamic-module=../ngx_brotli \
+		--add-dynamic-module=../ngx_uploadprogress \
+		--add-dynamic-module=../ngx_vts
+
+override_dh_auto_build:
+	cd nginx-src && make -j$$(nproc)
+	cd nginx-src && make -f objs-debug/Makefile -j$$(nproc)
+	sed -i 's/find_package(protobuf REQUIRED)/find_package(Protobuf REQUIRED)/' nginx-otel/CMakeLists.txt
+	cmake -S nginx-otel -B nginx-otel/build \
+		-DNGX_OTEL_GRPC=package \
+		-DNGX_OTEL_NGINX_BUILD_DIR=$(CURDIR)/nginx-src/objs \
+		-DNGX_OTEL_PROTO_DIR=$(CURDIR)/opentelemetry-proto \
+		-DNGX_OTEL_SDK=package
+	cmake --build nginx-otel/build --parallel $$(nproc)
+
+# Install into debian/tmp; per-package .install files route the core server and
+# each dynamic module into their own binary package (mirroring upstream's
+# nginx-module-* layout). nginx-debug is shipped in the core package alongside
+# nginx, as upstream does.
+override_dh_auto_install:
+	cd nginx-src && make install DESTDIR=$(CURDIR)/debian/tmp INSTALLDIRS=vendor
+	find $(CURDIR)/debian/tmp -type f \( -name .packlist -o -name perllocal.pod \) -delete
+	# Reproduce the /etc/nginx layout the nginx.org Debian package provided (and
+	# that the nginx image relied on): an nginx.conf that includes conf.d/*.conf,
+	# a welcome default.conf, and the welcome pages under /usr/share/nginx/html,
+	# plus the image's DHI hardening (server_tokens off, pid under /run/nginx,
+	# listen 8080). The nginx source we compile here does the opposite at
+	# `make install` time -- an inline-server nginx.conf with no conf.d and html
+	# under /etc/nginx/html -- so we override that source output to match.
+	install -Dm644 debian/nginx.conf \
+		$(CURDIR)/debian/tmp/etc/nginx/nginx.conf
+	install -Dm644 debian/default.conf \
+		$(CURDIR)/debian/tmp/etc/nginx/conf.d/default.conf
+	install -Dm644 $(CURDIR)/debian/tmp/etc/nginx/html/index.html \
+		$(CURDIR)/debian/tmp/usr/share/nginx/html/index.html
+	install -Dm644 $(CURDIR)/debian/tmp/etc/nginx/html/50x.html \
+		$(CURDIR)/debian/tmp/usr/share/nginx/html/50x.html
+	install -Dm755 nginx-src/objs-debug/nginx \
+		$(CURDIR)/debian/tmp/usr/sbin/nginx-debug
+	install -Dm644 nginx-src/objs/ngx_http_js_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_js_module.so
+	install -Dm644 nginx-src/objs/ngx_stream_js_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_stream_js_module.so
+	install -Dm644 nginx-src/objs/ngx_http_brotli_filter_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_brotli_filter_module.so
+	install -Dm644 nginx-src/objs/ngx_http_brotli_static_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_brotli_static_module.so
+	install -Dm644 nginx-src/objs/ngx_http_uploadprogress_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_uploadprogress_module.so
+	install -Dm644 nginx-src/objs/ngx_http_vhost_traffic_status_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_http_vhost_traffic_status_module.so
+	install -Dm644 nginx-otel/build/ngx_otel_module.so \
+		$(CURDIR)/debian/tmp/usr/lib/nginx/modules/ngx_otel_module.so
+
+override_dh_auto_test:
+
+override_dh_auto_clean:
+	cd nginx-src && [ ! -f Makefile ] || make clean
+	cd nginx-src && rm -rf objs-debug

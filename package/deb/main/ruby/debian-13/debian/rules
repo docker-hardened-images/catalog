@@ -1,0 +1,48 @@
+#!/usr/bin/make -f
+
+# Do not emit an automatic -dbgsym package; the hardened package ships no
+# debug symbols and the extra artifact is not part of the expected inventory.
+export DEB_BUILD_OPTIONS += noautodbgsym
+
+# GNU triplet for the build machine, passed to ./configure --build.
+DEB_BUILD_GNU_TYPE := $(shell dpkg-architecture --query DEB_BUILD_GNU_TYPE)
+
+# Cap parallelism at 6 to keep peak memory in check on large builders.
+NCPUS := $(shell n=$$(getconf _NPROCESSORS_ONLN); echo $$((n > 6 ? 6 : n)))
+
+# Location the interpreter and gems are staged into by dh_auto_install.
+STAGE_DIR := $(CURDIR)/debian/tmp
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	echo 'gem: --no-document' > /etc/gemrc
+	autoconf
+	./configure \
+		--build="$(DEB_BUILD_GNU_TYPE)" \
+		--prefix=/usr \
+		--sysconfdir=/etc \
+		--disable-install-doc \
+		--enable-shared \
+		--enable-yjit \
+		--with-jemalloc
+
+override_dh_auto_build:
+	$(MAKE) -j$(NCPUS)
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(STAGE_DIR)
+	test -x $(STAGE_DIR)/usr/bin/ruby
+
+	# Remove bundled CA certificates; provided by ca-certificates.
+	rm -f $(STAGE_DIR)/usr/lib/ruby/*/rubygems/ssl_certs/*/*.pem || true
+	rmdir $(STAGE_DIR)/usr/lib/ruby/*/rubygems/ssl_certs/* 2>/dev/null || true
+
+override_dh_auto_test:
+override_dh_auto_clean:
+
+override_dh_dwz:
+
+override_dh_missing:
+	dh_missing --list-missing

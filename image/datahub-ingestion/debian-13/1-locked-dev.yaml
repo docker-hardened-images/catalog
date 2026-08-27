@@ -1,0 +1,214 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub Ingestion 1.6.x (locked, dev)
+image: dhi.io/datahub-ingestion
+variant: dev
+flavor: locked
+tags:
+  - 1-locked-dev
+  - 1.6-locked-dev
+  - 1.6.0-locked-dev
+  - 1.6.0.1-locked-dev
+  - 1-debian-locked-dev
+  - 1-debian13-locked-dev
+  - 1.6-debian-locked-dev
+  - 1.6-debian13-locked-dev
+  - 1.6.0-debian-locked-dev
+  - 1.6.0-debian13-locked-dev
+  - 1.6.0.1-debian-locked-dev
+  - 1.6.0.1-debian13-locked-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  ACRYL_DATAHUB_SDIST_CHECKSUM: sha256:d4e30cc3e6bc4e849ec434fae240f97e779302160c372baec1c38c2d2ea0ee98
+  EXTRAS: base,datahub-rest,datahub-kafka,s3-slim,gcs-slim,abs-slim
+  PYTHON_MAJOR_MINOR_VERSION: "3.10"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0.1
+  VERSION: 1.6.0.1
+  VERSION_MAJOR_MINOR_PATCH: 1.6.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - krb5-config
+    - krb5-user
+    - libaio1t64
+    - libc-bin
+    - libffi8
+    - libkrb5-3
+    - libkrb5support0
+    - libldap2
+    - libodbc2
+    - librdkafka1
+    - libsasl2-2
+    - libsasl2-modules
+    - libsasl2-modules-gssapi-mit
+    - libsasl2-modules-ldap
+    - libstdc++6
+    - mawk
+    - perl-base
+    - python-3.10
+    - python-3.10-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - sed
+    - tzdata
+    - unixodbc
+    - util-linux
+  builds:
+    - name: datahub-ingestion
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - g++
+          - libaio-dev
+          - libffi-dev
+          - libkrb5-dev
+          - libldap2-dev
+          - librdkafka-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libxml2-dev
+          - libxslt1-dev
+          - pkg-config
+          - unixodbc-dev
+          - python-3.10
+          - python-3.10-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - sed
+        files:
+          - url: https://files.pythonhosted.org/packages/source/a/acryl-datahub/acryl_datahub-1.6.0.1.tar.gz
+            checksum: sha256:d4e30cc3e6bc4e849ec434fae240f97e779302160c372baec1c38c2d2ea0ee98
+            path: ${source.dir}/acryl_datahub.tar.gz
+            spdx:
+              name: acryl-datahub
+              version: 1.6.0.1
+              packages:
+                - name: acryl-datahub
+                  purl: pkg:pypi/acryl-datahub@1.6.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install uv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install uv
+        - name: install datahub-ingestion
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat > ${source.dir}/overrides.txt << 'EOF'
+            urllib3>=2.7.0
+            lxml>=6.1.0
+            cryptography>=50.0.0
+            EOF
+
+            UV_LINK_MODE=copy uv pip install \
+              --prefix ${target.dir}/opt/datahub \
+              --override ${source.dir}/overrides.txt \
+              --no-binary cryptography \
+              "${source.dir}/acryl_datahub.tar.gz[base,datahub-rest,datahub-kafka,s3-slim,gcs-slim,abs-slim]"
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: datahub-ingestion
+            source: ${target.dir}/opt/datahub
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find ${target.dir}/opt/datahub \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+      outputs:
+        - source: ${target.dir}/opt/datahub
+          target: /opt/datahub
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub-ingestion
+          target: /opt/docker/sbom/datahub-ingestion
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nonroot
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /opt/datahub/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PIP_INDEX_URL: http://127.0.0.1:1/simple
+  PYTHONPATH: /opt/datahub/lib/python3.10/site-packages
+  UV_INDEX_URL: http://127.0.0.1:1/simple
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal DataHub Ingestion image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - datahub
+  - /usr/bin/bash

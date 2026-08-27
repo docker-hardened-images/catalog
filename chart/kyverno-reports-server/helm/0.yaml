@@ -1,0 +1,128 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Kyverno Reports Server Helm chart 0.x
+image: dhi.io/kyverno-reports-server-chart
+variant: helm
+tags:
+  - 0.1.7
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: d2b451bf72c175f25a653265a03002de7c0e0d3c
+  CHART_HELM_NAME: kyverno-reports-server-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  ETCD_REFERENCE: dhi/etcd:3.5.32-debian13@sha256:4e09ba8e4ea9036ba42cdbab098482f1df9123fc0ca9ae68ec003d86fb45b4c2
+  HELM_VERSION: 4.1.4-2
+  KUBECTL_REFERENCE: dhi/kubectl:1.36.4-debian13-compat@sha256:9e3dbf268b714be94eddf62ac54a0c5fd54a07ce3c0ebca6490a94a8f55ca6ae
+  KYVERNO_REPORTS_SERVER_REFERENCE: dhi/kyverno-reports-server:0.1.7-debian13@sha256:41d6cc21591f8447a1c9d251a0f9b05267c076d3e1eab2c66aa419db4704e8d4
+  SEMVER_MAJOR_MINOR_VERSION: "0.1"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.1.7
+  VERSION: 0.1.7
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: kyverno-reports-server-chart
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - grep
+          - sed
+          - yq-go
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/kyverno/reports-server.git#reports-server-chart-0.1.7
+            checksum: d2b451bf72c175f25a653265a03002de7c0e0d3c
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/reports-server
+          with:
+            chart:
+              appRef: kyverno-reports-server
+              dependencies: null
+              description: Docker Hardened Images Helm chart for Kyverno Reports Server
+              images:
+                - name: kyverno-reports-server
+                  ref: dhi/kyverno-reports-server:0.1.7-debian13@sha256:41d6cc21591f8447a1c9d251a0f9b05267c076d3e1eab2c66aa419db4704e8d4
+                - name: kubectl
+                  ref: dhi/kubectl:1.36.4-debian13-compat@sha256:9e3dbf268b714be94eddf62ac54a0c5fd54a07ce3c0ebca6490a94a8f55ca6ae
+                - name: etcd
+                  ref: dhi/etcd:3.5.32-debian13@sha256:4e09ba8e4ea9036ba42cdbab098482f1df9123fc0ca9ae68ec003d86fb45b4c2
+              name: kyverno-reports-server-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/kyverno/reports-server
+            cmd: prepare
+            registry: dhi.io
+        - name: patch etcd image
+          work-dir: ${source.dir}/helm-charts/charts/reports-server
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF 'quay.io/coreos/etcd:v3.5.15' templates/etcd.yaml || {
+              echo "Error: pattern not found" >&2
+              exit 1
+            }
+            sed -i 's|quay.io/coreos/etcd:v3.5.15|"{{ .Values.config.etcd.image.registry }}/{{ .Values.config.etcd.image.repository }}:{{ .Values.config.etcd.image.tag }}"|' templates/etcd.yaml
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/reports-server
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update chart dependencies
+          uses: yq/patch@v1
+          work-dir: ${source.dir}/helm-charts/charts/reports-server
+          with:
+            file: Chart.yaml
+            patches:
+              - del(.dependencies[] | select(.name == "postgresql"))
+        - name: update values
+          uses: yq/patch@v1
+          work-dir: ${source.dir}/helm-charts/charts/reports-server
+          with:
+            file: values.yaml
+            patches:
+              - del(.postgresql)
+        - name: helm login
+          uses: helm/login@v1
+          with:
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          privileged: true
+          with:
+            chart: reports-server
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: reports-server
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: reports-server
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/kyverno-reports-server/config

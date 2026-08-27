@@ -1,0 +1,143 @@
+# syntax=dhi.io/build:2-debian13
+
+name: CDI Upload Server 1.x
+image: dhi.io/cdi-uploadserver
+variant: runtime
+tags:
+  - "1"
+  - "1.66"
+  - 1.66.0
+  - 1-debian
+  - 1-debian13
+  - 1.66-debian
+  - 1.66-debian13
+  - 1.66.0-debian
+  - 1.66.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-11"
+vars:
+  COMMIT_SHA: 938af7c54b2491321156bad2daa707b54bbdb214
+  SEMVER_MAJOR_MINOR_VERSION: "1.66"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.66.0
+  VERSION: 1.66.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - libc6
+    - libnbd-bin
+    - libnbd0
+    - qemu-utils
+    - tzdata
+  builds:
+    - name: cdi-uploadserver
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - pkg-config
+          - libnbd-dev
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.66.0
+            checksum: 938af7c54b2491321156bad2daa707b54bbdb214
+            path: /go/src/kubevirt.io/containerized-data-importer
+            spdx:
+              name: cdi-uploadserver
+              version: 1.66.0
+              packages:
+                - name: cdi-uploadserver
+                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.66.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/crypto@v0.52.0           # CVE-2025-22869, CVE-2025-47913, CVE-2025-47914, CVE-2025-58181, CVE-2026-39827, CVE-2026-39828, CVE-2026-39829, CVE-2026-39830, CVE-2026-39831, CVE-2026-39832, CVE-2026-39833, CVE-2026-39834, CVE-2026-39835, CVE-2026-42508, CVE-2026-46595, CVE-2026-46597, CVE-2026-46598
+            go get golang.org/x/net@v0.56.0              # CVE-2025-22870, CVE-2025-22872, CVE-2025-47911, CVE-2025-58190, CVE-2026-25680, CVE-2026-25681, CVE-2026-27136, CVE-2026-33814, CVE-2026-39821, CVE-2026-42502, CVE-2026-42506, CVE-2026-46600
+            go get golang.org/x/sys@v0.45.0              # CVE-2026-39824
+            go get golang.org/x/text@v0.39.0             # CVE-2026-56852
+            go get github.com/klauspost/compress@v1.18.7 # GHSA-259R-337F-4RFW
+            go get github.com/ulikunitz/xz@v0.5.15       # CVE-2025-58058
+            go get go.opentelemetry.io/otel@v1.44.0      # CVE-2026-29181, CVE-2026-41178
+            go get google.golang.org/grpc@v1.82.1        # CVE-2026-33186, GHSA-HRXH-6V49-42GF
+            go mod tidy
+            go mod vendor
+        - name: test
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          environment:
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            go test ./pkg/uploadserver/...
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/kubevirt.io/containerized-data-importer/cmd/cdi-uploadserver
+          environment:
+            GOWORK: "off"
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.66.0
+              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=938af7c54b2491321156bad2daa707b54bbdb214
+            output: ${target.dir}/usr/local/bin/cdi-uploadserver
+      outputs:
+        - source: ${target.dir}/usr/local/bin/cdi-uploadserver
+          target: /usr/local/bin/cdi-uploadserver
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cdi-uploadserver
+          target: /opt/docker/sbom/cdi-uploadserver
+          uid: 0
+          gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: A minimal CDI Upload Server image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/cdi-uploadserver
+  - -alsologtostderr
+ports:
+  - 8443/tcp

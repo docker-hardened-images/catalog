@@ -1,0 +1,153 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-mariadb
+variant: runtime
+tags:
+  - 11.8.9
+  - 11.8.9-r1
+  - 11.8.9-debian13
+  - 11.8.9-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-06-04"
+  end-of-life: "2028-06-04"
+vars:
+  COMMIT_SHA: bf9193a939f515e95dd8def1a5468088c91cede6
+  PACKAGE_NAME: mariadb-11.8
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "11.8"
+  SEMVER_MAJOR_VERSION: "11"
+  SEMVER_VERSION: 11.8.9
+  VERSION: 11.8.9
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: mariadb
+      work-dir: ${source.dir}/mariadb
+      contents:
+        packages:
+          - bash
+          - bison
+          - build-essential
+          - ca-certificates
+          - cmake
+          - coreutils
+          - diffutils
+          - file
+          - findutils
+          - git
+          - gzip
+          - libaio-dev
+          - libfmt-dev
+          - libjemalloc-dev
+          - libncurses-dev
+          - libnuma-dev
+          - libpcre2-dev
+          - libssl-dev
+          - pkg-config
+          - sed
+          - tar
+          - wget
+          - xz-utils
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/MariaDB/server#mariadb-11.8.9
+            checksum: bf9193a939f515e95dd8def1a5468088c91cede6
+            path: ${source.dir}/mariadb
+            spdx:
+              name: mariadb
+              version: 11.8.9
+              packages:
+                - name: mariadb
+                  purl: pkg:github/MariaDB/server@mariadb-11.8.9
+                  license: GPL-2.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build
+          work-dir: ${source.dir}/mariadb
+          runs: |
+            set -eux -o pipefail
+
+            cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/usr \
+              -DCMAKE_INSTALL_LIBDIR=/usr/lib \
+              -DMYSQL_DATADIR=/var/lib/mysql \
+              -DMYSQL_UNIX_ADDR=/run/mariadb/mariadb.sock \
+              -DWITH_DEBUG=OFF \
+              -DWITH_UNIT_TESTS=OFF \
+              -DINSTALL_MYSQLTESTDIR= \
+              -DWITH_JEMALLOC=system \
+              -DWITH_PCRE=system \
+              -DWITH_LIBFMT=system \
+              -DWITH_SSL=system \
+              -DWITH_ZLIB=system \
+              -DPLUGIN_MROONGA=NO
+
+            cmake --build build --parallel "$(nproc)"
+
+            DESTDIR="${target.dir}" cmake --install build
+        - name: prune install-tree cruft
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf "${target.dir}/usr/include"
+            rm -rf "${target.dir}/usr/lib/pkgconfig"
+            find "${target.dir}/usr/lib" -name '*.a' -delete
+            rm -rf "${target.dir}/usr/sql-bench"
+            rm -rf "${target.dir}/usr/share/mariadb/sql-bench"
+
+            for f in COPYING CREDITS INSTALL-BINARY README.md THIRDPARTY; do
+              rm -f "${target.dir}/usr/${f}"
+            done
+        - name: strip
+          runs: |
+            set -eux -o pipefail
+
+            for dir in "${target.dir}/usr/bin" "${target.dir}/usr/sbin"; do
+              [ -d "${dir}" ] || continue
+              find "${dir}" -type f -perm /111 | while read -r bin; do
+                if file -b "${bin}" | grep -q '^ELF'; then
+                  strip "${bin}"
+                fi
+              done
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libaio1t64
+              - libcrypt1
+              - libfmt10
+              - libjemalloc2
+              - libncurses6
+              - libnuma1
+              - libpcre2-8-0
+              - libssl3t64
+              - libstdc++6
+              - zlib1g
+            description: MariaDB open source relational database server
+            files:
+              - usr
+            formats:
+              - deb
+            license: GPL-2.0-only
+            name: mariadb-11.8
+            rel: 1
+            url: https://mariadb.org/
+            version: 11.8.9
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

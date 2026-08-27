@@ -1,0 +1,145 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Trust Manager Package for Debian 13 (trixie)
+image: dhi.io/trust-manager-package
+variant: runtime
+tags:
+  - trixie
+  - trixie-debian
+  - trixie-20250419
+  - trixie-debian13
+  - trixie-20250419-debian
+  - trixie-20250419-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-08-09"
+  end-of-life: "2028-08-09"
+vars:
+  BASE_DIGEST: sha256:4a01816cedefdd66a4a7f32813de794d8b8a8478e68deafd49f82e81c249cd8d
+  BASE_TAG: 20250419-debian13
+  CA_CERTIFICATES_VERSION: "20250419"
+  CA_CERTIFICATES_VERSION_DATE: "20250419"
+  CA_CERTIFICATES_VERSION_DEB: ""
+  CODENAME: trixie
+  DISTRO_PRETTY_VERSION: Debian 13 (trixie)
+  DISTRO_VERSION: "13"
+  GOLANG_REFERENCE: dhi/golang:1.26.7-debian13-dev@sha256:9b6a8e0bd0b59b7f4d32920da7be6dca232ebbcc52c2413b90901772f640758b
+  TRUST_MANAGER_COMMIT_SHA: 75590d07c8b52b29cafd7b01bac6a1adbfa591cd
+  TRUST_MANAGER_VERSION: 0.24.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: trust-pkg-debian-trixie
+      uses: dhi.io/golang:1.26.7-debian13-dev@sha256:9b6a8e0bd0b59b7f4d32920da7be6dca232ebbcc52c2413b90901772f640758b
+      contents:
+        files:
+          - url: git+https://github.com/cert-manager/trust-manager.git#v0.24.0
+            checksum: 75590d07c8b52b29cafd7b01bac6a1adbfa591cd
+            path: /go/src/github.com/cert-manager/trust-manager
+            spdx:
+              name: trust-manager
+              version: 0.24.0
+              packages:
+                - name: trust-manager-debian-bundle-static
+                  purl: pkg:golang/github.com/cert-manager/trust-manager@0.24.0#trust-packages/debian
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager/trust-packages/debian
+          with:
+            deps: []
+            download: true
+        - name: build debian-bundle-static binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/cert-manager/trust-manager/trust-packages/debian
+          with:
+            output: ${target.dir}/usr/local/bin/debian-bundle-static
+            packages: .
+        - name: create trust bundle JSON
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/debian-package
+
+            # ca-certificates and jq are pre-installed in the golang builder
+            # Create the JSON trust bundle matching upstream format
+            jq -n \
+              --rawfile bundle /etc/ssl/certs/ca-certificates.crt \
+              --arg name "cert-manager-debian-trixie" \
+              --arg version "20250419" \
+              '.name = $name | .bundle = $bundle | .version = $version' \
+              > ${target.dir}/debian-package/cert-manager-package-debian.json
+      outputs:
+        - source: ${target.dir}/usr/local/bin/debian-bundle-static
+          target: /usr/local/bin/debian-bundle-static
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/debian-package/cert-manager-package-debian.json
+          target: /debian-package/cert-manager-package-debian.json
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/trust-manager
+          target: /opt/docker/sbom/trust-manager
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-debian13@sha256:4a01816cedefdd66a4a7f32813de794d8b8a8478e68deafd49f82e81c249cd8d
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  run-as: "65532"
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /ko-app
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /ko-app/debian-bundle-static
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/debian-bundle-static
+annotations:
+  org.opencontainers.image.description: A minimal trust package image providing CA certificates for cert-manager trust-manager
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/debian-bundle-static

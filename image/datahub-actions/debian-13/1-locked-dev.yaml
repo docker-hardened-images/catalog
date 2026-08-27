@@ -1,0 +1,285 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DataHub Actions 1.6.x (locked, dev)
+image: dhi.io/datahub-actions
+variant: dev
+flavor: locked
+tags:
+  - 1-locked-dev
+  - 1.6-locked-dev
+  - 1.6.0-locked-dev
+  - 1.6.0.1-locked-dev
+  - 1-debian-locked-dev
+  - 1-debian13-locked-dev
+  - 1.6-debian-locked-dev
+  - 1.6-debian13-locked-dev
+  - 1.6.0-debian-locked-dev
+  - 1.6.0-debian13-locked-dev
+  - 1.6.0.1-debian-locked-dev
+  - 1.6.0.1-debian13-locked-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-01"
+vars:
+  ACRYL_DATAHUB_ACTIONS_SDIST_CHECKSUM: sha256:7a9a50ad224ea1827c2689731bbedd8dd836133738641236ee0f28a4fa8d651f
+  COMMIT_SHA: 036f89a860a92e8a756eccfc2d46047b52f05877
+  EXTRAS: base
+  PYTHON_MAJOR_MINOR_VERSION: "3.10"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0.1
+  VERSION: 1.6.0.1
+  VERSION_MAJOR_MINOR_PATCH: 1.6.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - krb5-config
+    - krb5-user
+    - libaio1t64
+    - libc-bin
+    - libffi8
+    - libkrb5-3
+    - libkrb5support0
+    - libldap2
+    - libodbc2
+    - librdkafka1
+    - libsasl2-2
+    - libsasl2-modules
+    - libsasl2-modules-gssapi-mit
+    - libsasl2-modules-ldap
+    - libstdc++6
+    - mawk
+    - perl-base
+    - python-3.10
+    - python-3.10-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - sed
+    - tzdata
+    - unixodbc
+    - util-linux
+  builds:
+    - name: datahub-actions
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - cargo
+          - g++
+          - libaio-dev
+          - libffi-dev
+          - libkrb5-dev
+          - libldap2-dev
+          - librdkafka-dev
+          - libsasl2-dev
+          - libssl-dev
+          - libxml2-dev
+          - libxslt1-dev
+          - pkg-config
+          - unixodbc-dev
+          - python-3.10
+          - python-3.10-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - sed
+        files:
+          - url: https://files.pythonhosted.org/packages/source/a/acryl-datahub-actions/acryl_datahub_actions-1.6.0.1.tar.gz
+            checksum: sha256:7a9a50ad224ea1827c2689731bbedd8dd836133738641236ee0f28a4fa8d651f
+            path: ${source.dir}/acryl_datahub_actions.tar.gz
+            spdx:
+              name: acryl-datahub-actions
+              version: 1.6.0.1
+              packages:
+                - name: acryl-datahub-actions
+                  purl: pkg:pypi/acryl-datahub-actions@1.6.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/datahub-project/datahub.git#v1.6.0.1
+            checksum: 036f89a860a92e8a756eccfc2d46047b52f05877
+            path: ${source.dir}/datahub-src
+            spdx:
+              name: datahub
+              version: 1.6.0.1
+              packages:
+                - name: datahub
+                  purl: pkg:github/datahub-project/datahub@v1.6.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install uv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install uv
+        - name: install datahub-actions
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cat > ${source.dir}/overrides.txt << 'EOF'
+            urllib3>=2.7.0
+            lxml>=6.1.0
+            cryptography>=50.0.0
+            setuptools>=83.0.0
+            EOF
+
+            UV_LINK_MODE=copy uv pip install \
+              --prefix ${target.dir}/opt/datahub \
+              --override ${source.dir}/overrides.txt \
+              --no-binary cryptography \
+              "${source.dir}/acryl_datahub_actions.tar.gz[base]"
+        - name: install datahub-actions glue from the monorepo checkout
+          work-dir: ${source.dir}/datahub-src/docker/datahub-actions
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/datahub/scripts \
+              ${target.dir}/etc/datahub/actions/system/conf
+
+            python3 - start.sh "${target.dir}/opt/datahub/scripts/start.sh" << 'PY'
+            import sys
+
+            src, dst = sys.argv[1], sys.argv[2]
+            s = open(src).read()
+            n = s.count("/home/datahub")
+            assert n == 6, f"expected 6 /home/datahub refs in start.sh, found {n}; upstream changed, re-evaluate the swap"
+            open(dst, "w").write(s.replace("/home/datahub", "/home/nonroot"))
+            PY
+            chmod 0755 ${target.dir}/opt/datahub/scripts/start.sh
+
+            install -m 0644 config/executor.yaml \
+              config/doc_propagation_action.yaml \
+              config/slack_action.yaml \
+              config/teams_action.yaml \
+              ${target.dir}/etc/datahub/actions/system/conf/
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: datahub-actions
+            source: ${target.dir}/opt/datahub
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find ${target.dir}/opt/datahub \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+      outputs:
+        - source: ${target.dir}/opt/datahub
+          target: /opt/datahub
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/datahub/actions/system/conf
+          target: /etc/datahub/actions/system/conf
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/datahub-actions
+          target: /opt/docker/sbom/datahub-actions
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/nonroot
+environment:
+  DATAHUB_ACTIONS_SYSTEM_CONFIGS_PATH: /etc/datahub/actions/system/conf
+  DATAHUB_ACTIONS_USER_CONFIGS_PATH: /etc/datahub/actions/conf
+  DEBIAN_FRONTEND: noninteractive
+  PATH: /opt/datahub/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PIP_INDEX_URL: http://127.0.0.1:1/simple
+  PYTHONPATH: /opt/datahub/lib/python3.10/site-packages
+  UV_INDEX_URL: http://127.0.0.1:1/simple
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /home/nonroot/.aws
+    uid: 65532
+    gid: 65532
+    mode: "0700"
+  - type: directory
+    path: /etc/datahub/actions/conf
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /etc/datahub/actions
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/datahub
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /tmp/datahub/logs/actions
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+annotations:
+  org.opencontainers.image.description: A minimal DataHub Actions image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /opt/datahub/scripts/start.sh
+  - /usr/bin/bash

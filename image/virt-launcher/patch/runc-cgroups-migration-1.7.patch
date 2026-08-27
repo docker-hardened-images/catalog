@@ -1,0 +1,502 @@
+# Provenance: backport merged kubevirt/kubevirt PR #17539 to KubeVirt v1.7.4,
+# migrating runc/libcontainer/cgroups imports to github.com/opencontainers/cgroups.
+# This enables the runc v1.3.6 update required for CVE-2026-41579.
+# Upstream: https://github.com/kubevirt/kubevirt/pull/17539
+diff --git a/cmd/virt-chroot/cgroup.go b/cmd/virt-chroot/cgroup.go
+index f1905c3..27eb996 100644
+--- a/cmd/virt-chroot/cgroup.go
++++ b/cmd/virt-chroot/cgroup.go
+@@ -8,15 +8,16 @@ import (
+ 	"runtime"
+ 	"syscall"
+ 
+-	runc_fs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+-	runc_fs2 "github.com/opencontainers/runc/libcontainer/cgroups/fs2"
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	_ "github.com/opencontainers/cgroups/devices"
++	runc_fs "github.com/opencontainers/cgroups/fs"
++	runc_fs2 "github.com/opencontainers/cgroups/fs2"
+ 
+ 	cgroupconsts "kubevirt.io/kubevirt/pkg/virt-handler/cgroup/constants"
+ )
+ 
+-func decodeResources(marshalledResourcesHash string) (*runc_configs.Resources, error) {
+-	var unmarshalledResources runc_configs.Resources
++func decodeResources(marshalledResourcesHash string) (*runc_cgroups.Resources, error) {
++	var unmarshalledResources runc_cgroups.Resources
+ 
+ 	marshalledResources, err := base64.StdEncoding.DecodeString(marshalledResourcesHash)
+ 	if err != nil {
+@@ -51,8 +52,8 @@ func decodePaths(marshalledPathsHash string) (map[string]string, error) {
+ 	return unmarshalledPaths, err
+ }
+ 
+-func setCgroupResources(paths map[string]string, resources *runc_configs.Resources, isRootless bool, isV2 bool) error {
+-	config := &runc_configs.Cgroup{
++func setCgroupResources(paths map[string]string, resources *runc_cgroups.Resources, isRootless bool, isV2 bool) error {
++	config := &runc_cgroups.Cgroup{
+ 		Path:      cgroupconsts.HostCgroupBasePath,
+ 		Resources: resources,
+ 		Rootless:  isRootless,
+@@ -73,7 +74,7 @@ func setCgroupResources(paths map[string]string, resources *runc_configs.Resourc
+ 	return nil
+ }
+ 
+-func setCgroupResourcesV1(paths map[string]string, resources *runc_configs.Resources, config *runc_configs.Cgroup) error {
++func setCgroupResourcesV1(paths map[string]string, resources *runc_cgroups.Resources, config *runc_cgroups.Cgroup) error {
+ 	return RunWithChroot(cgroupconsts.HostCgroupBasePath, func() error {
+ 		cgroupManager, err := runc_fs.NewManager(config, paths)
+ 		if err != nil {
+@@ -83,7 +84,7 @@ func setCgroupResourcesV1(paths map[string]string, resources *runc_configs.Resou
+ 	})
+ }
+ 
+-func setCgroupResourcesV2(paths map[string]string, resources *runc_configs.Resources, config *runc_configs.Cgroup) error {
++func setCgroupResourcesV2(paths map[string]string, resources *runc_cgroups.Resources, config *runc_cgroups.Cgroup) error {
+ 	for _, path := range paths {
+ 		mgr, err := runc_fs2.NewManager(config, path)
+ 		if err != nil {
+diff --git a/cmd/virt-chroot/main.go b/cmd/virt-chroot/main.go
+index 6148e08..e41a053 100644
+--- a/cmd/virt-chroot/main.go
++++ b/cmd/virt-chroot/main.go
+@@ -202,7 +202,7 @@ func main() {
+ 
+ 	cgroupsCmd.Flags().String("subsystem-paths", "", "marshalled map[string]string type, encoded to base64 format. "+
+ 		"For v1 key is cgroup subsystem and value is its path, for v2 the only key is an empty string and the value is cgroup dir path.")
+-	cgroupsCmd.Flags().String("resources", "", "marshalled Resources type (defined in github.com/opencontainers/runc/libcontainer/configs/cgroup_linux.go), encoded to base64 format")
++	cgroupsCmd.Flags().String("resources", "", "marshalled Resources type (defined in github.com/opencontainers/cgroups/config_linux.go), encoded to base64 format")
+ 	cgroupsCmd.Flags().Bool("rootless", false, "true to run rootless")
+ 	cgroupsCmd.Flags().Bool("isV2", false, "true to run rootless")
+ 
+diff --git a/pkg/virt-handler/cgroup/cgroup.go b/pkg/virt-handler/cgroup/cgroup.go
+index 8964374..9c34dae 100644
+--- a/pkg/virt-handler/cgroup/cgroup.go
++++ b/pkg/virt-handler/cgroup/cgroup.go
+@@ -28,9 +28,8 @@ import (
+ 
+ 	"kubevirt.io/client-go/log"
+ 
+-	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+-	"github.com/opencontainers/runc/libcontainer/configs"
+-	"github.com/opencontainers/runc/libcontainer/devices"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	devices "github.com/opencontainers/cgroups/devices/config"
+ 
+ 	v1 "kubevirt.io/api/core/v1"
+ 
+@@ -46,7 +45,7 @@ import (
+ // guide-line is to have the thinnest glue layer possible in order to have all runc's capabilities without extra effort.
+ // This interface can, of course, extend runc and introduce new functionalities that are specific to Kubevirt's use.
+ type Manager interface {
+-	Set(r *configs.Resources) error
++	Set(r *runc_cgroups.Resources) error
+ 
+ 	// GetBasePathToHostSubsystem returns the path to the specified subsystem
+ 	// from the host's viewpoint.
+@@ -102,9 +101,9 @@ func newManagerFromPid(pid int, deviceRules []*devices.Rule) (manager Manager, e
+ 		return nil, fmt.Errorf("cannot initialize new cgroup manager. err: %v", err)
+ 	}
+ 
+-	config := &configs.Cgroup{
++	config := &runc_cgroups.Cgroup{
+ 		Path: cgroupconsts.HostCgroupBasePath,
+-		Resources: &configs.Resources{
++		Resources: &runc_cgroups.Resources{
+ 			Devices: deviceRules,
+ 		},
+ 		Rootless: isRootless,
+diff --git a/pkg/virt-handler/cgroup/cgroup_test.go b/pkg/virt-handler/cgroup/cgroup_test.go
+index 53450e2..2db74da 100644
+--- a/pkg/virt-handler/cgroup/cgroup_test.go
++++ b/pkg/virt-handler/cgroup/cgroup_test.go
+@@ -25,9 +25,8 @@ import (
+ 
+ 	. "github.com/onsi/ginkgo/v2"
+ 	. "github.com/onsi/gomega"
+-	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
+-	"github.com/opencontainers/runc/libcontainer/devices"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	devices "github.com/opencontainers/cgroups/devices/config"
+ 	"go.uber.org/mock/gomock"
+ 
+ 	v1 "kubevirt.io/api/core/v1"
+@@ -60,7 +59,7 @@ var _ = Describe("cgroup manager", func() {
+ 			return paths
+ 		}).AnyTimes()
+ 
+-		execVirtChrootFunc := func(r *runc_configs.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error {
++		execVirtChrootFunc := func(r *runc_cgroups.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error {
+ 			rulesDefined = r.Devices
+ 			subsystemPathsDefined = subsystemPaths
+ 			return nil
+@@ -81,8 +80,8 @@ var _ = Describe("cgroup manager", func() {
+ 		return newMockManagerFromCtrl(ctrl, version)
+ 	}
+ 
+-	newResourcesWithRule := func(rule *devices.Rule) *runc_configs.Resources {
+-		return &runc_configs.Resources{
++	newResourcesWithRule := func(rule *devices.Rule) *runc_cgroups.Resources {
++		return &runc_cgroups.Resources{
+ 			Devices: []*devices.Rule{
+ 				rule,
+ 			},
+diff --git a/pkg/virt-handler/cgroup/cgroup_v1_manager.go b/pkg/virt-handler/cgroup/cgroup_v1_manager.go
+index 4bc62d2..8adc190 100644
+--- a/pkg/virt-handler/cgroup/cgroup_v1_manager.go
++++ b/pkg/virt-handler/cgroup/cgroup_v1_manager.go
+@@ -20,22 +20,20 @@
+ package cgroup
+ 
+ import (
+-	"bytes"
++	"bufio"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"strconv"
++	"strings"
+ 
+ 	"kubevirt.io/client-go/log"
+ 
+-	cgroup_devices "github.com/opencontainers/runc/libcontainer/cgroups/devices"
+-	"github.com/opencontainers/runc/libcontainer/devices"
+-
+-	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+-	runc_fs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	devices "github.com/opencontainers/cgroups/devices/config"
++	runc_fs "github.com/opencontainers/cgroups/fs"
+ 
+ 	"kubevirt.io/kubevirt/pkg/util"
+ 	cgroupconsts "kubevirt.io/kubevirt/pkg/virt-handler/cgroup/constants"
+@@ -49,7 +47,7 @@ type v1Manager struct {
+ 	getCurrentlyDefinedRules getCurrentlyDefinedRulesFunc
+ }
+ 
+-func newV1Manager(config *runc_configs.Cgroup, controllerPaths map[string]string) (Manager, error) {
++func newV1Manager(config *runc_cgroups.Cgroup, controllerPaths map[string]string) (Manager, error) {
+ 	runcManager, err := runc_fs.NewManager(config, controllerPaths)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("cannot initialize new cgroup manager. err: %v", err)
+@@ -78,7 +76,7 @@ func (v *v1Manager) GetBasePathToHostSubsystem(subsystem string) (string, error)
+ 	return filepath.Join(cgroupconsts.HostCgroupBasePath, subsystemPath), nil
+ }
+ 
+-func (v *v1Manager) Set(r *runc_configs.Resources) error {
++func (v *v1Manager) Set(r *runc_cgroups.Resources) error {
+ 	// We want to keep given resources untouched
+ 	resourcesToSet := *r
+ 
+@@ -119,17 +117,57 @@ func getCurrentlyDefinedRules(runcManager runc_cgroups.Manager) ([]*devices.Rule
+ 		return nil, fmt.Errorf("error reading current rules: %v", err)
+ 	}
+ 
+-	emulator, err := cgroup_devices.EmulatorFromList(bytes.NewBufferString(currentRulesStr))
+-	if err != nil {
+-		return nil, fmt.Errorf("error creating emulator out of current rules: %v", err)
+-	}
++	return parseDevicesList(strings.NewReader(currentRulesStr))
++}
+ 
+-	currentRules, err := emulator.Rules()
+-	if err != nil {
+-		return nil, fmt.Errorf("error getting rules from emulator: %v", err)
++func parseDevicesList(reader io.Reader) ([]*devices.Rule, error) {
++	var rules []*devices.Rule
++	scanner := bufio.NewScanner(reader)
++	for scanner.Scan() {
++		line := scanner.Text()
++		fields := strings.FieldsFunc(line, func(r rune) bool {
++			return r == ' ' || r == ':'
++		})
++		if len(fields) != 4 {
++			return nil, fmt.Errorf("malformed devices.list rule %q", line)
++		}
++		var rule devices.Rule
++		rule.Allow = true
++		switch fields[0] {
++		case "a":
++			continue
++		case "b":
++			rule.Type = devices.BlockDevice
++		case "c":
++			rule.Type = devices.CharDevice
++		default:
++			return nil, fmt.Errorf("unknown device type %q", fields[0])
++		}
++		if fields[1] == "*" {
++			rule.Major = devices.Wildcard
++		} else {
++			val, err := strconv.ParseInt(fields[1], 10, 64)
++			if err != nil {
++				return nil, fmt.Errorf("invalid major number: %w", err)
++			}
++			rule.Major = val
++		}
++		if fields[2] == "*" {
++			rule.Minor = devices.Wildcard
++		} else {
++			val, err := strconv.ParseInt(fields[2], 10, 64)
++			if err != nil {
++				return nil, fmt.Errorf("invalid minor number: %w", err)
++			}
++			rule.Minor = val
++		}
++		rule.Permissions = devices.Permissions(fields[3])
++		rules = append(rules, &rule)
+ 	}
+-
+-	return currentRules, nil
++	if err := scanner.Err(); err != nil {
++		return nil, fmt.Errorf("error reading devices.list: %w", err)
++	}
++	return rules, nil
+ }
+ 
+ func (v *v1Manager) GetCpuSet() (string, error) {
+diff --git a/pkg/virt-handler/cgroup/cgroup_v2_manager.go b/pkg/virt-handler/cgroup/cgroup_v2_manager.go
+index 946addd..4d7a017 100644
+--- a/pkg/virt-handler/cgroup/cgroup_v2_manager.go
++++ b/pkg/virt-handler/cgroup/cgroup_v2_manager.go
+@@ -27,10 +27,9 @@ import (
+ 	"strconv"
+ 	"strings"
+ 
+-	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+-	runc_fs "github.com/opencontainers/runc/libcontainer/cgroups/fs2"
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
+-	"github.com/opencontainers/runc/libcontainer/devices"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	devices "github.com/opencontainers/cgroups/devices/config"
++	runc_fs "github.com/opencontainers/cgroups/fs2"
+ 
+ 	"kubevirt.io/client-go/log"
+ 
+@@ -45,7 +44,7 @@ type v2Manager struct {
+ 	execVirtChroot execVirtChrootFunc
+ }
+ 
+-func newV2Manager(config *runc_configs.Cgroup, dirPath string) (Manager, error) {
++func newV2Manager(config *runc_cgroups.Cgroup, dirPath string) (Manager, error) {
+ 	runcManager, err := runc_fs.NewManager(config, dirPath)
+ 	if err != nil {
+ 		return nil, err
+@@ -75,7 +74,7 @@ func (v *v2Manager) GetBasePathToHostSubsystem(_ string) (string, error) {
+ 	return v.dirPath, nil
+ }
+ 
+-func (v *v2Manager) Set(r *runc_configs.Resources) error {
++func (v *v2Manager) Set(r *runc_cgroups.Resources) error {
+ 	// We want to keep given resources untouched
+ 	resourcesToSet := *r
+ 
+diff --git a/pkg/virt-handler/cgroup/generated_mock_cgroup.go b/pkg/virt-handler/cgroup/generated_mock_cgroup.go
+index 667945e..c11f239 100644
+--- a/pkg/virt-handler/cgroup/generated_mock_cgroup.go
++++ b/pkg/virt-handler/cgroup/generated_mock_cgroup.go
+@@ -12,8 +12,7 @@ package cgroup
+ import (
+ 	reflect "reflect"
+ 
+-	cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+-	configs "github.com/opencontainers/runc/libcontainer/configs"
++	cgroups "github.com/opencontainers/cgroups"
+ 	gomock "go.uber.org/mock/gomock"
+ )
+ 
+@@ -129,7 +128,7 @@ func (mr *MockManagerMockRecorder) GetCpuSet() *gomock.Call {
+ }
+ 
+ // Set mocks base method.
+-func (m *MockManager) Set(r *configs.Resources) error {
++func (m *MockManager) Set(r *cgroups.Resources) error {
+ 	m.ctrl.T.Helper()
+ 	ret := m.ctrl.Call(m, "Set", r)
+ 	ret0, _ := ret[0].(error)
+@@ -180,6 +179,20 @@ func (m *MockruncManager) EXPECT() *MockruncManagerMockRecorder {
+ 	return m.recorder
+ }
+ 
++// AddPid mocks base method.
++func (m *MockruncManager) AddPid(subcgroup string, pid int) error {
++	m.ctrl.T.Helper()
++	ret := m.ctrl.Call(m, "AddPid", subcgroup, pid)
++	ret0, _ := ret[0].(error)
++	return ret0
++}
++
++// AddPid indicates an expected call of AddPid.
++func (mr *MockruncManagerMockRecorder) AddPid(subcgroup, pid any) *gomock.Call {
++	mr.mock.ctrl.T.Helper()
++	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddPid", reflect.TypeOf((*MockruncManager)(nil).AddPid), subcgroup, pid)
++}
++
+ // Apply mocks base method.
+ func (m *MockruncManager) Apply(pid int) error {
+ 	m.ctrl.T.Helper()
+@@ -223,7 +236,7 @@ func (mr *MockruncManagerMockRecorder) Exists() *gomock.Call {
+ }
+ 
+ // Freeze mocks base method.
+-func (m *MockruncManager) Freeze(state configs.FreezerState) error {
++func (m *MockruncManager) Freeze(state cgroups.FreezerState) error {
+ 	m.ctrl.T.Helper()
+ 	ret := m.ctrl.Call(m, "Freeze", state)
+ 	ret0, _ := ret[0].(error)
+@@ -252,10 +265,10 @@ func (mr *MockruncManagerMockRecorder) GetAllPids() *gomock.Call {
+ }
+ 
+ // GetCgroups mocks base method.
+-func (m *MockruncManager) GetCgroups() (*configs.Cgroup, error) {
++func (m *MockruncManager) GetCgroups() (*cgroups.Cgroup, error) {
+ 	m.ctrl.T.Helper()
+ 	ret := m.ctrl.Call(m, "GetCgroups")
+-	ret0, _ := ret[0].(*configs.Cgroup)
++	ret0, _ := ret[0].(*cgroups.Cgroup)
+ 	ret1, _ := ret[1].(error)
+ 	return ret0, ret1
+ }
+@@ -267,10 +280,10 @@ func (mr *MockruncManagerMockRecorder) GetCgroups() *gomock.Call {
+ }
+ 
+ // GetFreezerState mocks base method.
+-func (m *MockruncManager) GetFreezerState() (configs.FreezerState, error) {
++func (m *MockruncManager) GetFreezerState() (cgroups.FreezerState, error) {
+ 	m.ctrl.T.Helper()
+ 	ret := m.ctrl.Call(m, "GetFreezerState")
+-	ret0, _ := ret[0].(configs.FreezerState)
++	ret0, _ := ret[0].(cgroups.FreezerState)
+ 	ret1, _ := ret[1].(error)
+ 	return ret0, ret1
+ }
+@@ -355,7 +368,7 @@ func (mr *MockruncManagerMockRecorder) Path(arg0 any) *gomock.Call {
+ }
+ 
+ // Set mocks base method.
+-func (m *MockruncManager) Set(r *configs.Resources) error {
++func (m *MockruncManager) Set(r *cgroups.Resources) error {
+ 	m.ctrl.T.Helper()
+ 	ret := m.ctrl.Call(m, "Set", r)
+ 	ret0, _ := ret[0].(error)
+diff --git a/pkg/virt-handler/cgroup/util.go b/pkg/virt-handler/cgroup/util.go
+index cce3ebf..8744be2 100644
+--- a/pkg/virt-handler/cgroup/util.go
++++ b/pkg/virt-handler/cgroup/util.go
+@@ -32,12 +32,10 @@ import (
+ 	"strings"
+ 	"syscall"
+ 
+-	"github.com/opencontainers/runc/libcontainer/cgroups"
+ 	"golang.org/x/sys/unix"
+ 
+ 	"github.com/opencontainers/runc/libcontainer/devices"
+ 
+-	runc_cgroups "github.com/opencontainers/runc/libcontainer/cgroups"
++	runc_cgroups "github.com/opencontainers/cgroups"
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
+ 
+ 	v1 "kubevirt.io/api/core/v1"
+@@ -65,7 +65,7 @@ var (
+ 	defaultDeviceRules []*devices.Rule
+ )
+ 
+-type execVirtChrootFunc func(r *runc_configs.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error
++type execVirtChrootFunc func(r *runc_cgroups.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error
+ type getCurrentlyDefinedRulesFunc func(runcManager runc_cgroups.Manager) ([]*devices.Rule, error)
+ 
+ // addCurrentRules gets a slice of rules as a parameter and returns a new slice that contains all given rules
+@@ -288,7 +288,7 @@ func GenerateDefaultDeviceRules() []*devices.Rule {
+ 	const toAllow = true
+ 
+ 	var permissions devices.Permissions
+-	if cgroups.IsCgroup2UnifiedMode() {
++	if runc_cgroups.IsCgroup2UnifiedMode() {
+ 		permissions = "rwm"
+ 	} else {
+ 		permissions = "rw"
+@@ -355,7 +355,7 @@ func GenerateDefaultDeviceRules() []*devices.Rule {
+ 
+ // execVirtChrootCgroups executes virt-chroot cgroups command to apply changes via virt-chroot.
+ // This is needed since high privileges are needed and root is needed to change.
+-func execVirtChrootCgroups(r *runc_configs.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error {
++func execVirtChrootCgroups(r *runc_cgroups.Resources, subsystemPaths map[string]string, rootless bool, version CgroupVersion) error {
+ 	marshalledRules, err := json.Marshal(*r)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to marshall resources. err: %v resources: %+v", err, *r)
+diff --git a/pkg/virt-handler/hotplug-disk/mount.go b/pkg/virt-handler/hotplug-disk/mount.go
+index d20dcb6..49977dc 100644
+--- a/pkg/virt-handler/hotplug-disk/mount.go
++++ b/pkg/virt-handler/hotplug-disk/mount.go
+@@ -41,9 +41,9 @@ import (
+ 	"kubevirt.io/kubevirt/pkg/virt-handler/cgroup"
+ 	"kubevirt.io/kubevirt/pkg/virt-handler/isolation"
+ 
+-	"github.com/opencontainers/runc/libcontainer/configs"
++	"github.com/opencontainers/cgroups"
+ 
+-	"github.com/opencontainers/runc/libcontainer/devices"
++	devices "github.com/opencontainers/cgroups/devices/config"
+ 	"k8s.io/apimachinery/pkg/types"
+ 
+ 	v1 "kubevirt.io/api/core/v1"
+@@ -487,7 +487,7 @@ func (m *volumeMounter) updateBlockMajorMinor(dev uint64, allow bool, cgroupMana
+ 		return fmt.Errorf("failed to apply device rule %+v: cgroup manager is nil", *deviceRule)
+ 	}
+ 
+-	err := cgroupManager.Set(&configs.Resources{
++	err := cgroupManager.Set(&cgroups.Resources{
+ 		Devices: []*devices.Rule{deviceRule},
+ 	})
+ 
+diff --git a/pkg/virt-handler/hotplug-disk/mount_test.go b/pkg/virt-handler/hotplug-disk/mount_test.go
+index 88bea94..eea71ac 100644
+--- a/pkg/virt-handler/hotplug-disk/mount_test.go
++++ b/pkg/virt-handler/hotplug-disk/mount_test.go
+@@ -48,8 +48,8 @@ import (
+ 
+ 	v1 "kubevirt.io/api/core/v1"
+ 
+-	runc_configs "github.com/opencontainers/runc/libcontainer/configs"
+-	"github.com/opencontainers/runc/libcontainer/devices"
++	runc_cgroups "github.com/opencontainers/cgroups"
++	devices "github.com/opencontainers/cgroups/devices/config"
+ 
+ 	hotplugdisk "kubevirt.io/kubevirt/pkg/hotplug-disk"
+ 	"kubevirt.io/kubevirt/pkg/virt-handler/cgroup"
+@@ -107,7 +107,7 @@ var _ = Describe("HotplugVolume", func() {
+ 			rule1.Allow == rule2.Allow
+ 	}
+ 
+-	cgroupMockSet := func(r *runc_configs.Resources) {
++	cgroupMockSet := func(r *runc_cgroups.Resources) {
+ 		if expectedCgroupRule == nil {
+ 			return
+ 		}
+diff --git a/pkg/virt-handler/vm.go b/pkg/virt-handler/vm.go
+index 7db8d51..a96860f 100644
+--- a/pkg/virt-handler/vm.go
++++ b/pkg/virt-handler/vm.go
+@@ -33,7 +33,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/mitchellh/go-ps"
+-	"github.com/opencontainers/runc/libcontainer/cgroups"
++	"github.com/opencontainers/cgroups"
+ 	"golang.org/x/sys/unix"
+ 	"libvirt.org/go/libvirtxml"
+ 
+@@ -212,7 +212,7 @@ func NewVirtualMachineController(
+ 	}
+ 
+ 	permissions := "rw"
+-	if cgroups.IsCgroup2UnifiedMode() {
++	if runc_cgroups.IsCgroup2UnifiedMode() {
+ 		// Need 'rwm' permissions otherwise ebpf filtering program attached by runc
+ 		// will deny probing the device file with 'access' syscall. That in turn
+ 		// will lead to virtqemud failure on VM startup.

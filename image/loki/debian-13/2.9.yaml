@@ -1,0 +1,209 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Loki 2.9.x
+image: dhi.io/loki
+variant: runtime
+tags:
+  - "2"
+  - "2.9"
+  - 2.9.17
+  - 2-debian
+  - 2-debian13
+  - 2.9-debian
+  - 2.9-debian13
+  - 2.9.17-debian
+  - 2.9.17-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-09-06"
+vars:
+  COMMIT_SHA: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+  LOKI_MODULE_BASE: github.com/grafana/loki
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.17
+  VERSION: 2.9.17
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - tzdata
+  builds:
+    - name: loki
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - make
+          - bash
+          - sed
+          - hostname
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+        files:
+          - url: git+https://github.com/grafana/loki.git#v2.9.17
+            checksum: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+            path: ${source.dir}/loki
+            spdx:
+              name: loki
+              version: 2.9.17
+              packages:
+                - name: loki
+                  purl: pkg:dhi/loki@2.9.17
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          work-dir: ${source.dir}/loki
+          privileged: true
+          environment:
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/crypto@v0.45.0
+            go get github.com/buger/jsonparser@v1.1.2
+            go get google.golang.org/grpc@v1.82.1
+            go get google.golang.org/api@v0.272.0
+
+            go mod edit -replace github.com/go-openapi/testify/v2=github.com/go-openapi/testify/v2@v2.0.2
+
+            go mod tidy
+            go mod vendor
+        - name: remove godoc
+          work-dir: ${source.dir}/loki
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/tools/godoc@none
+        - name: update go dependencies and vendor (2.9 only)
+          uses: go/bump@v2
+          work-dir: ${source.dir}/loki
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - golang.org/x/text@v0.39.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/gorilla/websocket@v1.5.3
+              - github.com/klauspost/compress@v1.18.7
+              - go.etcd.io/etcd/client/pkg/v3@v3.5.33
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+              - go.etcd.io/etcd/client/pkg/v3@v3.5.33
+            download: true
+        - name: sync vendor directory (2.9 only)
+          work-dir: ${source.dir}/loki
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: patch vendored grpcutil/health_check_list.go (2.9 only)
+          work-dir: ${source.dir}/loki
+          runs: |
+            set -eux -o pipefail
+
+            cat >> vendor/github.com/grafana/dskit/grpcutil/health_check_list.go << 'EOF'
+            package grpcutil
+            import (
+              "context"
+              "github.com/gogo/status"
+              "google.golang.org/grpc/codes"
+              "google.golang.org/grpc/health/grpc_health_v1"
+            )
+            func (h *HealthCheck) List(_ context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
+              return nil, status.Error(codes.Unimplemented, "Listing is not supported")
+            }
+            EOF
+        - name: build
+          uses: go/build@v1
+          work-dir: ${source.dir}/loki
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            ldflags:
+              - -extldflags "-static"
+              - -X github.com/grafana/loki/pkg/util/build.Branch=2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.Version=2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.Revision=ffcd570f815ccf0588bda305659d0d4e925e4ef1
+              - -X github.com/grafana/loki/pkg/util/build.BuildUser=dhi@build
+              - -X github.com/grafana/loki/pkg/util/build.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/local/bin/loki
+            packages: ./cmd/loki
+            tags: netgo
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/etc/loki"
+            cp -a "${source.dir}/loki/cmd/loki/loki-docker-config.yaml" "${target.dir}/etc/loki/local-config.yaml"
+      outputs:
+        - source: ${target.dir}/usr/local/bin/loki
+          target: /usr/local/bin/loki
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/loki/local-config.yaml
+          target: /etc/loki/local-config.yaml
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/loki
+          target: /opt/docker/sbom/loki
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /loki
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /loki/rules
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /loki/rules-temp
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal Loki image
+  org.opencontainers.image.licenses: AGPL-3.0
+entrypoint:
+  - /usr/local/bin/loki
+cmd:
+  - -config.file=/etc/loki/local-config.yaml
+ports:
+  - 3100/tcp

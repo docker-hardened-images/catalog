@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-debian13
+
+name: ECK Operator 3.5.x (dev)
+image: dhi.io/eck-operator
+variant: dev
+tags:
+  - 3-dev
+  - 3.5-dev
+  - 3.5.0-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.5-debian-dev
+  - 3.5-debian13-dev
+  - 3.5.0-debian-dev
+  - 3.5.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-25"
+  end-of-life: "2027-10-15"
+vars:
+  COMMIT_SHA: 386c7b14f2d1bbb7f2af1e7da997e64875f16e47
+  SEMVER_MAJOR_MINOR_VERSION: "3.5"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.5.0
+  VERSION: 3.5.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: eck-operator
+      work-dir: /go/src/github.com/elastic/cloud-on-k8s/v3
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/elastic/cloud-on-k8s.git#v3.5.0
+            checksum: 386c7b14f2d1bbb7f2af1e7da997e64875f16e47
+            path: /go/src/github.com/elastic/cloud-on-k8s/v3
+            spdx:
+              name: eck-operator
+              version: 3.5.0
+              packages:
+                - name: eck-operator
+                  purl: pkg:golang/github.com/elastic/cloud-on-k8s/v3@3.5.0
+                  license: Elastic-License-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (3 only)
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/google/cel-go@v0.30.0
+              - github.com/moby/spdystream@v0.5.1
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: unit test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./cmd/... -count=1
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/elastic/cloud-on-k8s/v3/pkg/about.version=3.5.0
+              - -X github.com/elastic/cloud-on-k8s/v3/pkg/about.buildHash=386c7b14f2d1bbb7f2af1e7da997e64875f16e47
+              - -X github.com/elastic/cloud-on-k8s/v3/pkg/about.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/elastic/cloud-on-k8s/v3/pkg/about.buildSnapshot=false
+            output: ${target.dir}/usr/local/bin/elastic-operator
+            packages: ./cmd
+      outputs:
+        - source: ${target.dir}/usr/local/bin/elastic-operator
+          target: /usr/local/bin/elastic-operator
+          uid: 0
+          gid: 0
+        - source: /go/src/github.com/elastic/cloud-on-k8s/v3/config/eck.yaml
+          target: /conf/eck.yaml
+          uid: 65532
+          gid: 65532
+          mode: "0644"
+        - source: /go/src/github.com/elastic/cloud-on-k8s/v3/LICENSE.txt
+          target: /licenses/LICENSE.txt
+          uid: 65532
+          gid: 65532
+          mode: "0644"
+        - source: /go/src/github.com/elastic/cloud-on-k8s/v3/NOTICE.txt
+          target: /licenses/NOTICE.txt
+          uid: 65532
+          gid: 65532
+          mode: "0644"
+        - source: /opt/docker/sbom/eck-operator
+          target: /opt/docker/sbom/eck-operator
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: symlink
+    path: /elastic-operator
+    uid: 0
+    gid: 0
+    source: /usr/local/bin/elastic-operator
+annotations:
+  org.opencontainers.image.description: A minimal ECK Operator image
+  org.opencontainers.image.licenses: Elastic-License-2.0
+entrypoint:
+  - /elastic-operator
+cmd:
+  - manager

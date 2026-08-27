@@ -1,0 +1,194 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-gitea
+variant: runtime
+tags:
+  - 1.27.2-alpine3.24
+  - 1.27.2-r4-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2016-12-23"
+vars:
+  COMMIT_SHA: 1dac1bb2f8593d4319125fa6bca9283000a2ddc2
+  GO_BUILD_TAGS: bindata,timetzdata,sqlite,sqlite_unlock_notify
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: gitea
+  REL: "4"
+  SEMVER_MAJOR_MINOR_VERSION: "1.27"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.27.2
+  VERSION: 1.27.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: gitea
+      work-dir: /go/src/code.gitea.io/gitea
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - corepack
+          - git
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - nodejs-22
+        files:
+          - url: git+https://github.com/go-gitea/gitea.git#v1.27.2
+            checksum: 1dac1bb2f8593d4319125fa6bca9283000a2ddc2
+            path: /go/src/code.gitea.io/gitea
+            spdx:
+              name: gitea
+              version: 1.27.2
+              packages:
+                - name: gitea
+                  purl: pkg:golang/code.gitea.io/gitea@v1.27.2
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - golang.org/x/image@v0.45.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/go-git/go-git/v5@v5.19.2
+              - github.com/klauspost/compress@v1.18.7
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            GITEA_I_AM_BEING_UNSAFE_RUNNING_AS_ROOT=true \
+              go test ./modules/setting/... ./modules/util/...
+        - name: build frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ "$(printf '%s\n%s' "1.27.2" '1.27.999' | sort -V | tail -1)" != '1.27.999' ]; then
+              echo "VERSION 1.27.2 exceeds reviewed baseline 1.27.x — re-validate pnpm-workspace.yaml overrides below"
+              exit 1
+            fi
+
+            # Reviewed against gitea v1.27.0 lockfile (pnpm 11.9.0):
+            # Dropped stale 1.26.x pins already satisfied (or superseded) upstream:
+            #   lodash-es 4.18.0 (lock 4.18.1), vite 8.0.16 (direct 8.1.0),
+            #   ws 8.21.0, js-yaml 4.2.0, uuid 11.1.1 (lock 14.0.0), esbuild 0.28.1.
+            # Kept still-required floors:
+            #   form-data 4.0.6 (CVE-2026-12143; lock 4.0.5 via jsdom),
+            #   dompurify 3.4.13 (GHSA-55q2-fjhq-7xh7, GHSA-c2j3-45gr-mqc4, GHSA-cmwh-pvxp-8882; lock 3.4.7 via mermaid),
+            #   postcss 8.5.23 (CVE-2026-41305, CVE-2026-69153, GHSA-r28c-9q8g-f849; lock 8.5.15),
+            #   js-yaml 4.3.1 (CVE-2026-59869, GHSA-5p4m-2wfm-xmqj; lock 4.2.0),
+            #   nanoid 3.3.18 (CVE-2026-67213, CVE-2026-67214; lock 3.3.12),
+            #   mermaid 11.16.1 (CVE-2026-50159, CVE-2026-71436–71439; lock 11.15.0).
+            node -e '
+              const fs = require("fs");
+              const path = "pnpm-workspace.yaml";
+              let text = fs.readFileSync(path, "utf8");
+              // Drop any prior top-level overrides block so retries stay idempotent.
+              text = text.replace(/\noverrides:\n(?:[ \t]+.+\n)*/, "\n");
+              const overrides = {
+                "form-data": "4.0.6",
+                "dompurify": "3.4.13",
+                "postcss": "8.5.23",
+                "js-yaml": "4.3.1",
+                "nanoid": "3.3.18",
+                "mermaid": "11.16.1",
+              };
+              const block =
+                "overrides:\n" +
+                Object.entries(overrides)
+                  .map(([k, v]) => "  " + k + ": " + v)
+                  .join("\n") +
+                "\n";
+              fs.writeFileSync(path, text.trimEnd() + "\n\n" + block);
+            '
+
+            corepack pnpm install --lockfile-only
+            corepack pnpm install --frozen-lockfile
+            corepack pnpm exec vite build
+        - name: prune frontend dev dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack pnpm prune --prod
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: gitea-frontend
+            source: /go/src/code.gitea.io/gitea/node_modules
+        - name: generate backend
+          runs: |
+            set -eux -o pipefail
+
+            CC= GOOS= GOARCH= CGO_ENABLED=0 go generate -tags 'bindata,timetzdata,sqlite,sqlite_unlock_notify' ./...
+        - name: build gitea
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -extldflags=-static
+              - -X main.Version=1.27.2
+            output: ${target.dir}/usr/bin/gitea
+            packages: .
+            tags: bindata,timetzdata,sqlite,sqlite_unlock_notify
+        - name: build gitea dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -extldflags=-static
+              - -X main.Version=1.27.2
+            output: ${target.dir}/usr/bin/gitea-dev
+            packages: .
+            strip: false
+            tags: bindata,timetzdata,sqlite,sqlite_unlock_notify
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - git
+            description: Gitea, a painless self-hosted Git service
+            files:
+              - usr/bin/gitea
+            license: MIT
+            name: gitea
+            rel: 4
+            subpackages:
+              - files:
+                  - path: usr/bin/gitea
+                    source: usr/bin/gitea-dev
+                name: gitea-dev
+            url: https://about.gitea.com/
+            version: 1.27.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

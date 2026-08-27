@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-klipper-lb
+variant: runtime
+tags:
+  - 0.4.17
+  - 0.4.17-r0
+  - 0.4.17-debian13
+  - 0.4.17-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-28"
+vars:
+  COMMIT_SHA: 982e737d2eafc79f29fa30d429f7360260edcdc6
+  IPTABLES_VERSION: 1.8.11-2+dhi0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.4"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.4.17
+  VERSION: 0.4.17
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: klipper-lb
+      work-dir: ${source.dir}/klipper-lb
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - dpkg
+          - grep
+          - iptables=1.8.11-2+dhi0
+          - libcap2-bin
+          - nftables
+          - sed
+        files:
+          - url: git+https://github.com/k3s-io/klipper-lb#v0.4.17
+            checksum: 982e737d2eafc79f29fa30d429f7360260edcdc6
+            path: ${source.dir}/klipper-lb
+            spdx:
+              name: klipper-lb
+              version: 0.4.17
+              packages:
+                - name: klipper-lb
+                  purl: pkg:dhi/klipper-lb@0.4.17
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch and install entry script
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's|BIN_DIR="/usr/sbin"|BIN_DIR="${BIN_DIR:-/usr/sbin}"|' ${source.dir}/klipper-lb/entry
+            sed -i '/^BIN_DIR=/a PAUSE_FIFO="${PAUSE_FIFO:-/pause}"' ${source.dir}/klipper-lb/entry
+            sed -i 's|\[ ! -e /pause \]|[ ! -e "$PAUSE_FIFO" ]|' ${source.dir}/klipper-lb/entry
+            sed -i 's|mkfifo /pause|mkfifo "$PAUSE_FIFO"|' ${source.dir}/klipper-lb/entry
+            sed -i 's|</pause|<"$PAUSE_FIFO"|' ${source.dir}/klipper-lb/entry
+            sed -i 's|ln -sf xtables-nft-multi|ln -sf /usr/lib/klipper-lb/xtables-nft-multi|' ${source.dir}/klipper-lb/entry
+            sed -i 's|ln -sf xtables-legacy-multi|ln -sf /usr/lib/klipper-lb/xtables-legacy-multi|' ${source.dir}/klipper-lb/entry
+
+            install -Dm755 ${source.dir}/klipper-lb/entry ${target.dir}/usr/bin/entry
+
+            install -Dm755 /usr/sbin/xtables-nft-multi ${target.dir}/usr/lib/klipper-lb/xtables-nft-multi
+            install -Dm755 /usr/sbin/xtables-legacy-multi ${target.dir}/usr/lib/klipper-lb/xtables-legacy-multi
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_net_admin,cap_net_raw+ep ${target.dir}/usr/lib/klipper-lb/xtables-nft-multi
+            setcap cap_net_admin,cap_net_raw+ep ${target.dir}/usr/lib/klipper-lb/xtables-legacy-multi
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+              - grep
+              - iptables
+              - kmod
+              - libcap2-bin
+              - nftables
+            description: Klipper service load balancer for k3s
+            files:
+              - usr/bin/entry
+              - usr/lib/klipper-lb/xtables-nft-multi
+              - usr/lib/klipper-lb/xtables-legacy-multi
+            formats:
+              - deb
+            license: Apache-2.0
+            name: klipper-lb
+            rel: 0
+            url: https://github.com/k3s-io/klipper-lb
+            version: 0.4.17
+        - name: inject deb postinst for setcap
+          runs: |
+            set -eux -o pipefail
+
+            arch="$(dpkg --print-architecture)"
+            deb="${target.dir}/packages/deb/13/klipper-lb_0.4.17-0_${arch}.deb"
+            work="$(mktemp -d)"
+            trap 'rm -rf "${work}"' EXIT
+
+            dpkg-deb -R "${deb}" "${work}"
+            install -Dm755 /scripts/klipper-lb.postinst "${work}/DEBIAN/postinst"
+            dpkg-deb -Zgzip -b "${work}" "${deb}"
+      paths:
+        - type: file
+          path: /scripts/klipper-lb.postinst
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/klipper-lb/debian-13/scripts/postinst
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

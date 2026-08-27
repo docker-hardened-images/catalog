@@ -1,0 +1,94 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Promtail Helm chart 6.x
+image: dhi.io/promtail-chart
+variant: helm
+tags:
+  - 6.17.1
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: b68e01680c1aa5230134a6620ac5c9c6ac007985
+  CHART_HELM_NAME: promtail-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_VERSION: 4.1.4-2
+  PROMETHEUS_CONFIG_RELOADER_REFERENCE: dhi/prometheus-config-reloader:0.93.1-debian13@sha256:7facf8c74672619c22ed5f1c434ad2deb7acbacf56e9ebe57821f8691d16e3b7
+  PROMTAIL_REFERENCE: dhi/promtail:3.6.11-debian13@sha256:ef36e5c7ac60608d217a3cd1f15d361e5295914670da4514a16be8da1acfefae
+  SEMVER_MAJOR_MINOR_VERSION: "6.17"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.17.1
+  VERSION: 6.17.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: promtail
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - yq-go
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/grafana/helm-charts.git#promtail-6.17.1
+            checksum: b68e01680c1aa5230134a6620ac5c9c6ac007985
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/promtail
+          with:
+            chart:
+              appRef: promtail
+              description: Docker Hardened Images Helm chart for Promtail
+              images:
+                - name: promtail
+                  ref: dhi/promtail:3.6.11-debian13@sha256:ef36e5c7ac60608d217a3cd1f15d361e5295914670da4514a16be8da1acfefae
+                - name: prometheus-config-reloader
+                  ref: dhi/prometheus-config-reloader:0.93.1-debian13@sha256:7facf8c74672619c22ed5f1c434ad2deb7acbacf56e9ebe57821f8691d16e3b7
+              name: promtail-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/grafana/helm-charts
+            cmd: prepare
+            registry: dhi.io
+        - name: remove default volumes
+          uses: yq/patch@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            file: promtail/values.yaml
+            patches:
+              - del(.defaultVolumes)
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/promtail
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: promtail
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: promtail
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/promtail/config

@@ -1,0 +1,145 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Argo executor 4.1.x (dev)
+image: dhi.io/argoexec
+variant: dev
+tags:
+  - 4-dev
+  - 4.1-dev
+  - 4.1.2-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.1-debian-dev
+  - 4.1-debian13-dev
+  - 4.1.2-debian-dev
+  - 4.1.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 16a52d67daf2f4a8a76fa8bec02a76a46aa46257
+  MODULE_MAJOR_VERSION: v4
+  SEMVER_MAJOR_MINOR_VERSION: "4.1"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.1.2
+  VERSION: 4.1.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: argoexec
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/argoproj/argo-workflows.git#v4.1.2
+            checksum: 16a52d67daf2f4a8a76fa8bec02a76a46aa46257
+            path: /go/src/github.com/argoproj/argo-workflows
+            spdx:
+              name: argoexec
+              version: 4.1.2
+              packages:
+                - name: argoexec
+                  purl: pkg:golang/github.com/argoproj/argo-workflows@4.1.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch (4 only)
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/argoproj/argo-workflows
+          with:
+            deps: []
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/argoproj/argo-workflows
+          runs: |
+            set -eux -o pipefail
+
+            echo "Testing core functionality after patching..."
+
+            # Test core workflow functionality
+            go test -v -count=1 -timeout=3m ./workflow/validate -run="TestDAG"
+            go test -v -count=1 -timeout=3m ./workflow/common
+
+            # Test all util packages except telemetry and sqldb (which need Docker/testcontainers)
+            UTIL_PACKAGES=$(go list ./util/... | grep -v './util/telemetry' | grep -v './util/sqldb')
+            go test -v -count=1 -timeout=4m $UTIL_PACKAGES
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/github.com/argoproj/argo-workflows
+          with:
+            ldflags:
+              - -X github.com/argoproj/argo-workflows/v4.version=4.1.2
+              - -X github.com/argoproj/argo-workflows/v4.gitCommit=16a52d67daf2f4a8a76fa8bec02a76a46aa46257
+            output: ${target.dir}/usr/local/bin/argoexec
+            packages: ./cmd/argoexec
+      outputs:
+        - source: ${target.dir}/usr/local/bin/argoexec
+          target: /usr/local/bin/argoexec
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/argoexec
+          target: /opt/docker/sbom/argoexec
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: argoexec
+      uid: 8737
+      gid: 8737
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: argoexec
+      gid: 8737
+      members:
+        - argoexec
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Argo executor image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - argoexec

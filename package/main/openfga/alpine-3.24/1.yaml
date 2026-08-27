@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-openfga
+variant: runtime
+tags:
+  - 1.19.0-alpine3.24
+  - 1.19.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 130c30aea5e73543e63b173dadfbd1ee519aa97a
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  GRPC_HEALTH_PROBE_COMMIT_SHA: b5fef775b4ec749eefb19fb00787089ec9a772d5
+  GRPC_HEALTH_PROBE_VERSION: 0.4.56
+  PACKAGE_NAME: openfga
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.0
+  VERSION: 1.19.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: openfga
+      work-dir: /go/src/github.com/openfga/openfga
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/openfga/openfga.git#v1.19.0
+            checksum: 130c30aea5e73543e63b173dadfbd1ee519aa97a
+            path: /go/src/github.com/openfga/openfga
+            spdx:
+              name: openfga
+              version: 1.19.0
+              packages:
+                - name: openfga
+                  purl: pkg:golang/github.com/openfga/openfga@1.19.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/grpc-ecosystem/grpc-health-probe.git#v0.4.56
+            checksum: b5fef775b4ec749eefb19fb00787089ec9a772d5
+            path: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+            spdx:
+              name: grpc-health-probe
+              version: 0.4.56
+              packages:
+                - name: grpc-health-probe
+                  purl: pkg:golang/github.com/grpc-ecosystem/grpc-health-probe@0.4.56
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update openfga go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/openfga/openfga
+          with:
+            deps: []
+            download: true
+        - name: update grpc-health-probe go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            deps: []
+            tidy: true
+        - name: build openfga
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openfga/openfga
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/openfga/openfga/internal/build.Version=v1.19.0
+              - -X github.com/openfga/openfga/internal/build.Commit=130c30aea5e73543e63b173dadfbd1ee519aa97a
+              - -X github.com/openfga/openfga/internal/build.Date=$(date -u -d @${SOURCE_DATE_EPOCH} +%Y-%m-%dT%TZ)
+              - -X github.com/openfga/openfga/internal/build.ProjectName=openfga
+            output: ${target.dir}/usr/bin/openfga
+            packages: ./cmd/openfga
+        - name: build openfga dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/openfga/openfga
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/openfga/openfga/internal/build.Version=v1.19.0
+              - -X github.com/openfga/openfga/internal/build.Commit=130c30aea5e73543e63b173dadfbd1ee519aa97a
+              - -X github.com/openfga/openfga/internal/build.Date=$(date -u -d @${SOURCE_DATE_EPOCH} +%Y-%m-%dT%TZ)
+              - -X github.com/openfga/openfga/internal/build.ProjectName=openfga
+            output: ${target.dir}/usr/bin/openfga-dev
+            packages: ./cmd/openfga
+            strip: false
+        - name: build grpc-health-probe
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            fips: false
+            ldflags:
+              - -X main.versionTag=0.4.56
+            output: ${target.dir}/usr/bin/grpc_health_probe
+            packages: ./main.go
+            strip: true
+            tags: netgo
+        - name: build grpc-health-probe dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            fips: false
+            ldflags:
+              - -X main.versionTag=0.4.56
+            output: ${target.dir}/usr/bin/grpc_health_probe-dev
+            packages: ./main.go
+            strip: false
+            tags: netgo
+        - name: verify binaries
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/bin/openfga" version 2>&1 | grep -F "v1.19.0"
+            "${target.dir}/usr/bin/openfga-dev" version 2>&1 | grep -F "v1.19.0"
+            "${target.dir}/usr/bin/grpc_health_probe" --version
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenFGA is a high-performance authorization engine inspired by Google Zanzibar
+            files:
+              - usr/bin/openfga
+              - usr/bin/grpc_health_probe
+            license: Apache-2.0
+            name: openfga
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/openfga
+                    source: usr/bin/openfga-dev
+                  - path: usr/bin/grpc_health_probe
+                    source: usr/bin/grpc_health_probe-dev
+                name: openfga-dev
+            url: https://github.com/openfga/openfga
+            version: 1.19.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,229 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kubeflow Pipelines Frontend 2.x (dev)
+image: dhi.io/kubeflow-pipelines-frontend
+variant: dev
+tags:
+  - 2-dev
+  - 2.17-dev
+  - 2.17.0-dev
+  - 2-debian-dev
+  - 2-debian13-dev
+  - 2.17-debian-dev
+  - 2.17-debian13-dev
+  - 2.17.0-debian-dev
+  - 2.17.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 4a3592cb2dd0a91a4652ab93893ec8beda1f3158
+  SEMVER_MAJOR_MINOR_VERSION: "2.17"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.17.0
+  VERSION: 2.17.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libgomp1
+    - libstdc++6
+    - mawk
+    - netbase
+    - nodejs-24
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: frontend
+      contents:
+        packages:
+          - bash
+          - base-files
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/kubeflow/pipelines.git#2.17.0
+            checksum: 4a3592cb2dd0a91a4652ab93893ec8beda1f3158
+            path: ${source.dir}/kubeflow-pipelines
+            spdx:
+              name: kubeflow-pipelines
+              version: 2.17.0
+              packages:
+                - name: kubeflow-pipelines
+                  purl: pkg:github/kubeflow/pipelines@2.17.0#frontend
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: move dev dependencies from prod (webui)
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          runs: |
+            set -eux -o pipefail
+
+            jq --argjson keys '["@craco/craco", "@types/lodash.groupby", "@types/pako", "http-proxy-middleware", "ts-proto"]' \
+              '. |
+                    ([.dependencies | to_entries[] | select(.key | IN($keys[]))]) as $dev
+                | .dependencies |= ( . | delpaths($keys | group_by(.)))
+              | .devDependencies |= . + ($dev | from_entries)
+              | .overrides |= del(.express)
+              | .engines.node = ">=24.14.0"' \
+              package.json > tmp.json && mv tmp.json package.json
+        - name: patch webserver
+          uses: patch@v1
+          with:
+            dir: ${source.dir}/kubeflow-pipelines/frontend/server
+            options: -p1
+            patches:
+              - ${source.dir}/patch/server/crypto-js.patch
+              - ${source.dir}/patch/server/proxy-middleware.patch
+        - name: bump webserver dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/server/npm-bumps.json
+            npm-root: ${source.dir}/kubeflow-pipelines/frontend/server
+        - name: bump webui dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/browser/npm-bumps.json
+            npm-root: ${source.dir}/kubeflow-pipelines/frontend
+        - name: override transitive protobufjs in webui
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          runs: |
+            set -eux -o pipefail
+
+            npm pkg set "overrides.protobufjs@7"="7.6.5"
+            npm install --package-lock-only
+        - name: build webui
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci
+            npm run build
+
+            # Generate SBOM
+            mkdir -p /opt/docker/sbom/kubeflow-pipelines-frontend
+            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx \
+              > /opt/docker/sbom/kubeflow-pipelines-frontend/.spdx.kubeflow-pipelines-frontend-browser.json
+        - name: build webserver
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend/server
+          shell: bash
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install
+            npm run build
+
+            # Remove all dependencies and reinstall just the production ones
+            rm -rf node_modules/*
+            npm ci --omit=dev
+
+            rm -rf server/integration-tests
+        - name: install
+          work-dir: ${source.dir}/kubeflow-pipelines/frontend
+          runs: |
+            set -eux -o pipefail
+
+            cp -a build '${target.dir}/app'
+
+            cp -a server/dist '${target.dir}/app/server'
+            cp -a server/node_modules '${target.dir}/app/server/node_modules'
+
+            install -T -m 0444 <(printf '4a3592cb2dd0a91a4652ab93893ec8beda1f3158') \
+              ${target.dir}/app/server/COMMIT_HASH
+            install -T -m 0444 <(printf '2.17.0') \
+              ${target.dir}/app/server/TAG_NAME
+            install -T -m 0444 <(date -ud @${SOURCE_DATE_EPOCH} --rfc-3339=sec) \
+              ${target.dir}/app/server/BUILD_DATE
+      paths:
+        - type: directory
+          path: ${source.dir}/patch/server
+          uid: 0
+          gid: 0
+          source: image/kubeflow-pipelines-frontend/patch/server
+        - type: directory
+          path: ${source.dir}/patch/browser
+          uid: 0
+          gid: 0
+          source: image/kubeflow-pipelines-frontend/patch/browser
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubeflow-pipelines
+          target: /opt/docker/sbom/kubeflow-pipelines
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubeflow-pipelines-frontend
+          target: /opt/docker/sbom/kubeflow-pipelines-frontend
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal Kubeflow Pipelines frontend image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - node
+cmd:
+  - /app/server/server.js
+  - /app
+  - "3000"
