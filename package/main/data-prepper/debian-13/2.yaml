@@ -1,0 +1,133 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-data-prepper
+variant: runtime
+tags:
+  - 2.16.0
+  - 2.16.0-r1
+  - 2.16.0-debian13
+  - 2.16.0-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-10-10"
+vars:
+  COMMIT_SHA: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
+  JDK_MAJOR_VERSION: "11"
+  JDK_VERSION: 11.0.32.9-0
+  PACKAGE_HOME: /usr/share/data-prepper
+  PACKAGE_NAME: data-prepper
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.16"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.16.0
+  VERSION: 2.16.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: data-prepper
+      work-dir: ${source.dir}/data-prepper
+      environment:
+        GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
+        JAVA_HOME: /usr/lib/jvm/temurin-11
+        JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
+        LANG: C.UTF-8
+        LC_ALL: C.UTF-8
+      caches:
+        - path: /root/.gradle
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - eclipse-temurin-11-jdk=11.0.32.9-0
+          - findutils
+          - grep
+          - gzip
+          - patch
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/opensearch-project/data-prepper.git#2.16.0
+            checksum: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
+            path: ${source.dir}/data-prepper
+            spdx:
+              name: opensearch-data-prepper
+              version: 2.16.0
+              packages:
+                - name: opensearch-data-prepper
+                  purl: pkg:github/opensearch-project/data-prepper@2.16.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply cve-bump patch
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/cve-bumps.patch
+        - name: build distribution
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./gradlew --no-daemon --console=plain :release:archives:linux:assemble
+        - name: stage distribution
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/data-prepper"
+            INSTALL=$(find "${source.dir}/data-prepper/release/archives/linux/build/install" \
+              -maxdepth 1 -type d -name 'opensearch-data-prepper-*-linux-*' | head -1)
+            test -n "${INSTALL}"
+            cp -a "${INSTALL}/." "${target.dir}/usr/share/data-prepper/"
+        - name: generate default keystore
+          runs: |
+            set -eux -o pipefail
+
+            keytool -genkeypair \
+              -alias data-prepper \
+              -keyalg RSA -keysize 2048 \
+              -storetype PKCS12 \
+              -storepass password -keypass password \
+              -dname "CN=data-prepper" \
+              -validity 3650 \
+              -keystore "${target.dir}/usr/share/data-prepper/keystore.p12"
+
+            chmod 0644 "${target.dir}/usr/share/data-prepper/keystore.p12"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - bc
+              - coreutils
+            description: OpenSearch Data Prepper observability pipeline
+            files:
+              - usr/share/data-prepper
+            formats:
+              - deb
+            license: Apache-2.0
+            name: data-prepper
+            rel: 1
+            url: https://opensearch.org/docs/latest/data-prepper/
+            version: 2.16.0
+      paths:
+        - type: file
+          path: ${source.dir}/cve-bumps.patch
+          uid: 0
+          gid: 0
+          source: package/main/data-prepper/patches/cve-bumps.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
