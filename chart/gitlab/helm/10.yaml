@@ -1,0 +1,104 @@
+# syntax=dhi.io/build:2-helm3
+
+name: GitLab Helm chart 10.x
+image: dhi.io/gitlab-chart
+variant: helm
+tags:
+  - 10.1.6
+platforms:
+  - linux/amd64
+vars:
+  BASH_REFERENCE: dhi/bash:5.2.37-debian13@sha256:4c4453bad07bb7e5e510b5531aaeeb34ab5aaf62a14993796534845356519a23
+  CHART_COMMIT_SHA: e7cae5d54373da043fcacb75f38848cb92b72da4
+  CHART_HELM_NAME: gitlab-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  GITLAB_EXPORTER_REFERENCE: dhi/gitlab-exporter:16.10.0-debian13@sha256:a795e1d7ff1dcce9d979d6fa175f2bf6e66625a03db07dcecba7c72c41c8f41e
+  GITLAB_SHELL_REFERENCE: dhi/gitlab-shell:14.56.1-debian13@sha256:454ff32bc3989cac5937ac44ae6e0cae84557dd531adbc2b20de0a8d167f3b3e
+  GITLAB_WEBSERVICE_REFERENCE: dhi/gitlab-webservice:19.1.7-debian13@sha256:da3b42b0a9527ba819de2678e4821b8337a792a0eb8e13528688881889a12783
+  GITLAB_WORKHORSE_REFERENCE: dhi/gitlab-workhorse:19.1.6-debian13@sha256:204270e1db691f0d766592d564fd11026bf8561309be736ec3f72705dfbfddaf
+  HELM_VERSION: 4.1.4-2
+  SEMVER_MAJOR_MINOR_VERSION: "10.1"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.1.6
+  VERSION: 10.1.6
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: gitlab-chart
+      work-dir: ${source.dir}/gitlab-chart
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - patch
+          - yq-go
+          - helm=4.1.4-2
+        files:
+          - url: git+https://gitlab.com/gitlab-org/charts/gitlab.git#v10.1.6
+            checksum: e7cae5d54373da043fcacb75f38848cb92b72da4
+            path: ${source.dir}/gitlab-chart
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: constrain and adapt chart
+          runs: |
+            set -eux -o pipefail
+
+            # Keep only local upstream dependencies. All externally fetched
+            # optional charts are unsupported and disabled by the DHI defaults.
+            yq -i '.dependencies |= map(select(.repository == null or .repository == ""))' Chart.yaml
+            rm -f Chart.lock
+
+            patch --batch --forward -p1 < "${source.dir}/config/gitlab-dhi-runtime.patch"
+        - name: prepare chart
+          uses: helm/rudder@v1
+          with:
+            chart:
+              appRef: gitlab-webservice
+              description: Docker Hardened Images Helm chart for GitLab
+              images:
+                - name: bash
+                  ref: dhi/bash:5.2.37-debian13@sha256:4c4453bad07bb7e5e510b5531aaeeb34ab5aaf62a14993796534845356519a23
+                - name: gitlab-webservice
+                  ref: dhi/gitlab-webservice:19.1.7-debian13@sha256:da3b42b0a9527ba819de2678e4821b8337a792a0eb8e13528688881889a12783
+                - name: gitlab-workhorse
+                  ref: dhi/gitlab-workhorse:19.1.6-debian13@sha256:204270e1db691f0d766592d564fd11026bf8561309be736ec3f72705dfbfddaf
+                - name: gitlab-shell
+                  ref: dhi/gitlab-shell:14.56.1-debian13@sha256:454ff32bc3989cac5937ac44ae6e0cae84557dd531adbc2b20de0a8d167f3b3e
+                - name: gitlab-exporter
+                  ref: dhi/gitlab-exporter:16.10.0-debian13@sha256:a795e1d7ff1dcce9d979d6fa175f2bf6e66625a03db07dcecba7c72c41c8f41e
+              name: gitlab-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://gitlab.com/gitlab-org/charts/gitlab
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: lint
+          uses: helm/cmd@v1
+          with:
+            chart: .
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: .
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/gitlab/config

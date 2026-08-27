@@ -1,0 +1,37 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Workaround for disabling the authorized_keys write to the database.
+# A proper fix is being tracked in: https://gitlab.com/gitlab-org/gitlab-ee/issues/4156
+puts 'Disabling authorized keys write in the database.'
+setting = ::ApplicationSetting.current_without_cache || ::ApplicationSetting.create_from_defaults
+setting.update_attribute(:authorized_keys_enabled, false)
+
+puts 'Enabling incremental logging of CI jobs.'
+setting.update_attribute(:ci_job_live_trace_enabled, true)
+
+puts 'Registering OAuth applications.'
+secrets_dir = ENV['OAUTH_SECRET_DIR'] || '/etc/gitlab/oauth-secrets'
+Dir.glob("#{secrets_dir}/*").each do |app_path|
+  app = File.basename(app_path).titleize
+  puts "Registering #{app} as an OAuth application."
+  begin
+    uid = File.read(File.join(app_path, 'appid')).strip
+    secret = File.read(File.join(app_path, 'appsecret')).strip
+    redirecturi = File.read(File.join(app_path, 'redirecturi')).strip
+
+    oauth_app = Authn::OauthApplication.where({ redirect_uri: redirecturi, name: app }).by_uid_and_secret(uid, secret)
+    if oauth_app
+      oauth_app.update_column(:organization_id, Organizations::Organization::DEFAULT_ORGANIZATION_ID) if oauth_app.organization_id.nil?
+    else
+      Authn::OauthApplication.where({ redirect_uri: redirecturi, name: app, uid: uid, secret: secret, organization_id: Organizations::Organization::DEFAULT_ORGANIZATION_ID }).create!
+    end
+    puts "Successfully registered #{app}."
+  rescue Errno::ENOENT
+    puts "Necessary secrets not found. Skipping registration of #{app}"
+    next
+  rescue ActiveRecord::ActiveRecordError, RuntimeError
+    puts "Failed to register #{app}."
+    next
+  end
+end
