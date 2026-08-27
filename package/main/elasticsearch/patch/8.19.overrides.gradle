@@ -1,0 +1,100 @@
+// Gradle init script: force CVE-remediated dependency versions at resolution time.
+//
+// Replaces the per-version `.patch` files that previously edited
+// `build-tools-internal/version.properties`, `gradle/build.versions.toml`,
+// `gradle/verification-metadata.xml`, and individual module build.gradle files.
+// The matching definition step regenerates verification-metadata.xml via
+// `./gradlew --write-verification-metadata sha256 ...` so the forced artifacts
+// pass strict dependency verification.
+//
+// Each rule matches the exact old version the upstream tag ships with, so this
+// is a deterministic override (not a blanket "always-bump" rule). To support a
+// new upstream point release, update only the version literals below.
+
+allprojects {
+    configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            def grp = details.requested.group
+            def name = details.requested.name
+            def ver = details.requested.version
+
+            // Jackson 2.15.0 / 2.17.2 / 2.18.8 -> 2.18.9. Upstream pins 2.15.0 in
+            // version.properties and 2.17.2 separately in libs/x-content/impl.
+            // Some modules still resolve 2.18.8 from prior DHI pins; force those
+            // to 2.18.9 as well. 2.18.9 clears the jackson-databind PTV bypass
+            // family and @JsonView bypass issues (CVE-2026-54515, CVE-2026-59889,
+            // GHSA-mhm7-754m-9p8w).
+            if (grp != null && grp.startsWith("com.fasterxml.jackson")
+                    && (ver == "2.15.0" || ver == "2.17.2" || ver == "2.18.8")) {
+                details.useVersion("2.18.9")
+                details.because("CVE remediation: CVE-2026-54515, CVE-2026-59889, GHSA-mhm7-754m-9p8w")
+            }
+
+            // Netty 4.1.132.Final / 4.1.135.Final -> 4.1.136.Final. Clears
+            // netty-codec / codec-http / codec-http2 / codec-dns findings fixed
+            // in 4.1.136 (CVE-2026-56745, CVE-2026-59901, CVE-2026-55831, …).
+            // Validated on 8.19 FIPS (jar-swap A/B + TestFipsEnd2End). Do not
+            // apply the same bump on 9.4 — see 9.4.overrides.gradle.
+            if (grp == "io.netty" && (ver == "4.1.132.Final" || ver == "4.1.135.Final")) {
+                details.useVersion("4.1.136.Final")
+                details.because("CVE remediation: CVE-2026-56745, CVE-2026-59901, CVE-2026-55831, CVE-2026-55833, CVE-2026-59899, CVE-2026-59900, CVE-2026-56746, CVE-2026-59898, CVE-2026-59921, GHSA-mfg7-5gfp-c4w3")
+            }
+
+            // Reactor Netty 1.0.45 -> 1.2.8 (modules/repository-azure pins
+            // azureReactorNetty=1.0.45 which feeds reactor-netty-* artifacts)
+            if (grp == "io.projectreactor.netty"
+                    && (name == "reactor-netty-core" || name == "reactor-netty-http")
+                    && ver == "1.0.45") {
+                details.useVersion("1.2.8")
+                details.because("CVE remediation: pin reactor-netty")
+            }
+
+            // Log4j 2.19.0 / 2.25.4 / 2.26.0 -> 2.26.1
+            if (grp == "org.apache.logging.log4j"
+                    && (ver == "2.19.0" || ver == "2.25.4" || ver == "2.26.0")) {
+                details.useVersion("2.26.1")
+                details.because("CVE remediation: CVE-2026-49844 pin log4j")
+            }
+
+            // SLF4J 2.0.6 -> 2.0.17
+            if (grp == "org.slf4j" && ver == "2.0.6") {
+                details.useVersion("2.0.17")
+                details.because("CVE remediation: pin slf4j")
+            }
+
+            // commons-lang3 3.9 -> 3.18.0
+            if (grp == "org.apache.commons" && name == "commons-lang3" && ver == "3.9") {
+                details.useVersion("3.18.0")
+                details.because("CVE remediation: pin commons-lang3")
+            }
+
+            // jakarta.mail 1.6.3 / 1.6.4 -> 1.6.8 (8.19 declares both in
+            // x-pack/plugin/watcher and x-pack/plugin/security build.gradle)
+            if (grp == "com.sun.mail" && name == "jakarta.mail"
+                    && (ver == "1.6.3" || ver == "1.6.4")) {
+                details.useVersion("1.6.8")
+                details.because("CVE remediation: pin jakarta.mail")
+            }
+
+            // Elastic APM agent 1.55.0 / 1.55.6 -> 1.56.0 (modules/apm; 1.55.6 fat jar
+            // embeds log4j-api 2.25.4, fixed in 1.56.0 with log4j-api 2.26.0)
+            if (grp == "co.elastic.apm" && name == "elastic-apm-agent-java8"
+                    && (ver == "1.55.0" || ver == "1.55.6")) {
+                details.useVersion("1.56.0")
+                details.because("CVE remediation: CVE-2026-49844 pin elastic-apm-agent-java8")
+            }
+
+            // lz4-java 1.10.1 -> 1.11.1
+            if (grp == "at.yawk.lz4" && name == "lz4-java" && ver == "1.10.1") {
+                details.useVersion("1.11.1")
+                details.because("CVE remediation: CVE-2026-59949")
+            }
+
+            // jsoup 1.21.2 -> 1.23.1
+            if (grp == "org.jsoup" && name == "jsoup" && ver == "1.21.2") {
+                details.useVersion("1.23.1")
+                details.because("CVE remediation: CVE-2026-71497")
+            }
+        }
+    }
+}
