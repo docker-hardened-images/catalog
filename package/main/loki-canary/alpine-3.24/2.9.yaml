@@ -1,0 +1,172 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-loki-canary
+variant: runtime
+tags:
+  - 2.9.17-alpine3.24
+  - 2.9.17-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-09-06"
+vars:
+  COMMIT_SHA: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: loki-canary-2.9
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.17
+  VERSION: 2.9.17
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: loki-canary-2.9
+      work-dir: /go/src/github.com/grafana/loki
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/grafana/loki.git#v2.9.17
+            checksum: ffcd570f815ccf0588bda305659d0d4e925e4ef1
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki-canary
+              version: 2.9.17
+              packages:
+                - name: loki-canary
+                  purl: pkg:golang/github.com/grafana/loki@2.9.17
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor
+          privileged: true
+          environment:
+            GODEBUG: ""
+            GOFIPS140: ""
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/crypto@v0.52.0
+            go get golang.org/x/net@v0.55.0
+            go get github.com/buger/jsonparser@v1.1.2
+            go get google.golang.org/grpc@v1.79.3
+            go get go.opentelemetry.io/otel/sdk@v1.41.0
+            go get google.golang.org/api@v0.272.0
+
+            go mod tidy
+            go mod vendor
+        - name: patch vendored grpcutil/health_check_list.go
+          runs: |
+            set -eux -o pipefail
+
+            cat >> vendor/github.com/grafana/dskit/grpcutil/health_check_list.go << 'EOF'
+            package grpcutil
+            import (
+              "context"
+              "google.golang.org/grpc/codes"
+              "google.golang.org/grpc/status"
+              "google.golang.org/grpc/health/grpc_health_v1"
+            )
+            func (h *HealthCheck) List(_ context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
+              return nil, status.Error(codes.Unimplemented, "Listing is not supported")
+            }
+            EOF
+        - name: remove godoc
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go get golang.org/x/tools/godoc@none
+        - name: update go dependencies and vendor (2.9 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            deps:
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/net@v0.56.0
+              - github.com/gorilla/websocket@v1.5.3
+              - github.com/klauspost/compress@v1.18.7
+              - go.etcd.io/etcd/client/pkg/v3@v3.5.33
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+        - name: build loki-canary (2.x)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/grafana/loki/pkg/util/build.Version=2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.Revision=ffcd570f815ccf0588bda305659d0d4e925e4ef1
+              - -X github.com/grafana/loki/pkg/util/build.Branch=v2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.BuildUser=dhi
+            output: ${target.dir}/usr/bin/loki-canary
+            packages: ./cmd/loki-canary
+            tags: netgo
+        - name: build loki-canary dev (2.x)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/grafana/loki/pkg/util/build.Version=2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.Revision=ffcd570f815ccf0588bda305659d0d4e925e4ef1
+              - -X github.com/grafana/loki/pkg/util/build.Branch=v2.9.17
+              - -X github.com/grafana/loki/pkg/util/build.BuildUser=dhi
+            output: ${target.dir}/usr/bin/loki-canary-dev
+            packages: ./cmd/loki-canary
+            strip: false
+            tags: netgo
+        - uses: dhi/build-pkg:0
+          with:
+            description: Loki Canary
+            files:
+              - usr/bin/loki-canary
+            license: AGPL-3.0
+            name: loki-canary-2.9
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/loki-canary
+                    source: usr/bin/loki-canary-dev
+                name: loki-canary-2.9-dev
+            url: https://github.com/grafana/loki
+            version: 2.9.17
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

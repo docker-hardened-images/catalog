@@ -1,0 +1,145 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-loki-canary
+variant: runtime
+tags:
+  - 3.7.6-alpine3.24
+  - 3.7.6-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-26"
+vars:
+  COMMIT_SHA: 5003600d7c787b5f047c8d1b0198559471b0caa5
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: loki-canary-3.7
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.7"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.7.6
+  VERSION: 3.7.6
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: loki-canary-3.7
+      work-dir: /go/src/github.com/grafana/loki
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/grafana/loki.git#v3.7.6
+            checksum: 5003600d7c787b5f047c8d1b0198559471b0caa5
+            path: /go/src/github.com/grafana/loki
+            spdx:
+              name: loki-canary
+              version: 3.7.6
+              packages:
+                - name: loki-canary
+                  purl: pkg:golang/github.com/grafana/loki@3.7.6
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies and vendor (3.7 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            deps:
+              - github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+              - github.com/buger/jsonparser@v1.1.2
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel@v1.45.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
+              - google.golang.org/grpc@v1.82.1
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0
+            download: true
+        - name: bump testify (3.7 only)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go get github.com/go-openapi/testify/v2@v2.5.1
+            go get github.com/go-openapi/testify/enable/yaml/v2@v2.5.1
+            go mod tidy
+            go mod vendor
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps: []
+        - name: build loki-canary (3.x)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/grafana/loki/v3/pkg/util/build.Version=3.7.6
+              - -X github.com/grafana/loki/v3/pkg/util/build.Revision=5003600d7c787b5f047c8d1b0198559471b0caa5
+              - -X github.com/grafana/loki/v3/pkg/util/build.Branch=v3.7.6
+              - -X github.com/grafana/loki/v3/pkg/util/build.BuildUser=dhi
+            output: ${target.dir}/usr/bin/loki-canary
+            packages: ./cmd/loki-canary
+            tags: netgo
+        - name: build loki-canary dev (3.x)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grafana/loki
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/grafana/loki/v3/pkg/util/build.Version=3.7.6
+              - -X github.com/grafana/loki/v3/pkg/util/build.Revision=5003600d7c787b5f047c8d1b0198559471b0caa5
+              - -X github.com/grafana/loki/v3/pkg/util/build.Branch=v3.7.6
+              - -X github.com/grafana/loki/v3/pkg/util/build.BuildUser=dhi
+            output: ${target.dir}/usr/bin/loki-canary-dev
+            packages: ./cmd/loki-canary
+            strip: false
+            tags: netgo
+        - uses: dhi/build-pkg:0
+          with:
+            description: Loki Canary
+            files:
+              - usr/bin/loki-canary
+            license: AGPL-3.0
+            name: loki-canary-3.7
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/loki-canary
+                    source: usr/bin/loki-canary-dev
+                name: loki-canary-3.7-dev
+            url: https://github.com/grafana/loki
+            version: 3.7.6
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
