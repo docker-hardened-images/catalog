@@ -1,0 +1,209 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-netdata
+variant: runtime
+tags:
+  - 2.11.0
+  - 2.11.0-r0
+  - 2.11.0-debian13
+  - 2.11.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-04"
+vars:
+  COMMIT_SHA: bb8f509e99cad230d3acc1fdfc840224f3b3db3a
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-0
+  PACKAGE_NAME: netdata
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.11"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.11.0
+  VERSION: 2.11.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: netdata
+      work-dir: ${source.dir}/netdata
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - autoconf
+          - autogen
+          - automake
+          - pkg-config
+          - zlib1g-dev
+          - uuid-dev
+          - libuv1-dev
+          - liblz4-dev
+          - libssl-dev
+          - libmnl-dev
+          - libjudy-dev
+          - libprotobuf-c-dev
+          - protobuf-c-compiler
+          - python3
+          - python3-pip
+          - curl
+          - grep
+          - libc-bin
+          - bison
+          - cmake
+          - flex
+          - g++
+          - gzip
+          - make
+          - libcurl4-openssl-dev
+          - libelf-dev
+          - libjson-c-dev
+          - libpcre2-dev
+          - libsystemd-dev
+          - libyaml-dev
+          - libzstd-dev
+          - patch
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26=1.26.7-0
+          - golang-1.26-oci-config=1.26.7-0
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/netdata/netdata.git#v2.11.0
+            checksum: bb8f509e99cad230d3acc1fdfc840224f3b3db3a
+            path: ${source.dir}/netdata
+            spdx:
+              name: netdata
+              version: 2.11.0
+              packages:
+                - name: netdata
+                  purl: pkg:dhi/netdata@2.11.0
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          work-dir: ${source.dir}/netdata/src/go
+          with:
+            deps:
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - go.opentelemetry.io/otel@v1.44.0
+              - golang.org/x/crypto@v0.55.0
+        - uses: go/hermetic@v1
+          work-dir: ${source.dir}/netdata/src/go
+        - name: build-and-install
+          work-dir: ${source.dir}/netdata
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            ./netdata-installer.sh \
+              --disable-ebpf \
+              --disable-telemetry \
+              --dont-wait \
+              --dont-start-it \
+              --stable-channel \
+              --install-no-prefix "${target.dir}"
+        - name: validate-installation
+          runs: |
+            set -eux -o pipefail
+
+            [ -d "${target.dir}/etc/netdata" ] || {
+              echo 'Netdata install failed'
+              exit 1
+            }
+        - name: setup-logs
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/var/log/netdata" "${target.dir}/opt/src"
+            ln -sf /dev/stdout "${target.dir}/var/log/netdata/access.log"
+            ln -sf /dev/stdout "${target.dir}/var/log/netdata/aclk.log"
+            ln -sf /dev/stdout "${target.dir}/var/log/netdata/debug.log"
+            ln -sf /dev/stderr "${target.dir}/var/log/netdata/error.log"
+            ln -sf /dev/stderr "${target.dir}/var/log/netdata/daemon.log"
+            ln -sf /dev/stdout "${target.dir}/var/log/netdata/collector.log"
+            ln -sf /dev/stdout "${target.dir}/var/log/netdata/health.log"
+        - name: setup-permissions
+          runs: |
+            set -eux -o pipefail
+
+            chmod 0755 "${target.dir}/usr/libexec/netdata/plugins.d/"*.plugin 2> /dev/null || true
+
+            for name in cgroup-network local-listeners apps.plugin debugfs.plugin freeipmi.plugin go.d.plugin perf.plugin ndsudo slabinfo.plugin network-viewer.plugin systemd-journal.plugin; do
+              [ -f "${target.dir}/usr/libexec/netdata/plugins.d/${name}" ] \
+                && chmod 4755 "${target.dir}/usr/libexec/netdata/plugins.d/${name}"
+            done
+
+            cp -va "${target.dir}/etc/netdata" "${target.dir}/etc/netdata.stock"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - ca-certificates
+              - coreutils
+              - curl
+              - grep
+              - gnu-which
+              - libjudydebian1
+              - libjson-c5
+              - liblz4-1
+              - libmnl0
+              - libprotobuf-c1
+              - libssl3t64
+              - libstdc++6
+              - libuv1t64
+              - libuuid1
+              - libyaml-0-2
+              - lsb-release
+              - netbase
+              - pciutils
+              - procps
+              - python-3.13
+              - python3-pip
+              - python3-setuptools
+              - python3-wheel
+              - sed
+              - tzdata
+              - usbutils
+              - util-linux
+              - zlib1g
+            description: Real-time performance monitoring for systems and applications
+            files:
+              - etc/netdata
+              - etc/netdata.stock
+              - usr/lib/netdata
+              - usr/libexec/netdata
+              - usr/sbin/netdata
+              - usr/sbin/netdatacli
+              - usr/sbin/systemd-cat-native
+              - usr/share/netdata
+              - var/lib/netdata
+              - var/log/netdata
+            formats:
+              - deb
+            license: GPL-3.0
+            name: netdata
+            rel: 0
+            url: https://www.netdata.cloud/
+            version: 2.11.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
