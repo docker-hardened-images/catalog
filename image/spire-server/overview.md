@@ -1,4 +1,4 @@
-### About SPIFFE SPIRE Server
+## About SPIFFE SPIRE Server
 
 The **SPIFFE SPIRE Server** is the central authority in a SPIRE deployment and implements the SPIFFE specification for
 issuing and managing workload identities. It verifies agent identities through node attestation, manages registration
