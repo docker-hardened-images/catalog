@@ -19,8 +19,6 @@ platforms:
 dates:
   release: "2022-10-10"
 vars:
-  COMMIT_SHA: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
-  JAVA_BUILD_MAJOR_VERSION: "11"
   JAVA_FIPS_SUFFIX: ""
   JAVA_HOME: /usr/lib/jvm/temurin-17
   JAVA_VARIANT: jre
@@ -28,7 +26,7 @@ vars:
   SEMVER_MAJOR_MINOR_VERSION: "2.16"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.16.0
-  VERSION: 2.16.0
+  VERSION: 2.16.0-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -43,6 +41,7 @@ contents:
     - bc
     - ca-certificates
     - coreutils
+    - data-prepper=2.16.0-1
     - eclipse-temurin-17-jre
     - eclipse-temurin-17-jre-oci-config
     - gettext-base
@@ -50,104 +49,6 @@ contents:
     - sed
     - tzdata
   builds:
-    - name: data-prepper
-      work-dir: ${source.dir}/data-prepper
-      environment:
-        GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
-        JAVA_HOME: /usr/lib/jvm/temurin-11
-        JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
-        LANG: C.UTF-8
-        LC_ALL: C.UTF-8
-      caches:
-        - path: /root/.gradle
-      contents:
-        packages:
-          - bash
-          - coreutils
-          - eclipse-temurin-11-jdk
-          - findutils
-          - grep
-          - gzip
-          - patch
-          - sed
-          - tar
-        files:
-          - url: git+https://github.com/opensearch-project/data-prepper.git#2.16.0
-            checksum: 5e82c95a35bb7286eb6b15dad1966fbd4c82791a
-            path: ${source.dir}/data-prepper
-            spdx:
-              name: opensearch-data-prepper
-              version: 2.16.0
-              packages:
-                - name: opensearch-data-prepper
-                  purl: pkg:github/opensearch-project/data-prepper@2.16.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: apply cve-bump patch
-          uses: patch@v1
-          with:
-            options: -p1
-            patch: ${source.dir}/cve-bumps.patch
-        - name: build distribution
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # `assemble` builds the runnable linux distribution and skips the
-            # integration test suite (developer_guide.md).
-            ./gradlew --no-daemon --console=plain :release:archives:linux:assemble
-        - name: stage distribution
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${target.dir}/usr/share/data-prepper"
-            # The installDist output mirrors the upstream linux tarball layout
-            # (bin/data-prepper wrapper, lib/, config/, pipelines/). The arch
-            # suffix (x64/arm64) is part of the dir name, so glob it.
-            INSTALL=$(find "${source.dir}/data-prepper/release/archives/linux/build/install" \
-              -maxdepth 1 -type d -name 'opensearch-data-prepper-*-linux-*' | head -1)
-            test -n "${INSTALL}"
-            cp -a "${INSTALL}/." "${target.dir}/usr/share/data-prepper/"
-        - name: generate default keystore
-          runs: |
-            set -eux -o pipefail
-
-            # Generate the insecure eval-only PKCS12 keystore at build time
-            # instead of committing key material to the repo. ssl:true in the
-            # default config still serves a self-signed cert out of the box;
-            # operators replace it (and the admin/admin basic auth) before any
-            # non-development use. storepass==keypass because PKCS12 does not
-            # support a distinct key password.
-            keytool -genkeypair \
-              -alias data-prepper \
-              -keyalg RSA -keysize 2048 \
-              -storetype PKCS12 \
-              -storepass password -keypass password \
-              -dname "CN=data-prepper" \
-              -validity 3650 \
-              -keystore "${target.dir}/usr/share/data-prepper/keystore.p12"
-
-            # Root-owned, world-readable: the nonroot runtime reads the keystore
-            # but cannot rewrite it. The rest of the install dir stays root-owned
-            # (from the build) for the same reason.
-            chmod 0644 "${target.dir}/usr/share/data-prepper/keystore.p12"
-      paths:
-        - type: file
-          path: ${source.dir}/cve-bumps.patch
-          uid: 0
-          gid: 0
-          source: image/data-prepper/patches/cve-bumps.patch
-      outputs:
-        - source: ${target.dir}/usr/share/data-prepper
-          target: /usr/share/data-prepper
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/opensearch-data-prepper
-          target: /opt/docker/sbom/opensearch-data-prepper
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
