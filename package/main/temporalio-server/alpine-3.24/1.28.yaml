@@ -1,0 +1,317 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-temporalio-server
+variant: runtime
+tags:
+  - 1.28.4-alpine3.24
+  - 1.28.4-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CLI_COMMIT_SHA: c579925f193fe2f0bf5134008125aea0c858ca95
+  CLI_VERSION: 1.8.2
+  COMMIT_SHA: 246f0667ac40a863186237f0f10bce13ce84efc5
+  DOCKER_BUILDS_COMMIT_SHA: a395e808bd4b2746882a4fed966302ea410991c5
+  DOCKERIZE_COMMIT_SHA: 935294144541a4648d5ce29342eec32a405c2143
+  DOCKERIZE_VERSION: 0.14.0
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.0-r0
+  PACKAGE_NAME: temporalio-server-1.28
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.28"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.28.4
+  VERSION: 1.28.4
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: temporalio-server-1.28
+      work-dir: /go/src/go.temporal.io/server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - mawk
+          - sed
+          - golang-1.27=1.27.0-r0
+          - golang-1.27-oci-config=1.27.0-r0
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.28.4
+            checksum: 246f0667ac40a863186237f0f10bce13ce84efc5
+            path: /go/src/go.temporal.io/server
+            spdx:
+              name: temporalio-server
+              version: 1.28.4
+              packages:
+                - name: temporalio-server
+                  purl: pkg:golang/go.temporal.io/server@v1.28.4
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jwilder/dockerize.git#v0.14.0
+            checksum: 935294144541a4648d5ce29342eec32a405c2143
+            path: /go/src/github.com/jwilder/dockerize
+            spdx:
+              name: dockerize
+              version: 0.14.0
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/jwilder/dockerize@v0.14.0
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/temporalio/cli.git#v1.8.2
+            checksum: c579925f193fe2f0bf5134008125aea0c858ca95
+            path: /go/src/github.com/temporalio/cli
+            spdx:
+              name: temporal-cli
+              version: 1.8.2
+              packages:
+                - name: temporal-cli
+                  purl: pkg:golang/github.com/temporalio/cli@v1.8.2
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/temporalio/docker-builds.git#a395e808bd4b2746882a4fed966302ea410991c5
+            checksum: a395e808bd4b2746882a4fed966302ea410991c5
+            path: ${source.dir}/docker-builds
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build dockerize
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/jwilder/dockerize
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+            download: true
+        - name: compile dockerize
+          uses: go/build@v1
+          work-dir: /go/src/github.com/jwilder/dockerize
+          with:
+            fips: false
+            ldflags:
+              - -X main.buildVersion=0.14.0
+            output: ${target.dir}/usr/bin/dockerize
+        - name: compile dockerize dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/jwilder/dockerize
+          with:
+            fips: false
+            ldflags:
+              - -X main.buildVersion=0.14.0
+            output: ${target.dir}/usr/bin/dockerize-dev
+            strip: false
+        - name: patch md5
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/no-md5.patch
+        - name: update go dependencies (1.28 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/apache/thrift@v0.23.0
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: unit test
+          runs: |
+            set -eux -o pipefail
+
+            echo "Running core temporal unit tests..."
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/log/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/config/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/util/...
+        - name: build server
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-server
+            packages: ./cmd/server
+        - name: build tdbg
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/tdbg
+            packages: ./cmd/tools/tdbg
+        - name: build temporal-cassandra-tool
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-cassandra-tool
+            packages: ./cmd/tools/cassandra
+        - name: build temporal-sql-tool
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-sql-tool
+            packages: ./cmd/tools/sql
+        - name: build server dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-server-dev
+            packages: ./cmd/server
+            strip: false
+        - name: build tdbg dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/tdbg-dev
+            packages: ./cmd/tools/tdbg
+            strip: false
+        - name: build temporal-cassandra-tool dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-cassandra-tool-dev
+            packages: ./cmd/tools/cassandra
+            strip: false
+        - name: build temporal-sql-tool dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/temporal-sql-tool-dev
+            packages: ./cmd/tools/sql
+            strip: false
+        - name: update cli dependencies (1.28 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/temporalio/cli
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.56.0
+              - github.com/apache/thrift@v0.23.0
+              - github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/gomarkdown/markdown@v0.0.0-20260411013819-759bbc3e3207
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.18.7
+              - github.com/labstack/echo/v4@v4.15.3
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.43.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+        - name: build temporal CLI binary
+          uses: go/build@v1
+          work-dir: /go/src/github.com/temporalio/cli
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/temporalio/cli/internal/temporalcli.Version=1.8.2
+            output: ${target.dir}/usr/bin/temporal
+            packages: ./cmd/temporal
+        - name: build temporal CLI dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/temporalio/cli
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/temporalio/cli/internal/temporalcli.Version=1.8.2
+            output: ${target.dir}/usr/bin/temporal-dev
+            packages: ./cmd/temporal
+            strip: false
+        - name: patch entrypoint scripts
+          uses: patch@v1
+          work-dir: ${source.dir}/docker-builds
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/entrypoint-getent_hostname.20.patch
+        - name: install config and scripts
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p '${target.dir}/etc/temporal/schema'
+            mkdir -p '${target.dir}/etc/temporal/config/dynamicconfig'
+
+            cp '/go/src/go.temporal.io/server/config/dynamicconfig/docker.yaml' '${target.dir}/etc/temporal/config/dynamicconfig/docker.yaml'
+            cp '/go/src/go.temporal.io/server/docker/config_template.yaml' '${target.dir}/etc/temporal/config/config_template.yaml'
+            cp -r '/go/src/go.temporal.io/server/schema' '${target.dir}/etc/temporal/'
+
+            cp '${source.dir}/docker-builds/docker/entrypoint.sh' '${target.dir}/etc/temporal/entrypoint.sh'
+            cp '${source.dir}/docker-builds/docker/start-temporal.sh' '${target.dir}/etc/temporal/start-temporal.sh'
+            cp '${source.dir}/docker-builds/docker/auto-setup.sh' '${target.dir}/etc/temporal/auto-setup.sh'
+
+            chmod +x '${target.dir}/etc/temporal/'*.sh
+        - uses: dhi/build-pkg:0
+          with:
+            description: Temporal Server workflow engine
+            files:
+              - usr/bin/dockerize
+              - usr/bin/temporal-server
+              - usr/bin/tdbg
+              - usr/bin/temporal-cassandra-tool
+              - usr/bin/temporal-sql-tool
+              - usr/bin/temporal
+              - etc/temporal
+            license: MIT
+            name: temporalio-server-1.28
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/dockerize
+                    source: usr/bin/dockerize-dev
+                  - path: usr/bin/temporal-server
+                    source: usr/bin/temporal-server-dev
+                  - path: usr/bin/tdbg
+                    source: usr/bin/tdbg-dev
+                  - path: usr/bin/temporal-cassandra-tool
+                    source: usr/bin/temporal-cassandra-tool-dev
+                  - path: usr/bin/temporal-sql-tool
+                    source: usr/bin/temporal-sql-tool-dev
+                  - path: usr/bin/temporal
+                    source: usr/bin/temporal-dev
+                name: temporalio-server-1.28-dev
+            url: https://github.com/temporalio/temporal
+            version: 1.28.4
+      paths:
+        - type: file
+          path: /src/patch/no-md5.patch
+          uid: 0
+          gid: 0
+          source: package/main/temporalio-server/patch/no-md5.patch
+        - type: file
+          path: /src/patch/entrypoint-getent_hostname.20.patch
+          uid: 0
+          gid: 0
+          source: package/main/temporalio-server/patch/entrypoint-getent_hostname.20.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
