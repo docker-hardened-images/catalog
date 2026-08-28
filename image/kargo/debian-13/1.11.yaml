@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Kargo 1.11.x
+image: dhi.io/kargo
+variant: runtime
+tags:
+  - "1"
+  - "1.11"
+  - "1.11.2"
+  - 1-debian
+  - 1-debian13
+  - 1.11-debian
+  - 1.11-debian13
+  - 1.11.2-debian
+  - 1.11.2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-18"
+vars:
+  COMMIT_SHA: 20c56384dc3aa29911368fa9c0916e8f4a541252
+  GOLANG_REFERENCE: dhi.io/golang:1.26.7-debian13-dev@sha256:9b6a8e0bd0b59b7f4d32920da7be6dca232ebbcc52c2413b90901772f640758b
+  NODE_REFERENCE: dhi.io/node:24.20.0-debian12-dev@sha256:3d151a18796df5a421e5ef9098f26426490a9bd545be73f871358726995d2dfb
+  PNPM_VERSION: 9.0.3
+  SEMVER_MAJOR_MINOR_VERSION: "1.11"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.11.2
+  VERSION: 1.11.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - busybox
+    - ca-certificates
+    - ca-certificates-bundle
+    - git
+    - gpg
+    - gpg-agent
+    - helm-3=3.21.4-1
+    - openssh-client
+    - tini
+  builds:
+    - name: kargo
+      uses: dhi.io/golang:1.26.7-debian13-dev@sha256:9b6a8e0bd0b59b7f4d32920da7be6dca232ebbcc52c2413b90901772f640758b
+      work-dir: /go/src/github.com/akuity/kargo
+      environment:
+        PATH: /pnpm:/usr/local/bin:/usr/local/go/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        PNPM_HOME: /pnpm
+      caches:
+        - path: /go/pkg/mod
+        - path: /pnpm/store
+      contents:
+        files:
+          - url: git+https://github.com/akuity/kargo.git#v1.11.2
+            checksum: 20c56384dc3aa29911368fa9c0916e8f4a541252
+            path: /go/src/github.com/akuity/kargo
+            spdx:
+              name: kargo
+              version: 1.11.2
+              packages:
+                - name: kargo
+                  purl: pkg:github/akuity/kargo@v1.11.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/node:24.20.0-debian12-dev@sha256:3d151a18796df5a421e5ef9098f26426490a9bd545be73f871358726995d2dfb
+            includes:
+              - opt/nodejs
+              - usr/local/bin
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build ui
+          work-dir: /go/src/github.com/akuity/kargo/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack prepare pnpm@9.0.3 --activate
+            pnpm config set store-dir /pnpm/store
+            pnpm install --frozen-lockfile
+            NODE_ENV=production VERSION=v1.11.2 pnpm run build
+            rm -rf /go/src/github.com/akuity/kargo/pkg/server/ui
+            cp -a build /go/src/github.com/akuity/kargo/pkg/server/ui
+        - name: generate ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: kargo-ui
+            source: /go/src/github.com/akuity/kargo/ui
+        - name: build credential helper
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -trimpath -buildvcs=false
+          caches:
+            - path: /go/pkg/mod
+          with:
+            cgo_enabled: 0
+            fips: false
+            output: ${target.dir}/usr/local/bin/credential-helper
+            packages: ./cmd/credential-helper
+            strip: true
+        - name: build control plane
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -trimpath -buildvcs=false
+          caches:
+            - path: /go/pkg/mod
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/akuity/kargo/pkg/x/version.version=v1.11.2
+              - -X github.com/akuity/kargo/pkg/x/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/akuity/kargo/pkg/x/version.gitCommit=20c56384dc3aa29911368fa9c0916e8f4a541252
+              - -X github.com/akuity/kargo/pkg/x/version.gitTreeState=clean
+            output: ${target.dir}/usr/local/bin/kargo
+            packages: ./cmd/controlplane
+            strip: true
+      outputs:
+        - source: ${target.dir}/usr/local/bin/credential-helper
+          target: /usr/local/bin/credential-helper
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: ${target.dir}/usr/local/bin/kargo
+          target: /usr/local/bin/kargo
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/kargo
+          target: /opt/docker/sbom/kargo
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kargo-ui
+          target: /opt/docker/sbom/kargo-ui
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/helm
+    uid: 0
+    gid: 0
+    source: /usr/bin/helm
+  - type: symlink
+    path: /sbin/tini
+    uid: 0
+    gid: 0
+    source: /usr/bin/tini
+annotations:
+  org.opencontainers.image.description: A minimal Kargo continuous promotion platform image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - /usr/local/bin/kargo
