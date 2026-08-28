@@ -3,24 +3,27 @@
 image: dhi.io/pkg-prometheus
 variant: runtime
 tags:
-  - 3.14.0-alpine3.24
-  - 3.14.0-r1-alpine3.24
+  - 3.5.5-alpine3.24
+  - 3.5.5-r1-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2025-07-14"
+  end-of-life: "2026-07-31"
 vars:
-  COMMIT_SHA: d7598b7141418fa35be2b5ec5d0fefb634199610
+  COMMIT_SHA: 077b713865116836b3b1bda123b2f7fc54b59d19
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.7-r0
   NODEJS_VERSION: 24.20.0-r0
-  PACKAGE_NAME: prometheus-3.14
-  PROMETHEUS_GO_MODULE_VERSION: 0.314.0
+  PACKAGE_NAME: prometheus-3.5
+  PROMETHEUS_GO_MODULE_VERSION: 0.305.5
   REL: "1"
-  RELEASE_TYPE: stable
-  SEMVER_MAJOR_MINOR_VERSION: "3.14"
+  RELEASE_TYPE: lts
+  SEMVER_MAJOR_MINOR_VERSION: "3.5"
   SEMVER_MAJOR_VERSION: "3"
-  SEMVER_VERSION: 3.14.0
-  VERSION: 3.14.0
+  SEMVER_VERSION: 3.5.5
+  VERSION: 3.5.5
 contents:
   repositories:
     - https://dhi.io/apk/alpine/v3.24/main
@@ -32,7 +35,7 @@ contents:
   packages:
     - alpine-baselayout-data
   builds:
-    - name: prometheus-3.14
+    - name: prometheus-3.5
       work-dir: /go/src/github.com/prometheus/prometheus
       caches:
         - path: /go/pkg/mod
@@ -58,15 +61,15 @@ contents:
           - golang-1.26-oci-config=1.26.7-r0
           - nodejs-24=24.20.0-r0
         files:
-          - url: git+https://github.com/prometheus/prometheus.git#v3.14.0
-            checksum: d7598b7141418fa35be2b5ec5d0fefb634199610
+          - url: git+https://github.com/prometheus/prometheus.git#v3.5.5
+            checksum: 077b713865116836b3b1bda123b2f7fc54b59d19
             path: /go/src/github.com/prometheus/prometheus
             spdx:
               name: prometheus
-              version: 3.14.0
+              version: 3.5.5
               packages:
                 - name: prometheus
-                  purl: pkg:dhi/prometheus@3.14.0
+                  purl: pkg:dhi/prometheus@3.5.5
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -76,55 +79,38 @@ contents:
           with:
             license: Apache-2.0
             name: prometheus-go
-            purl: pkg:golang/github.com/prometheus/prometheus@0.314.0
-            version: 0.314.0
-        - name: bump ui dependencies (3-stable only)
+            purl: pkg:golang/github.com/prometheus/prometheus@0.305.5
+            version: 0.305.5
+        - name: bump ui dependencies (3.5 only)
+          uses: npm/bump@v1
           work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
           privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            corepack enable pnpm
-
-            yq -i '.overrides."http-proxy-middleware" = "3.0.7"' pnpm-workspace.yaml # CVE-2026-55602
-            yq -i '.overrides."immutable" = "5.1.8"' pnpm-workspace.yaml             # CVE-2026-59879, CVE-2026-59880
-            yq -i '.overrides."nanoid" = "3.3.18"' pnpm-workspace.yaml               # CVE-2026-67213
-            yq -i '.overrides."postcss" = "8.5.23"' pnpm-workspace.yaml              # GHSA-r28c-9q8g-f849, CVE-2026-69153
-            pnpm install --lockfile-only
-        - name: install react-app dependencies for SBOM
-          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            corepack enable pnpm
-            pnpm install --prod --frozen-lockfile
-        - name: create SBOM for static assets
-          uses: sbom@v1
           with:
-            extra-scanners: javascript-package-cataloger
-            prefix: prometheus
-            source: /go/src/github.com/prometheus/prometheus/web/ui/react-app/node_modules
-        - name: compile static assets (3-stable only)
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: /go/src/github.com/prometheus/prometheus/web/ui/react-app
+        - name: create SBOM for static assets (3.5 only)
+          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
+          runs: |
+            set -eux -o pipefail
+
+            npm sbom --omit=dev --omit=peer --package-lock-only --sbom-format=spdx > /opt/docker/sbom/prometheus/.prometheus-reactapp.spdx.json
+        - name: compile static assets (3.5 only)
           work-dir: /go/src/github.com/prometheus/prometheus
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            corepack enable pnpm
-
-            cd web/ui && pnpm install --ignore-scripts && cd -
-            cd web/ui/react-app && pnpm install --ignore-scripts && cd -
-            cd web/ui/react-app && pnpm approve-builds unrs-resolver && cd -
-            cd web/ui/react-app && pnpm rebuild && cd -
-
-            make assets assets-compress
-        - name: update go dependencies (3 only)
+            make assets npm_licenses assets-compress
+        - name: update go dependencies (3.5 only)
           uses: go/bump@v1
           with:
             deps:
-              - github.com/buger/jsonparser@v1.1.2
+              - github.com/go-viper/mapstructure/v2@v2.4.0
+              - github.com/klauspost/compress@v1.18.7
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel/sdk@v1.43.0
               - google.golang.org/grpc@v1.82.1
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
             download: true
             tidy: true
         - name: build plugins
@@ -140,12 +126,12 @@ contents:
             extra-args: -mod=readonly
             fips: false
             ldflags:
-              - -X github.com/prometheus/common/version.Version=3.14.0
-              - -X github.com/prometheus/common/version.Revision=d7598b7141418fa35be2b5ec5d0fefb634199610
+              - -X github.com/prometheus/common/version.Version=3.5.5
+              - -X github.com/prometheus/common/version.Revision=077b713865116836b3b1bda123b2f7fc54b59d19
               - -X github.com/prometheus/common/version.Branch=HEAD
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
-              - -X github.com/prometheus/prometheus/version.Version=3.14.0
+              - -X github.com/prometheus/prometheus/version.Version=3.5.5
             output: ${target.dir}/usr/bin/prometheus
             packages: ./cmd/prometheus
             tags:
@@ -160,8 +146,8 @@ contents:
             extra-args: -mod=readonly
             fips: false
             ldflags:
-              - -X github.com/prometheus/common/version.Version=3.14.0
-              - -X github.com/prometheus/common/version.Revision=d7598b7141418fa35be2b5ec5d0fefb634199610
+              - -X github.com/prometheus/common/version.Version=3.5.5
+              - -X github.com/prometheus/common/version.Revision=077b713865116836b3b1bda123b2f7fc54b59d19
               - -X github.com/prometheus/common/version.Branch=HEAD
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
@@ -175,12 +161,12 @@ contents:
             extra-args: -mod=readonly
             fips: false
             ldflags:
-              - -X github.com/prometheus/common/version.Version=3.14.0
-              - -X github.com/prometheus/common/version.Revision=d7598b7141418fa35be2b5ec5d0fefb634199610
+              - -X github.com/prometheus/common/version.Version=3.5.5
+              - -X github.com/prometheus/common/version.Revision=077b713865116836b3b1bda123b2f7fc54b59d19
               - -X github.com/prometheus/common/version.Branch=HEAD
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
-              - -X github.com/prometheus/prometheus/version.Version=3.14.0
+              - -X github.com/prometheus/prometheus/version.Version=3.5.5
             output: ${target.dir}/usr/bin/prometheus-dev
             packages: ./cmd/prometheus
             strip: false
@@ -196,8 +182,8 @@ contents:
             extra-args: -mod=readonly
             fips: false
             ldflags:
-              - -X github.com/prometheus/common/version.Version=3.14.0
-              - -X github.com/prometheus/common/version.Revision=d7598b7141418fa35be2b5ec5d0fefb634199610
+              - -X github.com/prometheus/common/version.Version=3.5.5
+              - -X github.com/prometheus/common/version.Revision=077b713865116836b3b1bda123b2f7fc54b59d19
               - -X github.com/prometheus/common/version.Branch=HEAD
               - -X github.com/prometheus/common/version.BuildUser=dhi
               - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
@@ -223,7 +209,7 @@ contents:
               - opt/docker/sbom/prometheus
               - opt/docker/sbom/prometheus-go
             license: Apache-2.0
-            name: prometheus-3.14
+            name: prometheus-3.5
             rel: 1
             subpackages:
               - files:
@@ -231,9 +217,9 @@ contents:
                     source: usr/bin/prometheus-dev
                   - path: usr/bin/promtool
                     source: usr/bin/promtool-dev
-                name: prometheus-3.14-dev
+                name: prometheus-3.5-dev
             url: https://github.com/prometheus/prometheus
-            version: 3.14.0
+            version: 3.5.5
       paths:
         - type: file
           path: ${source.dir}/patch/npm-bumps.json
