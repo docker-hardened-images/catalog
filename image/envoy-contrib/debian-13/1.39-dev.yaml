@@ -1,0 +1,194 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Envoy Contrib 1.39.x (dev)
+image: dhi.io/envoy-contrib
+variant: dev
+tags:
+  - 1-dev
+  - 1.39-dev
+  - 1.39.0-dev
+  - 1-debian-dev
+  - 1-debian13-dev
+  - 1.39-debian-dev
+  - 1.39-debian13-dev
+  - 1.39.0-debian-dev
+  - 1.39.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-14"
+  end-of-life: "2027-07-14"
+vars:
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_BUILD_OPTS: -c opt --curses=no --verbose_failures --sandbox_debug --jobs=auto --experimental_ui_max_stdouterr_bytes=11712829 --disk_cache=/bazel-disk-cache --repository_cache=/bazel-repo-cache --experimental_disk_cache_gc_max_size=5G --experimental_disk_cache_gc_max_age=30d --config=clang-local --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18 --repo_env=BAZEL_USE_HOST_SYSROOT=True --action_env=INSTALL=/usr/bin/install
+  BAZEL_FIPS_OPTS: ""
+  BAZEL_TARGET_OPTS: '#{ target.arch == "arm64" ? "--cpu=aarch64" : "" }'
+  BAZEL_VERSION: 8.7.0
+  CLANG_VERSION: "18"
+  COMMIT_SHA: 8eea3285d6bdb89f8ea34632cfe7ce1608a8f374
+  SEMVER_MAJOR_MINOR_VERSION: "1.39"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.39.0
+  VERSION: 1.39.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - mawk
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: envoy-contrib
+      work-dir: ${source.dir}/envoy
+      caches:
+        - path: /bazel-disk-cache
+        - path: /bazel-repo-cache
+      contents:
+        packages:
+          - autoconf
+          - autoconf-archive
+          - automake
+          - bash
+          - build-essential
+          - ca-certificates
+          - clang-18
+          - cmake
+          - coreutils
+          - curl
+          - findutils
+          - git
+          - golang-1.26
+          - grep
+          - gzip
+          - libc++-18-dev
+          - libc++abi-18-dev
+          - libclang-18-dev
+          - lld-18
+          - llvm-18-dev
+          - libtool
+          - mawk
+          - ninja-build
+          - patch
+          - patchelf
+          - pkg-config
+          - python-3.13
+          - sed
+          - unzip
+          - util-linux
+          - zip
+        files:
+          - url: git+https://github.com/envoyproxy/envoy.git#v1.39.0
+            checksum: 8eea3285d6bdb89f8ea34632cfe7ce1608a8f374
+            path: ${source.dir}/envoy
+            spdx:
+              name: envoy-contrib
+              version: 1.39.0
+              packages:
+                - name: envoy-contrib
+                  purl: pkg:dhi/envoy-contrib@1.39.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/8.7.0/bazel-8.7.0-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/8.7.0/bazel-8.7.0-linux-${BAZEL_ARCH}.sha256
+            path: /opt/bazel/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export CC="clang-18" CXX="clang++-18"
+
+            /opt/bazel/bin/bazel --batch build \
+              -c opt --curses=no --verbose_failures --sandbox_debug --jobs=auto --experimental_ui_max_stdouterr_bytes=11712829 --disk_cache=/bazel-disk-cache --repository_cache=/bazel-repo-cache --experimental_disk_cache_gc_max_size=5G --experimental_disk_cache_gc_max_age=30d --config=clang-local --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18 --repo_env=BAZEL_USE_HOST_SYSROOT=True --action_env=INSTALL=/usr/bin/install  ${BAZEL_TARGET_OPTS} \
+              //contrib/exe:envoy-static.stripped
+
+            install -D -m0755 bazel-bin/contrib/exe/envoy-static.stripped \
+              "${target.dir}/usr/local/bin/envoy"
+        - name: verify-contrib
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/local/bin/envoy" --version 2>&1 | grep -q -e "-contrib/" || {
+              echo "✗ contrib verification failed: envoy --version carries no -contrib suffix"
+              exit 1
+            }
+        - name: envoy contrib bazel sbom
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/envoy-contrib
+            python3 "${source.dir}/bin/envoy-bazel-to-spdx.py" envoy-contrib "1.39.0" \
+              -c opt --curses=no --verbose_failures --sandbox_debug --jobs=auto --experimental_ui_max_stdouterr_bytes=11712829 --disk_cache=/bazel-disk-cache --repository_cache=/bazel-repo-cache --experimental_disk_cache_gc_max_size=5G --experimental_disk_cache_gc_max_age=30d --config=clang-local --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18 --repo_env=BAZEL_USE_HOST_SYSROOT=True --action_env=INSTALL=/usr/bin/install  ${BAZEL_TARGET_OPTS} \
+              > /opt/docker/sbom/envoy-contrib/.spdx.envoy-contrib.json
+      paths:
+        - type: file
+          path: ${source.dir}/bin/envoy-bazel-to-spdx.py
+          uid: 0
+          gid: 0
+          source: image/envoy-contrib/bin/envoy-bazel-to-spdx.py
+      outputs:
+        - source: ${target.dir}/usr/local/bin/envoy
+          target: /usr/local/bin/envoy
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: Envoy Contrib - Envoy L7 proxy built with the contrib extensions
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/envoy
