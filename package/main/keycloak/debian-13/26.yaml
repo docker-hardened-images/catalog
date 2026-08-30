@@ -1,0 +1,310 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-keycloak
+variant: runtime
+tags:
+  - 26.7.2
+  - 26.7.2-r0
+  - 26.7.2-debian13
+  - 26.7.2-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-30"
+vars:
+  BCFIPS_VERSION: 2.1.3
+  BCPKIXFIPS_VERSION: 2.1.12
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.24
+  BCUTILFIPS_VERSION: 2.1.7
+  COMMIT_SHA: 289376b142480b4d600aca7acb1e4651862ed2a1
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  MAVEN_VERSION: 3.9.16
+  NODEJS_VERSION: 24.20.0-0
+  PACKAGE_HOME: /usr/share/keycloak
+  PACKAGE_NAME: keycloak-26.7
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "26.7"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.7.2
+  VERSION: 26.7.2
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: keycloak-26.7
+      work-dir: ${source.dir}/keycloak
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - base-files
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - libc6
+          - libstdc++6
+          - mawk
+          - node-corepack
+          - nodejs-24=24.20.0-0
+          - npm
+          - sed
+          - tar
+          - xmlstarlet
+          - yarn-classic
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+        files:
+          - url: git+https://github.com/keycloak/keycloak.git#26.7.2
+            checksum: 289376b142480b4d600aca7acb1e4651862ed2a1
+            path: ${source.dir}/keycloak
+            spdx:
+              name: keycloak
+              version: 26.7.2
+              packages:
+                - name: keycloak
+                  purl: pkg:dhi/keycloak@26.7.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/io/netty/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar
+            checksum: sha256:185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/io/netty/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar
+            checksum: sha256:82fb63a2dc90c0bddb81e04065a1c06fb4c5be722ad5d64b46491daf8b6f9a01
+            path: ${source.dir}/patch/deps/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar
+            uid: 0
+            gid: 0
+          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            spdx:
+              name: maven
+              version: 3.9.16
+              packages:
+                - name: maven
+                  purl: pkg:generic/apache-maven@3.9.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install maven
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/java
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+
+            mkdir -p /usr/local/bin
+            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+              filename=$(basename "$file")
+              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+            done
+        - uses: mvn/mirror@v1
+        - name: configure maven mirror
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              mkdir -p /root/.m2
+              cat > /root/.m2/settings.xml << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <id>google-maven-central</id>
+                  <name>GCS Maven Central mirror</name>
+                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+                  <mirrorOf>central</mirrorOf>
+                </mirror>
+              </mirrors>
+            </settings>
+            EOF
+            fi
+        - name: patch
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/keycloak
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: pin netty epoll native transport
+          work-dir: ${source.dir}/keycloak
+          runs: |
+            set -eux -o pipefail
+
+            for classifier in linux-x86_64 linux-aarch_64; do
+              xmlstarlet ed -L \
+                -N m="http://maven.apache.org/POM/4.0.0" \
+                -s "/m:project/m:dependencyManagement/m:dependencies" -t elem -n "dependencyTMP" -v "" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n "groupId" -v "io.netty" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n "artifactId" -v "netty-transport-native-epoll" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n "version" -v "4.1.137.Final" \
+                -s "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -t elem -n "classifier" -v "${classifier}" \
+                -r "/m:project/m:dependencyManagement/m:dependencies/dependencyTMP" -v "dependency" \
+                pom.xml
+            done
+        - name: build ui
+          work-dir: ${source.dir}/keycloak/js
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@latest --activate
+
+            node -e '
+              const fs = require("fs");
+              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              p.pnpm = p.pnpm || {};
+              p.pnpm.overrides = Object.assign({}, p.pnpm.overrides, {
+                "jquery": "3.5.0",
+                "mdast-util-to-hast": "13.2.1",
+                "@remix-run/router": "1.23.3",
+                "react-router": "6.30.4",
+                "lodash": "4.18.0",
+                "lodash-es": "4.18.0",
+                "simple-git": "3.36.0",
+                "uuid": "13.0.1",
+                "yaml": "2.8.3"
+              });
+              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            '
+
+            pnpm install --prefer-offline --ignore-scripts --no-frozen-lockfile
+
+            export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+            pnpm --filter @keycloak/keycloak-admin-client run generate:openapi
+
+            pnpm build
+        - name: remove maven build cache extension
+          work-dir: ${source.dir}/keycloak
+          runs: |
+            set -eux -o pipefail
+
+            ext_xml=".mvn/extensions.xml"
+            if [ -f "${ext_xml}" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='maven-build-cache-extension']" \
+                "${ext_xml}"
+            fi
+        - name: build
+          work-dir: ${source.dir}/keycloak
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn install -Dskip.pnpm -DskipTests -DskipExamples -DskipTestsuite -DskipProtoLock=true -Pdistribution
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/keycloak"
+            tar -xzf "${source.dir}/keycloak/quarkus/dist/target/keycloak-26.7.2.tar.gz" -C "${target.dir}/usr/share/keycloak" --strip-components=1
+
+            "${target.dir}/usr/share/keycloak/bin/kc.sh" build
+        - name: patch native netty classifier jars
+          runs: |
+            set -eux -o pipefail
+
+            kc_root="${target.dir}/usr/share/keycloak"
+            netty_version="4.1.137.Final"
+
+            for arch in x86_64 aarch_64; do
+              find "${kc_root}" \
+                -name "netty-transport-native-epoll-*-linux-${arch}.jar" \
+                ! -name "netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
+                -delete
+
+              epoll_lib=$(find "${kc_root}" -path '*/lib/main' -type d 2> /dev/null | head -1)
+              if [ -z "${epoll_lib}" ]; then
+                handler_jar=$(find "${kc_root}" -name 'netty-handler-*.jar' -print -quit)
+                if [ -n "${handler_jar}" ]; then
+                  epoll_lib=$(dirname "${handler_jar}")
+                fi
+              fi
+              if [ -n "${epoll_lib}" ]; then
+                install -m 0644 \
+                  "${source.dir}/patch/deps/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar" \
+                  "${epoll_lib}/netty-transport-native-epoll-${netty_version}-linux-${arch}.jar"
+              fi
+            done
+        - name: prepare for sbom
+          work-dir: ${source.dir}/keycloak/js
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            find . -depth -type d -name node_modules -exec rm -rf {} +
+
+            export PATH="/usr/bin:${PATH}"
+
+            pnpm config set --location=project nodeLinker hoisted
+            pnpm install -prod --prefer-offline --frozen-lockfile --ignore-scripts
+        - name: sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: keycloak-ui
+            source: ${source.dir}/keycloak/js/node_modules
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+              - eclipse-temurin-21-jre
+            description: Keycloak identity and access management
+            files:
+              - usr/share/keycloak
+            formats:
+              - deb
+            license: Apache-2.0
+            name: keycloak-26.7
+            rel: 0
+            url: https://www.keycloak.org/
+            version: 26.7.2
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/keycloak/patch/mvn-properties.json
+        - type: file
+          path: ${source.dir}/patch/mvn-deps.json
+          uid: 0
+          gid: 0
+          source: package/main/keycloak/patch/mvn-deps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
