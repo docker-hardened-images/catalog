@@ -1,0 +1,498 @@
+Backport ParseMetricSelector wrapper for prometheus v0.311.3 on Pyroscope 1.15-1.20.
+Upstream added pkg/model.ParseMetricSelector in grafana/pyroscope v1.21.1 (#5124).
+https://github.com/grafana/pyroscope/blob/v1.21.1/pkg/model/labels.go
+
+
+diff --git a/pkg/frontend/readpath/queryfrontend/compat.go b/pkg/frontend/readpath/queryfrontend/compat.go
+index 7e65030a8..ba8cf8c41 100644
+--- a/pkg/frontend/readpath/queryfrontend/compat.go
++++ b/pkg/frontend/readpath/queryfrontend/compat.go
+@@ -7,7 +7,6 @@ import (
+ 
+ 	"connectrpc.com/connect"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 
+ 	queryv1 "github.com/grafana/pyroscope/api/gen/proto/go/query/v1"
+ 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
+@@ -52,7 +51,7 @@ func buildLabelSelectorFromMatchers(matchers []string) (string, error) {
+ }
+ 
+ func buildLabelSelectorWithProfileType(labelSelector, profileTypeID string) (string, error) {
+-	matchers, err := parser.ParseMetricSelector(labelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(labelSelector)
+ 	if err != nil {
+ 		return "", fmt.Errorf("parsing label selector %q: %w", labelSelector, err)
+ 	}
+@@ -67,7 +66,7 @@ func buildLabelSelectorWithProfileType(labelSelector, profileTypeID string) (str
+ func parseMatchers(matchers []string) ([]*labels.Matcher, error) {
+ 	parsed := make([]*labels.Matcher, 0, len(matchers))
+ 	for _, m := range matchers {
+-		s, err := parser.ParseMetricSelector(m)
++		s, err := phlaremodel.ParseMetricSelector(m)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("failed to parse label selector %q: %w", s, err)
+ 		}
+diff --git a/pkg/frontend/readpath/queryfrontend/query_frontend.go b/pkg/frontend/readpath/queryfrontend/query_frontend.go
+index 8e143ec86..1cc5626f7 100644
+--- a/pkg/frontend/readpath/queryfrontend/query_frontend.go
++++ b/pkg/frontend/readpath/queryfrontend/query_frontend.go
+@@ -11,7 +11,6 @@ import (
+ 	"github.com/go-kit/log"
+ 	"github.com/grafana/dskit/tenant"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"google.golang.org/grpc/codes"
+ 	"google.golang.org/grpc/status"
+ 
+@@ -153,7 +152,7 @@ func (q *QueryFrontend) QueryMetadata(
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, err.Error())
+ 	}
+-	matchers, err := parser.ParseMetricSelector(req.LabelSelector)
++	matchers, err := model.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, err.Error())
+ 	}
+diff --git a/pkg/metastore/index/query.go b/pkg/metastore/index/query.go
+index 63dcbe53a..d40f8c073 100644
+--- a/pkg/metastore/index/query.go
++++ b/pkg/metastore/index/query.go
+@@ -1,6 +1,7 @@
+ package index
+ 
+ import (
++	phlaremodel "github.com/grafana/pyroscope/pkg/model"
+ 	"context"
+ 	"fmt"
+ 	"slices"
+@@ -9,7 +10,6 @@ import (
+ 	"time"
+ 
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"go.etcd.io/bbolt"
+ 
+ 	metastorev1 "github.com/grafana/pyroscope/api/gen/proto/go/metastore/v1"
+@@ -56,7 +56,7 @@ func newMetadataQuery(index *Index, query MetadataQuery) (*metadataQuery, error)
+ 	if len(query.Tenant) == 0 {
+ 		return nil, &InvalidQueryError{Query: query, Err: fmt.Errorf("tenant_id is required")}
+ 	}
+-	matchers, err := parser.ParseMetricSelector(query.Expr)
++	matchers, err := phlaremodel.ParseMetricSelector(query.Expr)
+ 	if err != nil {
+ 		return nil, &InvalidQueryError{Query: query, Err: fmt.Errorf("failed to parse label matcher: %w", err)}
+ 	}
+diff --git a/pkg/model/labels.go b/pkg/model/labels.go
+index 7421b0cd6..0e545463d 100644
+--- a/pkg/model/labels.go
++++ b/pkg/model/labels.go
+@@ -13,13 +13,24 @@ import (
+ 	"github.com/cespare/xxhash/v2"
+ 	pmodel "github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
++	"github.com/prometheus/prometheus/promql/parser"
+ 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+ 
+ 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
+ 	"github.com/grafana/pyroscope/pkg/util"
+ )
+ 
+-var seps = []byte{'\xff'}
++var (
++	seps       = []byte{'\xff'}
++	promParser = parser.NewParser(parser.Options{})
++)
++
++// ParseMetricSelector parses the provided textual metric selector into a
++// list of label matchers.
++func ParseMetricSelector(input string) ([]*labels.Matcher, error) {
++	return promParser.ParseMetricSelector(input)
++}
++
+ 
+ const (
+ 	LabelNameProfileType        = "__profile_type__"
+diff --git a/pkg/model/recording_rule.go b/pkg/model/recording_rule.go
+index fece9b7f6..d4005531f 100644
+--- a/pkg/model/recording_rule.go
++++ b/pkg/model/recording_rule.go
+@@ -6,7 +6,6 @@ import (
+ 
+ 	prometheusmodel "github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 
+ 	settingsv1 "github.com/grafana/pyroscope/api/gen/proto/go/settings/v1"
+ )
+@@ -92,7 +91,7 @@ func newRecordingRuleWithBuilder(rule *settingsv1.RecordingRule, sb *labels.Scra
+ func parseMatchers(matchers []string) ([]*labels.Matcher, error) {
+ 	parsed := make([]*labels.Matcher, 0, len(matchers))
+ 	for _, m := range matchers {
+-		s, err := parser.ParseMetricSelector(m)
++		s, err := ParseMetricSelector(m)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+diff --git a/pkg/phlaredb/block_querier.go b/pkg/phlaredb/block_querier.go
+index 447e70157..e6729f8e5 100644
+--- a/pkg/phlaredb/block_querier.go
++++ b/pkg/phlaredb/block_querier.go
+@@ -25,7 +25,6 @@ import (
+ 	"github.com/parquet-go/parquet-go"
+ 	"github.com/pkg/errors"
+ 	"github.com/prometheus/common/model"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/prometheus/prometheus/storage"
+ 	"github.com/samber/lo"
+ 	"golang.org/x/sync/errgroup"
+@@ -1535,7 +1534,7 @@ func (b *singleBlockQuerier) SelectMatchingProfiles(ctx context.Context, params
+ 	b.queries.Add(1)
+ 	defer b.queries.Done()
+ 
+-	matchers, err := parser.ParseMetricSelector(params.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+@@ -1642,7 +1641,7 @@ func (b *singleBlockQuerier) SelectMergeByLabels(
+ 	b.queries.Add(1)
+ 	defer b.queries.Done()
+ 
+-	matchers, err := parser.ParseMetricSelector(params.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+@@ -1722,7 +1721,7 @@ func (b *singleBlockQuerier) SelectMergeByStacktraces(ctx context.Context, param
+ 	b.queries.Add(1)
+ 	defer b.queries.Done()
+ 
+-	matchers, err := parser.ParseMetricSelector(params.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+@@ -1791,7 +1790,7 @@ func (b *singleBlockQuerier) SelectMergeBySpans(ctx context.Context, params *ing
+ 	b.queries.Add(1)
+ 	defer b.queries.Done()
+ 
+-	matchers, err := parser.ParseMetricSelector(params.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+@@ -1859,7 +1858,7 @@ func (b *singleBlockQuerier) SelectMergePprof(ctx context.Context, params *inges
+ 	b.queries.Add(1)
+ 	defer b.queries.Done()
+ 
+-	matchers, err := parser.ParseMetricSelector(params.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+diff --git a/pkg/phlaredb/head.go b/pkg/phlaredb/head.go
+index 3a57c02fa..8364fbe2b 100644
+--- a/pkg/phlaredb/head.go
++++ b/pkg/phlaredb/head.go
+@@ -18,7 +18,6 @@ import (
+ 	"github.com/pkg/errors"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/prometheus/prometheus/tsdb/fileutil"
+ 	"github.com/samber/lo"
+ 	"go.uber.org/atomic"
+@@ -459,7 +458,7 @@ type selectors [][]*labels.Matcher
+ func parseSelectors(selectorStrings []string) (selectors, error) {
+ 	sels := make([][]*labels.Matcher, 0, len(selectorStrings))
+ 	for _, m := range selectorStrings {
+-		s, err := parser.ParseMetricSelector(m)
++		s, err := phlaremodel.ParseMetricSelector(m)
+ 		if err != nil {
+ 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("failed to parse label selector: %v", err))
+ 		}
+diff --git a/pkg/phlaredb/profiles.go b/pkg/phlaredb/profiles.go
+index e0abe46fa..543adc539 100644
+--- a/pkg/phlaredb/profiles.go
++++ b/pkg/phlaredb/profiles.go
+@@ -11,7 +11,6 @@ import (
+ 	"github.com/pkg/errors"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/prometheus/prometheus/storage"
+ 	"github.com/samber/lo"
+ 	"go.uber.org/atomic"
+@@ -218,7 +217,7 @@ func (pi *profilesIndex) Add(ps *schemav1.InMemoryProfile, lbs phlaremodel.Label
+ func (pi *profilesIndex) selectMatchingFPs(ctx context.Context, params *ingestv1.SelectProfilesRequest) ([]model.Fingerprint, error) {
+ 	sp, _ := opentracing.StartSpanFromContext(ctx, "selectMatchingFPs - Index")
+ 	defer sp.Finish()
+-	selectors, err := parser.ParseMetricSelector(params.LabelSelector)
++	selectors, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+diff --git a/pkg/querier/analyze_query.go b/pkg/querier/analyze_query.go
+index ba640ad48..a4a413a1b 100644
+--- a/pkg/querier/analyze_query.go
++++ b/pkg/querier/analyze_query.go
+@@ -8,7 +8,6 @@ import (
+ 	"github.com/opentracing/opentracing-go"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 
+ 	ingestv1 "github.com/grafana/pyroscope/api/gen/proto/go/ingester/v1"
+ 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
+@@ -150,7 +149,7 @@ func createMatchersFromQuery(query string) ([]string, error) {
+ 	var matchers []*labels.Matcher
+ 	var err error
+ 	if query != "" {
+-		matchers, err = parser.ParseMetricSelector(query)
++		matchers, err = phlaremodel.ParseMetricSelector(query)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+diff --git a/pkg/querier/http.go b/pkg/querier/http.go
+index 53e54a285..7c072757f 100644
+--- a/pkg/querier/http.go
++++ b/pkg/querier/http.go
+@@ -14,7 +14,6 @@ import (
+ 	"github.com/google/pprof/profile"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"golang.org/x/sync/errgroup"
+ 	"google.golang.org/grpc/codes"
+ 
+@@ -306,7 +305,7 @@ func parseQuery(fieldName string, req *http.Request) (string, *typesv1.ProfileTy
+ 		return "", nil, fmt.Errorf("'%s' is required", fieldName)
+ 	}
+ 
+-	parsedSelector, err := parser.ParseMetricSelector(q)
++	parsedSelector, err := phlaremodel.ParseMetricSelector(q)
+ 	if err != nil {
+ 		return "", nil, status.Error(codes.InvalidArgument, fmt.Sprintf("failed to parse '%s'", fieldName))
+ 	}
+diff --git a/pkg/querier/ingester_querier.go b/pkg/querier/ingester_querier.go
+index 7d85e5ce3..420155c74 100644
+--- a/pkg/querier/ingester_querier.go
++++ b/pkg/querier/ingester_querier.go
+@@ -8,7 +8,6 @@ import (
+ 	ring_client "github.com/grafana/dskit/ring/client"
+ 	"github.com/opentracing/opentracing-go"
+ 	otlog "github.com/opentracing/opentracing-go/log"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"golang.org/x/sync/errgroup"
+ 
+ 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
+@@ -91,7 +90,7 @@ func (q *Querier) selectTreeFromIngesters(ctx context.Context, req *querierv1.Se
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = phlaremodel.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+@@ -148,7 +147,7 @@ func (q *Querier) selectProfileFromIngesters(ctx context.Context, req *querierv1
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = phlaremodel.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+@@ -301,7 +300,7 @@ func (q *Querier) selectSpanProfileFromIngesters(ctx context.Context, req *queri
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = phlaremodel.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+diff --git a/pkg/querier/querier.go b/pkg/querier/querier.go
+index 2397092e7..82478ed1c 100644
+--- a/pkg/querier/querier.go
++++ b/pkg/querier/querier.go
+@@ -23,7 +23,6 @@ import (
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/client_golang/prometheus/promauto"
+ 	"github.com/prometheus/common/model"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/samber/lo"
+ 	"golang.org/x/sync/errgroup"
+ 
+@@ -924,7 +923,7 @@ func (q *Querier) SelectSeries(ctx context.Context, req *connect.Request[querier
+ 		sp.Finish()
+ 	}()
+ 
+-	_, err := parser.ParseMetricSelector(req.Msg.LabelSelector)
++	_, err := phlaremodel.ParseMetricSelector(req.Msg.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+diff --git a/pkg/querier/store_gateway_querier.go b/pkg/querier/store_gateway_querier.go
+index 074c63be7..fdcbe286c 100644
+--- a/pkg/querier/store_gateway_querier.go
++++ b/pkg/querier/store_gateway_querier.go
+@@ -13,7 +13,6 @@ import (
+ 	"github.com/pkg/errors"
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/client_golang/prometheus/promauto"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"golang.org/x/sync/errgroup"
+ 
+ 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
+@@ -180,7 +179,7 @@ func (q *Querier) selectTreeFromStoreGateway(ctx context.Context, req *querierv1
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = model.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+@@ -240,7 +239,7 @@ func (q *Querier) selectProfileFromStoreGateway(ctx context.Context, req *querie
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = model.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+@@ -408,7 +407,7 @@ func (q *Querier) selectSpanProfileFromStoreGateway(ctx context.Context, req *qu
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+-	_, err = parser.ParseMetricSelector(req.LabelSelector)
++	_, err = model.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+ 	}
+diff --git a/pkg/querybackend/block_reader.go b/pkg/querybackend/block_reader.go
+index 8a1e323aa..0553fb4c1 100644
+--- a/pkg/querybackend/block_reader.go
++++ b/pkg/querybackend/block_reader.go
+@@ -1,6 +1,7 @@
+ package querybackend
+ 
+ import (
++	phlaremodel "github.com/grafana/pyroscope/pkg/model"
+ 	"context"
+ 	"fmt"
+ 	"strings"
+@@ -13,7 +14,6 @@ import (
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"golang.org/x/sync/errgroup"
+ 	"google.golang.org/grpc/codes"
+ 	"google.golang.org/grpc/status"
+@@ -146,7 +146,7 @@ func validateRequest(req *queryv1.InvokeRequest) (*request, error) {
+ 	if len(req.Tenant) == 0 {
+ 		return nil, fmt.Errorf("no tenant provided")
+ 	}
+-	matchers, err := parser.ParseMetricSelector(req.LabelSelector)
++	matchers, err := phlaremodel.ParseMetricSelector(req.LabelSelector)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("label selection is invalid: %w", err)
+ 	}
+diff --git a/pkg/segmentwriter/memdb/profile_index_test.go b/pkg/segmentwriter/memdb/profile_index_test.go
+index 89d758eaf..2b67e70c5 100644
+--- a/pkg/segmentwriter/memdb/profile_index_test.go
++++ b/pkg/segmentwriter/memdb/profile_index_test.go
+@@ -12,7 +12,6 @@ import (
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	"google.golang.org/grpc/codes"
+@@ -88,7 +87,7 @@ func TestIndex(t *testing.T) {
+ }
+ 
+ func selectMatchingFPs(pi *profilesIndex, params *ingestv1.SelectProfilesRequest) ([]model.Fingerprint, error) {
+-	selectors, err := parser.ParseMetricSelector(params.LabelSelector)
++	selectors, err := phlaremodel.ParseMetricSelector(params.LabelSelector)
+ 	if err != nil {
+ 		return nil, status.Error(codes.InvalidArgument, "failed to parse label selectors: "+err.Error())
+ 	}
+diff --git a/pkg/settings/recording/recording.go b/pkg/settings/recording/recording.go
+index 26c2e1628..7840ccaeb 100644
+--- a/pkg/settings/recording/recording.go
++++ b/pkg/settings/recording/recording.go
+@@ -17,7 +17,6 @@ import (
+ 	"github.com/grafana/dskit/tenant"
+ 	prom "github.com/prometheus/common/model"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/thanos-io/objstore"
+ 
+ 	settingsv1 "github.com/grafana/pyroscope/api/gen/proto/go/settings/v1"
+@@ -270,7 +269,7 @@ func validateUpsert(req *settingsv1.UpsertRecordingRuleRequest) error {
+ 	}
+ 
+ 	for _, m := range req.Matchers {
+-		_, err := parser.ParseMetricSelector(m)
++		_, err := model.ParseMetricSelector(m)
+ 		if err != nil {
+ 			errs = append(errs, fmt.Errorf("matcher %q is invalid: %v", m, err))
+ 		}
+@@ -331,7 +330,7 @@ func convertRuleToAPI(rule *settingsv1.RecordingRuleStore) *settingsv1.Recording
+ 	// Try find the profile type from the matchers.
+ Loop:
+ 	for _, m := range rule.Matchers {
+-		s, err := parser.ParseMetricSelector(m)
++		s, err := model.ParseMetricSelector(m)
+ 		if err != nil {
+ 			// Since this value is loaded from the tenant settings database and
+ 			// we validate selectors before saving, we should theoretically
+diff --git a/pkg/validation/usage_groups.go b/pkg/validation/usage_groups.go
+index 82c87e1a9..37011aaa0 100644
+--- a/pkg/validation/usage_groups.go
++++ b/pkg/validation/usage_groups.go
+@@ -15,7 +15,6 @@ import (
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"github.com/prometheus/client_golang/prometheus/promauto"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"gopkg.in/yaml.v3"
+ 
+ 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
+@@ -237,7 +236,7 @@ func parseUsageGroupEntries(m map[string]string) ([]usageGroupEntry, map[string]
+ 			return nil, nil, fmt.Errorf("usage group name %q is reserved", noMatchName)
+ 		}
+ 
+-		matchers, err := parser.ParseMetricSelector(matchersText)
++		matchers, err := phlaremodel.ParseMetricSelector(matchersText)
+ 		if err != nil {
+ 			return nil, nil, fmt.Errorf("failed to parse matchers for usage group %q: %w", name, err)
+ 		}
+diff --git a/pkg/validation/usage_groups_test.go b/pkg/validation/usage_groups_test.go
+index 50203a42b..a2196ee53 100644
+--- a/pkg/validation/usage_groups_test.go
++++ b/pkg/validation/usage_groups_test.go
+@@ -8,7 +8,6 @@ import (
+ 
+ 	"github.com/prometheus/client_golang/prometheus/testutil"
+ 	"github.com/prometheus/prometheus/model/labels"
+-	"github.com/prometheus/prometheus/promql/parser"
+ 	"github.com/stretchr/testify/require"
+ 	"gopkg.in/yaml.v3"
+ 
+@@ -580,7 +579,7 @@ func TestUsageGroupConfig_UnmarshalJSON(t *testing.T) {
+ }
+ 
+ func testMustParseMatcher(t *testing.T, s string) []*labels.Matcher {
+-	m, err := parser.ParseMetricSelector(s)
++	m, err := phlaremodel.ParseMetricSelector(s)
+ 	require.NoError(t, err)
+ 	return m
+ }
