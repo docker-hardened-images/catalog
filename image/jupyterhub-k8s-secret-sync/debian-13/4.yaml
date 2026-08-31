@@ -1,0 +1,172 @@
+# syntax=dhi.io/build:2-debian13
+
+name: JupyterHub K8s Secret Sync 4.x
+image: dhi.io/jupyterhub-k8s-secret-sync
+variant: runtime
+tags:
+  - "4"
+  - "4.4"
+  - 4.4.1
+  - 4-debian
+  - 4-debian13
+  - 4.4-debian
+  - 4.4-debian13
+  - 4.4.1-debian
+  - 4.4.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-10"
+vars:
+  COMMIT_SHA: d7c085dc7ff3c35be652286cc19c7564c5f49aa7
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.1
+  VERSION: 4.4.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - libffi8
+    - libstdc++6
+    - python-3.14
+    - tini
+    - tzdata
+  builds:
+    - name: acme-secret-sync
+      work-dir: ${source.dir}/zero-to-jupyterhub-k8s
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - libstdc++6
+          - python-3.14
+          - python-3.14-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - sed
+        files:
+          - url: git+https://github.com/jupyterhub/zero-to-jupyterhub-k8s.git#4.4.1
+            checksum: d7c085dc7ff3c35be652286cc19c7564c5f49aa7
+            path: ${source.dir}/zero-to-jupyterhub-k8s
+            spdx:
+              name: zero-to-jupyterhub-k8s
+              version: 4.4.1
+              packages:
+                - name: zero-to-jupyterhub-k8s
+                  purl: pkg:github/jupyterhub/zero-to-jupyterhub-k8s@4.4.1
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/acme-secret-sync
+            python3 -m venv /opt/acme-secret-sync/.venv
+        - name: install kubernetes client
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            /opt/acme-secret-sync/.venv/bin/python3 -m pip install --no-cache-dir kubernetes
+        - name: upgrade python deps for cve fixes
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # aiohttp: CVE-2025-69223 CVE-2026-69244
+            # cryptography: CVE-2026-26007 GHSA-537C-GMF6-5CCF CVE-2026-69249
+            # urllib3: CVE-2025-66418 CVE-2025-66471 CVE-2026-21441 CVE-2026-44431
+            # pyjwt: CVE-2026-32597 CVE-2026-48526
+            # pyasn1: CVE-2026-23490 CVE-2026-30922 CVE-2026-59884 CVE-2026-59885 CVE-2026-59886
+            # pyopenssl: CVE-2026-27459
+            # requests: CVE-2024-47081 CVE-2026-25645
+            # idna: CVE-2026-45409
+            /opt/acme-secret-sync/.venv/bin/python3 -m pip install --no-cache-dir --upgrade \
+              'aiohttp>=3.14.3' \
+              'cryptography>=49.0.0' \
+              'urllib3>=2.7.0' \
+              'pyjwt>=2.13.0' \
+              'pyasn1>=0.6.4' \
+              'pyopenssl>=26.0.0' \
+              'requests>=2.33.0' \
+              'idna>=3.15'
+        - name: install script
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/acme-secret-sync/bin
+            install -m 755 images/secret-sync/acme-secret-sync.py \
+              /opt/acme-secret-sync/bin/acme-secret-sync
+            sed -i '1s|#!/usr/bin/env python3|#!/opt/acme-secret-sync/.venv/bin/python3|' \
+              /opt/acme-secret-sync/bin/acme-secret-sync
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find /opt/acme-secret-sync/.venv \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: jupyterhub-k8s-secret-sync-python
+            source: /opt/acme-secret-sync/.venv
+      outputs:
+        - source: /opt/acme-secret-sync
+          target: /opt/acme-secret-sync
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: symlink
+    path: /usr/bin/acme-secret-sync
+    uid: 0
+    gid: 0
+    source: /opt/acme-secret-sync/bin/acme-secret-sync
+annotations:
+  org.opencontainers.image.description: A minimal jupyterhub-k8s-secret-sync image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/bin/acme-secret-sync
