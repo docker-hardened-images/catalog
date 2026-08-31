@@ -1,0 +1,186 @@
+# syntax=dhi.io/build:2-debian13
+
+name: JupyterHub K8s Singleuser Sample 4.x (compat)
+image: dhi.io/jupyterhub-k8s-singleuser-sample
+variant: runtime
+flavor: compat
+tags:
+  - 4-compat
+  - 4.4-compat
+  - 4.4.1-compat
+  - 4-debian-compat
+  - 4-debian13-compat
+  - 4.4-debian-compat
+  - 4.4-debian13-compat
+  - 4.4.1-debian-compat
+  - 4.4.1-debian13-compat
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-10"
+vars:
+  COMMIT_SHA: d7c085dc7ff3c35be652286cc19c7564c5f49aa7
+  JUPYTERLAB_VERSION: 4.6.3
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.1
+  VERSION: 4.4.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - git
+    - libffi8
+    - libstdc++6
+    - python-3.14
+    - python-3.14-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - tini
+    - tzdata
+  builds:
+    - name: jupyterhub-k8s-singleuser-sample
+      work-dir: ${source.dir}/zero-to-jupyterhub-k8s/images/singleuser-sample
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libffi-dev
+          - libssl-dev
+          - libstdc++6
+          - python-3.14
+          - python-3.14-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - sed
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/jupyterhub/zero-to-jupyterhub-k8s.git#4.4.1
+            checksum: d7c085dc7ff3c35be652286cc19c7564c5f49aa7
+            path: ${source.dir}/zero-to-jupyterhub-k8s
+            spdx:
+              name: zero-to-jupyterhub-k8s
+              version: 4.4.1
+              packages:
+                - name: zero-to-jupyterhub-k8s
+                  purl: pkg:github/jupyterhub/zero-to-jupyterhub-k8s@4.4.1
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            mkdir -p /opt/singleuser
+            python3 -m venv "$VENV"
+        - name: install singleuser requirements
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              -r requirements.txt
+        - name: upgrade security-patched packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            # Pin to versions that resolve known CVEs:
+            #   cryptography>=50.0.0   CVE-2026-69247, CVE-2026-69249
+            #   jupyter_server>=2.20.0 CVE-2026-44727 (CRITICAL)
+            #   mistune>=3.3.0         CVE-2026-49851
+            #   setuptools>=83.0.0     CVE-2026-59890
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              "cryptography>=50.0.0" \
+              "jupyter_server>=2.20.0" \
+              "mistune>=3.3.0" \
+              "setuptools>=83.0.0"
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: jupyterhub-k8s-singleuser-sample-python
+            source: /opt/singleuser/.venv
+      outputs:
+        - source: /opt/singleuser
+          target: /opt/singleuser
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/jovyan
+environment:
+  JUPYTERLAB_VERSION: 4.6.3
+  PATH: /opt/singleuser/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal jupyterhub-k8s-singleuser-sample image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - jupyter
+  - lab
+  - --ip
+  - 0.0.0.0
+ports:
+  - 8888/tcp
