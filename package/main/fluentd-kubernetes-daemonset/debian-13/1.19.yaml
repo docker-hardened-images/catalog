@@ -1,0 +1,2996 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-fluentd-kubernetes-daemonset
+variant: runtime
+tags:
+  - 1.19.3
+  - 1.19.3-r0
+  - 1.19.3-debian13
+  - 1.19.3-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-07-30"
+vars:
+  JEMALLOC_VERSION: 5.3.1
+  REL: "0"
+  RUBY_MAJOR_MINOR_VERSION: "3.4"
+  RUBY_VERSION: 3.4.10-21
+  SEMVER_MAJOR_MINOR_VERSION: "1.19"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.19.3
+  VERSION: 1.19.3
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: fluentd-kubernetes-daemonset-azureblob
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in azure-storage-blob@2.0.3 fluent-plugin-azure-storage-append-blob-lts@0.7.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (azureblob)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-azureblob
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-cloudwatch
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in aws-sdk-cloudwatchlogs@1.124.0 fluent-plugin-cloudwatch-logs@0.15.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (cloudwatch)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-cloudwatch
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-datadog
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-datadog@0.14.4; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (datadog)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-datadog
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-elasticsearch7
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in faraday@2.14.3 faraday-excon@2.4.0 elasticsearch@7.17.11 elasticsearch-xpack@7.17.11 fluent-plugin-elasticsearch@5.4.4 fluent-plugin-dedot_filter@1.0.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (elasticsearch7)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-elasticsearch7
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-elasticsearch8
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in elasticsearch@8.19.3 fluent-plugin-elasticsearch@5.4.4 fluent-plugin-dedot_filter@1.0.0 faraday-typhoeus@1.1.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (elasticsearch8)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-elasticsearch8
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-forward
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (forward)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-forward
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-gcs
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-gcs@0.4.4; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (gcs)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-gcs
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-graylog
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-gelf-hs@1.0.8 gelf@3.1.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (graylog)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-graylog
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-kafka
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-avro@1.1.1 fluent-plugin-kafka@0.19.6 fluent-plugin-parser-avro@0.3.1 rdkafka@0.22.2 snappy@0.4.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+              - libsnappy1v5
+              - krb5-user
+              - libsasl2-modules-gssapi-mit
+              - libsasl2-2
+            description: Fluentd Kubernetes DaemonSet (kafka)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-kafka
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-kafka2
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-avro@1.1.1 fluent-plugin-kafka@0.19.6 fluent-plugin-parser-avro@0.3.1 rdkafka@0.22.2 snappy@0.4.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+              - libsnappy1v5
+              - krb5-user
+              - libsasl2-modules-gssapi-mit
+              - libsasl2-2
+            description: Fluentd Kubernetes DaemonSet (kafka2)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-kafka2
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-kinesis
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-kinesis@3.6.1; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (kinesis)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-kinesis
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-logentries
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-logentries@0.2.10; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (logentries)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-logentries
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-loggly
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-loggly@0.0.9; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (loggly)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-loggly
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-logzio
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-logzio@0.2.2; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (logzio)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-logzio
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-opensearch
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in faraday-typhoeus@1.1.0 fluent-plugin-opensearch@1.1.5; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (opensearch)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-opensearch
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-papertrail
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-papertrail@0.2.8; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (papertrail)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-papertrail
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-s3
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in aws-sdk-s3@1.223.0 fluent-plugin-s3@1.8.5; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (s3)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-s3
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+    - name: fluentd-kubernetes-daemonset-syslog
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - busybox
+          - bash
+          - build-essential
+          - ca-certificates
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - libc-bin
+          - mawk
+          - sed
+          - tar
+          - libffi8
+          - libjemalloc-dev
+          - libjemalloc2
+          - libyaml-0-2
+          - libyaml-dev
+          - libsnappy-dev
+          - ruby-3.4=3.4.10-21
+          - ruby-3.4-dev=3.4.10-21
+          - libgmp10
+          - libgmp-dev
+          - zlib1g
+          - zlib1g-dev
+        files:
+          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
+            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+            path: ${source.dir}/jemalloc.tar.bz2
+            spdx:
+              name: jemalloc
+              version: 5.3.1
+              packages:
+                - name: jemalloc
+                  purl: pkg:dhi/jemalloc@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install jemalloc
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/jemalloc
+            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
+            cd ${target.dir}/opt/jemalloc
+
+            echo "je_cv_madv_free=no" > config.cache
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            ./configure -C
+            make -j${ncpus}
+
+            rm -f ${target.dir}/opt/jemalloc/lib/*.a
+
+            mkdir -p ${target.dir}/usr/lib/libjemalloc
+            cp -a ${target.dir}/opt/jemalloc/lib/. ${target.dir}/usr/lib/libjemalloc/
+            rm -rf ${target.dir}/opt/jemalloc
+        - name: install fluentd gem
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+            mkdir -p "${GEM_HOME}"
+
+            gem install oj -v 3.17.3 --no-document
+            gem install json -v 2.19.9 --no-document
+            gem install rexml -v 3.4.4 --no-document
+            gem install async -v 2.39.0 --no-document
+            gem install async-http -v 0.95.1 --no-document
+            gem install fluentd -v 1.19.3 --no-doc
+        - name: install kubernetes plugins
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            gem install --no-document ffi -v 1.17.4
+            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
+            gem install --no-document fluent-plugin-systemd -v 1.1.1
+            gem install --no-document fluent-plugin-prometheus -v 2.2.2
+            gem install --no-document fluent-plugin-concat -v 2.6.1
+            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
+            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
+            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
+            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
+            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
+            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
+            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
+        - name: install destination plugins
+          privileged: true
+          environment:
+            INSTALL: /usr/bin/install
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export BUNDLE_APP_CONFIG="${GEM_HOME}"
+            export BUNDLE_SILENCE_ROOT_WARNING=true
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for spec in fluent-plugin-remote_syslog@1.1.0; do
+              name=$(echo "$spec" | cut -d@ -f1)
+              ver=$(echo "$spec" | cut -d@ -f2)
+              gem install --no-document --conservative "$name" -v "$ver"
+            done
+        - name: cleanup gem tree
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+
+            find "${GEM_HOME}/gems" -name Gemfile.lock -delete
+            find "${GEM_HOME}/gems" \( -type d \( -name spec -o -name test -o -name tests -o -name doc \) -prune -exec rm -rf {} + \)
+        - name: cleanup gem binstubs
+          runs: |
+            set -eux -o pipefail
+
+            export GEM_HOME="${target.dir}/usr/lib/fluentd-kubernetes-daemonset/bundle"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${GEM_HOME}/bin:${PATH:-}"
+
+            for f in "${GEM_HOME}/bin"/*; do
+              [[ -f $f && ${f##*/} != fluentd ]] && rm -v $f
+            done
+
+            "${GEM_HOME}/bin/fluentd" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ruby-3.4
+              - libjemalloc2
+              - libyaml-0-2
+              - libffi8
+              - libgmp10
+              - zlib1g
+              - libstdc++6
+            description: Fluentd Kubernetes DaemonSet (syslog)
+            files:
+              - usr/lib/fluentd-kubernetes-daemonset
+              - usr/lib/libjemalloc
+            formats:
+              - deb
+            license: Apache-2.0
+            name: fluentd-kubernetes-daemonset-syslog
+            rel: 0
+            url: https://github.com/fluent/fluentd-kubernetes-daemonset
+            version: 1.19.3
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
