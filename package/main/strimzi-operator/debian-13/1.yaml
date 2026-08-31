@@ -1,0 +1,176 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-strimzi-operator
+variant: runtime
+tags:
+  - 1.2.0
+  - 1.2.0-r0
+  - 1.2.0-debian13
+  - 1.2.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-23"
+vars:
+  COMMIT_SHA: 6c7b43c4af0db547c10463ba09d1dfa6f5e156a0
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  MAVEN_VERSION: 3.9.16
+  PACKAGE_HOME: /usr/share/strimzi-operator
+  PACKAGE_NAME: strimzi-operator
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.2"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.2.0
+  VERSION: 1.2.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: strimzi-operator
+      work-dir: ${source.dir}/strimzi
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+        MAVEN_ARGS: --batch-mode --no-transfer-progress -Dmdep.analyze.skip=true
+        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - sed
+          - unzip
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+        files:
+          - url: git+https://github.com/strimzi/strimzi-kafka-operator.git#1.2.0
+            checksum: 6c7b43c4af0db547c10463ba09d1dfa6f5e156a0
+            path: ${source.dir}/strimzi
+            spdx:
+              name: strimzi
+              version: 1.2.0
+              packages:
+                - name: strimzi
+                  purl: pkg:maven/io.strimzi/strimzi@1.2.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            spdx:
+              name: maven
+              version: 3.9.16
+              packages:
+                - name: maven
+                  purl: pkg:generic/apache-maven@3.9.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install maven
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/java
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+
+            mkdir -p /usr/local/bin
+            find "/opt/java/apache-maven-3.9.16/bin" \( -type f -executable -o -type l \) | while read -r file; do
+              filename=$(basename "$file")
+              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+            done
+        - uses: mvn/mirror@v1
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            downgrade: false
+            mvn-root: ${source.dir}/strimzi
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: build
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -DskipTests -Dcheckstyle.skip -Dmaven.javadoc.skip -Dmdep.analyze.skip=true install
+        - name: install operator bundles
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/strimzi-operator"
+            mkdir -p "$dest"
+            for bundle in cluster-operator topic-operator user-operator kafka-init; do
+              unzip -qo "docker-images/artifacts/binaries/${bundle}-1.2.0-dist.zip" -d "$dest"
+            done
+            mkdir -p "$dest/bin"
+            cp -a docker-images/operator/scripts/. "$dest/bin"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - eclipse-temurin-21-jre
+            description: Strimzi Kafka Operator for Kubernetes
+            files:
+              - usr/share/strimzi-operator
+            formats:
+              - deb
+            license: Apache-2.0
+            name: strimzi-operator
+            rel: 0
+            url: https://strimzi.io/
+            version: 1.2.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/strimzi-operator/patch/mvn-properties.json
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/strimzi-operator/patch/mvn-dependencies.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
