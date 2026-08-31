@@ -16,15 +16,17 @@ tags:
 platforms:
   - linux/amd64
   - linux/arm64
+dates:
+  release: "2026-08-01"
 vars:
-  COMMIT_SHA: d8f71d7bdbd7c9873d98293f83d64c6db72847e6
   DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "1.98"
   DEBIAN_EPOCH_MAJOR_VERSION: "1"
   DEBIAN_EPOCH_VERSION: 1.98.0
+  PYTHON_VERSION: 3.13.15-0
   SEMVER_MAJOR_MINOR_VERSION: "1.98"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.98.0
-  VERSION: 1.98.0
+  VERSION: 1.98.0-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -37,296 +39,93 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - libatomic1
     - libstdc++6
     - openssl
     - python-3.13
-    - python-3.13-dev
-    - python3-pip
-    - python3-setuptools
-    - python3-wheel
     - tzdata
   builds:
-    - name: litellm-build
-      environment:
-        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        VIRTUAL_ENV: /opt/litellm
+    - name: litellm-runtime-compat
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
-          - build-essential
-          - libssl-dev
-          - coreutils
           - bash
-          - ca-certificates
-          - grep
+          - coreutils
           - findutils
-          - gzip
+          - grep
+          - mawk
           - python-3.13
-          - python-3.13-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - diffutils
-          - gawk
-          - sed
-        files:
-          - url: git+https://github.com/BerriAI/litellm.git#d8f71d7bdbd7c9873d98293f83d64c6db72847e6
-            checksum: d8f71d7bdbd7c9873d98293f83d64c6db72847e6
-            path: ${source.dir}/litellm-src
-            spdx:
-              name: litellm
-              version: 1.98.0
-              packages:
-                - name: litellm
-                  purl: pkg:pypi/litellm@1.98.0
-                  license: MIT
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/diff/-/diff-8.0.3.tgz
-            path: ${source.dir}/npm-patches/diff-8.0.3.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/tar/-/tar-7.5.21.tgz
-            path: ${source.dir}/npm-patches/tar-7.5.21.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/minimatch/-/minimatch-10.2.3.tgz
-            path: ${source.dir}/npm-patches/minimatch-10.2.3.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/@isaacs/brace-expansion/-/brace-expansion-5.0.1.tgz
-            path: ${source.dir}/npm-patches/isaacs-brace-expansion-5.0.1.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz
-            path: ${source.dir}/npm-patches/brace-expansion-5.0.9.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz
-            path: ${source.dir}/npm-patches/ip-address-10.3.1.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz
-            path: ${source.dir}/npm-patches/picomatch-4.0.4.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/undici/-/undici-6.28.0.tgz
-            path: ${source.dir}/npm-patches/undici-6.28.0.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/@sigstore/core/-/core-3.2.1.tgz
-            path: ${source.dir}/npm-patches/sigstore-core-3.2.1.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/@sigstore/verify/-/verify-3.1.1.tgz
-            path: ${source.dir}/npm-patches/sigstore-verify-3.1.1.tgz
-            uid: 0
-            gid: 0
-          - url: https://registry.npmjs.org/sigstore/-/sigstore-4.1.1.tgz
-            path: ${source.dir}/npm-patches/sigstore-4.1.1.tgz
-            uid: 0
-            gid: 0
+          - litellm=1.98.0-0
       pipeline:
-        - name: build python package
-          work-dir: ${source.dir}/litellm-src
+        - name: restore runtime contract on installed package payload
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            # Install build module since DHI python image doesn't include it by default
-            python3 -m pip install build
+            VENV=/usr/lib/litellm
+            APP=/usr/share/litellm
 
-            # Clean and build the package
-            rm -rf dist/*
-            python3 -m build
-        - name: create virtual environment
-          runs: |
-            set -eux -o pipefail
+            "${VENV}/bin/pip" install --no-cache-dir --force-reinstall 'fastapi>=0.136.3,<0.140.7'
+            "${VENV}/bin/pip" install --no-cache-dir --upgrade 'mcp>=1.23.0,<2.0'
 
-            # Create virtual environment for LiteLLM directly at runtime location
-            python3 -m venv "$VIRTUAL_ENV"
-        - name: install litellm in venv
-          work-dir: ${source.dir}/litellm-src
-          privileged: true
-          runs: |
-            set -eux -o pipefail
+            ln -sf ../lib/python3.13/site-packages/nodejs_wheel/bin/node "${VENV}/bin/node"
 
-            # Source the virtual environment
-            source "$VIRTUAL_ENV/bin/activate"
+            ln -sfn "${APP}" /app
+            export PRISMA_HOME_DIR=/app
+            export PRISMA_OFFLINE_MODE=true
+            export PRISMA_USE_GLOBAL_NODE=true
+            export PATH="${VENV}/bin:${PATH}"
+            "${VENV}/bin/python3" -m prisma generate --schema /app/schema.prisma
 
-            # Install the built wheel using the upstream Docker runtime extras.
-            WHEEL_FILES=(dist/litellm-*.whl)
-            if [ ${#WHEEL_FILES[@]} -gt 1 ]; then
-              echo "Error: Multiple wheel files found:"
-              printf '  %s\n' "${WHEEL_FILES[@]}"
-              exit 1
-            elif [ ${#WHEEL_FILES[@]} -eq 0 ] || [ ! -f "${WHEEL_FILES[0]}" ]; then
-              echo "Error: No wheel files found in dist/"
-              exit 1
-            fi
-            WHEEL_FILE="${WHEEL_FILES[0]}"
-            pip install "${WHEEL_FILE}[proxy,extra_proxy,proxy-runtime]"
-
-            # Handle PyJWT specifically (upstream requirement)
-            pip uninstall jwt -y || true
-            pip uninstall PyJWT -y || true
-            pip install PyJWT==2.9.0 --no-cache-dir
-
-            # CVE remediation: Upgrade packages to fix known vulnerabilities
-            # Force reinstall starlette to override litellm's version constraint
-            pip install --force-reinstall 'starlette>=1.3.1'          # CVE-2026-54283, CVE-2026-48710, CVE-2026-48817, CVE-2026-54282
-            pip install --upgrade 'aiohttp>=3.12.14'                  # Fix CVE-2025-53643
-            pip install --upgrade 'cryptography>=46.0.5'              # Fix CVE-2026-26007
-            pip install --upgrade 'mcp>=1.23.0,<2.0'                  # Fix CVE-2025-66416; litellm requires mcp<2.0
-            pip install --force-reinstall 'fastapi>=0.136.3,<0.140.7' # litellm 1.96.0 management_v1 needs get_flat_dependant (removed in fastapi 0.140.7)
-            pip install --upgrade 'fastapi-sso>=0.19.0'               # Fix CVE-2025-14546
-            pip install --upgrade 'urllib3>=2.6.3'                    # Fix CVE-2026-21441
-            pip install --upgrade 'pynacl>=1.6.2'                     # Fix CVE-2025-69277
-            pip install --upgrade 'nodejs-wheel-binaries>=24.17.0'    # CVE-2025-55130, CVE-2025-55131, CVE-2025-59466, CVE-2026-21637, CVE-2025-55132, BSA-2026-48615, BSA-2026-48617, BSA-2026-48618, BSA-2026-48619, BSA-2026-48928, BSA-2026-48930, BSA-2026-48931, BSA-2026-48933, BSA-2026-48934, BSA-2026-48935, BSA-2026-48937
-            pip install --upgrade 'python-multipart>=0.0.22'          # Fix CVE-2026-24486
-            pip install --upgrade 'orjson>=3.11.5'                    # Fix CVE-2025-67221
-            pip install --upgrade 'pillow>=12.1.1'                    # Fix CVE-2026-25990
-            pip install --upgrade 'python-dotenv>=1.2.2'              # Fix CVE-2026-28684
-            pip install --upgrade 'pypdf>=6.13.3'                     # Fix CVE-2026-40260, GHSA-x284-j5p8-9c5p, GHSA-7gw9-cf7v-778f, GHSA-4pxv-j86v-mhcw, GHSA-jj6c-8h6c-hppx, GHSA-jm82-fx9c-mx94
-            pip install --upgrade 'pydantic-settings>=2.14.2'         # GHSA-4xgf-cpjx-pc3j
-        - name: patch npm packages in nodejs_wheel
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Define packages to patch using associative array: [search_path]=tarball
-            # search_path is the directory name under node_modules to find and replace
-            declare -A PATCHES=(
-              ["diff"]="diff-8.0.3.tgz"                                      # CVE-2026-24001
-              ["tar"]="tar-7.5.21.tgz"                                       # CVE-2026-24842, CVE-2026-26960, GHSA-qffp-2rhf-9h96, CVE-2026-31802, CVE-2026-53655, CVE-2026-59871, CVE-2026-59873, CVE-2026-59874, CVE-2026-59875
-              ["minimatch"]="minimatch-10.2.3.tgz"                           # CVE-2026-26996, CVE-2026-27903, CVE-2026-27904
-              ["@isaacs/brace-expansion"]="isaacs-brace-expansion-5.0.1.tgz" # GHSA-7h2j-956f-4vf2
-              ["brace-expansion"]="brace-expansion-5.0.9.tgz"                # CVE-2026-33750, CVE-2026-45149, CVE-2026-13149, CVE-2026-14257, CVE-2026-69152
-              ["ip-address"]="ip-address-10.3.1.tgz"                         # CVE-2026-42338, CVE-2026-69192, CVE-2026-69198, CVE-2026-54272
-              ["tinyglobby/node_modules/picomatch"]="picomatch-4.0.4.tgz"    # CVE-2026-33671
-              ["undici"]="undici-6.28.0.tgz"                                 # CVE-2026-12151, CVE-2026-9679, CVE-2026-11525, CVE-2026-6733, CVE-2026-16729, CVE-2026-16728, CVE-2026-15157
-              ["@sigstore/core"]="sigstore-core-3.2.1.tgz"                   # CVE-2026-48758
-              ["@sigstore/verify"]="sigstore-verify-3.1.1.tgz"               # CVE-2026-48816
-              ["sigstore"]="sigstore-4.1.1.tgz"                              # CVE-2026-48815
-            )
-
-            for search_path in "${!PATCHES[@]}"; do
-              tarball="${PATCHES[$search_path]}"
-              echo "Patching $search_path..."
-
-              # Extract fixed package version to temporary directory
-              tmp_dir=$(mktemp -d)
-              tar -xzf "${source.dir}/npm-patches/$tarball" -C "$tmp_dir"
-
-              # Find and replace package in nodejs_wheel location
-              # The path is: /opt/litellm/lib/python3.*/site-packages/nodejs_wheel/lib/node_modules/npm/node_modules/<search_path>
-              find "$VIRTUAL_ENV/lib" -type d -path "*/nodejs_wheel/lib/node_modules/npm/node_modules/$search_path" -print0 | while IFS= read -r -d '' pkg_dir; do
-                echo "  Replacing $pkg_dir"
-                rm -rf "$pkg_dir"
-                cp -r "$tmp_dir/package" "$pkg_dir"
-              done
-
-              echo "  ✓ $search_path patched successfully"
-            done
-        - name: install final packages in venv
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Source the virtual environment
-            source "$VIRTUAL_ENV/bin/activate"
-
-            # Install semantic_router without dependencies using venv pip
-            pip install semantic_router --no-deps
-        - name: prepare system integration
-          runs: |
-            set -eux -o pipefail
-
-            # Create symlink for litellm executable in /usr/local/bin
-            mkdir -p "${target.dir}/usr/local/bin"
-            ln -s ../../../opt/litellm/bin/litellm "${target.dir}/usr/local/bin/litellm"
-
-            # Create dummy supervisor script with helpful error message.
-            mkdir -p "${target.dir}/usr/bin"
-            cat > "${target.dir}/usr/bin/supervisord" << 'EOF'
-            #!/bin/bash
-            echo "The 'supervisor' package is not installed in the DHI litellm image, and is not supported by default."
-            exit 1
-            EOF
-            chmod +x "${target.dir}/usr/bin/supervisord"
-
-            # Put the Node.js runtime bundled with litellm on PATH as `node` so the
-            # prisma CLI (invoked by the proxy for `prisma migrate deploy`) uses it
-            # instead of downloading a Node via nodeenv at runtime (which needs
-            # network access and a writable cache and fails in locked-down runtimes).
-            ln -s ../lib/python3.13/site-packages/nodejs_wheel/bin/node "/opt/litellm/bin/node"
-        - name: prepare runtime files
-          work-dir: ${source.dir}/litellm-src
-          runs: |
-            set -eux -o pipefail
-
-            # Copy source files needed at runtime
-            mkdir -p "${target.dir}/app/docker"
-            cp docker/entrypoint.sh "${target.dir}/app/docker/"
-            cp docker/prod_entrypoint.sh "${target.dir}/app/docker/"
-            cp schema.prisma "${target.dir}/app/"
-
-            chmod +x "${target.dir}/app/docker/entrypoint.sh"
-            chmod +x "${target.dir}/app/docker/prod_entrypoint.sh"
-        - name: generate prisma client
-          work-dir: /app
-          privileged: true
-          environment:
-            PRISMA_HOME_DIR: /app
-          runs: |
-            set -eux -o pipefail
-
-            source "$VIRTUAL_ENV/bin/activate"
-
-            cp "${target.dir}/app/schema.prisma" /app/schema.prisma
-            python3 -m prisma generate --schema schema.prisma
-
-            # The prisma CLI wrapper (invoked by the proxy for `prisma migrate
-            # deploy` in PRISMA_OFFLINE_MODE) looks for the CLI at the *unversioned*
-            # path /app/.cache/prisma-python/binaries/node_modules/.bin/prisma, but
-            # prisma-client-py installs it under a version/engine-hash subdir. Add a
-            # stable symlink to the versioned node_modules so the offline lookup
-            # resolves without probing (and without needing network or a writable
-            # cache at runtime). Use an absolute target so the link is valid from
-            # any working directory at runtime.
             versioned_node_modules=$(find /app/.cache/prisma-python/binaries -maxdepth 3 -type d -name node_modules | head -n1)
             test -x "$versioned_node_modules/.bin/prisma"
             ln -sfn "$versioned_node_modules" /app/.cache/prisma-python/binaries/node_modules
+        - name: slice litellm dpkg stanza into status.d
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
 
-            cp -a /app/.cache "${target.dir}/app/.cache"
+            pkg=litellm
+            mkdir -p /var/lib/dpkg/status.d
+            grep -q "^Package: ${pkg}$" /var/lib/dpkg/status
+            awk -v pkg="${pkg}" '$0 == "Package: " pkg {f=1} f && !/^(Status|Depends|Pre-Depends|Recommends|Suggests):/{print} /^$/{if(f)exit}' /var/lib/dpkg/status \
+              > /var/lib/dpkg/status.d/${pkg}
+            test -s /var/lib/dpkg/status.d/${pkg}
         - name: python dependencies sbom
           uses: sbom@v1
           privileged: true
           with:
             extra-scanners: python-package-cataloger
             prefix: litellm-python
-            source: /opt/litellm
+            source: /usr/lib/litellm
       outputs:
-        - source: ${target.dir}/app
-          target: /app
+        - source: /usr/lib/litellm
+          target: /usr/lib/litellm
+          uid: 0
+          gid: 0
+        - source: /usr/share/litellm
+          target: /usr/share/litellm
           uid: 65532
           gid: 65532
-        - source: /opt/litellm
-          target: /opt/litellm
+        - source: /usr/bin/litellm
+          target: /usr/bin/litellm
           uid: 0
           gid: 0
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
+        - source: /usr/bin/supervisord
+          target: /usr/bin/supervisord
           uid: 0
           gid: 0
-        - source: ${target.dir}/usr/bin
-          target: /usr/bin
+        - source: /var/lib/dpkg/status.d/litellm
+          target: /var/lib/dpkg/status.d/litellm
           uid: 0
           gid: 0
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
+        - source: /opt/docker/sbom/litellm-python
+          target: /opt/docker/sbom/litellm-python
           uid: 0
           gid: 0
 accounts:
@@ -358,13 +157,27 @@ environment:
   PRISMA_HOME_DIR: /app
   PRISMA_OFFLINE_MODE: "true"
   PRISMA_USE_GLOBAL_NODE: "true"
-  PYTHON_VERSION: ${PYTHON_VERSION}
+  PYTHON_VERSION: 3.13.15-0
 paths:
-  - type: directory
+  - type: symlink
     path: /app
-    uid: 65532
-    gid: 65532
-    mode: "0755"
+    uid: 0
+    gid: 0
+    source: /usr/share/litellm
+  - type: symlink
+    path: /opt/litellm
+    uid: 0
+    gid: 0
+    source: /usr/lib/litellm
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/litellm
+    uid: 0
+    gid: 0
+    source: /usr/bin/litellm
 annotations:
   org.opencontainers.image.description: A minimal LiteLLM image - Universal LLM API Gateway
   org.opencontainers.image.licenses: MIT
