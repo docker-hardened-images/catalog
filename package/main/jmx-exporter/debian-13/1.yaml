@@ -4,9 +4,9 @@ image: dhi.io/pkg-jmx-exporter
 variant: runtime
 tags:
   - 1.6.0
-  - 1.6.0-r0
+  - 1.6.0-r1
   - 1.6.0-debian13
-  - 1.6.0-r0-debian13
+  - 1.6.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -17,7 +17,7 @@ vars:
   MAVEN_VERSION: 3.9.16
   PACKAGE_HOME: /usr/share/jmx-exporter
   PACKAGE_NAME: jmx-exporter
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "1.6"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.6.0
@@ -101,6 +101,50 @@ contents:
             if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
               rm -f /root/.m2/settings.xml
             fi
+        - name: pin vulnerable dependency versions
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/jmx-exporter
+        - name: patch prometheus otel agent embedded libraries
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            otel_api_version="1.62.0"
+            otel_context_version="1.62.0"
+            agent_version="1.7.0"
+
+            patch_lib=$(mktemp -d)
+            mvn -B dependency:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-api:${otel_api_version} \
+              -DoutputDirectory="${patch_lib}"
+            mvn -B dependency:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-context:${otel_context_version} \
+              -DoutputDirectory="${patch_lib}"
+
+            mvn -B dependency:get \
+              -Dartifact=io.prometheus:prometheus-metrics-exporter-opentelemetry-otel-agent-resources:${agent_version}
+
+            agent_jar="/root/.m2/repository/io/prometheus/prometheus-metrics-exporter-opentelemetry-otel-agent-resources/${agent_version}/prometheus-metrics-exporter-opentelemetry-otel-agent-resources-${agent_version}.jar"
+            agent_dir=$(mktemp -d)
+            (
+              cd "${agent_dir}"
+              jar xf "${agent_jar}"
+              install -m 0644 "${patch_lib}/opentelemetry-api-${otel_api_version}.jar" \
+                lib/opentelemetry-api-1.29.0.jar
+              install -m 0644 "${patch_lib}/opentelemetry-context-${otel_context_version}.jar" \
+                lib/opentelemetry-context-1.29.0.jar
+              jar cf "${agent_jar}" .
+            )
         - name: build
           privileged: true
           secrets:
@@ -149,6 +193,15 @@ contents:
               -pl collector,jmx_prometheus_common,jmx_prometheus_javaagent,jmx_prometheus_standalone \
               -DincludeScope=runtime \
               -DoutputDirectory="${source.dir}/jmx-exporter-deps"
+
+            find "${source.dir}/jmx-exporter-deps" -name 'opentelemetry-api-*.jar' -delete
+            find "${source.dir}/jmx-exporter-deps" -name 'opentelemetry-context-*.jar' -delete
+            mvn -B dependency:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-api:1.62.0 \
+              -DoutputDirectory="${source.dir}/jmx-exporter-deps"
+            mvn -B dependency:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-context:1.62.0 \
+              -DoutputDirectory="${source.dir}/jmx-exporter-deps"
         - name: maven sbom
           uses: sbom@v1
           with:
@@ -166,9 +219,15 @@ contents:
               - deb
             license: Apache-2.0
             name: jmx-exporter
-            rel: 0
+            rel: 1
             url: https://github.com/prometheus/jmx_exporter
             version: 1.6.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/jmx-exporter/debian-13/patch/mvn-dependencies.json
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
