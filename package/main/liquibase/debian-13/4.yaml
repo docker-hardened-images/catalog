@@ -1,0 +1,186 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-liquibase
+variant: runtime
+tags:
+  - 4.33.0
+  - 4.33.0-r0
+  - 4.33.0-debian13
+  - 4.33.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 75773ed9b45b0a5adf3c42872d2e5494da669427
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-0
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  LICENSE: Apache-2.0
+  MAVEN_VERSION: 3.9.16
+  PACKAGE_NAME: liquibase-4
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.33"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.33.0
+  VERSION: 4.33.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: liquibase
+      work-dir: ${source.dir}/liquibase
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - golang-1.26=1.26.7-0
+          - golang-1.26-oci-config=1.26.7-0
+        files:
+          - url: git+https://github.com/liquibase/liquibase.git#v4.33.0
+            checksum: 75773ed9b45b0a5adf3c42872d2e5494da669427
+            path: ${source.dir}/liquibase
+            spdx:
+              name: liquibase
+              version: 4.33.0
+              packages:
+                - name: liquibase
+                  purl: pkg:dhi/liquibase@4.33.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            spdx:
+              name: maven
+              version: 3.9.16
+              packages:
+                - name: maven
+                  purl: pkg:generic/apache-maven@3.9.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install maven
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/java
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+
+            mkdir -p /usr/local/bin
+            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+              filename=$(basename "$file")
+              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+            done
+        - uses: mvn/mirror@v1
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: patch root dependencies forced
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies-root.json
+            downgrade: true
+            mvn-root: ${source.dir}/liquibase
+        - name: patch dist properties
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/liquibase/liquibase-dist
+            properties: ${source.dir}/patch/mvn-properties-dist.json
+        - name: install liquibase distribution
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/liquibase"
+            cd "${source.dir}/liquibase"
+
+            sed -i -e "s/build.version=.*/build.version=4.33.0/" liquibase-standard/src/main/resources/liquibase.build.properties
+            mvn versions:set -DnewVersion="4.33.0"
+            mvn -B clean package -DskipTests -Dmaven.javadoc.skip=true
+            tar -zxf "liquibase-dist/target/liquibase-4.33.0.tar.gz" -C "${target.dir}/usr/share/liquibase"
+        - name: patch mssql-jdbc jar metadata for sbom
+          runs: |
+            set -eux -o pipefail
+
+            jar="${target.dir}/usr/share/liquibase/internal/lib/mssql-jdbc.jar"
+            work="$(mktemp -d)"
+            trap 'rm -rf "${work}"' EXIT
+
+            meta="META-INF/maven/com.microsoft.sqlserver/mssql-jdbc"
+            props="${meta}/pom.properties"
+            pom="${meta}/pom.xml"
+            mkdir -p "${work}"
+            (cd "${work}" && "${JAVA_HOME}/bin/jar" xf "${jar}" "${props}" "${pom}")
+            sed -i 's/^version=12.10.2.*/version=12.10.2.jre11/' "${work}/${props}"
+            sed -i '0,/<version>12.10.2<\/version>/s/<version>12.10.2<\/version>/<version>12.10.2.jre11<\/version>/' "${work}/${pom}"
+            (cd "${work}" && "${JAVA_HOME}/bin/jar" uf "${jar}" "${props}" "${pom}")
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+            description: Liquibase database schema change management tool
+            files:
+              - usr
+            formats:
+              - deb
+            license: Apache-2.0
+            name: liquibase-4
+            rel: 0
+            url: https://www.liquibase.com/
+            version: 4.33.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies-root.json
+          uid: 0
+          gid: 0
+          source: package/main/liquibase/debian-13/patch/mvn-dependencies-root.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-dist.json
+          uid: 0
+          gid: 0
+          source: package/main/liquibase/debian-13/patch/mvn-properties-dist.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
