@@ -1,0 +1,120 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-tigera-operator
+variant: runtime
+tags:
+  - 1.36.16-alpine3.24
+  - 1.36.16-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: fdb10d5c1b619137f2e50cbdcb4c9012364d6ed7
+  GOLANG_VERSION: 1.26.7-r0
+  HELM_VERSION: 4.2.4-r3
+  PACKAGE_NAME: tigera-operator-1.36
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.36"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.36.16
+  VERSION: 1.36.16
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: tigera-operator-1.36
+      work-dir: /go/src/github.com/tigera/operator
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - helm-4=4.2.4-r3
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/tigera/operator.git#v1.36.16
+            checksum: fdb10d5c1b619137f2e50cbdcb4c9012364d6ed7
+            path: /go/src/github.com/tigera/operator
+            spdx:
+              name: tigera-operator
+              version: 1.36.16
+              packages:
+                - name: tigera-operator
+                  purl: pkg:golang/github.com/tigera/operator@1.36.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies (1.36 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/crypto@v0.55.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            for i in {1..3}; do
+              if CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller)'); then
+                exit 0
+              fi
+              echo "Retry $i/3..."
+              sleep 2
+            done
+
+            exit 1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.36.16
+            output: ${target.dir}/usr/bin/operator
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.36.16
+            output: ${target.dir}/usr/bin/operator-dev
+            packages: .
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Tigera operator for managing Calico installations
+            files:
+              - usr/bin/operator
+            license: Apache-2.0
+            name: tigera-operator-1.36
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/operator
+                    source: usr/bin/operator-dev
+                name: tigera-operator-1.36-dev
+            url: https://github.com/tigera/operator
+            version: 1.36.16
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

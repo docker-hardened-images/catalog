@@ -1,0 +1,123 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-tigera-operator
+variant: runtime
+tags:
+  - 1.38.16-alpine3.24
+  - 1.38.16-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 9cbd52a5cd61725bf149efc9d643dcd7f1178ab5
+  GOLANG_VERSION: 1.26.7-r0
+  HELM_VERSION: 4.2.4-r3
+  PACKAGE_NAME: tigera-operator-1.38
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.38"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.38.16
+  VERSION: 1.38.16
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: tigera-operator-1.38
+      work-dir: /go/src/github.com/tigera/operator
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - helm-4=4.2.4-r3
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/tigera/operator.git#v1.38.16
+            checksum: 9cbd52a5cd61725bf149efc9d643dcd7f1178ab5
+            path: /go/src/github.com/tigera/operator
+            spdx:
+              name: tigera-operator
+              version: 1.38.16
+              packages:
+                - name: tigera-operator
+                  purl: pkg:golang/github.com/tigera/operator@1.38.16
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies (1.38 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/crypto@v0.55.0
+              - github.com/envoyproxy/gateway@v1.7.4
+            download: true
+        - name: patch gatewayapi for envoy-gateway api (1.38)
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/fix-envoy-gateway-api-1.38.patch
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller|render)')
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.38.16
+            output: ${target.dir}/usr/bin/operator
+            packages: ./cmd/
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.38.16
+            output: ${target.dir}/usr/bin/operator-dev
+            packages: ./cmd/
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Tigera operator for managing Calico installations
+            files:
+              - usr/bin/operator
+            license: Apache-2.0
+            name: tigera-operator-1.38
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/operator
+                    source: usr/bin/operator-dev
+                name: tigera-operator-1.38-dev
+            url: https://github.com/tigera/operator
+            version: 1.38.16
+      paths:
+        - type: file
+          path: ${source.dir}/patch/fix-envoy-gateway-api-1.38.patch
+          uid: 0
+          gid: 0
+          source: package/main/tigera-operator/patch/fix-envoy-gateway-api-1.38.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

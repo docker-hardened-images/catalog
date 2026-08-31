@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-tigera-operator
+variant: runtime
+tags:
+  - 1.43.0-alpine3.24
+  - 1.43.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-30"
+vars:
+  COMMIT_SHA: 22d717f8e934e78cd34dd79bd8d6dd0bf8faf2c6
+  ENVOY_GATEWAY_COMMIT_SHA: 6c2e80d5158926749b95e948d7aae36b9ae67669
+  ENVOY_GATEWAY_VERSION: v1.8.2
+  GOLANG_VERSION: 1.26.7-r0
+  HELM_VERSION: 4.2.4-r3
+  ISTIO_VERSION: 1.29.2
+  PACKAGE_NAME: tigera-operator-1.43
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.43"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.43.0
+  VERSION: 1.43.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: tigera-operator-1.43
+      work-dir: /go/src/github.com/tigera/operator
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - helm-4=4.2.4-r3
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/tigera/operator.git#v1.43.0
+            checksum: 22d717f8e934e78cd34dd79bd8d6dd0bf8faf2c6
+            path: /go/src/github.com/tigera/operator
+            spdx:
+              name: tigera-operator
+              version: 1.43.0
+              packages:
+                - name: tigera-operator
+                  purl: pkg:golang/github.com/tigera/operator@1.43.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://istio-release.storage.googleapis.com/charts/base-1.29.2.tgz
+            path: /go/src/github.com/tigera/operator/pkg/render/istio/base.tgz
+            uid: 0
+            gid: 0
+          - url: https://istio-release.storage.googleapis.com/charts/istiod-1.29.2.tgz
+            path: /go/src/github.com/tigera/operator/pkg/render/istio/istiod.tgz
+            uid: 0
+            gid: 0
+          - url: https://istio-release.storage.googleapis.com/charts/cni-1.29.2.tgz
+            path: /go/src/github.com/tigera/operator/pkg/render/istio/cni.tgz
+            uid: 0
+            gid: 0
+          - url: https://istio-release.storage.googleapis.com/charts/ztunnel-1.29.2.tgz
+            path: /go/src/github.com/tigera/operator/pkg/render/istio/ztunnel.tgz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/envoyproxy/gateway.git#v1.8.2
+            checksum: 6c2e80d5158926749b95e948d7aae36b9ae67669
+            path: /go/src/github.com/envoyproxy/gateway
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump go dependencies (1.43 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.55.0
+            download: true
+        - name: package gateway-helm chart
+          runs: |
+            set -eux -o pipefail
+
+            chart=/go/src/github.com/envoyproxy/gateway/charts/gateway-helm
+            sed \
+              -e "s|\${GatewayImage}|docker.io/envoyproxy/gateway:v1.8.2|g" \
+              -e "s|\${GatewayImagePullPolicy}|IfNotPresent|g" \
+              "$chart/values.tmpl.yaml" > "$chart/values.yaml"
+            helm dependency update "$chart"
+            out=$(mktemp -d)
+            helm package "$chart" \
+              --app-version "v1.8.2" \
+              --version "v1.8.2" \
+              --destination "$out"
+            mkdir -p /go/src/github.com/tigera/operator/pkg/render/gatewayapi
+            mv "$out"/gateway-helm-*.tgz \
+              /go/src/github.com/tigera/operator/pkg/render/gatewayapi/gateway-helm.tgz
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            for i in {1..3}; do
+              if CGO_ENABLED=0 go test $(go list ./pkg/... | grep -v -E 'pkg/(crds|controller)'); then
+                exit 0
+              fi
+              echo "Retry $i/3..."
+              sleep 2
+            done
+
+            exit 1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.43.0
+            output: ${target.dir}/usr/bin/operator
+            packages: ./cmd/
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/tigera/operator/version.VERSION=v1.43.0
+            output: ${target.dir}/usr/bin/operator-dev
+            packages: ./cmd/
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Tigera operator for managing Calico installations
+            files:
+              - usr/bin/operator
+            license: Apache-2.0
+            name: tigera-operator-1.43
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/operator
+                    source: usr/bin/operator-dev
+                name: tigera-operator-1.43-dev
+            url: https://github.com/tigera/operator
+            version: 1.43.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
