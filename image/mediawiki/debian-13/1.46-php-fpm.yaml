@@ -20,27 +20,21 @@ platforms:
 dates:
   release: "2026-06-30"
 vars:
-  COMPOSER_PHAR_SHA256: c86ce603fe836bf0861a38c93ac566c8f1e69ac44b2445d9b7a6a17ea2e9972a
-  COMPOSER_VERSION: 2.9.5
-  IMAGEMAGICK_COMMIT_SHA: 344e9056f43764bfdf82456faf3bc2feee98a6fe
-  IMAGEMAGICK_VERSION: 7.1.2-30
-  PHP_DEV_REFERENCE: dhi/php:8.3.33-debian13-dev@sha256:f8bc83b47e4d8bbd8799f3d6053ef9461920d43775cbc536b4f3d8dba06c1547
-  PHP_INI_DIR: /opt/php-8.3/etc/php
+  PACKAGE_HOME: /usr/share/mediawiki-1.46
+  PACKAGE_NAME: mediawiki-1.46
+  PHP_INI_DIR: /etc/php-8.3
   PHP_MAJOR_MINOR_VERSION: "8.3"
-  PHP_PREFIX: /opt/php-8.3
-  PHP_REFERENCE: dhi/php:8.3.33-debian13-fpm@sha256:f271fd4f4220a2861199ad4dece6f6ad99f843b56b002c27c764ccc100cb6fdb
-  PHP_VERSION: 8.3.33
+  PHP_VERSION: 8.3.33-0
   SEMVER_MAJOR_MINOR_VERSION: "1.46"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.46.0
-  VERSION: 1.46.0
+  VERSION: 1.46.0-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
   keyring:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - '!imagemagick'
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
@@ -51,8 +45,10 @@ contents:
     - libargon2-1
     - libcurl4t64
     - libfontconfig1
+    - libgomp1
     - libicu76
     - liblcms2-2
+    - liblqr-1-0
     - libltdl7
     - liblua5.1-0
     - libonig5
@@ -64,270 +60,18 @@ contents:
     - libstdc++6
     - libtiff6
     - libwebp7
+    - libx11-6
+    - libxext6
     - libxml2
+    - mediawiki-1.46=1.46.0-1
+    - php-8.3
+    - php-8.3-fpm
     - python-3.13
     - python-3.13-dev
     - python3-pip
     - python3-setuptools
     - python3-wheel
     - zlib1g
-  builds:
-    - name: mediawiki
-      uses: dhi.io/php:8.3.33-debian13-dev@sha256:f8bc83b47e4d8bbd8799f3d6053ef9461920d43775cbc536b4f3d8dba06c1547
-      contents:
-        packages:
-          - ca-certificates
-          - coreutils
-          - curl
-          - gawk
-          - liblua5.1-0-dev
-          - libpcre2-dev
-          - tar
-          - unzip
-        files:
-          - url: https://releases.wikimedia.org/mediawiki/1.46/mediawiki-1.46.0.tar.gz
-            path: ${source.dir}/mediawiki.tar.gz
-            spdx:
-              name: mediawiki
-              version: 1.46.0
-              packages:
-                - name: mediawiki
-                  purl: pkg:composer/mediawiki/core@1.46.0
-                  license: GPL-2.0-or-later
-            uid: 0
-            gid: 0
-          - url: https://releases.wikimedia.org/mediawiki/1.46/mediawiki-1.46.0.tar.gz.sig
-            path: ${source.dir}/mediawiki.tar.gz.sig
-            uid: 0
-            gid: 0
-          - url: https://github.com/composer/composer/releases/download/2.9.5/composer.phar
-            path: ${source.dir}/composer.phar
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: verify server GPG
-          uses: gpg/verify@v1
-          with:
-            file: ${source.dir}/mediawiki.tar.gz
-            keys: ${source.dir}/keys.txt
-            signature: ${source.dir}/mediawiki.tar.gz.sig
-        - name: verify composer phar checksum
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Composer publishes a detached .asc signature, but we cannot verify it with gpg/verify@v1 because the
-            # public keys documented on https://composer.github.io/pubkeys.html are PEM/SPKI keys, not OpenPGP keys.
-            # Also explored Sigstore/GitHub attestations via cosign, but verification requires Rekor/tlog inclusion
-            # which is not reliably available in this build environment. To keep the build deterministic, we pin
-            # Composer to 2.9.5 and verify composer.phar by SHA-256 (COMPOSER_PHAR_SHA256).
-            # COMPOSER_PHAR_SHA256 is validated out-of-band by comparing the sha256 of the GitHub release asset
-            # and the https://getcomposer.org/download/2.9.5/composer.phar download.
-            echo "c86ce603fe836bf0861a38c93ac566c8f1e69ac44b2445d9b7a6a17ea2e9972a  ${source.dir}/composer.phar" | sha256sum -c -
-        - name: extract source
-          work-dir: ${source.dir}/mediawiki
-          runs: |
-            set -eux -o pipefail
-
-            tar -x --strip-components=1 -f '${source.dir}/mediawiki.tar.gz'
-        - name: install php extensions with pecl
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            pecl install APCu
-            echo "extension=apcu.so" > /opt/php-8.3/etc/php/conf.d/apcu.ini
-
-            pecl install LuaSandbox
-            echo "extension=luasandbox.so" > /opt/php-8.3/etc/php/conf.d/luasandbox.ini
-        - name: add calendar php extension
-          work-dir: /opt/php-8.3/src/ext/calendar
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            phpize
-            ./configure --with-php-config=/opt/php-8.3/bin/php-config
-            make -j "$(nproc)"
-            make install
-
-            echo "extension=calendar.so" > /opt/php-8.3/etc/php/conf.d/calendar.ini
-        - name: add mysqli php extension
-          work-dir: /opt/php-8.3/src/ext/mysqli
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            phpize
-            ./configure --with-php-config=/opt/php-8.3/bin/php-config
-            make -j "$(nproc)"
-            make install
-
-            echo "extension=mysqli.so" > /opt/php-8.3/etc/php/conf.d/mysqli.ini
-        - name: configure opcache
-          runs: |
-            set -eux -o pipefail
-
-            cat << 'EOF' >> /opt/php-8.3/etc/php/conf.d/opcache-recommended.ini
-            opcache.memory_consumption=128
-            opcache.interned_strings_buffer=8
-            opcache.max_accelerated_files=4000
-            opcache.revalidate_freq=60
-            EOF
-        - name: bump composer dependencies
-          work-dir: ${source.dir}/mediawiki
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # prevent dev-tool advisories from breaking the build
-            php ${source.dir}/composer.phar config audit.block-insecure false
-
-            # Bump to fixed major for CVE-2025-45769
-            php ${source.dir}/composer.phar require --no-interaction --no-ansi --no-progress --no-update firebase/php-jwt:^7.0
-
-            # Bump symfony/yaml to 6.4.40 for CVE-2026-45133, CVE-2026-45304, CVE-2026-45305
-            php ${source.dir}/composer.phar require --no-interaction --no-ansi --no-progress --no-update symfony/yaml:^6.4.40
-
-            # Bump guzzlehttp/guzzle to 7.12.1 for CVE-2026-55568, CVE-2026-55767
-            php ${source.dir}/composer.phar require --no-interaction --no-ansi --no-progress --no-update guzzlehttp/guzzle:^7.12.1
-
-            # Ensure vendor tree is updated (omit dev deps)
-            php ${source.dir}/composer.phar install --no-interaction --no-ansi --no-progress --no-dev --prefer-dist
-      paths:
-        - type: file
-          path: ${source.dir}/keys.txt
-          uid: 0
-          gid: 0
-          source: image/mediawiki/key/keys.txt
-      outputs:
-        - source: /opt/php-8.3
-          target: /opt/php-8.3
-          uid: 0
-          gid: 0
-          diff: true
-        - source: ${source.dir}/mediawiki
-          target: /var/www/html
-          uid: 0
-          gid: 0
-          diff: true
-        - source: /opt/docker/sbom/mediawiki
-          target: /opt/docker/sbom/mediawiki
-          uid: 0
-          gid: 0
-    - name: imagemagick
-      contents:
-        packages:
-          - autoconf
-          - bash
-          - build-essential
-          - coreutils
-          - gawk
-          - grep
-          - fontconfig-config
-          - libfontconfig1-dev
-          - libfreetype-dev
-          - libjpeg62-turbo-dev
-          - liblcms2-dev
-          - liblqr-1-0-dev
-          - libltdl-dev
-          - liblzma-dev
-          - libonig-dev
-          - libopenexr-dev
-          - libopenjp2-7-dev
-          - libpango1.0-dev
-          - libpcre2-dev
-          - libperl-dev
-          - libpng-dev
-          - libraw-dev
-          - librsvg2-bin
-          - librsvg2-dev
-          - libtiff-dev
-          - libtool
-          - libwebp-dev
-          - libwmf-dev
-          - libx11-dev
-          - libxext-dev
-          - libxml2-dev
-          - libxml2-utils
-          - libxt-dev
-          - libzip-dev
-          - libicu-dev
-          - libonig-dev
-          - make
-          - pkg-config
-          - sed
-          - xsltproc
-          - zlib1g-dev
-        files:
-          - url: git+https://github.com/ImageMagick/ImageMagick#7.1.2-30
-            checksum: 344e9056f43764bfdf82456faf3bc2feee98a6fe
-            path: ${source.dir}/imagemagick
-            spdx:
-              name: imagemagick
-              version: 7.1.2-30
-              packages:
-                - name: imagemagick
-                  purl: pkg:dhi/imagemagick/imagemagick@7.1.2-30
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: build
-          work-dir: ${source.dir}/imagemagick
-          environment:
-            CC: gcc
-            CFLAGS: -Wno-deprecated-declarations -Wdeclaration-after-statement -Wno-error=unused-variable
-            CXX: g++
-          runs: |
-            set -eux -o pipefail
-
-            ./configure \
-              --prefix=/usr/local \
-              --enable-reproducible-build \
-              --disable-static \
-              --enable-shared \
-              --with-modules \
-              --with-quantum-depth=16 \
-              --without-magick-plus-plus \
-              --without-perl \
-              --disable-docs \
-              --disable-opencl
-
-            make -j$(nproc)
-            make install DESTDIR=${target.dir}
-      outputs:
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/etc
-          target: /usr/local/etc
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/include
-          target: /usr/local/include
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/lib
-          target: /usr/local/lib
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/share
-          target: /usr/local/share
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/imagemagick
-          target: /opt/docker/sbom/imagemagick
-          uid: 0
-          gid: 0
-  artifacts:
-    - name: dhi.io/php:8.3.33-debian13-fpm@sha256:f271fd4f4220a2861199ad4dece6f6ad99f843b56b002c27c764ccc100cb6fdb
-      includes:
-        - opt/**
-        - var/www/html/**
-      uid: 0
-      gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -349,10 +93,33 @@ os-release:
   bug-report-url: https://docker.com/support/
 paths:
   - type: directory
+    path: /var/www
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /var/www/html
+    uid: 0
+    gid: 0
+    source: /usr/share/mediawiki-1.46
+  - type: directory
     path: /var/www/data
     uid: 65532
     gid: 65532
     mode: "0755"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/magick
+    uid: 0
+    gid: 0
+    source: /usr/bin/magick
+  - type: symlink
+    path: /usr/local/bin/convert
+    uid: 0
+    gid: 0
+    source: /usr/bin/convert
   - type: directory
     path: /tmp
     uid: 0
