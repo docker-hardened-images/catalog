@@ -1,0 +1,130 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-opm
+variant: runtime
+tags:
+  - 1.73.0-alpine3.24
+  - 1.73.0-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 19af4a361697de502ae43b0ab5b072973cbe4655
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  PACKAGE_NAME: opm
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "1.73"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.73.0
+  VERSION: 1.73.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: opm
+      work-dir: /go/src/github.com/operator-framework/operator-registry
+      contents:
+        packages:
+          - busybox
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - file
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+          - linux-headers
+        files:
+          - url: git+https://github.com/operator-framework/operator-registry.git#v1.73.0
+            checksum: 19af4a361697de502ae43b0ab5b072973cbe4655
+            path: /go/src/github.com/operator-framework/operator-registry
+            spdx:
+              name: operator-registry
+              version: 1.73.0
+              packages:
+                - name: operator-registry
+                  purl: pkg:golang/github.com/operator-framework/operator-registry@1.73.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/go-git/go-git/v5@v5.19.2
+              - github.com/google/cel-go@v0.30.0
+              - github.com/sigstore/fulcio@v1.8.6
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -tags json1,containers_image_openpgp ./cmd/... ./pkg/... ./alpha/...
+        - name: build opm
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -extldflags=-static
+              - -X github.com/operator-framework/operator-registry/cmd/opm/version.gitCommit=19af4a361697de502ae43b0ab5b072973cbe4655
+              - -X github.com/operator-framework/operator-registry/cmd/opm/version.opmVersion=v1.73.0
+            output: ${target.dir}/usr/bin/opm
+            packages: ./cmd/opm
+            tags: json1,containers_image_openpgp
+        - name: build opm dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -extldflags=-static
+              - -X github.com/operator-framework/operator-registry/cmd/opm/version.gitCommit=19af4a361697de502ae43b0ab5b072973cbe4655
+              - -X github.com/operator-framework/operator-registry/cmd/opm/version.opmVersion=v1.73.0
+            output: ${target.dir}/usr/bin/opm-dev
+            packages: ./cmd/opm
+            strip: false
+            tags: json1,containers_image_openpgp
+        - name: verify binary
+          runs: |
+            set -eux -o pipefail
+
+            GODEBUG="" "${target.dir}/usr/bin/opm" version > /tmp/opm-version.txt
+            grep -qF "v1.73.0" /tmp/opm-version.txt
+            file "${target.dir}/usr/bin/opm" > /tmp/opm-file.txt
+            grep -q "statically linked" /tmp/opm-file.txt
+
+            GODEBUG="" "${target.dir}/usr/bin/opm" validate ./fbc-dir/file-based-catalog
+            GODEBUG="" "${target.dir}/usr/bin/opm" render ./fbc-dir/file-based-catalog > /tmp/opm-render.json
+            grep -q olm.package /tmp/opm-render.json
+        - uses: dhi/build-pkg:0
+          with:
+            description: Operator Package Manager CLI for creating, validating, and serving operator catalogs
+            files:
+              - usr/bin/opm
+            license: Apache-2.0
+            name: opm
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/opm
+                    source: usr/bin/opm-dev
+                name: opm-dev
+            url: https://github.com/operator-framework/operator-registry
+            version: 1.73.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
