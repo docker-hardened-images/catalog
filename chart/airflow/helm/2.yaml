@@ -1,0 +1,114 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Apache Airflow Helm chart 2.x
+image: dhi.io/airflow-chart
+variant: helm
+tags:
+  - 2.0.0
+platforms:
+  - linux/amd64
+vars:
+  AIRFLOW_REFERENCE: dhi/airflow:3.3.1-python3.13-debian13-compat@sha256:ae4acc0870b37220e2ac6094c7fc15e17e518b35812af00352a4c45c2a7af685
+  APPVERSION: 3.3.1
+  APPVERSION_MATCH: 3.3.1
+  CHART_COMMIT_SHA: 3adbbe1c58e4532df1964cb7794805e763816ee8
+  CHART_HELM_NAME: airflow-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  GIT_SYNC_REFERENCE: dhi/git-sync:4.7.1-debian13@sha256:f4e72584de0916589abad454fe7c72f2cd8b9304411399896bcc8d06d3dd0a65
+  HELM_VERSION: 4.1.4-2
+  OPENTELEMETRY_COLLECTOR_REFERENCE: dhi/opentelemetry-collector:0.159.0-debian13-contrib@sha256:7b24dec8003840dc60ffc0ec18c98d4ec78c667e4451f703e5a5e3711b2b236e
+  PGBOUNCER_EXPORTER_REFERENCE: dhi/airflow-pgbouncer-exporter:0.20.0-debian13@sha256:0c8603977813c21fe23d48b5b157fac98c3022bd70a38801854bb21d8895e1a9
+  PGBOUNCER_REFERENCE: dhi/pgbouncer:1.25.2-debian13@sha256:6d47b640d7900a28baa1a906356b3e1ed82f22cd22c237ec3255dcacbfae8bd5
+  PROMETHEUS_STATSD_EXPORTER_REFERENCE: dhi/prometheus-statsd-exporter:0.30.0-debian13@sha256:14403eeb052ff770fc3bbe4dec4dd956615abb8abcea3adb33972d0e167353b8
+  REDIS_REFERENCE: dhi/redis:8.10.1-debian13-compat@sha256:a238154a9719d18887c235cd00212c588f58598dcc97b0190a49e6c1cf42cc57
+  SEMVER_MAJOR_MINOR_VERSION: "2.0"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.0.0
+  VERSION: 2.0.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: airflow
+      work-dir: ${source.dir}/helm-charts/chart
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - yq-go
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/apache/airflow.git#3.3.1
+            checksum: 3adbbe1c58e4532df1964cb7794805e763816ee8
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update chart dependencies
+          uses: yq/patch@v1
+          with:
+            file: Chart.yaml
+            patches:
+              - del(.dependencies[] | select(.name == "postgresql"))
+        - name: prepare chart
+          uses: helm/rudder@v1
+          with:
+            chart:
+              appRef: airflow
+              dependencies: null
+              description: Docker Hardened Images Helm chart for Apache Airflow
+              images:
+                - name: airflow
+                  ref: dhi/airflow:3.3.1-python3.13-debian13-compat@sha256:ae4acc0870b37220e2ac6094c7fc15e17e518b35812af00352a4c45c2a7af685
+                - name: prometheus-statsd-exporter
+                  ref: dhi/prometheus-statsd-exporter:0.30.0-debian13@sha256:14403eeb052ff770fc3bbe4dec4dd956615abb8abcea3adb33972d0e167353b8
+                - name: pgbouncer
+                  ref: dhi/pgbouncer:1.25.2-debian13@sha256:6d47b640d7900a28baa1a906356b3e1ed82f22cd22c237ec3255dcacbfae8bd5
+                - name: airflow-pgbouncer-exporter
+                  ref: dhi/airflow-pgbouncer-exporter:0.20.0-debian13@sha256:0c8603977813c21fe23d48b5b157fac98c3022bd70a38801854bb21d8895e1a9
+                - name: git-sync
+                  ref: dhi/git-sync:4.7.1-debian13@sha256:f4e72584de0916589abad454fe7c72f2cd8b9304411399896bcc8d06d3dd0a65
+                - name: redis
+                  ref: dhi/redis:8.10.1-debian13-compat@sha256:a238154a9719d18887c235cd00212c588f58598dcc97b0190a49e6c1cf42cc57
+                - name: opentelemetry-collector
+                  ref: dhi/opentelemetry-collector:0.159.0-debian13-contrib@sha256:7b24dec8003840dc60ffc0ec18c98d4ec78c667e4451f703e5a5e3711b2b236e
+              name: airflow-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/apache/airflow
+              updateDependencies: true
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: patch pgbouncer command
+          runs: |
+            set -eux -o pipefail
+
+            yq -i '.pgbouncer.command = ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]' values.yaml
+        - name: lint
+          uses: helm/cmd@v1
+          with:
+            chart: .
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: .
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/airflow/config
