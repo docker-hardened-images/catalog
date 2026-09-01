@@ -7,10 +7,10 @@ set -euo pipefail
 HZ_JAR="${1:?usage: patch-hazelcast-jackson-play.sh <hazelcast.jar> <patch-deps-dir>}"
 PATCH_DIR="${2:?usage: patch-hazelcast-jackson-play.sh <hazelcast.jar> <patch-deps-dir>}"
 
-JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.5.jar"
-JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.5.jar"
-JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.4.jar"
-JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.5.jar"
+JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.6.jar"
+JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.6.jar"
+JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.6.jar"
+JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.6.jar"
 
 for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3"; do
     if [ ! -f "$jar" ]; then
@@ -69,10 +69,10 @@ version=${version}
 EOF
 }
 
-write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.5
-write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.5
-write_pom_properties tools.jackson.core jackson-core 3.1.4
-write_pom_properties tools.jackson.core jackson-databind 3.1.5
+write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.6
+write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.6
+write_pom_properties tools.jackson.core jackson-core 3.1.6
+write_pom_properties tools.jackson.core jackson-databind 3.1.6
 
 jar cf "$HZ_JAR" .
 
