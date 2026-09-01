@@ -159,7 +159,7 @@ Maven DHI images follow this tag pattern: `<maven-version>-jdk<jdk-version>-<os>
 
 **Maven versions:**
 
-- `3.9.11` - Specific patch version (recommended for production)
+- `3.9.16` - Specific patch version (recommended for production)
 - `3.9` - Latest patch of 3.9 series
 - `3` - Latest minor and patch version
 
@@ -167,12 +167,27 @@ Maven DHI images follow this tag pattern: `<maven-version>-jdk<jdk-version>-<os>
 
 - `jdk17` - Java 17 LTS (mature, stable)
 - `jdk21` - Java 21 LTS (recommended for new projects)
-- `jdk23` - Java 23 (latest features)
+- `jdk25` - Java 25 LTS (latest)
 
 **Operating systems:**
 
 - `debian13` - Debian-based (default, ~647MB uncompressed)
 - `alpine3.22` - Alpine-based (~578MB uncompressed, ~69MB smaller)
+- `alpine3.23` - Alpine-based
+- `alpine3.24` - Alpine-based
+
+### FIPS variants
+
+FIPS variants include `fips` in the variant name and tag. Because Maven Docker Hardened Images are build-time only, FIPS
+variants are available as `dev` variants only, for the `debian13`, `alpine3.23`, and `alpine3.24` operating systems.
+These variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+The FIPS variants configure the JVM through two environment variables: `JDK_JAVA_OPTIONS` loads the BouncyCastle FIPS
+providers (bootstrap class path plus FIPS security properties), and `JAVA_TOOL_OPTIONS` applies the FIPS security
+configuration. Setting your own `JAVA_TOOL_OPTIONS` (for example, heap flags) is safe — FIPS stays active through
+`JDK_JAVA_OPTIONS`. Do not replace `JDK_JAVA_OPTIONS`: without it the JVM cannot load the FIPS providers, and TLS
+connections fail.
 
 ## Migrate to a Docker Hardened Image
 
