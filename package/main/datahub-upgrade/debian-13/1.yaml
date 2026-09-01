@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-upgrade
 variant: runtime
 tags:
   - 1.7.0
-  - 1.7.0-r0
+  - 1.7.0-r1
   - 1.7.0-debian13
-  - 1.7.0-r0-debian13
+  - 1.7.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -23,7 +23,7 @@ vars:
   OTEL_JAVAAGENT_VERSION: 2.28.0
   PACKAGE_HOME: /usr/lib/datahub-upgrade
   PACKAGE_NAME: datahub-upgrade
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0
@@ -121,59 +121,31 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar
+            checksum: sha256:7d61f737fd661610ccc14aea79764faa1ea94a340cbc8f0029b3d2edea3d80c1
+            path: ${source.dir}/agents/jmx_prometheus_javaagent.jar
+            spdx:
+              name: jmx_prometheus_javaagent
+              version: 1.0.1
+              packages:
+                - name: jmx_prometheus_javaagent
+                  purl: pkg:maven/io.prometheus.jmx/jmx_prometheus_javaagent@1.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.28.0/opentelemetry-javaagent.jar
+            checksum: sha256:130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500
+            path: ${source.dir}/agents/opentelemetry-javaagent.jar
+            spdx:
+              name: opentelemetry-javaagent
+              version: 2.28.0
+              packages:
+                - name: opentelemetry-javaagent
+                  purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.28.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
-        - name: fetch java agents
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${source.dir}/agents"
-
-            fetch() {
-              local out="$1"
-              shift
-              local urls="$*"
-              for url in $urls; do
-                echo "fetch: $url" >&2
-                if curl --fail --silent --show-error --location \
-                  --retry 4 --retry-delay 5 --retry-all-errors \
-                  --connect-timeout 30 --max-time 600 \
-                  -o "$out" "$url"; then
-                  return 0
-                fi
-                sleep 3
-              done
-              echo "fetch: all mirrors exhausted for $out" >&2
-              return 1
-            }
-
-            jmx_path="io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar"
-            fetch "${source.dir}/agents/jmx_prometheus_javaagent.jar" \
-              "https://repo.maven.apache.org/maven2/${jmx_path}" \
-              "https://maven-central.storage-download.googleapis.com/maven2/${jmx_path}" \
-              "https://repo1.maven.org/maven2/${jmx_path}"
-
-            fetch "${source.dir}/agents/opentelemetry-javaagent.jar" \
-              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.28.0/opentelemetry-javaagent.jar"
-
-            echo "130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500  ${source.dir}/agents/opentelemetry-javaagent.jar" \
-              | sha256sum -c -
-            echo "7d61f737fd661610ccc14aea79764faa1ea94a340cbc8f0029b3d2edea3d80c1  ${source.dir}/agents/jmx_prometheus_javaagent.jar" \
-              | sha256sum -c -
-        - name: opentelemetry-javaagent sbom
-          uses: spdx@v1
-          with:
-            license: Apache-2.0
-            name: opentelemetry-javaagent
-            purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.28.0
-            version: 2.28.0
-        - name: jmx_prometheus_javaagent sbom
-          uses: spdx@v1
-          with:
-            license: Apache-2.0
-            name: jmx_prometheus_javaagent
-            purl: pkg:maven/io.prometheus.jmx/jmx_prometheus_javaagent@1.0.1
-            version: 1.0.1
         - name: install gradle init scripts
           runs: |
             set -eux -o pipefail
@@ -252,6 +224,11 @@ contents:
                             details.useVersion '7.0.8'
                             details.because 'DHI CVE remediation'
                         }
+                        if (req.group == 'org.springframework.boot'
+                                && req.name.startsWith('spring-boot')) {
+                            details.useVersion '4.0.7'
+                            details.because 'DHI CVE remediation'
+                        }
                         if (req.group == 'io.micrometer'
                                 && (req.name == 'micrometer-core'
                                     || req.name.startsWith('micrometer-registry-'))) {
@@ -302,7 +279,7 @@ contents:
             ./gradlew --init-script ${source.dir}/files/init.gradle \
               :datahub-upgrade:assemble -x test \
               --no-daemon --no-watch-fs --parallel --max-workers=4 \
-              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.module:*,org.apache.commons:*,io.opentelemetry:*,io.netty:*,org.apache.parquet:*,org.postgresql:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*,org.apache.logging.log4j:*,io.micrometer:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:*,com.squareup.wire:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.module:*,org.apache.commons:*,io.opentelemetry:*,io.netty:*,org.apache.parquet:*,org.postgresql:*,org.springframework.boot:*,org.springframework.kafka:*,org.springframework:*,org.jline:*,ch.qos.logback:*,at.yawk.lz4:*,org.apache.logging.log4j:*,io.micrometer:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:*,com.squareup.wire:*' \
               --console=plain
 
             test -f datahub-upgrade/build/libs/datahub-upgrade.jar
@@ -364,7 +341,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-upgrade
-            rel: 0
+            rel: 1
             url: https://datahubproject.io/
             version: 1.7.0
       paths:
