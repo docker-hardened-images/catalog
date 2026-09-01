@@ -7,16 +7,16 @@
 # tools.jackson 3.1.2. Gradle resolutionStrategy cannot reach those copies, so we
 # relocate fixed jackson JAR contents into com.hazelcast.shaded.* after the fat jar
 # is built. Fixes GHSA-r7wm-3cxj-wff9, CVE-2026-54512, CVE-2026-54513, and the
-# shaded copies implicated by CVE-2026-54515.
+# shaded copies implicated by CVE-2026-54515 and CVE-2026-68497.
 set -euo pipefail
 
 WAR_PATH="${1:?usage: patch-hazelcast-jackson.sh <war.war>}"
 PATCH_DIR="${2:?usage: patch-hazelcast-jackson.sh <war.war> <patch-deps-dir>}"
 
-JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.5.jar"
-JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.5.jar"
-JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.4.jar"
-JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.5.jar"
+JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.6.jar"
+JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.6.jar"
+JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.6.jar"
+JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.6.jar"
 
 for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3"; do
     if [ ! -f "$jar" ]; then
@@ -95,10 +95,10 @@ version=${version}
 EOF
         }
 
-        write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.5
-        write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.5
-        write_pom_properties tools.jackson.core jackson-core 3.1.4
-        write_pom_properties tools.jackson.core jackson-databind 3.1.5
+        write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.6
+        write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.6
+        write_pom_properties tools.jackson.core jackson-core 3.1.6
+        write_pom_properties tools.jackson.core jackson-databind 3.1.6
 
         # Scout indexes pom.xml before pom.properties; drop stale shaded metadata.
         rm -f \
@@ -119,9 +119,11 @@ EOF
             cd "$VERIFY_WORK"
             jar xf "$WAR_WORK/$embedded_jar" \
                 META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties \
+                META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties \
                 META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
-            grep -q 'version=2.21.5' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
-            grep -q 'version=3.1.5' META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
+            grep -q 'version=2.21.6' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
+            grep -q 'version=2.21.6' META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties
+            grep -q 'version=3.1.6' META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
         )
         rm -rf "$VERIFY_WORK"
     )
