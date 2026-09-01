@@ -18,8 +18,9 @@ vars:
   DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "3.14"
   DEBIAN_EPOCH_MAJOR_VERSION: "3"
   DEBIAN_EPOCH_VERSION: 3.14.0
-  PROMETHEUS_GO_MODULE_VERSION: 0.314.0
-  RELEASE_TYPE: stable
+  DEBIAN_VERSION: 3.14.0-2
+  FLAVORED_SUFFIX: ""
+  SUFFIX: ""
   VERSION: 3.14.0
 contents:
   repositories:
@@ -29,165 +30,8 @@ contents:
   packages:
     - base-files
     - ca-certificates-bundle
+    - prometheus-3.14=3.14.0-2
     - tzdata
-  builds:
-    - name: prometheus
-      environment:
-        USER: root
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - make
-          - curl
-          - bzip2
-          - gzip
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-          - base-files
-          - ca-certificates
-          - git
-          - libc6
-          - libstdc++6
-          - nodejs-24
-          - node-corepack
-          - npm
-          - yarn-classic
-          - tar
-          - yq
-        files:
-          - url: git+https://github.com/prometheus/prometheus.git#v3.14.0
-            checksum: d7598b7141418fa35be2b5ec5d0fefb634199610
-            path: /go/src/github.com/prometheus/prometheus
-            spdx:
-              name: prometheus
-              version: 3.14.0
-              packages:
-                - name: prometheus
-                  purl: pkg:dhi/prometheus@3.14.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: spdx
-          uses: spdx@v1
-          with:
-            license: Apache-2.0
-            name: prometheus-go
-            purl: pkg:golang/github.com/prometheus/prometheus@0.314.0
-            version: 0.314.0
-        - name: bump ui dependencies (3-stable only)
-          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            corepack enable pnpm
-
-            yq -yi '.overrides."http-proxy-middleware" = "3.0.7"' pnpm-workspace.yaml # CVE-2026-55602
-            yq -yi '.overrides."immutable" = "5.1.8"' pnpm-workspace.yaml             # CVE-2026-59879, CVE-2026-59880
-            yq -yi '.overrides."nanoid" = "3.3.18"' pnpm-workspace.yaml               # CVE-2026-67213
-            yq -yi '.overrides."postcss" = "8.5.23"' pnpm-workspace.yaml              # GHSA-r28c-9q8g-f849, CVE-2026-69153
-            pnpm install --lockfile-only
-        - name: install react-app dependencies for SBOM
-          work-dir: /go/src/github.com/prometheus/prometheus/web/ui/react-app
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            pnpm install --prod --frozen-lockfile
-        - name: create SBOM for static assests
-          uses: sbom@v1
-          with:
-            extra-scanners: javascript-package-cataloger
-            prefix: prometheus
-            source: /go/src/github.com/prometheus/prometheus/web/ui/react-app/node_modules
-        - name: compile static assets (3-stable only)
-          work-dir: /go/src/github.com/prometheus/prometheus
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Install dependencies without running build scripts, then approve and rebuild
-            cd web/ui && pnpm install --ignore-scripts && cd -
-            cd web/ui/react-app && pnpm install --ignore-scripts && cd -
-            cd web/ui/react-app && pnpm approve-builds unrs-resolver && cd -
-            cd web/ui/react-app && pnpm rebuild && cd -
-
-            make assets assets-compress
-        - name: update go dependencies (3 only)
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/prometheus/prometheus
-          with:
-            deps:
-              - github.com/buger/jsonparser@v1.1.2
-              - google.golang.org/grpc@v1.82.1
-            download: true
-        - name: go build
-          work-dir: /go/src/github.com/prometheus/prometheus
-          environment:
-            GOFLAGS: -buildvcs=false
-          runs: |
-            set -eux -o pipefail
-
-            make plugins
-
-            GOLDFLAGS="-X github.com/prometheus/common/version.Version=3.14.0
-              -X github.com/prometheus/common/version.Revision=d7598b7141418fa35be2b5ec5d0fefb634199610
-              -X github.com/prometheus/common/version.Branch=HEAD
-              -X github.com/prometheus/common/version.BuildUser=$USER@$HOSTNAME
-              -X github.com/prometheus/common/version.BuildDate=$(date -u "+%Y%m%d-%H:%M:%S" ${SOURCE_DATE_EPOCH:+-d @$SOURCE_DATE_EPOCH})
-              -X github.com/prometheus/prometheus/version.Version=3.14.0
-            "
-
-            CGO_ENABLED=0 go build \
-              -mod=readonly \
-              -ldflags "$GOLDFLAGS" \
-              -tags netgo,builtinassets,stringlabels \
-              ./cmd/prometheus
-
-            CGO_ENABLED=0 go build \
-              -mod=readonly \
-              -ldflags "$GOLDFLAGS" \
-              ./cmd/promtool
-        - name: install
-          work-dir: /go/src/github.com/prometheus/prometheus
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/usr/local/bin
-            cp ./prometheus ./promtool ${target.dir}/usr/local/bin/
-
-            mkdir -p ${target.dir}/etc/prometheus
-            cp ./documentation/examples/prometheus.yml ${target.dir}/etc/prometheus/
-      paths:
-        - type: file
-          path: ${source.dir}/patch/npm-bumps.json
-          uid: 0
-          gid: 0
-          source: image/prometheus/patch/npm-bumps.json
-      outputs:
-        - source: ${target.dir}/usr/local/bin/
-          target: /usr/local/bin/
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/prometheus
-          target: /etc/prometheus
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/prometheus
-          target: /opt/docker/sbom/prometheus
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/prometheus-go
-          target: /opt/docker/sbom/prometheus-go
-          uid: 0
-          gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -213,6 +57,20 @@ paths:
     uid: 65532
     gid: 65532
     mode: "0755"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/prometheus
+    uid: 0
+    gid: 0
+    source: /usr/bin/prometheus
+  - type: symlink
+    path: /usr/local/bin/promtool
+    uid: 0
+    gid: 0
+    source: /usr/bin/promtool
 annotations:
   org.opencontainers.image.description: A minimal Prometheus image
   org.opencontainers.image.licenses: Apache-2.0
