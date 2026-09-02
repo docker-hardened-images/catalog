@@ -1,0 +1,214 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kafka
+variant: runtime
+tags:
+  - 4.3.1
+  - 4.3.1-r0
+  - 4.3.1-debian13
+  - 4.3.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-13"
+vars:
+  BCFIPS_VERSION: 2.1.2
+  BCPKIXFIPS_VERSION: 2.1.11
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.23
+  BCUTILFIPS_VERSION: 2.1.6
+  COMMIT_SHA: 26b251a451ce941d3d7a55e6487bcb7f16b5ad48
+  GRADLE_PACKAGE: gradle-9
+  GRADLE_VERSION: 9.7.0-0
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  PACKAGE_NAME: kafka-4.3
+  REL: "0"
+  SCALA_VERSION: "2.13"
+  SEMVER_MAJOR_MINOR_VERSION: "4.3"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.3.1
+  VERSION: 4.3.1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: kafka-4.3
+      work-dir: ${source.dir}/kafka
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+      caches:
+        - path: /root/.gradle/caches
+        - path: /root/.gradle/wrapper
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gzip
+          - patch
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - eclipse-temurin-21-jdk-oci-config=21.0.12.8-0
+          - gradle-9=9.7.0-0
+        files:
+          - url: git+https://github.com/apache/kafka.git#4.3.1
+            checksum: 26b251a451ce941d3d7a55e6487bcb7f16b5ad48
+            path: ${source.dir}/kafka
+            spdx:
+              name: kafka
+              version: 4.3.1
+              packages:
+                - name: kafka
+                  purl: pkg:github/apache/kafka@4.3.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply jline remote-telnet cve patch
+          uses: git/patch@v1
+          work-dir: ${source.dir}/kafka
+          with:
+            patch: ${source.dir}/patch/jline-remote-telnet-cve.patch
+        - name: apply gradle 9.5 projectdependency compatibility patch
+          uses: git/patch@v1
+          work-dir: ${source.dir}/kafka
+          with:
+            patch: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
+        - name: configure gradle mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle
+            cat > /root/.gradle/init.gradle << 'EOF'
+            def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+
+            def mirrorMavenCentral = { repo ->
+                if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
+                    repo.url.toString() == "https://repo.maven.apache.org/maven2/") {
+                    repo.setUrl(mavenCentralMirror)
+                }
+            }
+
+            settingsEvaluated { settings ->
+                settings.pluginManagement.repositories.configureEach(mirrorMavenCentral)
+                settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+            }
+
+            allprojects {
+                buildscript.repositories.configureEach(mirrorMavenCentral)
+                repositories.configureEach(mirrorMavenCentral)
+            }
+
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        if (details.requested.group == "org.apache.logging.log4j" &&
+                                (details.requested.name == "log4j-api" ||
+                                 details.requested.name == "log4j-core" ||
+                                 details.requested.name == "log4j-1.2-api" ||
+                                 details.requested.name == "log4j-slf4j-impl")) {
+                            details.useVersion("2.25.5")
+                            details.because("CVE remediation: CVE-2026-49844")
+                        }
+                        if (details.requested.group == "com.fasterxml.jackson.core" &&
+                                (details.requested.name == "jackson-databind" ||
+                                 details.requested.name == "jackson-core")) {
+                            details.useVersion("2.21.5")
+                            details.because("CVE remediation: GHSA-72hv-8253-57qq, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59889, GHSA-mhm7-754m-9p8w")
+                        }
+                        if (details.requested.group == "com.fasterxml.jackson.core" &&
+                                details.requested.name == "jackson-annotations") {
+                            details.useVersion("2.21")
+                            details.because("align jackson-annotations with jackson-databind 2.21.5 for MessageGenerator")
+                        }
+                        if (details.requested.group.startsWith("org.eclipse.jetty") &&
+                                details.requested.name.startsWith("jetty-") &&
+                                details.requested.version.startsWith("12.0.")) {
+                            details.useVersion("12.0.36")
+                            details.because("CVE remediation: CVE-2026-10050, CVE-2026-10051, CVE-2026-6790, CVE-2026-8384")
+                        }
+                        if (details.requested.group == "at.yawk.lz4" &&
+                                details.requested.name == "lz4-java") {
+                            details.useVersion("1.11.1")
+                            details.because("CVE remediation: CVE-2026-59949")
+                        }
+                    }
+                }
+            }
+            EOF
+        - name: build kafka distribution
+          work-dir: ${source.dir}/kafka
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export GRADLE_HOME="/usr/share/java/gradle"
+            export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
+
+            gradle clean releaseTarGz \
+              -PscalaVersion=2.13 \
+              --no-daemon \
+              --console=plain \
+              --warning-mode=summary
+        - name: extract distribution
+          work-dir: ${source.dir}/kafka
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/usr/share/kafka
+
+            tar -xzf "core/build/distributions/kafka_2.13-4.3.1.tgz" \
+              --strip-components=1 \
+              -C ${target.dir}/usr/share/kafka
+        - name: install docker server properties
+          work-dir: ${source.dir}/kafka
+          runs: |
+            set -eux -o pipefail
+
+            cp docker/server.properties \
+              ${target.dir}/usr/share/kafka/config/server.properties
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+            description: Apache Kafka distributed event streaming platform
+            files:
+              - usr/share/kafka
+            formats:
+              - deb
+            license: Apache-2.0
+            name: kafka-4.3
+            rel: 0
+            url: https://kafka.apache.org/
+            version: 4.3.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/fips-sha256-log-cleaner.patch
+          uid: 0
+          gid: 0
+          source: package/main/kafka/patch/fips-sha256-log-cleaner.patch
+        - type: file
+          path: ${source.dir}/patch/jline-remote-telnet-cve.patch
+          uid: 0
+          gid: 0
+          source: package/main/kafka/patch/jline-remote-telnet-cve.patch
+        - type: file
+          path: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
+          uid: 0
+          gid: 0
+          source: package/main/kafka/patch/gradle-9.5-projectdependency-4.3.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
