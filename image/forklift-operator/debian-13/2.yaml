@@ -1,0 +1,348 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Forklift Operator 2.x
+image: dhi.io/forklift-operator
+variant: runtime
+tags:
+  - "2"
+  - "2.12"
+  - 2.12.5
+  - 2-debian
+  - 2-debian13
+  - 2.12-debian
+  - 2.12-debian13
+  - 2.12.5-debian
+  - 2.12.5-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-09-30"
+vars:
+  ANSIBLE_CORE_VERSION: 2.18.19
+  ANSIBLE_OPERATOR_COMMIT_SHA: 292a56a4877c8093037c0533f3ef3c7a6bbd78e2
+  ANSIBLE_OPERATOR_SOURCE_VERSION: 1.42.3
+  ANSIBLE_OPERATOR_VERSION: 1.42.3-2
+  ANSIBLE_RUNNER_VERSION: 2.4.3
+  CLOUD_COMMON_COLLECTION_VERSION: 2.1.1
+  COMMIT_SHA: 3f0cd97048ca697250551345a656516da7cc8456
+  FLAVORED_SUFFIX: ""
+  KUBERNETES_CLIENT_VERSION: 33.1.0
+  KUBERNETES_CORE_COLLECTION_VERSION: 2.4.2
+  OPERATOR_SDK_UTIL_COLLECTION_VERSION: 0.5.0
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.5
+  SUFFIX: ""
+  VERSION: 2.12.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - ansible-operator=1.42.3-2
+    - base-files
+    - ca-certificates-bundle
+    - coreutils
+    - dash
+    - python-3.13
+    - tini
+    - tzdata
+  builds:
+    - name: ansible-runtime
+      work-dir: ${source.dir}
+      environment:
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - cargo
+          - coreutils
+          - findutils
+          - gzip
+          - libffi-dev
+          - libssl-dev
+          - locales
+          - pkg-config
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+        files:
+          - url: git+https://github.com/operator-framework/ansible-operator-plugins.git#v1.42.3
+            checksum: 292a56a4877c8093037c0533f3ef3c7a6bbd78e2
+            path: ${source.dir}/ansible-operator-plugins
+            spdx:
+              name: ansible-operator-plugins
+              version: 1.42.3
+              packages:
+                - name: ansible-runner-http
+                  purl: pkg:github/operator-framework/ansible-operator-plugins@v1.42.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/kubernetes-core-2.4.2.tar.gz
+            checksum: sha256:fe676c60bcf38a3244cd594f8b2099fbf264b6727a425cdaef437cf3934c89b5
+            path: ${source.dir}/collections/kubernetes-core-2.4.2.tar.gz
+            spdx:
+              name: kubernetes.core
+              version: 2.4.2
+              packages:
+                - name: kubernetes.core
+                  purl: pkg:generic/ansible-collection/kubernetes.core@2.4.2
+                  license: GPL-3.0-or-later
+            uid: 0
+            gid: 0
+          - url: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/cloud-common-2.1.1.tar.gz
+            checksum: sha256:d35140aa134d9b870c7e5575c8a0b53c6ab1f85daf6c25db371f83d7e684b280
+            path: ${source.dir}/collections/cloud-common-2.1.1.tar.gz
+            spdx:
+              name: cloud.common
+              version: 2.1.1
+              packages:
+                - name: cloud.common
+                  purl: pkg:generic/ansible-collection/cloud.common@2.1.1
+                  license: GPL-3.0-or-later
+            uid: 0
+            gid: 0
+          - url: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/operator_sdk-util-0.5.0.tar.gz
+            checksum: sha256:92fe28e6d6bd39cec11ed6e056cffe77e6dbcc172b65179717cb32534117790f
+            path: ${source.dir}/collections/operator_sdk-util-0.5.0.tar.gz
+            spdx:
+              name: operator_sdk.util
+              version: 0.5.0
+              packages:
+                - name: operator_sdk.util
+                  purl: pkg:generic/ansible-collection/operator_sdk.util@0.5.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install uv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install uv
+        - name: install ansible runtime
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            UV_LINK_MODE=copy uv pip install \
+              --prefix ${target.dir}/opt/ansible-runtime \
+              --no-binary cryptography \
+              ansible-core==2.18.19 \
+              ansible-runner==2.4.3 \
+              kubernetes==33.1.0 \
+              requests==2.33.1 \
+              requests-unixsocket==0.4.1 \
+              urllib3==2.7.0 \
+              ${source.dir}/ansible-operator-plugins/images/ansible-operator/ansible_runner_http/
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: ansible-runtime
+            source: ${target.dir}/opt/ansible-runtime
+        - name: generate the build locale
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+        - name: install ansible collections
+          runs: |
+            set -eux -o pipefail
+
+            HOME=/tmp \
+              LC_ALL=en_US.UTF-8 \
+              PYTHONPATH=${target.dir}/opt/ansible-runtime/lib/python3.13/site-packages \
+              ${target.dir}/opt/ansible-runtime/bin/ansible-galaxy collection install \
+              ${source.dir}/collections/kubernetes-core-2.4.2.tar.gz \
+              ${source.dir}/collections/cloud-common-2.1.1.tar.gz \
+              ${source.dir}/collections/operator_sdk-util-0.5.0.tar.gz \
+              -p ${target.dir}/opt/ansible/.ansible/collections
+        - name: clean python bytecode caches
+          runs: |
+            set -eux -o pipefail
+
+            find ${target.dir}/opt/ansible-runtime \
+              -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+            find ${target.dir}/opt/ansible-runtime -depth \
+              -type d -name __pycache__ -exec rm -rf '{}' +
+        - name: create the ansible tmp dir
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/ansible/.ansible/tmp
+            chown 1001:0 ${target.dir}/opt/ansible/.ansible/tmp
+            chmod 0775 ${target.dir}/opt/ansible/.ansible/tmp
+      outputs:
+        - source: ${target.dir}/opt/ansible-runtime
+          target: /opt/ansible-runtime
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/opt/ansible
+          target: /opt/ansible
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ansible-runtime
+          target: /opt/docker/sbom/ansible-runtime
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kubernetes.core
+          target: /opt/docker/sbom/kubernetes.core
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/cloud.common
+          target: /opt/docker/sbom/cloud.common
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/operator_sdk.util
+          target: /opt/docker/sbom/operator_sdk.util
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ansible-operator-plugins
+          target: /opt/docker/sbom/ansible-operator-plugins
+          uid: 0
+          gid: 0
+    - name: forklift-assets
+      work-dir: ${source.dir}/forklift
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - grep
+        files:
+          - url: git+https://github.com/kubev2v/forklift.git#v2.12.5
+            checksum: 3f0cd97048ca697250551345a656516da7cc8456
+            path: ${source.dir}/forklift
+            spdx:
+              name: forklift-operator
+              version: 2.12.5
+              packages:
+                - name: forklift-operator
+                  purl: pkg:github/kubev2v/forklift@v2.12.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: assert the pinned collections match upstream requirements
+          runs: |
+            set -eux -o pipefail
+
+            grep -A1 'name: kubernetes.core' operator/requirements.yml | grep 'version: "2.4.2"'
+            grep -A1 'name: cloud.common' operator/requirements.yml | grep 'version: "2.1.1"'
+            grep -A1 'name: operator_sdk.util' operator/requirements.yml | grep 'version: "0.5.0"'
+        - name: stage operator assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/app
+            cp -a operator/watches.yaml operator/requirements.yml operator/roles ${target.dir}/app/
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/forklift-operator
+          target: /opt/docker/sbom/forklift-operator
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  run-as: ansible
+  users:
+    - name: ansible
+      uid: 1001
+      gid: 0
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  HOME: /opt/ansible
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  PATH: /opt/ansible-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONPATH: /opt/ansible-runtime/lib/python3.13/site-packages
+  USER_NAME: ansible
+  USER_UID: "1001"
+paths:
+  - type: file
+    path: /etc/ansible/ansible.cfg
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/forklift-operator/config/ansible.cfg
+  - type: file
+    path: /etc/ansible/hosts
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/forklift-operator/config/hosts
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/ansible-operator
+    uid: 0
+    gid: 0
+    source: /usr/bin/ansible-operator
+annotations:
+  org.opencontainers.image.description: A minimal Forklift Operator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/ansible-operator
+  - run
+  - --watches-file=./watches.yaml
+ports:
+  - 6789/tcp
+  - 8443/tcp
