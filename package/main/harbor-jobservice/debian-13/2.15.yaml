@@ -1,0 +1,156 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-harbor-jobservice
+variant: runtime
+tags:
+  - 2.15.2
+  - 2.15.2-r0
+  - 2.15.2-debian13
+  - 2.15.2-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-03-20"
+vars:
+  COMMIT_SHA: 080b0220574cc853ae1e2946ce7a5610ba855757
+  GO_SWAGGER_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:c668a4a1f96f65fdc166fef3f89adebe15b82f34e9cdeb71bc771436f6b94b07" : "sha256:d21f57d56f3f6dcae0e801b0c47067549343b35a5234e76bfc608cae411598aa" }'
+  GO_SWAGGER_VERSION: v0.33.1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-0
+  PACKAGE_NAME: harbor-jobservice-2.15
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.15"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.15.2
+  VERSION: 2.15.2
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: harbor-jobservice-2.15
+      work-dir: /go/src/github.com/goharbor/harbor
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.7-0
+          - golang-1.26-oci-config=1.26.7-0
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/goharbor/harbor.git#v2.15.2
+            checksum: 080b0220574cc853ae1e2946ce7a5610ba855757
+            path: /go/src/github.com/goharbor/harbor
+            spdx:
+              name: harbor-jobservice
+              version: 2.15.2
+              packages:
+                - name: harbor-jobservice
+                  purl: pkg:golang/github.com/goharbor/harbor@2.15.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/go-swagger/go-swagger/releases/download/v0.33.1/swagger_linux_${target.arch}
+            checksum: ${GO_SWAGGER_CHECKSUM}
+            path: /usr/local/bin/swagger
+            spdx:
+              name: go-swagger
+              version: v0.33.1
+              packages:
+                - name: go-swagger
+                  purl: pkg:golang/github.com/go-swagger/go-swagger@v0.33.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+            mode: "755"
+      pipeline:
+        - name: generate-swagger
+          runs: |
+            set -eux -o pipefail
+
+            /usr/local/bin/swagger generate server \
+              --template-dir=tools/swagger/templates \
+              --exclude-main \
+              --additional-initialism=CVE \
+              --additional-initialism=GC \
+              --additional-initialism=OIDC \
+              -f api/v2.0/swagger.yaml \
+              -A harbor \
+              --target src/server/v2.0
+        - name: patch vulnerable go dependencies (2.15 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/goharbor/harbor/src
+          with:
+            deps:
+              - golang.org/x/crypto@v0.52.0
+              - golang.org/x/net@v0.55.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/go-jose/go-jose/v4@v4.1.4
+              - github.com/gorilla/csrf@v1.7.3
+              - github.com/klauspost/compress@v1.18.7
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
+              - go.opentelemetry.io/otel/sdk@v1.45.0
+              - google.golang.org/grpc@v1.83.1
+              - helm.sh/helm/v3@v3.20.2
+            download: true
+        - name: test
+          work-dir: /go/src/github.com/goharbor/harbor/src/jobservice
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test $(go list ./... | grep -v -E '(/job$|/job/|common/dao|common/rds|logger|hook|lcm|mgt|migration|period|runner|runtime|sync|worker/cworker)')
+        - name: build harbor-jobservice
+          uses: go/build@v1
+          work-dir: /go/src/github.com/goharbor/harbor/src/jobservice
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=2.15.2
+              - -X github.com/goharbor/harbor/src/pkg/version.GitCommit=080b0220574cc853ae1e2946ce7a5610ba855757
+            output: ${target.dir}/usr/bin/harbor-jobservice
+        - name: build harbor-jobservice dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/goharbor/harbor/src/jobservice
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=2.15.2
+              - -X github.com/goharbor/harbor/src/pkg/version.GitCommit=080b0220574cc853ae1e2946ce7a5610ba855757
+            output: ${target.dir}/usr/bin/harbor-jobservice-dev
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Harbor Job Service background worker for Harbor 2.15.x
+            files:
+              - usr/bin/harbor-jobservice
+            formats:
+              - deb
+            license: Apache-2.0
+            name: harbor-jobservice-2.15
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/harbor-jobservice
+                    source: usr/bin/harbor-jobservice-dev
+                name: harbor-jobservice-2.15-dev
+            url: https://goharbor.io/
+            version: 2.15.2
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
