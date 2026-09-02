@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-istio-pilot
+variant: runtime
+tags:
+  - 1.31.0-alpine3.24
+  - 1.31.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-27"
+vars:
+  COMMIT_SHA: eed52ebb66ade45214088877b0f82855d954060d
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.31"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.31.0
+  VERSION: 1.31.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: istio-pilot
+      work-dir: /go/src/github.com/istio/istio
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - grep
+          - mawk
+          - sed
+          - golang-1.26=1.26.8-r0
+          - golang-1.26-oci-config=1.26.8-r0
+        files:
+          - url: git+https://github.com/istio/istio.git#1.31.0
+            checksum: eed52ebb66ade45214088877b0f82855d954060d
+            path: /go/src/github.com/istio/istio
+            spdx:
+              name: istio-pilot
+              version: 1.31.0
+              packages:
+                - name: istio
+                  purl: pkg:golang/istio.io/istio@1.31.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.31 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/google/cel-go@v0.31.0
+              - github.com/klauspost/compress@v1.19.2
+              - github.com/moby/spdystream@v0.5.1
+              - github.com/prometheus/prometheus@v0.311.3
+              - golang.org/x/crypto@v0.55.0
+              - golang.org/x/text@v0.41.0
+              - google.golang.org/grpc@v1.82.1
+            download: true
+            replaces:
+              - k8s.io/api=k8s.io/api@v0.36.1
+              - k8s.io/apimachinery=k8s.io/apimachinery@v0.36.1
+              - k8s.io/client-go=k8s.io/client-go@v0.36.1
+            tidy: true
+        - name: run-upstream-pilot-tests
+          runs: |
+            set -eux -o pipefail
+
+            skip_reason() {
+              case "$1" in
+                istio.io/istio/pilot/cmd/pilot-agent/status)
+                  echo "status probes require network listener behavior outside this build sandbox"
+                  ;;
+                istio.io/istio/pilot/pkg/bootstrap | istio.io/istio/pilot/pkg/model | istio.io/istio/pilot/pkg/trustbundle)
+                  echo "pre-existing skip: upstream runtime tests use environment-sensitive crypto/network paths"
+                  ;;
+                istio.io/istio/pilot/pkg/config/kube/clustertrustbundle | istio.io/istio/pilot/pkg/config/kube/crdclient | istio.io/istio/pilot/pkg/config/kube/ingress)
+                  echo "Kubernetes config tests start informers and wait for cache sync without a live API server"
+                  ;;
+                istio.io/istio/pilot/pkg/controllers/ipallocate | istio.io/istio/pilot/pkg/controllers/untaint)
+                  echo "controller tests depend on Kubernetes watcher/controller synchronization"
+                  ;;
+                istio.io/istio/pilot/pkg/credentials/kube)
+                  echo "credential tests start Kubernetes informers that do not settle in the build sandbox"
+                  ;;
+                istio.io/istio/pilot/pkg/networking/apigen | istio.io/istio/pilot/pkg/networking/core | istio.io/istio/pilot/pkg/networking/grpcgen)
+                  echo "networking simulation tests create fake discovery servers backed by Kubernetes informers"
+                  ;;
+                istio.io/istio/pilot/pkg/serviceregistry)
+                  echo "service registry tests wait on Kubernetes discovery namespace cache sync"
+                  ;;
+                istio.io/istio/pilot/pkg/xds)
+                  echo "xDS runtime tests exercise reconnect/discovery flows backed by Kubernetes informers"
+                  ;;
+                *)
+                  return 1
+                  ;;
+              esac
+            }
+
+            go list ./pilot/... > /tmp/pilot-test-packages
+
+            while read pkg; do
+              if reason="$(skip_reason "$pkg")"; then
+                echo "Compile-only: $pkg ($reason)"
+                go test -run '^$' -count=1 -timeout=2m "$pkg" || exit 1
+                continue
+              fi
+
+              echo "Testing: $pkg"
+              test_args="-v -count=1 -timeout=5m"
+              if [ "$pkg" = "istio.io/istio/pilot/pkg/config/kube/gateway" ]; then
+                test_args="$test_args -skip TestConvertResources/backend-lb-policy"
+              fi
+              go test $test_args "$pkg" || exit 1
+            done < /tmp/pilot-test-packages
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X istio.io/istio/pkg/version.buildVersion=1.31.0
+              - -X istio.io/istio/pkg/version.buildGitRevision=eed52ebb66ade45214088877b0f82855d954060d
+              - -X istio.io/istio/pkg/version.buildStatus=Clean
+              - -X istio.io/istio/pkg/version.buildTag=1.31.0
+              - -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
+              - -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
+              - -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)
+            output: ${target.dir}/usr/bin/pilot-discovery
+            packages: ./pilot/cmd/pilot-discovery
+            tags: vtprotobuf,disable_pgv
+        - name: build dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X istio.io/istio/pkg/version.buildVersion=1.31.0
+              - -X istio.io/istio/pkg/version.buildGitRevision=eed52ebb66ade45214088877b0f82855d954060d
+              - -X istio.io/istio/pkg/version.buildStatus=Clean
+              - -X istio.io/istio/pkg/version.buildTag=1.31.0
+              - -X istio.io/istio/pkg/version.buildHub=docker.io/dhi
+              - -X istio.io/istio/pkg/version.buildOS=$(go env GOOS)
+              - -X istio.io/istio/pkg/version.buildArch=$(go env GOARCH)
+            output: ${target.dir}/usr/bin/pilot-discovery-dev
+            packages: ./pilot/cmd/pilot-discovery
+            strip: false
+            tags: vtprotobuf,disable_pgv
+        - uses: dhi/build-pkg:0
+          with:
+            description: Istio Pilot discovery service
+            files:
+              - usr/bin/pilot-discovery
+            license: Apache-2.0
+            name: istio-pilot
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/pilot-discovery
+                    source: usr/bin/pilot-discovery-dev
+                name: istio-pilot-dev
+            url: https://github.com/istio/istio
+            version: 1.31.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
