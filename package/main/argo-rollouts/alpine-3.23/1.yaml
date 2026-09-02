@@ -4,7 +4,7 @@ image: dhi.io/pkg-argo-rollouts
 variant: runtime
 tags:
   - 1.10.0-alpine3.23
-  - 1.10.0-r1-alpine3.23
+  - 1.10.0-r3-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,7 +14,8 @@ vars:
   COMMIT_SHA: d90700ae8d71d141561f0c546e19f999bb335cbd
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.7-r0
-  REL: "1"
+  NODEJS_VERSION: 24.20.0-r0
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "1.10"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.10.0
@@ -31,14 +32,20 @@ contents:
   builds:
     - name: argo-rollouts
       work-dir: /go/src/github.com/argoproj/argo-rollouts
+      caches:
+        - path: /go/pkg/mod
       contents:
         packages:
           - busybox
           - bash
           - ca-certificates-bundle
           - binutils-gold
+          - git
           - golang-1.26=1.26.7-r0
           - golang-1.26-oci-config=1.26.7-r0
+          - nodejs-24=24.20.0-r0
+          - corepack
+          - npm
         files:
           - url: git+https://github.com/argoproj/argo-rollouts.git#v1.10.0
             checksum: d90700ae8d71d141561f0c546e19f999bb335cbd
@@ -58,6 +65,7 @@ contents:
           work-dir: /go/src/github.com/argoproj/argo-rollouts
           with:
             deps:
+              - golang.org/x/crypto@v0.54.0
               - github.com/expr-lang/expr@v1.17.7
               - github.com/klauspost/compress@v1.18.7
               - github.com/moby/spdystream@v0.5.1
@@ -65,18 +73,18 @@ contents:
               - go.opentelemetry.io/otel/sdk@v1.40.0
               - google.golang.org/grpc@v1.82.1
             download: true
-        - uses: go/hermetic@v1
+            replaces:
+              - github.com/whilp/git-urls=github.com/chainguard-dev/git-urls@v1.0.2
         - name: test
           runs: |
             set -eux -o pipefail
+
+            export GOMAXPROCS=1
 
             if [ "${target.fips}" = "true" ]; then
               export GODEBUG=fips140=on
             fi
 
-            # Skip TestListWithWatch: flaky test with timing/race condition where
-            # the third watch event doesn't arrive before the test timeout.
-            # The test expects 3 output lines but only receives 2.
             go test -skip 'TestListWithWatch' $(go list ./... | grep -v -e ./test/cmd/metrics-plugin-sample -e github.com/argoproj/argo-rollouts/rollout$)
         - name: build rollouts-controller
           uses: go/build@v1
@@ -103,6 +111,19 @@ contents:
             output: ${target.dir}/usr/bin/rollouts-controller-dev
             packages: ./cmd/rollouts-controller
             strip: false
+        - name: build ui
+          work-dir: /go/src/github.com/argoproj/argo-rollouts/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@11.9.0 --activate
+
+            pnpm install --frozen-lockfile --ignore-scripts
+            NODE_ENV='production' pnpm build
+
+            cp -r dist/app/* ../server/static
         - name: build kubectl-argo-rollouts
           uses: go/build@v1
           work-dir: /go/src/github.com/argoproj/argo-rollouts
@@ -135,7 +156,7 @@ contents:
               - usr/bin/rollouts-controller
             license: Apache-2.0
             name: argo-rollouts
-            rel: 1
+            rel: 3
             subpackages:
               - files:
                   - path: usr/bin/kubectl-argo-rollouts
