@@ -1,0 +1,129 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-vector
+variant: runtime
+tags:
+  - 0.58.0-0
+  - 0.58.0-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-06-10"
+vars:
+  CARGO_VERSION: 1.97.1-0
+  COMMIT_SHA: 2bcad9bbb84e201dcfd58c22b1f779290101b728
+  DHI_REL: "0"
+  DHI_VERSION: 0.58.0-0
+  RUSTC_VERSION: 1.97.1-0
+  VERSION: 0.58.0
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: vector deb
+      work-dir: ${source.dir}/vector-deb
+      caches:
+        - path: /root/.cargo
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - cargo-1.97=1.97.1-0
+          - ca-certificates
+          - cmake
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - gawk
+          - git
+          - grep
+          - gzip
+          - libclang-dev
+          - libprotobuf-dev
+          - libsasl2-dev
+          - libssl-dev
+          - pkg-config
+          - protobuf-compiler
+          - rustc-1.97=1.97.1-0
+          - sed
+        files:
+          - url: git+https://github.com/vectordotdev/vector.git#v0.58.0
+            checksum: 2bcad9bbb84e201dcfd58c22b1f779290101b728
+            path: ${source.dir}/vector-deb/src
+            spdx:
+              name: vector
+              version: 0.58.0
+              packages:
+                - name: vector
+                  purl: pkg:dhi/vector@0.58.0
+                  license: MPL-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch source
+          uses: patch@v1
+          work-dir: ${source.dir}/vector-deb/src
+          privileged: true
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/allow_dead_code.patch
+              - ${source.dir}/patch/allow_unstable_name_collisions.patch
+              - ${source.dir}/patch/allow_deprecated.patch
+        - name: bump cargo dependencies
+          work-dir: ${source.dir}/vector-deb/src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            sed -i '/^openssl = /s/version = "[^"]*"/version = ">=0.10.79, <0.11"/' Cargo.toml
+            cargo update --ignore-rust-version --recursive openssl
+            cargo update --ignore-rust-version --precise 0.6.12 postgres-protocol
+            cargo update --ignore-rust-version --precise 0.11.15 quinn-proto
+            sed -i '/^git2 = /s/version = "[^"]*"/version = ">=0.20.4, <0.22"/' vdev/Cargo.toml
+            cargo update --ignore-rust-version --precise 0.21.0 git2
+            cargo update --ignore-rust-version --precise 5.4.2 event-listener@5.4.2
+            cargo update --ignore-rust-version --precise 1.2.2 webbrowser
+            cargo update --ignore-rust-version --precise 0.4.16 h2@0.4.16
+            cargo update --ignore-rust-version serial_test
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: vector-cargo
+            source: ${source.dir}/vector-deb/src
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 0.58.0-0
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/vector/patch
+        - type: directory
+          path: ${source.dir}/vector-deb/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/vector/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
