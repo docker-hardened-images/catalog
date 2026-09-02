@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2026-04-02"
 vars:
-  COMMIT_SHA: 2dcf2e3548faf3c740b3d29ee300e2132db65cff
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "1.18"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.18.3
-  VERSION: 1.18.3
+  SUFFIX: ""
+  VERSION: 1.18.3-4
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -32,97 +33,8 @@ contents:
   packages:
     - base-files
     - ca-certificates-bundle
+    - dapr-scheduler=1.18.3-4
     - tzdata
-  builds:
-    - name: dapr-scheduler
-      work-dir: /go/src/github.com/dapr/dapr
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/dapr/dapr.git#v1.18.3
-            checksum: 2dcf2e3548faf3c740b3d29ee300e2132db65cff
-            path: /go/src/github.com/dapr/dapr
-            spdx:
-              name: dapr-scheduler
-              version: 1.18.3
-              packages:
-                - name: dapr-scheduler
-                  purl: pkg:golang/github.com/dapr/dapr@1.18.3
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - golang.org/x/crypto@v0.55.0
-              - golang.org/x/net@v0.57.0
-              - golang.org/x/text@v0.41.0
-              - github.com/go-jose/go-jose/v4@v4.1.4
-              - go.opentelemetry.io/otel@v1.44.0
-              - google.golang.org/grpc@v1.82.1
-              - go.etcd.io/etcd/client/pkg/v3@v3.5.33
-              - go.etcd.io/etcd/server/v3@v3.5.33
-            download: true
-            replaces:
-              - go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.60.0
-              - go.etcd.io/etcd/api/v3=go.etcd.io/etcd/api/v3@v3.5.33
-              - go.etcd.io/etcd/client/pkg/v3=go.etcd.io/etcd/client/pkg/v3@v3.5.33
-              - go.etcd.io/etcd/client/v3=go.etcd.io/etcd/client/v3@v3.5.33
-              - go.etcd.io/etcd/pkg/v3=go.etcd.io/etcd/pkg/v3@v3.5.33
-              - go.etcd.io/etcd/raft/v3=go.etcd.io/etcd/raft/v3@v3.5.33
-              - go.etcd.io/etcd/server/v3=go.etcd.io/etcd/server/v3@v3.5.33
-        - name: test go dependencies
-          runs: |
-            set -eux -o pipefail
-
-            # Build system injects OTEL_EXPORTER_OTLP_TRACES_* vars which take priority
-            # over OTEL_EXPORTER_OTLP_* and break unit tests that set the latter
-            unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || true
-            unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL || true
-
-            # Build containers have no outbound network or non-loopback interfaces;
-            # provide a fallback so GetHostAddress() doesn't fail
-            export DAPR_HOST_IP="${DAPR_HOST_IP:-127.0.0.1}"
-
-            # CGO_ENABLED=0: build container has no linker (binutils not installed)
-            # -tags unit: required to compile unit test helpers (WithAppChannel, mock, diag utils etc.)
-            # Exclude tests/: those are integration/e2e tests, not unit tests.
-            # Also exclude the dnslookup package because upstream added an
-            # integration-style reconnect test there that depends on mixed
-            # IPv4/IPv6 loopback behavior and is flaky in the DHI build sandbox.
-            CGO_ENABLED=0 go test -tags unit \
-              $(go list -tags unit ./... \
-                | grep -v 'github.com/dapr/dapr/tests/' \
-                | grep -v 'github.com/dapr/dapr/pkg/actors/internal/placement/connector/dnslookup$')
-        - name: build
-          uses: go/build@v1
-          with:
-            ldflags:
-              - -X github.com/dapr/dapr/pkg/buildinfo.gitcommit=2dcf2e3548faf3c740b3d29ee300e2132db65cff
-              - -X github.com/dapr/dapr/pkg/buildinfo.gitversion=1.18.3
-              - -X github.com/dapr/dapr/pkg/buildinfo.version=1.18.3
-            output: ${target.dir}/usr/local/bin/dapr-scheduler
-            packages: ./cmd/scheduler
-      outputs:
-        - source: ${target.dir}/usr/local/bin/dapr-scheduler
-          target: /usr/local/bin/dapr-scheduler
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/dapr-scheduler
-          target: /opt/docker/sbom/dapr-scheduler
-          uid: 0
-          gid: 0
 accounts:
   run-as: "65532"
   users:
@@ -143,11 +55,20 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/dapr-scheduler
+    uid: 0
+    gid: 0
+    source: /usr/bin/dapr-scheduler
   - type: symlink
     path: /scheduler
     uid: 0
     gid: 0
-    source: /usr/local/bin/dapr-scheduler
+    source: /usr/bin/dapr-scheduler
 annotations:
   org.opencontainers.image.description: A minimal Dapr Scheduler image
   org.opencontainers.image.licenses: Apache-2.0
