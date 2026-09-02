@@ -1,0 +1,156 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-podinfo
+variant: runtime
+tags:
+  - 6.14.1-alpine3.24
+  - 6.14.1-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-06-16"
+vars:
+  COMMIT_SHA: eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.7-r0
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "6.14"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.14.1
+  VERSION: 6.14.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: podinfo
+      work-dir: /go/src/github.com/stefanprodan/podinfo
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.7-r0
+          - golang-1.26-oci-config=1.26.7-r0
+        files:
+          - url: git+https://github.com/stefanprodan/podinfo.git#6.14.1
+            checksum: eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+            path: /go/src/github.com/stefanprodan/podinfo
+            spdx:
+              name: podinfo
+              version: 6.14.1
+              packages:
+                - name: podinfo
+                  purl: pkg:golang/github.com/stefanprodan/podinfo@6.14.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+              - golang.org/x/net@v0.58.0
+              - golang.org/x/text@v0.41.0
+            download: true
+        - name: hermetic
+          uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./... -count=1
+        - name: build podinfo
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -a -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/stefanprodan/podinfo/pkg/version.REVISION=eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+            output: ${target.dir}/usr/bin/podinfo
+            packages: ./cmd/podinfo
+            strip: true
+            trimpath: true
+        - name: build podcli
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -a -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/stefanprodan/podinfo/pkg/version.REVISION=eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+            output: ${target.dir}/usr/bin/podcli
+            packages: ./cmd/podcli
+            strip: true
+            trimpath: true
+        - name: build podinfo dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/stefanprodan/podinfo/pkg/version.REVISION=eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+            output: ${target.dir}/usr/bin/podinfo-dev
+            packages: ./cmd/podinfo
+            strip: false
+        - name: build podcli dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/stefanprodan/podinfo/pkg/version.REVISION=eec06d1ea459af4cb4e10e806f8be7c7bd58b361
+            output: ${target.dir}/usr/bin/podcli-dev
+            packages: ./cmd/podcli
+            strip: false
+        - name: stage ui
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/podinfo/ui"
+            mkdir -p "${target.dir}/usr/share/podinfo/ui-dev"
+            cp ui/vue.html "${target.dir}/usr/share/podinfo/ui/vue.html"
+            cp ui/vue.html "${target.dir}/usr/share/podinfo/ui-dev/vue.html"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Podinfo
+            files:
+              - usr/bin/podinfo
+              - usr/bin/podcli
+              - usr/share/podinfo/ui/vue.html
+            license: Apache-2.0
+            name: podinfo
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/podinfo
+                    source: usr/bin/podinfo-dev
+                  - path: usr/bin/podcli
+                    source: usr/bin/podcli-dev
+                  - path: usr/share/podinfo/ui/vue.html
+                    source: usr/share/podinfo/ui-dev/vue.html
+                name: podinfo-dev
+            url: https://github.com/stefanprodan/podinfo
+            version: 6.14.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
