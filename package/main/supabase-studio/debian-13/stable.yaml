@@ -1,0 +1,241 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-supabase-studio
+variant: runtime
+tags:
+  - 2026.08.03-0
+  - 2026.08.03-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-03"
+vars:
+  COMMIT_SHA: 022b374f2dbd7dab46b3fd5aab92d827b7fa4059
+  DHI_REL: "0"
+  DHI_VERSION: 2026.08.03-0
+  NODEJS_VERSION: 22.23.2-0
+  PACKAGE_NAME: supabase-studio
+  PNPM_VERSION: 11.13.1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2026.08"
+  SEMVER_MAJOR_VERSION: "2026"
+  SEMVER_VERSION: 2026.08.03
+  STUDIO_SHORT_SHA: 022b374
+  STUDIO_UNTIL: "2026-08-03"
+  TURBO_VERSION: 2.9.14
+  VERSION: 2026.08.03
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: supabase-studio
+      work-dir: ${source.dir}/supabase
+      environment:
+        CI: "true"
+        DOCKER_BUILD: "1"
+        NEXT_TELEMETRY_DISABLED: "1"
+        PNPM_HOME: /pnpm
+        npm_config_python: /usr/bin/python3.13
+      caches:
+        - path: /pnpm/store
+        - path: /root/.cache
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - g++
+          - gcc
+          - git
+          - grep
+          - jq
+          - libc6
+          - libc6-dev
+          - libstdc++6
+          - make
+          - mawk
+          - nodejs-22=22.23.2-0
+          - node-corepack
+          - npm
+          - pkgconf
+          - python-3.13
+          - sed
+          - yq
+        files:
+          - url: git+https://github.com/supabase/supabase.git#022b374f2dbd7dab46b3fd5aab92d827b7fa4059
+            checksum: 022b374f2dbd7dab46b3fd5aab92d827b7fa4059
+            path: ${source.dir}/supabase
+            spdx:
+              name: supabase-studio
+              version: 2026.08.03
+              packages:
+                - name: supabase-studio
+                  purl: pkg:github/supabase/supabase@022b374f2dbd7dab46b3fd5aab92d827b7fa4059
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prune studio workspace
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PNPM_HOME=/pnpm
+            export PATH="${PNPM_HOME}:${PATH}"
+
+            corepack enable
+            corepack prepare pnpm@11.13.1 --activate
+
+            pnpm dlx turbo@2.9.14 prune studio --docker
+        - name: build and stage studio
+          work-dir: ${source.dir}/supabase/out
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PNPM_HOME=/pnpm
+            export PATH="${PNPM_HOME}:${PATH}"
+
+            cp -a json/. .
+            cp -a full/. .
+            if [ -d "${source.dir}/supabase/patches" ]; then
+              cp -a "${source.dir}/supabase/patches" ./patches
+            fi
+
+            rm -f apps/studio/.env
+
+            yq -Y -i '.overrides."sharp" = "0.35.0"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."mermaid" = "11.16.1"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."dompurify" = "3.4.13"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."@hono/node-server" = "1.19.15"' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + ["sharp", "fast-uri", "mermaid", "dompurify", "@hono/node-server"])' pnpm-workspace.yaml
+
+            pnpm install --lockfile-only
+            pnpm install --frozen-lockfile
+
+            rm -f "${source.dir}/supabase/pnpm-workspace.yaml" "${source.dir}/supabase/pnpm-lock.yaml"
+
+            HEAP_MB=$(node -e 'console.log(Math.min(8192, Math.floor(require("os").totalmem()/1024/1024*0.6)))')
+            NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" \
+              pnpm --filter studio exec next build
+
+            DEST="${target.dir}/usr/lib/supabase-studio"
+            mkdir -p "${DEST}/apps/studio/.next"
+            cp -a apps/studio/.next/standalone/. "${DEST}/"
+            cp -a apps/studio/.next/static "${DEST}/apps/studio/.next/static"
+            cp -a apps/studio/public "${DEST}/apps/studio/public"
+
+            SHARP_LIBVIPS_SOURCE=$(find node_modules/.pnpm -path "*/node_modules/@img/sharp-libvips-linux-*/lib" -type d -print -quit)
+            SHARP_LIBVIPS_TARGET=$(find "${DEST}/node_modules/.pnpm" -path "*/node_modules/@img/sharp-libvips-linux-*/lib" -type d -print -quit)
+            SHARP_BINDING_PACKAGE=$(find "${DEST}/node_modules/.pnpm" -maxdepth 1 -name '@img+sharp-linux-*' -type d -print -quit)
+            SHARP_LIBVIPS_PACKAGE=$(find "${DEST}/node_modules/.pnpm" -maxdepth 1 -name '@img+sharp-libvips-linux-*' -type d -print -quit)
+            test -n "${SHARP_LIBVIPS_SOURCE}"
+            test -n "${SHARP_LIBVIPS_TARGET}"
+            test -n "${SHARP_BINDING_PACKAGE}"
+            test -n "${SHARP_LIBVIPS_PACKAGE}"
+            cp -a "${SHARP_LIBVIPS_SOURCE}/." "${SHARP_LIBVIPS_TARGET}/"
+
+            SHARP_LIBVIPS_NAME=$(basename "$(dirname "${SHARP_LIBVIPS_TARGET}")")
+            SHARP_LIBVIPS_LINK="${SHARP_BINDING_PACKAGE}/node_modules/@img/${SHARP_LIBVIPS_NAME}"
+            test ! -e "${SHARP_LIBVIPS_LINK}"
+            test ! -L "${SHARP_LIBVIPS_LINK}"
+            ln -s "../../../$(basename "${SHARP_LIBVIPS_PACKAGE}")/node_modules/@img/${SHARP_LIBVIPS_NAME}" "${SHARP_LIBVIPS_LINK}"
+
+            test -f "${DEST}/apps/studio/server.js"
+            test -n "$(find "${SHARP_LIBVIPS_TARGET}" -name 'libvips-cpp.so.*' -type f -print -quit)"
+            test -n "$(find -L "${SHARP_LIBVIPS_LINK}/lib" -name 'libvips-cpp.so.*' -type f -print -quit)"
+        - name: verify packaged configuration
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/usr/lib/supabase-studio"
+            test -z "$(find "${DEST}" -name '.env' -type f -print -quit)"
+
+            set +x
+            UPSTREAM_DASHBOARD_PASSWORD=$(sed -n 's/^DASHBOARD_PASSWORD=//p' apps/studio/.env)
+            UPSTREAM_ANON_KEY=$(sed -n 's/^SUPABASE_ANON_KEY=//p' apps/studio/.env)
+            UPSTREAM_SERVICE_KEY=$(sed -n 's/^SUPABASE_SERVICE_KEY=//p' apps/studio/.env)
+            UPSTREAM_AI_ANON_KEY=$(sed -n 's/^NEXT_PUBLIC_SUPABASE_ANON_KEY=//p' apps/studio/.env)
+            UPSTREAM_AI_URL=$(sed -n 's/^NEXT_PUBLIC_SUPABASE_URL=//p' apps/studio/.env)
+            UPSTREAM_HCAPTCHA_SITE_KEY=$(sed -n 's/^NEXT_PUBLIC_HCAPTCHA_SITE_KEY=//p' apps/studio/.env)
+            UPSTREAM_POSTGRES_PASSWORD=$(sed -n 's/^POSTGRES_PASSWORD=//p' apps/studio/.env)
+            UPSTREAM_LOGFLARE_TOKEN=$(sed -n 's/^LOGFLARE_PRIVATE_ACCESS_TOKEN=//p' apps/studio/.env)
+            test -n "${UPSTREAM_DASHBOARD_PASSWORD}"
+            test -n "${UPSTREAM_ANON_KEY}"
+            test -n "${UPSTREAM_SERVICE_KEY}"
+            test -n "${UPSTREAM_AI_ANON_KEY}"
+            test -n "${UPSTREAM_AI_URL}"
+            test -n "${UPSTREAM_HCAPTCHA_SITE_KEY}"
+            test -n "${UPSTREAM_POSTGRES_PASSWORD}"
+            test -n "${UPSTREAM_LOGFLARE_TOKEN}"
+            for upstream_value in \
+              "${UPSTREAM_DASHBOARD_PASSWORD}" \
+              "${UPSTREAM_ANON_KEY}" \
+              "${UPSTREAM_SERVICE_KEY}" \
+              "${UPSTREAM_AI_ANON_KEY}" \
+              "${UPSTREAM_AI_URL}" \
+              "${UPSTREAM_HCAPTCHA_SITE_KEY}" \
+              "${UPSTREAM_POSTGRES_PASSWORD}" \
+              "${UPSTREAM_LOGFLARE_TOKEN}"; do
+              if grep -r -a -F -q -- "${upstream_value}" "${DEST}"; then
+                echo "upstream development configuration remained in the packaged payload" >&2
+                exit 1
+              fi
+            done
+            set -x
+        - name: stage built payload for dpkg
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf "${source.dir}/supabase-studio-pkg/pkg-staging"
+            mkdir -p "${source.dir}/supabase-studio-pkg/pkg-staging"
+            cp -a "${target.dir}/usr/lib/supabase-studio/." "${source.dir}/supabase-studio-pkg/pkg-staging/"
+        - uses: dpkg/bump@v1
+          work-dir: ${source.dir}/supabase-studio-pkg
+          with:
+            changelog:
+              - Update sharp to 0.35.0 to fix GHSA-f88m-g3jw-g9cj
+              - Update fast-uri to 3.1.5 to fix CVE-2026-18446
+              - Update mermaid to 11.16.1 to fix CVE-2026-71436, CVE-2026-71437, CVE-2026-71438, CVE-2026-71439 and CVE-2026-50159
+              - Update dompurify to 3.4.13 to fix GHSA-55q2-fjhq-7xh7
+              - Update @hono/node-server to 1.19.15 to fix GHSA-frvp-7c67-39w9
+            version: 2026.08.03-0
+        - uses: dpkg/build@v1
+          work-dir: ${source.dir}/supabase-studio-pkg
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/supabase-studio-pkg/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/supabase-studio/debian-13/debian
+        - type: file
+          path: ${source.dir}/supabase-studio-pkg/debian/rules
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/supabase-studio/debian-13/debian/rules
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
