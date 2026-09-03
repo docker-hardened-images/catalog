@@ -43,7 +43,7 @@ elif [ ${#WHEEL_FILES[@]} -eq 0 ] || [ ! -f "${WHEEL_FILES[0]}" ]; then
   exit 1
 fi
 WHEEL_FILE="${WHEEL_FILES[0]}"
-pip install --no-cache-dir "${WHEEL_FILE}[proxy,extra_proxy,proxy-runtime]"
+pip install --no-cache-dir "${WHEEL_FILE}[proxy,extra_proxy,proxy-runtime]" 'redis==5.3.1'
 
 pip uninstall jwt -y || true
 pip uninstall PyJWT -y || true
