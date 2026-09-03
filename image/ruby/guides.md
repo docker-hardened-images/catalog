@@ -1,3 +1,12 @@
+> [!NOTE]
+>
+> In Debian-based Ruby images, Ruby and its development commands are installed under `/usr` to align with the
+> [Filesystem Hierarchy Standard](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/index.html). Commands such as `ruby`,
+> `bundle`, `bundler`, and `rake` are therefore located in `/usr/bin`.
+>
+> Compatibility symlinks preserve their previous locations under `/usr/local/bin`, but new hardcoded path references
+> should use `/usr/bin`.
+
 ## How to use this image
 
 All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
