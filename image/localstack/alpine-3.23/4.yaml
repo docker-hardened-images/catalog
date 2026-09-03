@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: LocalStack 4.14.x
+image: dhi.io/localstack
+variant: runtime
+tags:
+  - 4-alpine3.23
+  - 4.14-alpine3.23
+  - 4.14.0-alpine3.23
+  - 4-python3.13-alpine3.23
+  - 4.14-python3.13-alpine3.23
+  - 4.14.0-python3.13-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 3d5a0c70e0fe2eb0864447c882454d33b406ba8a
+  LOCALSTACK_PACKAGE_VERSION: 4.14.0-r0
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  PYTHON_VERSION: 3.13.15-r1
+  SEMVER_MAJOR_MINOR_VERSION: "4.14"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.14.0
+  VERSION: 4.14.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - busybox
+    - iproute2
+    - iputils
+    - localstack=4.14.0-r0
+    - python-3.13=3.13.15-r1
+    - tzdata
+    - unzip
+  builds:
+    - name: localstack source
+      contents:
+        packages:
+          - busybox
+          - python-3.13=3.13.15-r1
+          - localstack=4.14.0-r0
+        files:
+          - url: git+https://github.com/localstack/localstack.git#v4.14.0
+            checksum: 3d5a0c70e0fe2eb0864447c882454d33b406ba8a
+            path: ${source.dir}/localstack
+            spdx:
+              name: localstack
+              version: 4.14.0
+              packages:
+                - name: localstack
+                  purl: pkg:dhi/localstack@4.14.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch source for cbor2 compatibility
+          work-dir: ${source.dir}/localstack
+          runs: |
+            set -eux -o pipefail
+
+            /usr/bin/python3.13 - << 'PY'
+            from pathlib import Path
+
+            replacements = {
+                "localstack-core/localstack/aws/protocol/parser.py": [
+                    (
+                        "# cbor2: explicitly load from private _decoder module to avoid using the (non-patched) C-version\nfrom cbor2._decoder import loads as cbor2_loads\n",
+                        "# cbor2>=5.9 removed the private _decoder module; fall back to the public loader.\ntry:\n    from cbor2._decoder import loads as cbor2_loads\nexcept ModuleNotFoundError:\n    from cbor2 import loads as cbor2_loads\n",
+                    ),
+                ],
+                "localstack-core/localstack/aws/protocol/serializer.py": [
+                    (
+                        "from cbor2._encoder import dumps as cbor2_dumps\n",
+                        "try:\n    from cbor2._encoder import dumps as cbor2_dumps\nexcept ModuleNotFoundError:\n    from cbor2 import dumps as cbor2_dumps\n",
+                    ),
+                ],
+                "localstack-core/localstack/aws/client.py": [
+                    (
+                        "            # cbor2: explicitly load from private _decoder module to avoid using the (non-patched) C-version\n            from cbor2._decoder import loads\n",
+                        "            # cbor2>=5.9 removed the private _decoder module; fall back to the public loader.\n            try:\n                from cbor2._decoder import loads\n            except ModuleNotFoundError:\n                from cbor2 import loads\n",
+                    ),
+                    (
+                        "    from cbor2._decoder import CBORDecodeValueError, semantic_decoders\n    from cbor2._encoder import CBOREncodeValueError, default_encoders\n    from cbor2._types import CBORTag\n",
+                        "    try:\n        from cbor2._decoder import CBORDecodeValueError, semantic_decoders\n        from cbor2._encoder import CBOREncodeValueError, default_encoders\n        from cbor2._types import CBORTag\n    except ModuleNotFoundError:\n        return\n",
+                    ),
+                ],
+            }
+
+            for relpath, pairs in replacements.items():
+                source = Path(relpath)
+                content = source.read_text()
+                for old, new in pairs:
+                    if old not in content:
+                        raise SystemExit(f"expected block not found in {source}")
+                    content = content.replace(old, new)
+                source.write_text(content)
+            PY
+        - name: generate version metadata
+          runs: |
+            set -eux -o pipefail
+
+            cat > "${source.dir}/localstack/localstack-core/localstack/version.py" << 'PY'
+            from __future__ import annotations
+
+            __all__ = [
+                "__version__",
+                "__version_tuple__",
+                "version",
+                "version_tuple",
+                "__commit_id__",
+                "commit_id",
+            ]
+            __version__ = version = "4.14.0"
+            __version_tuple__ = version_tuple = tuple(int(part) for part in version.split("."))
+            __commit_id__ = commit_id = None
+            PY
+
+            egg_info="${source.dir}/localstack/localstack-core/localstack_core.egg-info"
+            dist_info="/usr/lib/localstack/lib/python3.13/site-packages/localstack_core-4.14.0.dist-info"
+            mkdir -p "$egg_info"
+            cp "$dist_info/METADATA" "$egg_info/PKG-INFO"
+            cp "$dist_info/entry_points.txt" "$dist_info/top_level.txt" "$egg_info/"
+      outputs:
+        - source: ${source.dir}/localstack/localstack-core
+          target: /src/localstack/localstack-core
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/localstack
+    uid: 0
+    gid: 0
+    source: /usr/lib/localstack
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/localstack
+    uid: 0
+    gid: 0
+    source: /usr/bin/localstack
+  - type: symlink
+    path: /usr/local/bin/localstack-supervisor
+    uid: 0
+    gid: 0
+    source: /usr/bin/localstack-supervisor
+  - type: directory
+    path: /var/lib/localstack
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal LocalStack image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - localstack-supervisor
+ports:
+  - 4566/tcp
+  - 5678/tcp
+  - 4510-4559
