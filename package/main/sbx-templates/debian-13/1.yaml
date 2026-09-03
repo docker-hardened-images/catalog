@@ -1,0 +1,161 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-sbx-templates
+variant: runtime
+tags:
+  - 0.1.0
+  - 0.1.0-r0
+  - 0.1.0-debian13
+  - 0.1.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-29"
+vars:
+  COMMIT_SHA: 54a695035350bab5f126a88c892a9bc3b5ae162a
+  GOLANG_VERSION: 1.26.7-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.1"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.1.0
+  VERSION: 0.1.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: sbx-templates
+      work-dir: /go/src/github.com/docker/sandboxes
+      environment:
+        GOPATH: /go
+        GOTOOLCHAIN: local
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - golang-1.26=1.26.7-1
+          - golang-1.26-oci-config=1.26.7-1
+        files:
+          - url: git+https://github.com/docker/sandboxes.git#54a695035350bab5f126a88c892a9bc3b5ae162a
+            checksum: 54a695035350bab5f126a88c892a9bc3b5ae162a
+            path: /go/src/github.com/docker/sandboxes
+            spdx:
+              name: clipboard-bridge
+              version: 54a695035350bab5f126a88c892a9bc3b5ae162a
+              packages:
+                - name: clipboard-bridge
+                  purl: pkg:golang/github.com/docker/sandboxes@54a695035350bab5f126a88c892a9bc3b5ae162a
+                  license: LicenseRef-Proprietary
+                - name: golang.org/x/sys
+                  purl: pkg:golang/golang.org/x/sys@v0.46.0
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: go/bump@v1
+          with:
+            deps: []
+        - name: build clipboard-bridge
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/bin/clipboard-bridge
+            packages: ./sandboxlib/agent/clipboardbridge/cmd/clipboard-bridge
+        - name: stage shared sandbox filesystem
+          runs: |
+            set -eux -o pipefail
+
+            src="${source.dir}/files"
+            share="${target.dir}/usr/share/sbx-templates"
+
+            mkdir -p "${share}/etc"
+            cp -a "${src}/etc/pam.d" "${share}/etc/"
+            cp -a "${src}/home" "${share}/"
+            cp -a "${src}/usr" "${share}/"
+            install -Dm644 "${src}/etc/bash.bashrc" "${share}/etc/bash.bashrc"
+            install -Dm644 "${src}/etc/profile" "${share}/etc/profile"
+
+            find "${share}/etc/pam.d" -type f -exec chmod 0644 {} +
+            chmod 0644 "${share}/home/agent/.bashrc" "${share}/home/agent/.bash_profile"
+
+            install -d -m 0755 "${target.dir}/etc/profile.d"
+            install -d -m 0755 "${target.dir}/etc/sudoers.d"
+            : > "${target.dir}/etc/sandbox-persistent.sh"
+            install -Dm644 "${src}/etc/profile.d/sandbox-persistent.sh" "${target.dir}/etc/profile.d/sandbox-persistent.sh"
+            install -Dm440 "${src}/etc/sudoers.d/agent" "${target.dir}/etc/sudoers.d/agent"
+            install -Dm440 "${src}/etc/sudoers.d/proxyconfig" "${target.dir}/etc/sudoers.d/proxyconfig"
+
+            chmod 0644 "${target.dir}/etc/sandbox-persistent.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Shared Docker Sandbox agent template filesystem and clipboard bridge
+            files:
+              - usr/bin/clipboard-bridge
+              - usr/share/sbx-templates/etc/bash.bashrc
+              - usr/share/sbx-templates/etc/profile
+              - usr/share/sbx-templates/etc/pam.d/common-auth
+              - usr/share/sbx-templates/etc/pam.d/common-account
+              - usr/share/sbx-templates/etc/pam.d/common-session-noninteractive
+              - usr/share/sbx-templates/etc/pam.d/common-session
+              - usr/share/sbx-templates/etc/pam.d/common-password
+              - usr/share/sbx-templates/etc/pam.d/sudo
+              - usr/share/sbx-templates/etc/pam.d/su
+              - usr/share/sbx-templates/home/agent/.bashrc
+              - usr/share/sbx-templates/home/agent/.bash_profile
+              - usr/share/sbx-templates/home/agent/workspace/.keep
+              - usr/share/sbx-templates/home/agent/.docker/sandbox/locks/.keep
+              - usr/share/sbx-templates/home/agent/.local/bin/.keep
+              - usr/share/sbx-templates/home/agent/.local/share/.keep
+              - usr/share/sbx-templates/home/agent/.local/state/.keep
+              - usr/share/sbx-templates/usr/local/share/npm-global/.keep
+              - usr/share/sbx-templates/usr/local/share/ca-certificates/.keep
+              - etc/sandbox-persistent.sh
+              - etc/profile.d/sandbox-persistent.sh
+              - etc/sudoers.d/agent
+              - etc/sudoers.d/proxyconfig
+            formats:
+              - deb
+            license: LicenseRef-Proprietary
+            name: sbx-templates
+            rel: 0
+            url: https://github.com/docker/sandboxes
+            version: 0.1.0
+        - name: inject deb postinst for agent ownership
+          runs: |
+            set -eux -o pipefail
+
+            arch="$(dpkg --print-architecture)"
+            deb="$(ls "${target.dir}/packages/deb/13/"sbx-templates_*.deb | head -1)"
+            work="$(mktemp -d)"
+            trap 'rm -rf "${work}"' EXIT
+
+            dpkg-deb -R "${deb}" "${work}"
+            install -Dm755 /scripts/postinst "${work}/DEBIAN/postinst"
+            dpkg-deb -Zgzip -b "${work}" "${deb}"
+      paths:
+        - type: directory
+          path: ${source.dir}/files
+          uid: 0
+          gid: 0
+          source: package/main/sbx-templates/debian-13/files
+        - type: file
+          path: /scripts/postinst
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/sbx-templates/debian-13/scripts/postinst
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
