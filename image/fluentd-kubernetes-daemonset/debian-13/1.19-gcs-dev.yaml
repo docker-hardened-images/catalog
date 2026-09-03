@@ -22,14 +22,12 @@ dates:
 vars:
   BINUTILS_ARCH: '#{ target.arch == "amd64" ? "x86-64" : "aarch64" }'
   DESTINATION: gcs
-  DESTINATION_PLUGINS: fluent-plugin-gcs@0.4.4
   GEM_HOME: /usr/local/bundle
-  JEMALLOC_VERSION: 5.3.1
   RUBY_VERSION: 3.4.10-36
   SEMVER_MAJOR_MINOR_VERSION: "1.19"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.19.3
-  VERSION: 1.19.3
+  VERSION: 1.19.3-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -62,6 +60,7 @@ contents:
     - diffutils
     - dpkg
     - findutils
+    - fluentd-kubernetes-daemonset-gcs=1.19.3-0
     - git
     - grep
     - libc-bin
@@ -91,127 +90,6 @@ contents:
     - util-linux
     - zlib1g
   builds:
-    - name: jemalloc
-      contents:
-        packages:
-          - bash
-          - build-essential
-          - coreutils
-          - grep
-          - libc-bin
-          - mawk
-          - sed
-        files:
-          - url: https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2
-            checksum: sha256:3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
-            path: ${source.dir}/jemalloc.tar.bz2
-            spdx:
-              name: jemalloc
-              version: 5.3.1
-              packages:
-                - name: jemalloc
-                  purl: pkg:dhi/jemalloc@5.3.1
-                  license: MIT
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: install jemalloc
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/opt/jemalloc
-            tar -xjf ${source.dir}/jemalloc.tar.bz2 -C ${target.dir}/opt/jemalloc --strip-components=1
-            cd ${target.dir}/opt/jemalloc
-
-            echo "je_cv_madv_free=no" > config.cache
-
-            ncpus=$(getconf _NPROCESSORS_ONLN)
-            ncpus=$((ncpus > 6 ? 6 : ncpus))
-
-            ./configure -C
-            make -j${ncpus}
-
-            rm -f ${target.dir}/opt/jemalloc/lib/*.a
-      outputs:
-        - source: ${target.dir}/opt/jemalloc/lib
-          target: /usr/lib/libjemalloc
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
-          uid: 0
-          gid: 0
-    - name: fluent
-      environment:
-        BUNDLE_APP_CONFIG: ${BUNDLE_APP_CONFIG}
-        BUNDLE_SILENCE_ROOT_WARNING: ${BUNDLE_SILENCE_ROOT_WARNING}
-        GEM_HOME: /usr/local/bundle
-      contents:
-        packages:
-          - bash
-          - build-essential
-          - ca-certificates
-          - ca-certificates-bundle
-          - cmake
-          - coreutils
-          - findutils
-          - grep
-          - gzip
-          - libffi8
-          - libjemalloc-dev
-          - libjemalloc2
-          - libyaml-dev
-          - libsnappy-dev
-          - ruby-3.4=3.4.10-36
-          - ruby-3.4-dev=3.4.10-36
-          - sed
-          - tar
-      pipeline:
-        - name: install fluentd gem
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            gem install oj -v 3.17.3 --no-document
-            gem install json -v 2.19.9 --no-document
-            gem install rexml -v 3.4.4 --no-document
-            gem install async -v 2.39.0 --no-document
-            gem install async-http -v 0.95.1 --no-document
-            gem install fluentd -v 1.19.3 --no-doc
-        - name: install kubernetes plugins
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            gem install --no-document fluent-plugin-kubernetes_metadata_filter -v 3.8.0
-            gem install --no-document fluent-plugin-systemd -v 1.1.1
-            gem install --no-document fluent-plugin-prometheus -v 2.2.2
-            gem install --no-document fluent-plugin-concat -v 2.6.1
-            gem install --no-document fluent-plugin-detect-exceptions -v 0.0.16
-            gem install --no-document fluent-plugin-grok-parser -v 2.6.2
-            gem install --no-document fluent-plugin-json-in-json-2 -v 1.0.2
-            gem install --no-document fluent-plugin-multi-format-parser -v 1.0.0
-            gem install --no-document fluent-plugin-parser-cri -v 0.1.1
-            gem install --no-document fluent-plugin-record-modifier -v 2.2.1
-            gem install --no-document fluent-plugin-rewrite-tag-filter -v 2.4.0
-            gem install --no-document ffi -v 1.17.4
-        - name: install destination plugins
-          privileged: true
-          environment:
-            INSTALL: /usr/bin/install
-          runs: |
-            set -eux -o pipefail
-
-            for spec in fluent-plugin-gcs@0.4.4; do
-              name=$(echo "$spec" | cut -d@ -f1)
-              ver=$(echo "$spec" | cut -d@ -f2)
-              gem install --no-document --conservative "$name" -v "$ver"
-            done
-      outputs:
-        - source: /usr/local/bundle
-          target: /usr/local/bundle
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
@@ -277,6 +155,15 @@ environment:
   LC_ALL: en_US.UTF-8
   PATH: /usr/local/bundle/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
+  - type: directory
+    path: /usr/local
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bundle
+    uid: 0
+    gid: 0
+    source: /usr/lib/fluentd-kubernetes-daemonset/bundle
   - type: directory
     path: /etc/fluent
     uid: 0
