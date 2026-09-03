@@ -34,7 +34,7 @@ vars:
   JDK_MAJOR_VERSION: "21"
   LOG4J_API_25_VERSION: 2.25.5
   LOG4J_API_26_VERSION: 2.26.1
-  MAVEN_REF: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:10c6464158f76287b452681a479a9ce738b4a57c4d9132d2dcb37b651266d1fc
+  MAVEN_REF: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:55ddfc1748b1daf376c6a079062fef83379ff2b21b9e0379e375f467bf1f84b2
   NETTY_VERSION: 4.1.137.Final
   REACTOR_NETTY_VERSION: 1.2.8
   SEMVER_MAJOR_MINOR_VERSION: "26.8"
@@ -74,7 +74,7 @@ contents:
     - util-linux
   builds:
     - name: sonarqube
-      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:10c6464158f76287b452681a479a9ce738b4a57c4d9132d2dcb37b651266d1fc
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:55ddfc1748b1daf376c6a079062fef83379ff2b21b9e0379e375f467bf1f84b2
       contents:
         packages:
           - bash
@@ -501,6 +501,8 @@ contents:
               local jar_path="$1"
               local expected_version="2.18.10"
               local metadata_dir="META-INF/maven/com.fasterxml.jackson.core/jackson-core"
+              local patch_jar="${source.dir}/patch/deps/jackson-core-${expected_version}.jar"
+              local verify_impl_jars=false
 
               patch_dir="$(mktemp -d)"
               repack_dir="${patch_dir}/repack"
@@ -509,40 +511,68 @@ contents:
 
               (cd "${repack_dir}" && jar xf "${jar_path}")
 
-              if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+              if [[ -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+                if grep -q "version=${expected_version}" "${repack_dir}/${metadata_dir}/pom.properties"; then
+                  rm -rf "${patch_dir}"
+                  return
+                fi
+
+                (cd "${overlay_dir}" && jar xf "${patch_jar}")
+
+                rm -rf "${repack_dir:?}/com/fasterxml/jackson/core" "${repack_dir:?}/${metadata_dir}"
+                for vdir in "${repack_dir}"/META-INF/versions/*/com/fasterxml/jackson/core; do
+                  rm -rf "${vdir}"
+                done
+
+                mkdir -p "${repack_dir}/com/fasterxml/jackson" "${repack_dir}/META-INF/maven/com.fasterxml.jackson.core"
+                cp -a "${overlay_dir}/com/fasterxml/jackson/core" "${repack_dir}/com/fasterxml/jackson/core"
+                cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+                for vdir in "${overlay_dir}"/META-INF/versions/*/com/fasterxml/jackson/core; do
+                  rel="${vdir#${overlay_dir}/}"
+                  mkdir -p "${repack_dir}/$(dirname "${rel}")"
+                  cp -a "${vdir}" "${repack_dir}/${rel}"
+                done
+
+                grep -q "version=${expected_version}" "${repack_dir}/${metadata_dir}/pom.properties"
+              elif [[ -d "${repack_dir}/IMPL-JARS/x-content" ]]; then
+                local old_jackson_name
+                old_jackson_name=$(find "${repack_dir}/IMPL-JARS/x-content" -maxdepth 1 -type d -name 'jackson-core-*.jar' -printf '%f\n' | head -1)
+
+                if [[ -z "${old_jackson_name}" ]]; then
+                  rm -rf "${patch_dir}"
+                  return
+                fi
+
+                if [[ "${old_jackson_name}" == "jackson-core-${expected_version}.jar" ]]; then
+                  rm -rf "${patch_dir}"
+                  return
+                fi
+
+                rm -rf "${repack_dir}/IMPL-JARS/x-content/${old_jackson_name}"
+                mkdir -p "${repack_dir}/IMPL-JARS/x-content/jackson-core-${expected_version}.jar"
+                (cd "${repack_dir}/IMPL-JARS/x-content/jackson-core-${expected_version}.jar" && jar xf "${patch_jar}")
+
+                if [[ -f "${repack_dir}/IMPL-JARS/x-content/LISTING.TXT" ]]; then
+                  sed -i "s|${old_jackson_name}|jackson-core-${expected_version}.jar|g" "${repack_dir}/IMPL-JARS/x-content/LISTING.TXT"
+                fi
+
+                grep -q "version=${expected_version}" "${repack_dir}/IMPL-JARS/x-content/jackson-core-${expected_version}.jar/${metadata_dir}/pom.properties"
+                verify_impl_jars=true
+              else
                 rm -rf "${patch_dir}"
                 return
               fi
-
-              if grep -q "version=${expected_version}" "${repack_dir}/${metadata_dir}/pom.properties"; then
-                rm -rf "${patch_dir}"
-                return
-              fi
-
-              (cd "${overlay_dir}" && jar xf "${source.dir}/patch/deps/jackson-core-${expected_version}.jar")
-
-              rm -rf "${repack_dir:?}/com/fasterxml/jackson/core" "${repack_dir:?}/${metadata_dir}"
-              for vdir in "${repack_dir}"/META-INF/versions/*/com/fasterxml/jackson/core; do
-                rm -rf "${vdir}"
-              done
-
-              mkdir -p "${repack_dir}/com/fasterxml/jackson" "${repack_dir}/META-INF/maven/com.fasterxml.jackson.core"
-              cp -a "${overlay_dir}/com/fasterxml/jackson/core" "${repack_dir}/com/fasterxml/jackson/core"
-              cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
-              for vdir in "${overlay_dir}"/META-INF/versions/*/com/fasterxml/jackson/core; do
-                rel="${vdir#${overlay_dir}/}"
-                mkdir -p "${repack_dir}/$(dirname "${rel}")"
-                cp -a "${vdir}" "${repack_dir}/${rel}"
-              done
-
-              grep -q "version=${expected_version}" "${repack_dir}/${metadata_dir}/pom.properties"
 
               patched_jar="${patch_dir}/$(basename "${jar_path}")"
               (cd "${repack_dir}" && jar --create --file "${patched_jar}" --manifest META-INF/MANIFEST.MF .)
               mv "${patched_jar}" "${jar_path}"
               rm -rf "${patch_dir}"
 
-              unzip -p "${jar_path}" "${metadata_dir}/pom.properties" | grep -q "version=${expected_version}"
+              if [[ "${verify_impl_jars}" == true ]]; then
+                unzip -p "${jar_path}" "IMPL-JARS/x-content/jackson-core-${expected_version}.jar/${metadata_dir}/pom.properties" | grep -q "version=${expected_version}"
+              else
+                unzip -p "${jar_path}" "${metadata_dir}/pom.properties" | grep -q "version=${expected_version}"
+              fi
               patched_count=$((patched_count + 1))
             }
 
@@ -551,6 +581,11 @@ contents:
                 patch_jackson_core_2x "${jar}"
               fi
             done
+
+            if [[ "${patched_count}" -lt 1 ]]; then
+              echo "ERROR: expected at least one bundled jackson-core 2.x patch in Elasticsearch" >&2
+              exit 1
+            fi
 
             echo "Patched ${patched_count} bundled jackson-core 2.x JARs in Elasticsearch"
         - name: patch bundled lz4 in sonar-application
