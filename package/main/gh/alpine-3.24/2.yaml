@@ -1,0 +1,120 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-gh
+variant: runtime
+tags:
+  - 2.100.0-alpine3.24
+  - 2.100.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 45437bc7eeeb3359bbfddd1742f79de7652fd3e2
+  GOLANG_VERSION: 1.26.8-r0
+  PACKAGE_NAME: gh
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.100"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.100.0
+  VERSION: 2.100.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: gh
+      work-dir: /go/src/github.com/cli/cli
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - git
+          - openssh-client-default
+          - openssh-keygen
+          - golang-1.26=1.26.8-r0
+          - golang-1.26-oci-config=1.26.8-r0
+        files:
+          - url: git+https://github.com/cli/cli.git#v2.100.0
+            checksum: 45437bc7eeeb3359bbfddd1742f79de7652fd3e2
+            path: /go/src/github.com/cli/cli
+            spdx:
+              name: gh
+              version: 2.100.0
+              packages:
+                - name: gh
+                  purl: pkg:golang/github.com/cli/cli/v2@2.100.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.40.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            GODEBUG=zipinsecurepath=1 CGO_ENABLED=0 go test -skip '^TestMigrationWriteErrors$' ./...
+        - name: build gh
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/cli/cli/v2/internal/build.Version=2.100.0
+              - -X github.com/cli/cli/v2/internal/build.Date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
+            output: ${target.dir}/usr/bin/gh
+            packages: ./cmd/gh
+            strip: true
+        - name: build gh dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/cli/cli/v2/internal/build.Version=2.100.0
+              - -X github.com/cli/cli/v2/internal/build.Date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
+            output: ${target.dir}/usr/bin/gh-dev
+            packages: ./cmd/gh
+            strip: false
+        - name: verify binary
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/usr/bin/gh" --version
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - git
+            description: GitHub's official command line tool
+            files:
+              - usr/bin/gh
+            license: MIT
+            name: gh
+            rel: 0
+            subpackages:
+              - depends:
+                  - git
+                files:
+                  - path: usr/bin/gh
+                    source: usr/bin/gh-dev
+                name: gh-dev
+            url: https://github.com/cli/cli
+            version: 2.100.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
