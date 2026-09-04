@@ -1,0 +1,182 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-vsphere-copy-offload-populator
+variant: runtime
+tags:
+  - 2.12.7-alpine3.24
+  - 2.12.7-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-09-30"
+vars:
+  COMMIT_SHA: a8fd1bf54505dd27e10282423ceb5e05a5c8354c
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-r0
+  PACKAGE_NAME: vsphere-copy-offload-populator
+  REL: "0"
+  SCRIPT_VERSION: 0.3.3
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.7
+  VERSION: 2.12.7
+  VIB_VERSION: 0.3.3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: vsphere-copy-offload-populator
+      work-dir: /go/src/github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator
+      contents:
+        packages:
+          - busybox
+          - bash
+          - binutils
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26=1.26.8-r0
+          - golang-1.26-oci-config=1.26.8-r0
+        files:
+          - url: git+https://github.com/kubev2v/forklift.git#v2.12.7
+            checksum: a8fd1bf54505dd27e10282423ceb5e05a5c8354c
+            path: /go/src/github.com/kubev2v/forklift
+            spdx:
+              name: vsphere-copy-offload-populator
+              version: 2.12.7
+              packages:
+                - name: vsphere-copy-offload-populator
+                  purl: pkg:golang/github.com/kubev2v/forklift@v2.12.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: fix vantara test host handling
+          uses: patch@v1
+          work-dir: /go/src/github.com/kubev2v/forklift
+          with:
+            options: -p1
+            patch: /go/src/patch/vantara-test-hostport.patch
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.56.0
+              - golang.org/x/net@v0.57.0
+              - golang.org/x/sys@v0.47.0
+              - golang.org/x/text@v0.41.0
+              - go.mongodb.org/mongo-driver@v1.17.7
+            download: true
+        - name: verify wrapper version pins
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF 'SCRIPT_VERSION="0.3.3"' vmkfstools-wrapper/vmkfstools_wrapper.sh
+            grep -qF 'VIB_VERSION := 0.3.3' vmkfstools-wrapper/version.mk
+        - name: wrapper tests
+          runs: |
+            set -eux -o pipefail
+
+            bash vmkfstools-wrapper/vmkfstools_wrapper_test.sh
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=vendor -count=1 ./...
+        - name: build populator
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/internal/version.Version=v2.12.7
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/internal/version.VibVersion=0.3.3
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/vmkfstools-wrapper.Version=0.3.3
+            output: ${target.dir}/usr/bin/vsphere-copy-offload-populator
+            packages: .
+            strip: true
+        - name: build populator dev
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/internal/version.Version=v2.12.7
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/internal/version.VibVersion=0.3.3
+              - -X github.com/kubev2v/forklift/cmd/vsphere-copy-offload-populator/vmkfstools-wrapper.Version=0.3.3
+            output: ${target.dir}/usr/bin/vsphere-copy-offload-populator-dev
+            packages: .
+            strip: false
+        - name: build vib-installer
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/bin/vib-installer
+            packages: ./cmd
+            strip: true
+        - name: build vib-installer dev
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            output: ${target.dir}/usr/bin/vib-installer-dev
+            packages: ./cmd
+            strip: false
+        - name: verify binary
+          runs: |
+            set -eux -o pipefail
+
+            '${target.dir}/usr/bin/vsphere-copy-offload-populator' --version > /tmp/vscop-version.txt 2>&1
+            grep -qF 'version=v2.12.7' /tmp/vscop-version.txt
+            grep -qF 'vib_version=0.3.3' /tmp/vscop-version.txt
+            grep -qF 'vmkfstools_wrapper_version=0.3.3' /tmp/vscop-version.txt
+        - name: build vib
+          runs: |
+            set -eux -o pipefail
+
+            VIB_VERSION='0.3.3' bash vmkfstools-wrapper/create-vib.sh
+            install -D -m 0644 vmkfstools-wrapper/vmkfstools-wrapper.vib \
+              '${target.dir}/usr/share/vsphere-copy-offload-populator/vmkfstools-wrapper.vib'
+        - uses: dhi/build-pkg:0
+          with:
+            description: Forklift vSphere copy-offload volume populator for KubeVirt VM migrations
+            files:
+              - usr/bin/vsphere-copy-offload-populator
+              - usr/bin/vib-installer
+              - usr/share/vsphere-copy-offload-populator/vmkfstools-wrapper.vib
+            license: Apache-2.0
+            name: vsphere-copy-offload-populator
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/vsphere-copy-offload-populator
+                    source: usr/bin/vsphere-copy-offload-populator-dev
+                  - path: usr/bin/vib-installer
+                    source: usr/bin/vib-installer-dev
+                name: vsphere-copy-offload-populator-dev
+            url: https://github.com/kubev2v/forklift
+            version: 2.12.7
+      paths:
+        - type: file
+          path: /go/src/patch/vantara-test-hostport.patch
+          uid: 0
+          gid: 0
+          source: package/main/vsphere-copy-offload-populator/patch/vantara-test-hostport.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
