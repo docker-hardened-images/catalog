@@ -1,0 +1,40 @@
+Wait for compaction success status before shutting down TestWorker_SuccessfulCompaction.
+
+runWorker stops after a fixed sleep, so the SUCCESS PollCompactionJobs
+status update can be missed under golang 1.26 scheduling. Mirror the
+synchronization pattern from TestWorker_CleanupMaxDurationAtShutdown.
+
+Upstream worker_test.go on v1.21.1 and main:
+https://github.com/grafana/pyroscope/blob/v1.21.1/pkg/compactionworker/worker_test.go
+
+--- a/pkg/compactionworker/worker_test.go
++++ b/pkg/compactionworker/worker_test.go
+@@ -123,14 +123,28 @@ func TestWorker_SuccessfulCompaction(t *testing.T) {
+ 		Blocks: metadata,
+ 	}, nil).Once()
+ 
++	successDone := make(chan struct{})
+ 	compactionClient.EXPECT().PollCompactionJobs(mock.Anything, mock.MatchedBy(func(req *metastorev1.PollCompactionJobsRequest) bool {
+ 		return len(req.StatusUpdates) > 0 && req.StatusUpdates[0].Status == metastorev1.CompactionJobStatus_COMPACTION_STATUS_SUCCESS
+-	}), mock.Anything).Return(&metastorev1.PollCompactionJobsResponse{}, nil).Once()
++	}), mock.Anything).Run(func(_ context.Context, _ *metastorev1.PollCompactionJobsRequest, _ ...grpc.CallOption) {
++		close(successDone)
++	}).Return(&metastorev1.PollCompactionJobsResponse{}, nil).Once()
+ 
+ 	// Additional polls should return empty responses.
+ 	compactionClient.EXPECT().PollCompactionJobs(mock.Anything, mock.Anything, mock.Anything).Return(&metastorev1.PollCompactionJobsResponse{}, nil).Maybe()
+ 
+-	runWorker(w)
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	svc := w.Service()
++	require.NoError(t, svc.StartAsync(ctx))
++	require.NoError(t, svc.AwaitRunning(ctx))
++	select {
++	case <-successDone:
++	case <-time.After(4 * time.Second):
++		t.Fatal("timed out waiting for compaction success status update")
++	}
++	svc.StopAsync()
++	require.NoError(t, svc.AwaitTerminated(ctx))
+ }
