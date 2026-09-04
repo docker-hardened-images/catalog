@@ -1,0 +1,202 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-grafana
+variant: runtime
+tags:
+  - 13.1.5
+  - 13.1.5-r0
+  - 13.1.5-debian13
+  - 13.1.5-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-23"
+  end-of-life: "2027-03-20"
+vars:
+  CARGO_VERSION: 1.97.1-0
+  COMMIT_SHA: 3f02f9bd21247756f3ddbdf0a0cb4393fd3149b1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-0
+  NODEJS_VERSION: 24.20.0-0
+  PACKAGE_NAME: grafana-13.1
+  PYTHON_VERSION: 3.13.15-1
+  REL: "0"
+  RUSTC_VERSION: 1.97.1-0
+  SEMVER_MAJOR_MINOR_VERSION: "13.1"
+  SEMVER_MAJOR_VERSION: "13"
+  SEMVER_VERSION: 13.1.5
+  VERSION: 13.1.5
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: grafana-13.1
+      work-dir: /go/src/github.com/grafana/grafana
+      caches:
+        - path: /usr/local/share/.cache/yarn
+        - path: /go/pkg/mod
+        - path: /root/.cargo
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates-bundle
+          - cargo-1.97=1.97.1-0
+          - chromium
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - gcc
+          - git
+          - golang-1.26=1.26.8-0
+          - golang-1.26-oci-config=1.26.8-0
+          - grep
+          - jq
+          - libc6
+          - libstdc++6
+          - make
+          - mawk
+          - node-corepack
+          - nodejs-24=24.20.0-0
+          - npm
+          - python-3.13=3.13.15-1
+          - python-3.13-dev=3.13.15-1
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - rustc-1.97=1.97.1-0
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/grafana/grafana.git#v13.1.5
+            checksum: 3f02f9bd21247756f3ddbdf0a0cb4393fd3149b1
+            path: /go/src/github.com/grafana/grafana
+            spdx:
+              name: grafana
+              version: 13.1.5
+              packages:
+                - name: grafana
+                  purl: pkg:dhi/grafana@13.1.5
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update version
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s/\"version\": \"[0-9]\+\.[0-9]\+\.[0-9]\+\"/\"version\": \"13.1.5\"/g" package.json
+        - name: update node-gyp
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            jq '.resolutions += { "node-gyp" : "^10.0.0" }' package.json > package.new.json
+            rm package.json
+            mv package.new.json package.json
+            yarn install
+        - name: build ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export NODE_OPTIONS=--max_old_space_size=8000
+            yarn install --immutable
+
+            export NODE_ENV=production
+            yarn build
+
+            mkdir -p "${target.dir}/usr/share/grafana/public/"
+            cp -r public/* "${target.dir}/usr/share/grafana/public/"
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.56.0
+              - google.golang.org/grpc@v1.83.1
+            download: true
+            replaces:
+              - go.opentelemetry.io/otel/log=go.opentelemetry.io/otel/log@v0.21.0
+              - go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog=go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
+              - github.com/go-openapi/testify/v2=github.com/go-openapi/testify/v2@v2.5.1
+              - github.com/go-openapi/testify/enable/yaml/v2=github.com/go-openapi/testify/enable/yaml/v2@v2.5.1
+            work-replaces:
+              - go.opentelemetry.io/otel/log=go.opentelemetry.io/otel/log@v0.21.0
+              - go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog=go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
+              - github.com/go-openapi/testify/v2=github.com/go-openapi/testify/v2@v2.5.1
+              - github.com/go-openapi/testify/enable/yaml/v2=github.com/go-openapi/testify/enable/yaml/v2@v2.5.1
+        - name: compile
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make build-go
+        - name: stage runtime binaries
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/grafana/bin/"
+            find ./bin -type f -name 'grafana*' -exec cp {} "${target.dir}/usr/share/grafana/bin/" \;
+        - name: compile dev
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            GO_BUILD_DEV=1 make build-go
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/grafana/bin-dev/"
+            find ./bin -type f -name 'grafana*' -exec cp {} "${target.dir}/usr/share/grafana/bin-dev/" \;
+
+            mkdir -p "${target.dir}/etc/grafana/"
+            cp conf/sample.ini "${target.dir}/etc/grafana/grafana.ini"
+            cp conf/ldap.toml "${target.dir}/etc/grafana/ldap.toml"
+
+            mkdir -p "${target.dir}/usr/share/grafana/conf/"
+            cp -r conf/* "${target.dir}/usr/share/grafana/conf/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - libstdc++6
+            description: Grafana
+            files:
+              - usr/share/grafana/bin
+              - usr/share/grafana/public
+              - usr/share/grafana/conf
+              - etc/grafana/grafana.ini
+              - etc/grafana/ldap.toml
+            formats:
+              - deb
+            license: AGPL-3.0
+            name: grafana-13.1
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/share/grafana/bin/grafana
+                    source: usr/share/grafana/bin-dev/grafana
+                name: grafana-13.1-dev
+            url: https://github.com/grafana/grafana
+            version: 13.1.5
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
