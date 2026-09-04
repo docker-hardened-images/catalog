@@ -1,0 +1,127 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-opentelemetry-javaagent
+variant: runtime
+tags:
+  - 2.31.1
+  - 2.31.1-r0
+  - 2.31.1-debian13
+  - 2.31.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-01-12"
+vars:
+  COMMIT_SHA: 8ad06a082e051f366f19c16ad95a7b68edf30afd
+  GRADLE_VERSION: 9.7.1-0
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.12.8-0
+  PACKAGE_HOME: /usr/share/opentelemetry-javaagent
+  PACKAGE_NAME: opentelemetry-javaagent
+  PLUGINS_JDK_MAJOR_VERSION: "17"
+  PLUGINS_JDK_VERSION: 17.0.20.8-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.31"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.31.1
+  VERSION: 2.31.1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: opentelemetry-javaagent
+      work-dir: ${source.dir}/opentelemetry-java-instrumentation
+      environment:
+        GRADLE_USER_HOME: /root/.gradle
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+      caches:
+        - path: /root/.gradle/caches
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - grep
+          - sed
+          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - eclipse-temurin-17-jdk=17.0.20.8-0
+          - gradle-9=9.7.1-0
+        files:
+          - url: git+https://github.com/open-telemetry/opentelemetry-java-instrumentation.git#v2.31.1
+            checksum: 8ad06a082e051f366f19c16ad95a7b68edf30afd
+            path: ${source.dir}/opentelemetry-java-instrumentation
+            spdx:
+              name: opentelemetry-javaagent
+              version: 2.31.1
+              packages:
+                - name: opentelemetry-javaagent
+                  purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.31.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            unset CI
+
+            gradle --init-script ${source.dir}/files/dhi-agent-deps.init.gradle \
+              :javaagent:assemble :javaagent:dhiCopyAgentDeps \
+              -Dorg.gradle.java.installations.auto-download=false \
+              -Dorg.gradle.java.installations.paths=/usr/lib/jvm/temurin-17,/usr/lib/jvm/temurin-21 \
+              --max-workers=4 \
+              --no-daemon \
+              --no-build-cache \
+              --no-configuration-cache \
+              --console=plain
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0644 \
+              "javaagent/build/libs/opentelemetry-javaagent-2.31.1.jar" \
+              "${target.dir}/usr/share/opentelemetry-javaagent/opentelemetry-javaagent.jar"
+
+            "/usr/lib/jvm/temurin-21/bin/java" \
+              -jar "${target.dir}/usr/share/opentelemetry-javaagent/opentelemetry-javaagent.jar" | grep -Fx "2.31.1"
+        - name: bundled dependency jars sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: opentelemetry-javaagent-deps
+            source: ${source.dir}/opentelemetry-java-instrumentation/javaagent/build/dhi-agent-deps
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenTelemetry Java instrumentation agent
+            files:
+              - usr/share/opentelemetry-javaagent
+            formats:
+              - deb
+            license: Apache-2.0
+            name: opentelemetry-javaagent
+            rel: 0
+            url: https://opentelemetry.io/docs/zero-code/java/agent/
+            version: 2.31.1
+      paths:
+        - type: file
+          path: ${source.dir}/files/dhi-agent-deps.init.gradle
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-javaagent/files/dhi-agent-deps.init.gradle
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
