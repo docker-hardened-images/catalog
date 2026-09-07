@@ -1,0 +1,30 @@
+## About Forklift OpenStack Populator
+
+[Forklift](https://github.com/kubev2v/forklift) migrates virtual machines from other platforms to KubeVirt. The
+OpenStack populator is the data-path component for OpenStack sources: the Forklift populator controller launches it as a
+Kubernetes volume populator pod, and it streams a Glance image from the source cloud straight into the
+PersistentVolumeClaim that will back the migrated virtual machine, publishing transfer progress on a TLS metrics
+endpoint while it runs.
+
+## About Docker Hardened Images
+
+Docker Hardened Images are built to meet the highest security and compliance standards. They provide a trusted
+foundation for containerized workloads by incorporating security best practices from the start.
+
+### Why use Docker Hardened Images?
+
+These images are published with near-zero known CVEs, include signed provenance, and come with a complete Software Bill
+of Materials (SBOM) and VEX metadata. They're designed to secure your software supply chain while fitting seamlessly
+into existing Docker workflows.
+
+## Trademarks
+
+KubeVirt™ is a trademark of the Linux Foundation. All rights in the mark are reserved to the Linux Foundation. Any use
+by Docker is for referential purposes only and does not indicate sponsorship, endorsement, or affiliation.
+
+Kubernetes® is a trademark of the Linux Foundation. All rights in the mark are reserved to the Linux Foundation. Any use
+by Docker is for referential purposes only and does not indicate sponsorship, endorsement, or affiliation.
+
+This listing is prepared by Docker. All third-party product names, logos, and trademarks are the property of their
+respective owners and are used solely for identification. Docker claims no interest in those marks, and no affiliation,
+sponsorship, or endorsement is implied.
