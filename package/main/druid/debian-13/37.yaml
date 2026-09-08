@@ -4,9 +4,9 @@ image: dhi.io/pkg-druid
 variant: runtime
 tags:
   - 37.0.0
-  - 37.0.0-r1
+  - 37.0.0-r4
   - 37.0.0-debian13
-  - 37.0.0-r1-debian13
+  - 37.0.0-r4-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -25,7 +25,7 @@ vars:
   NODEJS_VERSION: 24.20.0-0
   PACKAGE_HOME: /usr/share/druid
   PACKAGE_NAME: druid-37
-  REL: "1"
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "37.0"
   SEMVER_MAJOR_VERSION: "37"
   SEMVER_VERSION: 37.0.0
@@ -138,6 +138,11 @@ contents:
             downgrade: false
             mvn-root: ${source.dir}/druid
             properties: ${source.dir}/patch/mvn-properties-37.0.json
+        - name: bump vertx-core for CVE-2026-6860 and CVE-2026-1002
+          uses: git/patch@v1
+          work-dir: ${source.dir}/druid
+          with:
+            patch: ${source.dir}/patch/vertx-core-37.0.patch
         - name: prune unused extensions from build
           runs: |
             set -eux -o pipefail
@@ -289,7 +294,41 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-37
-            rel: 1
+            rel: 4
+            url: https://druid.apache.org/
+            version: 37.0.0
+        - name: fipsify
+          runs: |
+            set -eux -o pipefail
+
+            BC_CLASSPATH="/usr/lib/bouncycastle/bc-fips-2.1.2.jar:\
+            /usr/lib/bouncycastle/bctls-fips-2.1.23.jar:\
+            /usr/lib/bouncycastle/bcutil-fips-2.1.6.jar:\
+            /usr/lib/bouncycastle/bc-rng-jent-1.3.6.jar:\
+            /usr/lib/bouncycastle/bcpkix-fips-2.1.11.jar"
+
+            printf '%s\n' \
+              "-Xbootclasspath/a:${BC_CLASSPATH}" \
+              '--add-exports=java.base/sun.security.internal.spec=ALL-UNNAMED' \
+              '--add-exports=java.base/sun.security.provider=ALL-UNNAMED' \
+              '-Dorg.bouncycastle.fips.approved_only=true' \
+              '-Djavax.net.ssl.trustStore=/usr/lib/bouncycastle/cacerts.bcfks' \
+              '-Djavax.net.ssl.trustStoreType=BCFKS' \
+              '-Djavax.net.ssl.trustStorePassword=changeit' \
+              > "${target.dir}/usr/share/druid/conf/druid-fips.properties"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+            description: Apache Druid real-time analytics database (FIPS)
+            files:
+              - usr
+            formats:
+              - deb
+            license: Apache-2.0
+            name: druid-37-fips
+            rel: 4
             url: https://druid.apache.org/
             version: 37.0.0
       paths:
@@ -303,6 +342,11 @@ contents:
           uid: 0
           gid: 0
           source: package/main/druid/patch/mvn-deps-37.0.json
+        - type: file
+          path: ${source.dir}/patch/vertx-core-37.0.patch
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/vertx-core-37.0.patch
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
