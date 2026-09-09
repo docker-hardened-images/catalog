@@ -1,0 +1,56 @@
+# Subject: Backport the otelgrpc StatsHandler migration to Kubernetes 1.33
+#
+# Kubernetes 1.33 configures etcd tracing with otelgrpc's deprecated
+# UnaryClientInterceptor and StreamClientInterceptor APIs. Those APIs were
+# removed from newer otelgrpc releases selected after the CVE dependency
+# updates in the DHI build, causing kube-apiserver compilation to fail.
+#
+# Upstream source:
+# https://github.com/kubernetes/kubernetes/commit/7c0f968ab256486b524ea37014ccf580b12c73e4
+#
+# Upstream included this change after the 1.33 branch point. Kubernetes 1.34
+# and newer already use NewClientHandler and therefore do not need this patch.
+#
+# DHI modifications:
+# - Isolate the three upstream gRPC client changes from the larger dependency
+#   update commit so they apply cleanly to Kubernetes 1.33.13.
+# - No semantic changes were made to the upstream source changes.
+diff --git a/staging/src/k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go b/staging/src/k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go
+--- a/staging/src/k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go
++++ b/staging/src/k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go
+@@ -325,8 +325,7 @@ var newETCD3Client = func(c storagebackend.TransportConfig) (*kubernetes.Client,
+ 		// Even with Noop  TracerProvider, the otelgrpc still handles context propagation.
+ 		// See https://github.com/open-telemetry/opentelemetry-go/tree/main/example/passthrough
+ 		dialOptions = append(dialOptions,
+-			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor(tracingOpts...)),
+-			grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor(tracingOpts...)))
++			grpc.WithStatsHandler(otelgrpc.NewClientHandler(tracingOpts...)))
+ 	}
+ 	if egressDialer != nil {
+ 		dialer := func(ctx context.Context, addr string) (net.Conn, error) {
+diff --git a/staging/src/k8s.io/cri-client/pkg/remote_image.go b/staging/src/k8s.io/cri-client/pkg/remote_image.go
+--- a/staging/src/k8s.io/cri-client/pkg/remote_image.go
++++ b/staging/src/k8s.io/cri-client/pkg/remote_image.go
+@@ -72,8 +72,7 @@ func NewRemoteImageService(endpoint string, connectionTimeout time.Duration, tp
+ 		// Even if there is no TracerProvider, the otelgrpc still handles context propagation.
+ 		// See https://github.com/open-telemetry/opentelemetry-go/tree/main/example/passthrough
+ 		dialOpts = append(dialOpts,
+-			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor(tracingOpts...)),
+-			grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor(tracingOpts...)))
++			grpc.WithStatsHandler(otelgrpc.NewClientHandler(tracingOpts...)))
+ 	}
+ 
+ 	connParams := grpc.ConnectParams{
+diff --git a/staging/src/k8s.io/cri-client/pkg/remote_runtime.go b/staging/src/k8s.io/cri-client/pkg/remote_runtime.go
+--- a/staging/src/k8s.io/cri-client/pkg/remote_runtime.go
++++ b/staging/src/k8s.io/cri-client/pkg/remote_runtime.go
+@@ -104,8 +104,7 @@ func NewRemoteRuntimeService(endpoint string, connectionTimeout time.Duration, t
+ 		// Even if there is no TracerProvider, the otelgrpc still handles context propagation.
+ 		// See https://github.com/open-telemetry/opentelemetry-go/tree/main/example/passthrough
+ 		dialOpts = append(dialOpts,
+-			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor(tracingOpts...)),
+-			grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor(tracingOpts...)))
++			grpc.WithStatsHandler(otelgrpc.NewClientHandler(tracingOpts...)))
+ 	}
+ 
+ 	connParams := grpc.ConnectParams{
