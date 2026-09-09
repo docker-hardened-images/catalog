@@ -1,0 +1,206 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Forklift oVirt Populator 2.x
+image: dhi.io/ovirt-populator
+variant: runtime
+tags:
+  - "2"
+  - "2.12"
+  - 2.12.7
+  - 2-debian
+  - 2-debian13
+  - 2.12-debian
+  - 2.12-debian13
+  - 2.12.7-debian
+  - 2.12.7-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-24"
+vars:
+  FLAVORED_SUFFIX: ""
+  OVIRT_ENGINE_SDK_SDIST_CHECKSUM: sha256:9cf0242792b8910cb7b2decc3886db2ccfd779507e46ac1ce2a52573075fd3df
+  OVIRT_ENGINE_SDK_VERSION: 4.6.3
+  OVIRT_IMAGEIO_SDIST_CHECKSUM: sha256:7dbb735728c5a80a7cc39165d54f7504c250842ef714a1a7f928c47b7a873cff
+  OVIRT_IMAGEIO_VERSION: 2.5.1
+  PYCURL_SDIST_CHECKSUM: sha256:5e3cf357939da8d4ceefe3c7f305afcf9b47cba66cfd95e7768ca43b38445e14
+  PYCURL_VERSION: 7.47.0
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  SEMVER_MAJOR_MINOR_VERSION: "2.12"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.12.7
+  SUFFIX: ""
+  VERSION: 2.12.7-0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - libcurl4t64
+    - libpython-3.13-stdlib
+    - libxml2
+    - ovirt-populator=2.12.7-0
+    - python-3.13-minimal
+    - qemu-utils
+    - tzdata
+  builds:
+    - name: ovirt-img
+      work-dir: ${source.dir}
+      environment:
+        PYCURL_SSL_LIBRARY: openssl
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gcc
+          - libc6-dev
+          - libcurl4-openssl-dev
+          - libxml2-dev
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+        files:
+          - url: https://files.pythonhosted.org/packages/source/o/ovirt-imageio/ovirt_imageio-2.5.1.tar.gz
+            checksum: sha256:7dbb735728c5a80a7cc39165d54f7504c250842ef714a1a7f928c47b7a873cff
+            path: ${source.dir}/ovirt_imageio-2.5.1.tar.gz
+            spdx:
+              name: ovirt-imageio
+              version: 2.5.1
+              packages:
+                - name: ovirt-imageio
+                  purl: pkg:pypi/ovirt-imageio@2.5.1
+                  license: GPL-2.0-or-later
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/source/o/ovirt-engine-sdk-python/ovirt_engine_sdk_python-4.6.3.tar.gz
+            checksum: sha256:9cf0242792b8910cb7b2decc3886db2ccfd779507e46ac1ce2a52573075fd3df
+            path: ${source.dir}/ovirt_engine_sdk_python-4.6.3.tar.gz
+            spdx:
+              name: ovirt-engine-sdk-python
+              version: 4.6.3
+              packages:
+                - name: ovirt-engine-sdk-python
+                  purl: pkg:pypi/ovirt-engine-sdk-python@4.6.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/source/p/pycurl/pycurl-7.47.0.tar.gz
+            checksum: sha256:5e3cf357939da8d4ceefe3c7f305afcf9b47cba66cfd95e7768ca43b38445e14
+            path: ${source.dir}/pycurl-7.47.0.tar.gz
+            spdx:
+              name: pycurl
+              version: 7.47.0
+              packages:
+                - name: pycurl
+                  purl: pkg:pypi/pycurl@7.47.0
+                  license: LGPL-2.1-only OR MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install the ovirt-img stack
+          runs: |
+            set -eux -o pipefail
+
+            dist=${target.dir}/usr/lib/python3/dist-packages
+            mkdir -p "${dist}" ${target.dir}/usr/bin
+
+            python3 -m pip install \
+              --no-deps --no-index --no-build-isolation --no-compile \
+              --target "${dist}" \
+              ${source.dir}/pycurl-7.47.0.tar.gz \
+              ${source.dir}/ovirt_engine_sdk_python-4.6.3.tar.gz \
+              ${source.dir}/ovirt_imageio-2.5.1.tar.gz
+
+            {
+              printf '#!/usr/bin/python3\n'
+              tail -n +2 "${dist}/bin/ovirt-img"
+            } > ${target.dir}/usr/bin/ovirt-img
+            chmod 0755 ${target.dir}/usr/bin/ovirt-img
+            rm -rf "${dist}/bin" "${dist}/share"
+        - name: clean python bytecode caches and tests
+          runs: |
+            set -eux -o pipefail
+
+            dist=${target.dir}/usr/lib/python3/dist-packages
+            find "${dist}" -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf '{}' +
+            find "${dist}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+        - name: verify the extensions import and pycurl links OpenSSL
+          runs: |
+            set -eux -o pipefail
+
+            dist=${target.dir}/usr/lib/python3/dist-packages
+            export PYTHONPATH=${dist} PYTHONDONTWRITEBYTECODE=1
+            python3 -c 'import ovirtsdk4, ovirtsdk4.xml, ovirt_imageio.client, ovirt_imageio._internal.ioutil, pycurl; assert "OpenSSL" in pycurl.version, pycurl.version; print(pycurl.version)'
+            ${target.dir}/usr/bin/ovirt-img --version
+            test -z "$(find "${dist}" \( -type d -a \( -name test -o -name tests -o -name __pycache__ -o -name share \) \) -o \( -type f -a -name '*.pyc' \))"
+      outputs:
+        - source: ${target.dir}/usr/bin/ovirt-img
+          target: /usr/bin/ovirt-img
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/usr/lib/python3/dist-packages
+          target: /usr/lib/python3/dist-packages
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ovirt-imageio
+          target: /opt/docker/sbom/ovirt-imageio
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/ovirt-engine-sdk-python
+          target: /opt/docker/sbom/ovirt-engine-sdk-python
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/pycurl
+          target: /opt/docker/sbom/pycurl
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/ovirt-populator
+    uid: 0
+    gid: 0
+    source: /usr/bin/ovirt-populator
+  - type: symlink
+    path: /usr/local/bin/ovirt-img
+    uid: 0
+    gid: 0
+    source: /usr/bin/ovirt-img
+annotations:
+  org.opencontainers.image.description: A minimal Forklift oVirt Populator image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/ovirt-populator
+ports:
+  - 8443/tcp
