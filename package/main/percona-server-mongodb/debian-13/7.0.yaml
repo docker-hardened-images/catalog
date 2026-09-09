@@ -1,0 +1,299 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Percona Server for MongoDB 7.0.x
+image: dhi.io/pkg-percona-server-mongodb
+variant: runtime
+tags:
+  - "7.0"
+  - 7.0.40
+  - 7.0.40-r0
+  - 7.0-debian13
+  - 7.0.40-debian13
+  - 7.0.40-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 21a342dfee6468ad9350d156d25086da64dd03b1
+  DEB_ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-0
+  MONGO_TOOLS_VERSION: 100.18.0
+  MONGOSH_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  MONGOSH_VERSION: 2.10.0
+  PACKAGE_NAME: percona-server-mongodb-7.0
+  PSMDB_APT_REPO: https://repo.percona.com/psmdb-70/apt
+  PSMDB_DEB_POOL: https://repo.percona.com/psmdb-70/apt/pool/main/p/percona-server-mongodb
+  PSMDB_MONGOS_SHA256: '#{ target.arch == "amd64" ? definition.vars.PSMDB_MONGOS_SHA256_AMD64 : definition.vars.PSMDB_MONGOS_SHA256_ARM64 }'
+  PSMDB_MONGOS_SHA256_AMD64: 7a5fa3907085bc538fa85ff959370718976f707876e7f484fd28b26e27ce0c0d
+  PSMDB_MONGOS_SHA256_ARM64: a6877fcfe30b8e985a4214dab6d478292f4a056e2a5137f4d6ca654188eac6f5
+  PSMDB_SERVER_SHA256: '#{ target.arch == "amd64" ? definition.vars.PSMDB_SERVER_SHA256_AMD64 : definition.vars.PSMDB_SERVER_SHA256_ARM64 }'
+  PSMDB_SERVER_SHA256_AMD64: 78ccd48cf895fb2781a668a9ffb4a942dc6b19d2a4314e7ec09a27f2ae28dea6
+  PSMDB_SERVER_SHA256_ARM64: 988de7171995a9e542daeaa18a77c1df08bd2e8560252de2c50aa584f32cb67f
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "7.0"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.0.40
+  VERSION: 7.0.40-22
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: percona-server-mongodb
+      work-dir: /go/src/github.com/mongodb/mongo-tools
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - ca-certificates-bundle
+          - coreutils
+          - dpkg
+          - gcc
+          - golang-1.26=1.26.8-0
+          - golang-1.26-oci-config=1.26.8-0
+          - gpg
+          - gpg-agent
+          - gzip
+          - libc6-dev
+          - libkrb5-dev
+          - tar
+        files:
+          - url: https://repo.percona.com/psmdb-70/apt/pool/main/p/percona-server-mongodb/percona-server-mongodb-server_7.0.40-22.noble_${DEB_ARCH}.deb
+            checksum: sha256:${PSMDB_SERVER_SHA256}
+            path: ${source.dir}/psmdb-server.deb
+            spdx:
+              name: percona-server-mongodb
+              version: 7.0.40-22
+              packages:
+                - name: percona-server-mongodb
+                  purl: pkg:github/percona/percona-server-mongodb@7.0.40-22
+                  license: SSPL-1.0
+            uid: 0
+            gid: 0
+          - url: https://repo.percona.com/psmdb-70/apt/pool/main/p/percona-server-mongodb/percona-server-mongodb-mongos_7.0.40-22.noble_${DEB_ARCH}.deb
+            checksum: sha256:${PSMDB_MONGOS_SHA256}
+            path: ${source.dir}/psmdb-mongos.deb
+            uid: 0
+            gid: 0
+          - url: https://pgp.mongodb.com/mongosh.asc
+            path: ${source.dir}/keys/mongosh.asc
+            uid: 0
+            gid: 0
+          - url: https://downloads.mongodb.com/compass/mongosh-2.10.0-linux-${MONGOSH_ARCH}-openssl3.tgz
+            path: ${source.dir}/mongosh.tgz
+            spdx:
+              name: mongosh
+              version: 2.10.0
+              packages:
+                - name: mongosh
+                  purl: pkg:npm/mongosh@2.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://downloads.mongodb.com/compass/mongosh-2.10.0-linux-${MONGOSH_ARCH}-openssl3.tgz.sig
+            path: ${source.dir}/mongosh.tgz.sig
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/mongodb/mongo-tools.git#100.18.0
+            checksum: 21a342dfee6468ad9350d156d25086da64dd03b1
+            path: /go/src/github.com/mongodb/mongo-tools
+            spdx:
+              name: mongo-tools
+              version: 100.18.0
+              packages:
+                - name: mongo-tools
+                  purl: pkg:golang/github.com/mongodb/mongo-tools@100.18.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install percona server
+          runs: |
+            set -eux -o pipefail
+
+            dpkg-deb -x "${source.dir}/psmdb-server.deb" "${source.dir}/psmdb-server"
+            dpkg-deb -x "${source.dir}/psmdb-mongos.deb" "${source.dir}/psmdb-mongos"
+            for bin in mongod mongobridge perconadecrypt; do
+              install -D -m 0755 "${source.dir}/psmdb-server/usr/bin/${bin}" "${target.dir}/usr/bin/${bin}"
+            done
+            install -D -m 0755 "${source.dir}/psmdb-mongos/usr/bin/mongos" "${target.dir}/usr/bin/mongos"
+        - name: verify mongosh GPG
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/mongosh.tgz
+            keys: ${source.dir}/keys/mongosh.asc
+            signature: ${source.dir}/mongosh.tgz.sig
+        - name: install mongosh
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf "${source.dir}/mongosh.tgz" -C "${source.dir}"
+            install -D -m 0755 \
+              "${source.dir}/mongosh-2.10.0-linux-${MONGOSH_ARCH}-openssl3/bin/mongosh" \
+              "${target.dir}/usr/bin/mongosh"
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.56.0
+              - golang.org/x/net@v0.57.0
+              - github.com/klauspost/compress@v1.18.7
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test ./common/json/... ./common/bsonutil/... ./common/util/... -count=1
+        - name: build bsondump
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/bsondump
+            packages: ./bsondump/main
+            tags: gssapi
+        - name: build mongodump
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongodump
+            packages: ./mongodump/main
+            tags: gssapi
+        - name: build mongoexport
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongoexport
+            packages: ./mongoexport/main
+            tags: gssapi
+        - name: build mongofiles
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongofiles
+            packages: ./mongofiles/main
+            tags: gssapi
+        - name: build mongoimport
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongoimport
+            packages: ./mongoimport/main
+            tags: gssapi
+        - name: build mongorestore
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongorestore
+            packages: ./mongorestore/main
+            tags: gssapi
+        - name: build mongostat
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongostat
+            packages: ./mongostat/main
+            tags: gssapi
+        - name: build mongotop
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            ldflags:
+              - -X main.VersionStr=100.18.0
+              - -X main.GitCommit=21a342dfee6468ad9350d156d25086da64dd03b1
+            output: ${target.dir}/usr/bin/mongotop
+            packages: ./mongotop/main
+            tags: gssapi
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+              - libcurl4t64
+              - libgssapi-krb5-2
+              - libldap2
+              - libsasl2-2
+              - libssl3t64
+            description: Percona Server for MongoDB database server
+            files:
+              - usr/bin/mongod
+              - usr/bin/perconadecrypt
+            formats:
+              - deb
+            license: SSPL-1.0
+            name: percona-server-mongodb-7.0
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                  - libcurl4t64
+                  - libgssapi-krb5-2
+                  - libldap2
+                  - libsasl2-2
+                  - libssl3t64
+                description: Percona Server for MongoDB sharded cluster query router
+                files:
+                  - path: usr/bin/mongos
+                name: percona-server-mongodb-7.0-mongos
+              - depends:
+                  - libsasl2-2
+                  - libssl3t64
+                description: Percona Server for MongoDB network bridge for testing
+                files:
+                  - path: usr/bin/mongobridge
+                name: percona-server-mongodb-7.0-mongobridge
+              - depends:
+                  - libssl3t64
+                  - zlib1g
+                description: MongoDB Shell (mongosh)
+                files:
+                  - path: usr/bin/mongosh
+                name: percona-server-mongodb-7.0-mongosh
+              - depends:
+                  - ca-certificates-bundle
+                  - libgssapi-krb5-2
+                  - libkrb5-3
+                description: MongoDB database tools
+                files:
+                  - path: usr/bin/bsondump
+                  - path: usr/bin/mongodump
+                  - path: usr/bin/mongoexport
+                  - path: usr/bin/mongofiles
+                  - path: usr/bin/mongoimport
+                  - path: usr/bin/mongorestore
+                  - path: usr/bin/mongostat
+                  - path: usr/bin/mongotop
+                name: percona-server-mongodb-7.0-tools
+            url: https://www.percona.com/mongodb/software/percona-server-for-mongodb
+            version: 7.0.40-22
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
