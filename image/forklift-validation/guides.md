@@ -44,7 +44,7 @@ docker run --rm -p 8181:8181 \
   -e TLS_CERT_FILE=/certs/tls.crt \
   -e TLS_KEY_FILE=/certs/tls.key \
   -e CA_TLS_CERTIFICATE=/certs/ca.crt \
-  dhi.io/forklift-validation:2.12.1-alpine3.24
+  dhi.io/forklift-validation:2.12.1
 ```
 
 Query a policy directly:
@@ -65,16 +65,17 @@ docker run --rm -p 8181:8181 \
   -v /path/to/certs:/certs:ro \
   -e TLS_CERT_FILE=/certs/tls.crt \
   -e TLS_KEY_FILE=/certs/tls.key \
-  dhi.io/forklift-validation:2.12.1-alpine3.24-fips
+  dhi.io/forklift-validation:2.12.1-fips
 ```
 
 ### Development variant
 
-The `-dev` tag adds an APK package manager and runs as root for interactive debugging. Runtime and FIPS variants include
-a minimal shell only so `/usr/bin/entrypoint.sh` can start; use `-dev` for shells, `apk`, and troubleshooting.
+The `-dev` tag adds a package manager (`apt` on Debian, `apk` on Alpine) and runs as root for interactive debugging.
+Runtime and FIPS variants include a minimal shell only so `/usr/bin/entrypoint.sh` can start; use `-dev` for shells,
+package installs, and troubleshooting.
 
 ```sh
-docker run --rm -it --entrypoint /bin/sh dhi.io/forklift-validation:2.12.1-alpine3.24-dev
+docker run --rm -it --entrypoint /bin/sh dhi.io/forklift-validation:2.12.1-dev
 ```
 
 ## Image variants
@@ -185,8 +186,8 @@ the host. For example, `docker run -p 80:8080 my-image` will work because the po
 ### No shell
 
 By default, image variants intended for runtime don't include an interactive shell or package manager. Runtime and FIPS
-variants ship a minimal shell only so `/usr/bin/entrypoint.sh` can run. Use `dev` images for interactive shells and
-`apk`, or Docker Debug to debug running containers.
+variants ship a minimal shell only so `/usr/bin/entrypoint.sh` can run. Use `dev` images for interactive shells and the
+package manager, or Docker Debug to debug running containers.
 
 ### Entry point
 
