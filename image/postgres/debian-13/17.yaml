@@ -19,8 +19,14 @@ dates:
 vars:
   MAJOR_VERSION: "17"
   MINOR_VERSION: "11"
+  PACKAGE_NAME: postgresql-17
   PGDATA: /var/lib/postgresql/17/data
+  VERSION: 17.11-1
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!libelogind0'
     - '!mawk'
@@ -30,131 +36,60 @@ contents:
     - ca-certificates
     - coreutils
     - less
+    - libcurl4t64
     - libgssapi-krb5-2
     - libicu76
     - libldap2
     - liblz4-1
+    - libnuma1
     - libpam0g
     - libreadline8t64
     - libselinux1
     - libssl3t64
+    - liburing2
     - libuuid1
     - libxml2
     - libxslt1.1
     - libzstd1
     - llvm
     - locales
+    - postgresql-17=17.11-1
     - tzdata
     - zlib1g
   builds:
-    - name: postgres
+    - name: legacy /opt/postgresql layout
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
-          - autoconf
-          - automake
           - bash
-          - bison
-          - build-essential
-          - clang
           - coreutils
-          - flex
-          - grep
-          - libcurl4-openssl-dev
-          - libgss-dev
-          - libicu-dev
-          - libldap2-dev
-          - liblz4-dev
-          - libnuma-dev
-          - libpam0g-dev
-          - libreadline-dev
-          - libselinux1-dev
-          - libssl-dev
-          - liburing-dev
-          - libxml2-dev
-          - libxslt1-dev
-          - libzstd-dev
-          - llvm-dev
-          - lz4
-          - pkgconf
-          - sed
-          - tzdata
-          - uuid-dev
-          - zlib1g-dev
-          - zstd
-        files:
-          - url: https://ftp.postgresql.org/pub/source/v17.11/postgresql-17.11.tar.gz
-            checksum: https://ftp.postgresql.org/pub/source/v17.11/postgresql-17.11.tar.gz.sha256
-            path: ${source.dir}/
-            spdx:
-              name: postgresql
-              version: "17.11"
-              packages:
-                - name: postgresql
-                  purl: pkg:dhi/postgresql@17.11
-                  license: PostgreSQL
-            uid: 0
-            gid: 0
+          - postgresql-17=17.11-1
       pipeline:
-        - name: patch source
-          uses: patch@v1
-          work-dir: ${source.dir}/postgresql-17.11
-          with:
-            options: -p1
-            patches:
-              - ${source.dir}/patch/initdb.patch
-              - ${source.dir}/patch/pager-less.patch
-        - name: build and install
-          work-dir: ${source.dir}/postgresql-17.11
-          runs: |
+        - runs: |
             set -eux -o pipefail
 
-            ./configure \
-              --prefix='/opt/postgresql/17' \
-              --with-gssapi \
-              --with-icu \
-              --with-ldap \
-              --with-libcurl \
-              --with-libnuma \
-              --with-liburing \
-              --with-libxml \
-              --with-libxslt \
-              --with-llvm \
-              --with-lz4 \
-              --with-pam \
-              --with-selinux \
-              --with-ssl=openssl \
-              --with-uuid=e2fs \
-              --with-zstd \
-              --with-system-tzdata=/usr/share/zoneinfo
+            mkdir -p "/opt/postgresql/17/bin"
 
-            make world-bin -j"$(nproc)"
+            for item in "/usr/lib/postgresql/17/"*; do
+              [ -e "${item}" ] || continue
+              name="$(basename "${item}")"
+              ln -sfn "${item}" "/opt/postgresql/17/${name}"
+            done
 
-            make install-world-bin DESTDIR='${target.dir}'
-        - name: configure defaults
-          work-dir: ${target.dir}/opt/postgresql/17/share
-          runs: |
-            set -eux -o pipefail
-
-            sed -E -i postgresql.conf.sample \
-              -e "s|^#?(listen_addresses)\s*=\s*\S+.*|\1 = '*'|"
-      paths:
-        - type: file
-          path: ${source.dir}/patch/initdb.patch
-          uid: 0
-          gid: 0
-          source: image/postgres/patch/initdb.patch
-        - type: file
-          path: ${source.dir}/patch/pager-less.patch
-          uid: 0
-          gid: 0
-          source: image/postgres/patch/pager-less.patch
+            while IFS= read -r path; do
+              case "${path}" in
+                /usr/bin/*)
+                  [ -e "${path}" ] || continue
+                  ln -sfn "${path}" "/opt/postgresql/17/bin/$(basename "${path}")"
+                  ;;
+              esac
+            done < "/var/lib/dpkg/info/postgresql-17.list"
       outputs:
-        - source: ${target.dir}/opt/postgresql/17
-          target: /opt/postgresql/17
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/postgresql
-          target: /opt/docker/sbom/postgresql
+        - source: /opt/postgresql
+          target: /opt/postgresql
           uid: 0
           gid: 0
     - name: locale
