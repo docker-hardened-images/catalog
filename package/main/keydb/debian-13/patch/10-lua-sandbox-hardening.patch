@@ -1,0 +1,680 @@
+Lua sandbox hardening: readonly tables, protected globals, eval function in registry, stack cleanup
+
+Redis 6.2.7 fixed two Lua sandbox weaknesses. CVE-2022-24736: a script could
+crash the server via an assert reached by passing thousands of arguments to
+redis.call (Lua stack exhausted; fixed by popping the call arguments before the
+reply is pushed). CVE-2022-24735: a script could inject Lua code that ran at
+compile time and override the wrapped f_<sha> global of another script; fixed by
+loading the user chunk directly and storing it in the Lua registry, making the
+global table and every table reachable from it readonly (new
+lua_enablereadonlytable API), installing an allow list for globals created
+during initialisation and an __index error metatable for unknown globals, while
+keeping print available to avoid a breaking change.
+
+Tracker: CVE-2022-24736 CVE-2022-24735
+Upstream patch: https://github.com/redis/redis/commit/13c1e1f2986adcd8788f464a1931cdfe744f15f9
+Upstream patch: https://github.com/redis/redis/commit/21414ad4802659eeb3e81d20d86b437d3ab882dc
+Upstream patch: https://github.com/redis/redis/commit/b2ce3719afe5440b010ab3f12d9ad35b79cee55a
+Upstream patch: https://github.com/redis/redis/commit/11b602fbf8f9cdf8fc741c24625ab6287ab998a9
+Upstream patch: https://github.com/redis/redis/commit/afb48c6cc971c82f271cf1472638e1e75e09fd56
+Upstream patch: https://github.com/redis/redis/commit/93c1d31d97a995cd07a2c235b7a4e177f3c752cc
+Adaptation: src/scripting.c hunks re-targeted to KeyDB's src/scripting.cpp (C++17):
+ allow-list arrays declared const char * / const char ** and iterated with
+ const char *** (string literals are not char* in C++); luaL_loadbuffer takes
+ (const char*)ptrFromObj(body) instead of body->ptr; g_pserver-> instead of
+ server.; KeyDB's per-thread lua_client setup block left untouched. "keydb" added
+ to redis_api_allow_list because KeyDB aliases the redis table as a second
+ global (lua_setglobal(lua,"keydb")) that the upstream list does not know.
+ "__redis__compare_helper" added to the same list: KeyDB still defines and uses
+ it in luaSortArray, and upstream 6.2.7 shipped a startup warning for this very
+ global (removed as dead code only in 6.2.8, redis/redis#10701). The unrelated
+ 6.2.7 hunk adding the min-replicas-to-write check (redis 34505d26f) is not part
+ of this series and was not ported. deps/lua/src/* and tests/unit/scripting.tcl
+ hunks apply verbatim (KeyDB's copies are identical to Redis 6.2.6).
+
+diff --git a/deps/lua/src/lapi.c b/deps/lua/src/lapi.c
+index 5d5145d..e8ef41e 100644
+--- a/deps/lua/src/lapi.c
++++ b/deps/lua/src/lapi.c
+@@ -674,6 +674,8 @@ LUA_API void lua_rawset (lua_State *L, int idx) {
+   api_checknelems(L, 2);
+   t = index2adr(L, idx);
+   api_check(L, ttistable(t));
++  if (hvalue(t)->readonly)
++    luaG_runerror(L, "Attempt to modify a readonly table");
+   setobj2t(L, luaH_set(L, hvalue(t), L->top-2), L->top-1);
+   luaC_barriert(L, hvalue(t), L->top-1);
+   L->top -= 2;
+@@ -687,6 +689,8 @@ LUA_API void lua_rawseti (lua_State *L, int idx, int n) {
+   api_checknelems(L, 1);
+   o = index2adr(L, idx);
+   api_check(L, ttistable(o));
++  if (hvalue(o)->readonly)
++    luaG_runerror(L, "Attempt to modify a readonly table");
+   setobj2t(L, luaH_setnum(L, hvalue(o), n), L->top-1);
+   luaC_barriert(L, hvalue(o), L->top-1);
+   L->top--;
+@@ -709,6 +713,8 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
+   }
+   switch (ttype(obj)) {
+     case LUA_TTABLE: {
++      if (hvalue(obj)->readonly)
++        luaG_runerror(L, "Attempt to modify a readonly table");
+       hvalue(obj)->metatable = mt;
+       if (mt)
+         luaC_objbarriert(L, hvalue(obj), mt);
+@@ -1085,3 +1091,19 @@ LUA_API const char *lua_setupvalue (lua_State *L, int funcindex, int n) {
+   return name;
+ }
+ 
++LUA_API void lua_enablereadonlytable (lua_State *L, int objindex, int enabled) {
++  const TValue* o = index2adr(L, objindex);
++  api_check(L, ttistable(o));
++  Table* t = hvalue(o);
++  api_check(L, t != hvalue(registry(L)));
++  t->readonly = enabled;
++}
++
++LUA_API int lua_isreadonlytable (lua_State *L, int objindex) {
++    const TValue* o = index2adr(L, objindex);
++  api_check(L, ttistable(o));
++  Table* t = hvalue(o);
++  api_check(L, t != hvalue(registry(L)));
++  return t->readonly;
++}
++
+diff --git a/deps/lua/src/ldebug.c b/deps/lua/src/ldebug.c
+index 50ad3d3..4940e65 100644
+--- a/deps/lua/src/ldebug.c
++++ b/deps/lua/src/ldebug.c
+@@ -80,7 +80,6 @@ LUA_API int lua_gethookcount (lua_State *L) {
+   return L->basehookcount;
+ }
+ 
+-
+ LUA_API int lua_getstack (lua_State *L, int level, lua_Debug *ar) {
+   int status;
+   CallInfo *ci;
+diff --git a/deps/lua/src/lobject.h b/deps/lua/src/lobject.h
+index f1e447e..10e46b1 100644
+--- a/deps/lua/src/lobject.h
++++ b/deps/lua/src/lobject.h
+@@ -337,7 +337,8 @@ typedef struct Node {
+ 
+ typedef struct Table {
+   CommonHeader;
+-  lu_byte flags;  /* 1<<p means tagmethod(p) is not present */ 
++  lu_byte flags;  /* 1<<p means tagmethod(p) is not present */
++  int readonly;
+   lu_byte lsizenode;  /* log2 of size of `node' array */
+   struct Table *metatable;
+   TValue *array;  /* array part */
+diff --git a/deps/lua/src/ltable.c b/deps/lua/src/ltable.c
+index ec84f4f..f75fe19 100644
+--- a/deps/lua/src/ltable.c
++++ b/deps/lua/src/ltable.c
+@@ -364,6 +364,7 @@ Table *luaH_new (lua_State *L, int narray, int nhash) {
+   t->array = NULL;
+   t->sizearray = 0;
+   t->lsizenode = 0;
++  t->readonly = 0;
+   t->node = cast(Node *, dummynode);
+   setarrayvector(L, t, narray);
+   setnodevector(L, t, nhash);
+diff --git a/deps/lua/src/lua.h b/deps/lua/src/lua.h
+index a4b73e7..223bd99 100644
+--- a/deps/lua/src/lua.h
++++ b/deps/lua/src/lua.h
+@@ -358,6 +358,9 @@ struct lua_Debug {
+   int i_ci;  /* active function */
+ };
+ 
++LUA_API void lua_enablereadonlytable (lua_State *L, int index, int enabled);
++LUA_API int lua_isreadonlytable (lua_State *L, int objindex);
++
+ /* }====================================================================== */
+ 
+ 
+diff --git a/deps/lua/src/lvm.c b/deps/lua/src/lvm.c
+index e0a0cd8..5cd313b 100644
+--- a/deps/lua/src/lvm.c
++++ b/deps/lua/src/lvm.c
+@@ -138,6 +138,8 @@ void luaV_settable (lua_State *L, const TValue *t, TValue *key, StkId val) {
+     const TValue *tm;
+     if (ttistable(t)) {  /* `t' is a table? */
+       Table *h = hvalue(t);
++      if (h->readonly)
++        luaG_runerror(L, "Attempt to modify a readonly table");
+       TValue *oldval = luaH_set(L, h, key); /* do a primitive set */
+       if (!ttisnil(oldval) ||  /* result is no nil? */
+           (tm = fasttm(L, h->metatable, TM_NEWINDEX)) == NULL) { /* or no TM? */
+diff --git a/src/scripting.cpp b/src/scripting.cpp
+index f1772cd..6d2402f 100644
+--- a/src/scripting.cpp
++++ b/src/scripting.cpp
+@@ -42,6 +42,99 @@ extern "C" {
+ #include <math.h>
+ #include <mutex>
+ 
++/* Globals that are added by the Lua libraries */
++static const char *libraries_allow_list[] = {
++    "string",
++    "cjson",
++    "bit",
++    "cmsgpack",
++    "math",
++    "table",
++    "struct",
++    NULL,
++};
++
++/* Redis Lua API globals */
++static const char *redis_api_allow_list[] = {
++    "redis",
++    "keydb",
++    "__redis__err__handler", /* error handler for eval, currently located on globals.
++                                Should move to registry. */
++    "__redis__compare_helper", /* sort fallback comparator used by luaSortArray. */
++    NULL,
++};
++
++/* Lua builtins */
++static const char *lua_builtins_allow_list[] = {
++    "xpcall",
++    "tostring",
++    "getfenv",
++    "setmetatable",
++    "next",
++    "assert",
++    "tonumber",
++    "rawequal",
++    "collectgarbage",
++    "getmetatable",
++    "rawset",
++    "pcall",
++    "coroutine",
++    "type",
++    "_G",
++    "select",
++    "unpack",
++    "gcinfo",
++    "pairs",
++    "rawget",
++    "loadstring",
++    "ipairs",
++    "_VERSION",
++    "setfenv",
++    "load",
++    "error",
++    "print", /* should be blocked, but kept in old releases to avoid breaking change. */
++    NULL,
++};
++
++/* Lua builtins which are not documented on the Lua documentation */
++static const char *lua_builtins_not_documented_allow_list[] = {
++    "newproxy",
++    NULL,
++};
++
++/* Lua builtins which are allowed on initialization but will be removed right after */
++static const char *lua_builtins_removed_after_initialization_allow_list[] = {
++    "debug", /* debug will be set to nil after the error handler will be created */
++    NULL,
++};
++
++/* Those allow lists was created from the globals that was
++ * available to the user when the allow lists was first introduce.
++ * Because we do not want to break backward compatibility we keep
++ * all the globals. The allow lists will prevent us from accidentally
++ * creating unwanted globals in the future.
++ *
++ * Also notice that the allow list is only checked on start time,
++ * after that the global table is locked so not need to check anything.*/
++static const char **allow_lists[] = {
++    libraries_allow_list,
++    redis_api_allow_list,
++    lua_builtins_allow_list,
++    lua_builtins_not_documented_allow_list,
++    lua_builtins_removed_after_initialization_allow_list,
++    NULL,
++};
++
++/* Deny list contains elements which we know we do not want to add to globals
++ * and there is no need to print a warning message form them. We will print a
++ * log message only if an element was added to the globals and the element is
++ * not on the allow list nor on the back list. */
++static const char *deny_list[] = {
++    "dofile",
++    "loadfile",
++    NULL,
++};
++
+ char *redisProtocolToLuaType_Int(lua_State *lua, char *reply);
+ char *redisProtocolToLuaType_Bulk(lua_State *lua, char *reply);
+ char *redisProtocolToLuaType_Status(lua_State *lua, char *reply);
+@@ -601,6 +694,10 @@ int luaRedisGenericCommand(lua_State *lua, int raise_error) {
+         return raise_error ? luaRaiseError(lua) : 1;
+     }
+ 
++    /* Pop all arguments from the stack, we do not need them anymore
++     * and this way we guaranty we will have room on the stack for the result. */
++    lua_pop(lua, argc);
++
+     /* Setup our fake client for command execution */
+     c->argv = argv;
+     c->argc = argc;
+@@ -1086,52 +1183,120 @@ void luaLoadLibraries(lua_State *lua) {
+ #endif
+ }
+ 
+-/* Remove a functions that we don't want to expose to the Redis scripting
+- * environment. */
+-void luaRemoveUnsupportedFunctions(lua_State *lua) {
+-    lua_pushnil(lua);
+-    lua_setglobal(lua,"loadfile");
+-    lua_pushnil(lua);
+-    lua_setglobal(lua,"dofile");
++static int luaProtectedTableError(lua_State *lua) {
++    int argc = lua_gettop(lua);
++    if (argc != 2) {
++        serverLog(LL_WARNING, "malicious code trying to call luaProtectedTableError with wrong arguments");
++        luaL_error(lua, "Wrong number of arguments to luaProtectedTableError");
++    }
++    if (!lua_isstring(lua, -1) && !lua_isnumber(lua, -1)) {
++        luaL_error(lua, "Second argument to luaProtectedTableError must be a string or number");
++    }
++    const char *variable_name = lua_tostring(lua, -1);
++    luaL_error(lua, "Script attempted to access nonexistent global variable '%s'", variable_name);
++    return 0;
+ }
+ 
+-/* This function installs metamethods in the global table _G that prevent
+- * the creation of globals accidentally.
++/* Set a special metatable on the table on the top of the stack.
++ * The metatable will raise an error if the user tries to fetch
++ * an un-existing value.
+  *
+- * It should be the last to be called in the scripting engine initialization
+- * sequence, because it may interact with creation of globals. */
+-void scriptingEnableGlobalsProtection(lua_State *lua) {
+-    const char *s[32];
+-    sds code = sdsempty();
+-    int j = 0;
++ * The function assumes the Lua stack have a least enough
++ * space to push 2 element, its up to the caller to verify
++ * this before calling this function. */
++void luaSetErrorMetatable(lua_State *lua) {
++    lua_newtable(lua); /* push metatable */
++    lua_pushcfunction(lua, luaProtectedTableError); /* push get error handler */
++    lua_setfield(lua, -2, "__index");
++    lua_setmetatable(lua, -2);
++}
++
++/* Set the readonly flag on the table located on the top of the stack
++ * and recursively call this function on each table located on the original
++ * table.  Also, recursively call this function on the metatables.*/
++void luaSetTableProtectionRecursively(lua_State *lua) {
++    /* This protect us from a loop in case we already visited the table
++     * For example, globals has '_G' key which is pointing back to globals. */
++    if (lua_isreadonlytable(lua, -1)) {
++        return;
++    }
+ 
+-    /* strict.lua from: http://metalua.luaforge.net/src/lib/strict.lua.html.
+-     * Modified to be adapted to Redis. */
+-    s[j++]="local dbg=debug\n";
+-    s[j++]="local mt = {}\n";
+-    s[j++]="setmetatable(_G, mt)\n";
+-    s[j++]="mt.__newindex = function (t, n, v)\n";
+-    s[j++]="  if dbg.getinfo(2) then\n";
+-    s[j++]="    local w = dbg.getinfo(2, \"S\").what\n";
+-    s[j++]="    if w ~= \"main\" and w ~= \"C\" then\n";
+-    s[j++]="      error(\"Script attempted to create global variable '\"..tostring(n)..\"'\", 2)\n";
+-    s[j++]="    end\n";
+-    s[j++]="  end\n";
+-    s[j++]="  rawset(t, n, v)\n";
+-    s[j++]="end\n";
+-    s[j++]="mt.__index = function (t, n)\n";
+-    s[j++]="  if dbg.getinfo(2) and dbg.getinfo(2, \"S\").what ~= \"C\" then\n";
+-    s[j++]="    error(\"Script attempted to access nonexistent global variable '\"..tostring(n)..\"'\", 2)\n";
+-    s[j++]="  end\n";
+-    s[j++]="  return rawget(t, n)\n";
+-    s[j++]="end\n";
+-    s[j++]="debug = nil\n";
+-    s[j++]=NULL;
+-
+-    for (j = 0; s[j] != NULL; j++) code = sdscatlen(code,s[j],strlen(s[j]));
+-    luaL_loadbuffer(lua,code,sdslen(code),"@enable_strict_lua");
+-    lua_pcall(lua,0,0,0);
+-    sdsfree(code);
++    /* protect the current table */
++    lua_enablereadonlytable(lua, -1, 1);
++
++    lua_checkstack(lua, 2);
++    lua_pushnil(lua); /* Use nil to start iteration. */
++    while (lua_next(lua,-2)) {
++        /* Stack now: table, key, value */
++        if (lua_istable(lua, -1)) {
++            luaSetTableProtectionRecursively(lua);
++        }
++        lua_pop(lua, 1);
++    }
++
++    /* protect the metatable if exists */
++    if (lua_getmetatable(lua, -1)) {
++        luaSetTableProtectionRecursively(lua);
++        lua_pop(lua, 1); /* pop the metatable */
++    }
++}
++
++static int luaNewIndexAllowList(lua_State *lua) {
++    int argc = lua_gettop(lua);
++    if (argc != 3) {
++        serverLog(LL_WARNING, "malicious code trying to call luaNewIndexAllowList with wrong arguments");
++        luaL_error(lua, "Wrong number of arguments to luaNewIndexAllowList");
++    }
++    if (!lua_istable(lua, -3)) {
++        luaL_error(lua, "first argument to luaNewIndexAllowList must be a table");
++    }
++    if (!lua_isstring(lua, -2) && !lua_isnumber(lua, -2)) {
++        luaL_error(lua, "Second argument to luaNewIndexAllowList must be a string or number");
++    }
++    const char *variable_name = lua_tostring(lua, -2);
++    /* check if the key is in our allow list */
++
++    const char ***allow_l = allow_lists;
++    for (; *allow_l ; ++allow_l){
++        const char **c = *allow_l;
++        for (; *c ; ++c) {
++            if (strcmp(*c, variable_name) == 0) {
++                break;
++            }
++        }
++        if (*c) {
++            break;
++        }
++    }
++    if (!*allow_l) {
++        /* Search the value on the back list, if its there we know that it was removed
++         * on purpose and there is no need to print a warning. */
++        const char **c = deny_list;
++        for ( ; *c ; ++c) {
++            if (strcmp(*c, variable_name) == 0) {
++                break;
++            }
++        }
++        if (!*c) {
++            serverLog(LL_WARNING, "A key '%s' was added to Lua globals which is not on the globals allow list nor listed on the deny list.", variable_name);
++        }
++    } else {
++        lua_rawset(lua, -3);
++    }
++    return 0;
++}
++
++/* Set a metatable with '__newindex' function that verify that
++ * the new index appears on our globals while list.
++ *
++ * The metatable is set on the table which located on the top
++ * of the stack.
++ */
++void luaSetAllowListProtection(lua_State *lua) {
++    lua_newtable(lua); /* push metatable */
++    lua_pushcfunction(lua, luaNewIndexAllowList); /* push get error handler */
++    lua_setfield(lua, -2, "__newindex");
++    lua_setmetatable(lua, -2);
+ }
+ 
+ /* Initialize the scripting environment.
+@@ -1161,8 +1326,11 @@ void scriptingInit(int setup) {
+         ldbInit();
+     }
+ 
++    lua_pushvalue(lua, LUA_GLOBALSINDEX);
++    luaSetAllowListProtection(lua);
++    lua_pop(lua, 1);
++
+     luaLoadLibraries(lua);
+-    luaRemoveUnsupportedFunctions(lua);
+ 
+     /* Initialize a dictionary we use to map SHAs to scripts.
+      * This is useful for replication, as we need to replicate EVALSHA
+@@ -1299,6 +1467,7 @@ void scriptingInit(int setup) {
+      * of view of the user debugging a script. */
+     {
+         const char *errh_func =       "local dbg = debug\n"
++                                "debug = nil\n"
+                                 "function __redis__err__handler(err)\n"
+                                 "  local i = dbg.getinfo(2,'nSl')\n"
+                                 "  if i and i.what == 'C' then\n"
+@@ -1314,10 +1483,12 @@ void scriptingInit(int setup) {
+         lua_pcall(lua,0,0,0);
+     }
+ 
+-    /* Lua beginners often don't use "local", this is likely to introduce
+-     * subtle bugs in their code. To prevent problems we protect accesses
+-     * to global variables. */
+-    scriptingEnableGlobalsProtection(lua);
++    /* Lock the global table from any changes */
++    lua_pushvalue(lua, LUA_GLOBALSINDEX);
++    luaSetErrorMetatable(lua);
++    /* Recursively lock all tables that can be reached from the global table */
++    luaSetTableProtectionRecursively(lua);
++    lua_pop(lua, 1);
+ 
+     g_pserver->lua = lua;
+ }
+@@ -1348,7 +1519,9 @@ void luaSetGlobalArray(lua_State *lua, const char *var, robj **elev, int elec) {
+         lua_pushlstring(lua,(char*)ptrFromObj(elev[j]),sdslen((sds)ptrFromObj(elev[j])));
+         lua_rawseti(lua,-2,j+1);
+     }
++    lua_enablereadonlytable(lua, LUA_GLOBALSINDEX, 0);
+     lua_setglobal(lua,var);
++    lua_enablereadonlytable(lua, LUA_GLOBALSINDEX, 1);
+ }
+ 
+ /* ---------------------------------------------------------------------------
+@@ -1429,14 +1602,7 @@ sds luaCreateFunction(client *c, lua_State *lua, robj *body) {
+         return (sds)dictGetKey(de);
+     }
+ 
+-    sds funcdef = sdsempty();
+-    funcdef = sdscat(funcdef,"function ");
+-    funcdef = sdscatlen(funcdef,funcname,42);
+-    funcdef = sdscatlen(funcdef,"() ",3);
+-    funcdef = sdscatlen(funcdef,ptrFromObj(body),sdslen((sds)ptrFromObj(body)));
+-    funcdef = sdscatlen(funcdef,"\nend",4);
+-
+-    if (luaL_loadbuffer(lua,funcdef,sdslen(funcdef),"@user_script")) {
++    if (luaL_loadbuffer(lua,(const char*)ptrFromObj(body),sdslen((sds)ptrFromObj(body)),"@user_script")) {
+         if (c != NULL) {
+             addReplyErrorFormat(c,
+                 "Error compiling script (new function): %s\n",
+@@ -1444,20 +1610,12 @@ sds luaCreateFunction(client *c, lua_State *lua, robj *body) {
+         }
+         lua_pop(lua,1);
+         sdsfree(sha);
+-        sdsfree(funcdef);
+         return NULL;
+     }
+-    sdsfree(funcdef);
+ 
+-    if (lua_pcall(lua,0,0,0)) {
+-        if (c != NULL) {
+-            addReplyErrorFormat(c,"Error running script (new function): %s\n",
+-                lua_tostring(lua,-1));
+-        }
+-        lua_pop(lua,1);
+-        sdsfree(sha);
+-        return NULL;
+-    }
++    serverAssert(lua_isfunction(lua, -1));
++
++    lua_setfield(lua, LUA_REGISTRYINDEX, funcname);
+ 
+     /* We also save a SHA1 -> Original script map in a dictionary
+      * so that we can replicate / write in the AOF all the
+@@ -1588,7 +1746,7 @@ void evalGenericCommand(client *c, int evalsha) {
+     lua_getglobal(lua, "__redis__err__handler");
+ 
+     /* Try to lookup the Lua function */
+-    lua_getglobal(lua, funcname);
++    lua_getfield(lua, LUA_REGISTRYINDEX, funcname);
+     if (lua_isnil(lua,-1)) {
+         lua_pop(lua,1); /* remove the nil from the stack */
+         /* Function not defined... let's define it if we have the
+@@ -1606,7 +1764,7 @@ void evalGenericCommand(client *c, int evalsha) {
+             return;
+         }
+         /* Now the following is guaranteed to return non nil */
+-        lua_getglobal(lua, funcname);
++        lua_getfield(lua, LUA_REGISTRYINDEX, funcname);
+         serverAssert(!lua_isnil(lua,-1));
+     }
+ 
+diff --git a/tests/unit/scripting.tcl b/tests/unit/scripting.tcl
+index 561bcf7..195fa7b 100644
+--- a/tests/unit/scripting.tcl
++++ b/tests/unit/scripting.tcl
+@@ -403,7 +403,7 @@ start_server {tags {"scripting"}} {
+     test {Globals protection setting an undeclared global*} {
+         catch {r eval {a=10} 0} e
+         set e
+-    } {*ERR*attempted to create global*}
++    } {ERR*Attempt to modify a readonly table*}
+ 
+     test {Test an example script DECR_IF_GT} {
+         set decr_if_gt {
+@@ -640,6 +640,132 @@ start_server {tags {"scripting"}} {
+         set res [r eval {redis.setresp(2); return redis.call('hgetall', KEYS[1])} 1 hash]
+         assert_equal $res $expected_list
+     }
++
++    test "Try trick global protection 1" {
++        catch {
++            r eval {
++                setmetatable(_G, {})
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick global protection 2" {
++        catch {
++            r eval {
++                local g = getmetatable(_G)
++                g.__index = {}
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick global protection 3" {
++        catch {
++            r eval {
++                redis = function() return 1 end
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick global protection 4" {
++        catch {
++            r eval {
++                _G = {}
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick readonly table on redis table" {
++        catch {
++            r eval {
++                redis.call = function() return 1 end
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick readonly table on json table" {
++        catch {
++            r eval {
++                cjson.encode = function() return 1 end
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick readonly table on cmsgpack table" {
++        catch {
++            r eval {
++                cmsgpack.pack = function() return 1 end
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Try trick readonly table on bit table" {
++        catch {
++            r eval {
++                bit.lshift = function() return 1 end
++            } 0
++        } e
++        set _ $e
++    } {*Attempt to modify a readonly table*}
++
++    test "Test loadfile are not available" {
++        catch {
++            r eval {
++                loadfile('some file')
++            } 0
++        } e
++        set _ $e
++    } {*Script attempted to access nonexistent global variable 'loadfile'*}
++
++    test "Test dofile are not available" {
++        catch {
++            r eval {
++                dofile('some file')
++            } 0
++        } e
++        set _ $e
++    } {*Script attempted to access nonexistent global variable 'dofile'*}
++
++    test "Test print is available to avoid breaking change" {
++        catch {
++            r eval {
++                print('some data')
++            } 0
++        } e
++        set _ $e
++    } {}
++
++    test {Script return recursive object} {
++        r readraw 1
++        set res [r eval {local a = {}; local b = {a}; a[1] = b; return a} 0]
++        # drain the response
++        while {true} {
++            if {$res == "-ERR reached lua stack limit"} {
++                break
++            }
++            assert_equal $res "*1"
++            set res [r read]
++        }
++        r readraw 0
++        # make sure the connection is still valid
++        assert_equal [r ping] {PONG}
++    }
++
++    test {Script check unpack with massive arguments} {
++        r eval {
++            local a = {}
++            for i=1,7999 do
++                a[i] = 1
++            end 
++            return redis.call("lpush", "l", unpack(a))
++        } 0
++    } {7999}
+ }
+ 
+ # Start a new server since the last test in this stanza will kill the

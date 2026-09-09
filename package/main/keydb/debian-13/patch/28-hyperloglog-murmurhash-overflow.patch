@@ -1,0 +1,25 @@
+Fix MurmurHash64A overflow in HyperLogLog with 2GB+ entries
+
+MurmurHash64A in hyperloglog.cpp took the element length as int, so a PFADD
+element larger than 2GB (allowed when proto-max-bulk-len and
+client-query-buffer-limit are raised) wrapped the length negative, and the
+end-pointer arithmetic walked outside the element buffer and crashed the
+server. The len parameter is now size_t, matching the size_t elesize that
+hllPatLen already passes in.
+
+Tracker: none
+Upstream patch: https://github.com/redis/redis/commit/0bca98244178178c58315cf877cf94cb8ebcf2c8
+Adaptation: src/hyperloglog.c -> src/hyperloglog.cpp; the function body is identical in KeyDB v6.3.4 and the one-line signature change applies as-is. The tests/support/util.tcl and tests/unit/hyperloglog.tcl hunks are dropped: KeyDB's test_helper.tcl has no --large-memory option, so the new large-memory tagged test would run in the default suite and allocate 2GB+, and KeyDB's tests/unit/violations.tcl already defines its own write_big_bulk.
+
+diff --git a/src/hyperloglog.cpp b/src/hyperloglog.cpp
+--- a/src/hyperloglog.cpp
++++ b/src/hyperloglog.cpp
+@@ -395,7 +395,7 @@
+ /* Our hash function is MurmurHash2, 64 bit version.
+  * It was modified for Redis in order to provide the same result in
+  * big and little endian archs (endian neutral). */
+-uint64_t MurmurHash64A (const void * key, int len, unsigned int seed) {
++uint64_t MurmurHash64A (const void * key, size_t len, unsigned int seed) {
+     const uint64_t m = 0xc6a4a7935bd1e995;
+     const int r = 47;
+     uint64_t h = seed ^ (len * m);

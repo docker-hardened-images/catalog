@@ -1,0 +1,68 @@
+#!/usr/bin/make -f
+
+# The bundled RocksDB build reuses CFLAGS for its C++ sources, so drop the
+# C-only -Werror flag dpkg injects (invalid for the C++ compiler).
+export DEB_CFLAGS_MAINT_STRIP = -Werror=implicit-function-declaration
+
+# RocksDB 7.9 predates GCC 14; keep its warnings from failing the build.
+export DISABLE_WARNING_AS_ERROR = 1
+
+BUILD_FLAGS := BUILD_TLS=yes ENABLE_FLASH=yes
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) $(BUILD_FLAGS) -j$$(nproc)
+
+# KeyDB's `make install` ignores DESTDIR, so stage into debian/tmp via PREFIX.
+# keydb-diagnostic-tool is built but not covered by the install target.
+override_dh_auto_install:
+	$(MAKE) install $(BUILD_FLAGS) PREFIX=$(CURDIR)/debian/tmp/usr
+	install -m 0755 src/keydb-diagnostic-tool $(CURDIR)/debian/tmp/usr/bin/keydb-diagnostic-tool
+	install -d $(CURDIR)/debian/tmp/etc/keydb/conf.d
+	install -m 0644 keydb.conf sentinel.conf $(CURDIR)/debian/tmp/etc/keydb/
+	install -m 0644 debian/local.conf $(CURDIR)/debian/tmp/etc/keydb/conf.d/local.conf
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+# KeyDB builds with link-time optimization (-flto), whose output dwz cannot
+# process; skip DWARF optimization.
+override_dh_dwz:
+
+# Upstream ships only the Tcl integration suite (no C unit tests). Run the
+# suites that exercise the RESP core, the areas touched by the backported
+# Redis security fixes, and the KeyDB-specific FLASH storage provider and
+# active replication; the full suite takes over an hour.
+# "EVAL with pipelined command" assumes a one-million-SET Lua loop still runs
+# after 1.2 s; fast builders finish it early, so the expected BUSY never
+# appears and the test fails on speed alone. "Stress subkey expires" pipelines
+# about two million commands through a client that never reads its replies, so
+# it completes only where the kernel socket buffers absorb them all; the same
+# stall reproduces with the unpatched upstream binary.
+override_dh_auto_test:
+	./runtest --clients 4 --timeout 600 \
+		--skiptest "EVAL with pipelined command (No crash)" \
+		--skiptest "Stress subkey expires" \
+		--single unit/type/string \
+		--single unit/type/hash \
+		--single unit/type/list \
+		--single unit/type/set \
+		--single unit/type/zset \
+		--single unit/expire \
+		--single unit/multi \
+		--single unit/scripting \
+		--single unit/pubsub \
+		--single unit/hyperloglog \
+		--single unit/bitops \
+		--single unit/keyspace \
+		--single unit/dump \
+		--single unit/acl \
+		--single unit/auth \
+		--single integration/corrupt-dump \
+		--single unit/flash \
+		--single integration/replication-active
+
+# The source is a fresh checkout each build, so there is nothing to clean.
+override_dh_auto_clean:

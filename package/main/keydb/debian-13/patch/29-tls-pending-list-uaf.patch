@@ -1,0 +1,37 @@
+Fix use-after-free in tlsProcessPendingData() pending-list iteration
+
+tlsProcessPendingData() walked pending_list with a listIter, which caches the
+next node pointer. The read handler run by tlsHandleEvent() can execute a
+command (e.g. CLIENT KILL) that closes another pending TLS connection, whose
+connTLSClose() frees its pending_list node; the cached pointer then dangles
+and the following listNext() reads freed memory (SIGSEGV). Replace the
+iteration with a bounded detach-from-head drain that never holds a list node
+pointer across a handler call.
+
+Tracker: none
+Upstream patch: https://github.com/redis/redis/commit/b12c4db14a5e3dba28f431cc8863951eb93eb663
+Adaptation: src/tls.c -> src/tls.cpp; kept KeyDB's serverAssert(!GlobalLocksAcquired()) at the top of the function and the explicit (tls_connection*) cast of listNodeValue() required by C++. The list is thread_local in KeyDB, but a kill issued on the owning thread still deletes a sibling node mid-iteration, so the fix logic is identical.
+
+diff --git a/src/tls.cpp b/src/tls.cpp
+--- a/src/tls.cpp
++++ b/src/tls.cpp
+@@ -1290,14 +1290,15 @@ int tlsHasPendingData() {
+ }
+ 
+ int tlsProcessPendingData() {
+-    listIter li;
+-    listNode *ln;
+     serverAssert(!GlobalLocksAcquired());
+ 
+     int processed = listLength(pending_list);
+-    listRewind(pending_list,&li);
+-    while((ln = listNext(&li))) {
++    for (int i = 0; i < processed; i++) {
++        listNode *ln = listFirst(pending_list);
++        if (!ln) break;
+         tls_connection *conn = (tls_connection*)listNodeValue(ln);
++        listDelNode(pending_list, conn->pending_list_node);
++        conn->pending_list_node = NULL;
+         tlsHandleEvent(conn, AE_READABLE);
+     }
+     return processed;
