@@ -4,21 +4,24 @@ image: dhi.io/pkg-cilium
 variant: runtime
 tags:
   - 1.20.1-alpine3.23
-  - 1.20.1-r1-alpine3.23
+  - 1.20.1-r4-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-07-29"
 vars:
+  CILIUM_ENVOY_SHA: 766ccfb37260a43e9d228837aa84ce3faf9f64e7
   COMMIT_SHA: 7d68cfb394f2960e10aa72e76d0d51e66c1b2ebc
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.8-r0
+  IPTABLES_WRAPPER_COMMIT_SHA: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
+  IPTABLES_WRAPPER_VERSION: "3"
   PACKAGE_NAME: cilium-1.20
   PROTOC_GEN_GO_GRPC_VERSION: 1.5.1
   PROTOC_GEN_GO_JSON_VERSION: 1.5.0
   PROTOC_GEN_GO_VERSION: 1.36.10
-  REL: "1"
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "1.20"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.20.1
@@ -33,6 +36,92 @@ contents:
   packages:
     - alpine-baselayout-data
   builds:
+    - name: cilium-1.20-libs
+      work-dir: /go/src/github.com/cilium/cilium
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - make
+          - cni
+          - git
+          - iptables
+          - golang-1.26=1.26.8-r0
+          - golang-1.26-oci-config=1.26.8-r0
+        files:
+          - url: git+https://github.com/cilium/cilium.git#v1.20.1
+            checksum: 7d68cfb394f2960e10aa72e76d0d51e66c1b2ebc
+            path: /go/src/github.com/cilium/cilium
+            spdx:
+              name: cilium
+              version: 1.20.1
+              packages:
+                - name: cilium
+                  purl: pkg:golang/github.com/cilium/cilium@1.20.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/kubernetes-sigs/iptables-wrappers.git#v3
+            checksum: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
+            path: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+            spdx:
+              name: iptables-wrappers
+              version: "3"
+              packages:
+                - name: iptables-wrappers
+                  purl: pkg:github/kubernetes-sigs/iptables-wrappers@3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install BPF sources
+          runs: |
+            set -eux -o pipefail
+            make install-bpf DESTDIR=${target.dir}
+        - name: install scripts
+          runs: |
+            set -eux -o pipefail
+            install -m 755 images/cilium/init-container.sh ${target.dir}/init-container.sh
+            install -m 755 plugins/cilium-cni/install-plugin.sh ${target.dir}/install-plugin.sh
+            install -m 755 plugins/cilium-cni/cni-uninstall.sh ${target.dir}/cni-uninstall.sh
+        - name: install loopback
+          runs: |
+            set -eux -o pipefail
+            install -D -m 755 /usr/bin/loopback ${target.dir}/cni/loopback
+        - name: install iptables wrapper
+          runs: |
+            set -eux -o pipefail
+            cd /go/src/github.com/kubernetes-sigs/iptables-wrappers
+            go mod download
+            mkdir -p ${target.dir}/usr/sbin
+            CGO_ENABLED=0 go build \
+              -ldflags="-s -w -extldflags=-static -buildid=" \
+              -o ${target.dir}/usr/sbin/iptables-wrapper \
+              ./
+            ln -sf /usr/sbin/iptables-wrapper ${target.dir}/usr/sbin/iptables
+            ln -sf /usr/sbin/iptables-wrapper ${target.dir}/usr/sbin/ip6tables
+        - name: create cilium-libs package (1.20 only)
+          uses: dhi/build-pkg:0
+          with:
+            description: Cilium runtime support files (BPF sources, init/CNI scripts, loopback, iptables wrapper)
+            files:
+              - init-container.sh
+              - install-plugin.sh
+              - cni-uninstall.sh
+              - cni/loopback
+              - usr/sbin/iptables-wrapper
+              - usr/sbin/iptables
+              - usr/sbin/ip6tables
+              - var/lib/cilium
+            formats:
+              - deb
+            license: Apache-2.0
+            name: cilium-1.20-libs
+            priority: optional
+            rel: 4
+            url: https://github.com/cilium/cilium
+            version: 1.20.1
     - name: cilium-1.20
       work-dir: /go/src/github.com/cilium/cilium
       contents:
@@ -40,6 +129,7 @@ contents:
           - busybox
           - bash
           - ca-certificates-bundle
+          - git
           - golang-1.26=1.26.8-r0
           - golang-1.26-oci-config=1.26.8-r0
         files:
@@ -60,12 +150,13 @@ contents:
           uses: go/bump@v2
           with:
             deps:
-              - golang.org/x/crypto@v0.55.0
+              - golang.org/x/crypto@v0.56.0
               - golang.org/x/text@v0.41.0
               - github.com/google/cel-go@v0.30.0
               - github.com/klauspost/compress@v1.18.7
               - github.com/osrg/gobgp/v4@v4.7.0
               - go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - google.golang.org/grpc@v1.83.2
             download: true
         - uses: go/hermetic@v1
         - name: test
@@ -73,95 +164,20 @@ contents:
             set -eux -o pipefail
 
             GOMAXPROCS=1 CGO_ENABLED=0 go test -mod=vendor -count=1 -p 1 -timeout 30m -v \
-              ./operator/... \
               ./daemon/... \
               ./cilium-dbg/... \
               ./cilium-health/... \
               ./bugtool/... \
               ./tools/mount/... \
               ./tools/sysctlfix/... \
-              ./plugins/cilium-cni/... \
-              ./clustermesh-apiserver/...
-        - name: build cilium-operator-generic
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-generic
-            packages: ./operator
-            tags: osusergo,ipam_provider_operator
-        - name: build cilium-operator-generic dev
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-generic-dev
-            packages: ./operator
-            strip: false
-            tags: osusergo,ipam_provider_operator
-        - name: build cilium-operator-aws
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-aws
-            packages: ./operator
-            tags: osusergo,ipam_provider_aws
-        - name: build cilium-operator-aws dev
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-aws-dev
-            packages: ./operator
-            strip: false
-            tags: osusergo,ipam_provider_aws
-        - name: build cilium-operator-azure
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-azure
-            packages: ./operator
-            tags: osusergo,ipam_provider_azure
-        - name: build cilium-operator-azure dev
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-operator-azure-dev
-            packages: ./operator
-            strip: false
-            tags: osusergo,ipam_provider_azure
-        - name: build cilium-clustermesh-apiserver
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-clustermesh-apiserver
-            packages: ./clustermesh-apiserver
-        - name: build cilium-clustermesh-apiserver dev
-          uses: go/build@v1
-          with:
-            fips: false
-            ldflags:
-              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
-            output: ${target.dir}/usr/bin/cilium-clustermesh-apiserver-dev
-            packages: ./clustermesh-apiserver
-            strip: false
+              ./plugins/cilium-cni/...
         - name: build cilium-agent
           uses: go/build@v1
           with:
             fips: false
             ldflags:
               - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+              - -X github.com/cilium/cilium/pkg/envoy.requiredEnvoyVersionSHA=766ccfb37260a43e9d228837aa84ce3faf9f64e7
             output: ${target.dir}/usr/bin/cilium-agent
             packages: ./daemon
             tags: osusergo
@@ -171,6 +187,7 @@ contents:
             fips: false
             ldflags:
               - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+              - -X github.com/cilium/cilium/pkg/envoy.requiredEnvoyVersionSHA=766ccfb37260a43e9d228837aa84ce3faf9f64e7
             output: ${target.dir}/usr/bin/cilium-agent-dev
             packages: ./daemon
             strip: false
@@ -270,6 +287,25 @@ contents:
             packages: ./tools/mount
             strip: false
             tags: osusergo
+        - name: build hubble
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+            output: ${target.dir}/usr/bin/hubble
+            packages: ./hubble
+            tags: osusergo
+        - name: build hubble dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+            output: ${target.dir}/usr/bin/hubble-dev
+            packages: ./hubble
+            strip: false
+            tags: osusergo
         - name: build cilium-sysctlfix
           uses: go/build@v1
           with:
@@ -308,8 +344,33 @@ contents:
             packages: ./plugins/cilium-cni
             strip: false
             tags: osusergo
-        - uses: dhi/build-pkg:0
+        - name: build cilium-envoy-bootstrap-locality
+          uses: go/build@v1
           with:
+            fips: false
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+              - -X github.com/cilium/cilium/pkg/envoy.requiredEnvoyVersionSHA=766ccfb37260a43e9d228837aa84ce3faf9f64e7
+            output: ${target.dir}/usr/bin/cilium-envoy-bootstrap-locality
+            packages: ./tools/envoy-bootstrap-locality
+            tags: osusergo
+        - name: build cilium-envoy-bootstrap-locality dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/cilium/cilium/pkg/version.ciliumVersion=1.20.1
+              - -X github.com/cilium/cilium/pkg/envoy.requiredEnvoyVersionSHA=766ccfb37260a43e9d228837aa84ce3faf9f64e7
+            output: ${target.dir}/usr/bin/cilium-envoy-bootstrap-locality-dev
+            packages: ./tools/envoy-bootstrap-locality
+            strip: false
+            tags: osusergo
+        - name: create cilium package (1.20 only)
+          uses: dhi/build-pkg:0
+          with:
+            deb:
+              depends:
+                - cilium-1.20-libs
             description: Cilium binaries
             files:
               - usr/bin/cilium-agent
@@ -319,49 +380,20 @@ contents:
               - usr/bin/cilium-bugtool
               - usr/bin/cilium-mount
               - usr/bin/cilium-sysctlfix
+              - usr/bin/hubble
               - opt/cni/bin/cilium-cni
+              - usr/bin/cilium-envoy-bootstrap-locality
+            formats:
+              - deb
             license: Apache-2.0
             name: cilium-1.20
-            priority: "200"
-            rel: 1
+            priority: optional
+            rel: 4
             subpackages:
-              - files:
-                  - path: usr/bin/cilium-operator-generic
-                name: cilium-operator-generic-1.20
-              - files:
-                  - path: usr/bin/cilium-operator-aws
-                name: cilium-operator-aws-1.20
-              - files:
-                  - path: usr/bin/cilium-operator-azure
-                name: cilium-operator-azure-1.20
-              - files:
-                  - path: usr/bin/cilium-clustermesh-apiserver
-                name: cilium-clustermesh-apiserver-1.20
-              - files:
-                  - path: usr/bin/cilium-agent
-                name: cilium-agent-1.20
-              - files:
-                  - path: usr/bin/cilium-dbg
-                name: cilium-dbg-1.20
-              - files:
-                  - path: usr/bin/cilium-health
-                name: cilium-health-1.20
-              - files:
-                  - path: usr/bin/cilium-health-responder
-                name: cilium-health-responder-1.20
-              - files:
-                  - path: usr/bin/cilium-bugtool
-                name: cilium-bugtool-1.20
-              - files:
-                  - path: usr/bin/cilium-mount
-                name: cilium-mount-1.20
-              - files:
-                  - path: usr/bin/cilium-sysctlfix
-                name: cilium-sysctlfix-1.20
-              - files:
-                  - path: opt/cni/bin/cilium-cni
-                name: cilium-cni-1.20
-              - files:
+              - deb:
+                  depends:
+                    - cilium-1.20-libs
+                files:
                   - path: usr/bin/cilium-agent
                     source: usr/bin/cilium-agent-dev
                   - path: usr/bin/cilium-dbg
@@ -376,57 +408,13 @@ contents:
                     source: usr/bin/cilium-mount-dev
                   - path: usr/bin/cilium-sysctlfix
                     source: usr/bin/cilium-sysctlfix-dev
+                  - path: usr/bin/hubble
+                    source: usr/bin/hubble-dev
                   - path: opt/cni/bin/cilium-cni
                     source: opt/cni/bin/cilium-cni-dev
+                  - path: usr/bin/cilium-envoy-bootstrap-locality
+                    source: usr/bin/cilium-envoy-bootstrap-locality-dev
                 name: cilium-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-operator-generic
-                    source: usr/bin/cilium-operator-generic-dev
-                name: cilium-operator-generic-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-operator-aws
-                    source: usr/bin/cilium-operator-aws-dev
-                name: cilium-operator-aws-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-operator-azure
-                    source: usr/bin/cilium-operator-azure-dev
-                name: cilium-operator-azure-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-clustermesh-apiserver
-                    source: usr/bin/cilium-clustermesh-apiserver-dev
-                name: cilium-clustermesh-apiserver-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-agent
-                    source: usr/bin/cilium-agent-dev
-                name: cilium-agent-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-dbg
-                    source: usr/bin/cilium-dbg-dev
-                name: cilium-dbg-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-health
-                    source: usr/bin/cilium-health-dev
-                name: cilium-health-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-health-responder
-                    source: usr/bin/cilium-health-responder-dev
-                name: cilium-health-responder-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-bugtool
-                    source: usr/bin/cilium-bugtool-dev
-                name: cilium-bugtool-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-mount
-                    source: usr/bin/cilium-mount-dev
-                name: cilium-mount-1.20-dev
-              - files:
-                  - path: usr/bin/cilium-sysctlfix
-                    source: usr/bin/cilium-sysctlfix-dev
-                name: cilium-sysctlfix-1.20-dev
-              - files:
-                  - path: opt/cni/bin/cilium-cni
-                    source: opt/cni/bin/cilium-cni-dev
-                name: cilium-cni-1.20-dev
             url: https://github.com/cilium/cilium
             version: 1.20.1
 os-release:
