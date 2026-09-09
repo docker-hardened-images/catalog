@@ -73,41 +73,22 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: apply jline remote-telnet cve patch
+        - uses: gradle/mirror@v1
+        - name: apply upstream jline dependency cleanup
           uses: git/patch@v1
           work-dir: ${source.dir}/kafka
           with:
-            patch: ${source.dir}/patch/jline-remote-telnet-cve.patch
+            patch: ${source.dir}/patch/jline-dependency-cleanup.patch
         - name: apply gradle 9.5 projectdependency compatibility patch
           uses: git/patch@v1
           work-dir: ${source.dir}/kafka
           with:
             patch: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
-        - name: configure gradle mirror
+        - name: configure dependency overrides
           runs: |
             set -eux -o pipefail
 
-            mkdir -p /root/.gradle
-            cat > /root/.gradle/init.gradle << 'EOF'
-            def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
-
-            def mirrorMavenCentral = { repo ->
-                if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
-                    repo.url.toString() == "https://repo.maven.apache.org/maven2/") {
-                    repo.setUrl(mavenCentralMirror)
-                }
-            }
-
-            settingsEvaluated { settings ->
-                settings.pluginManagement.repositories.configureEach(mirrorMavenCentral)
-                settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
-            }
-
-            allprojects {
-                buildscript.repositories.configureEach(mirrorMavenCentral)
-                repositories.configureEach(mirrorMavenCentral)
-            }
-
+            cat >> /root/.gradle/init.gradle << 'EOF'
             // jackson-databind PolymorphicTypeValidator bypass family and
             // XML datatype parsing DoS
             // (CVE-2026-54512, -54513, -54514, -54516, -54517, -54518,
@@ -167,6 +148,13 @@ contents:
         - name: build kafka distribution
           work-dir: ${source.dir}/kafka
           privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
           runs: |
             set -eux -o pipefail
 
@@ -210,10 +198,10 @@ contents:
           gid: 0
           source: image/kafka/patch/fips-sha256-log-cleaner.patch
         - type: file
-          path: ${source.dir}/patch/jline-remote-telnet-cve.patch
+          path: ${source.dir}/patch/jline-dependency-cleanup.patch
           uid: 0
           gid: 0
-          source: image/kafka/patch/jline-remote-telnet-cve.patch
+          source: image/kafka/patch/jline-dependency-cleanup.patch
         - type: file
           path: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
           uid: 0
