@@ -1,0 +1,228 @@
+# syntax=dhi.io/build:2-debian13
+
+name: PyTorch 2.13.x CUDA 12.6
+image: dhi.io/pkg-pytorch
+variant: runtime
+tags:
+  - pytorch-2.13-cuda12.6-python3.11-2.13.0
+  - pytorch-2.13-cuda12.6-python3.11-2.13.0-r0
+  - pytorch-2.13-cuda12.6-python3.11-2.13.0-debian13
+  - pytorch-2.13-cuda12.6-python3.11-2.13.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch }'
+  COMMIT_SHA: cf30153c4c131c8164ee7798e5022d810682e2cb
+  CUDA_MAJOR_MINOR_VERSION: "12.6"
+  CUDA_MAJOR_VERSION: "12"
+  CUDA_MINOR_VERSION: "6"
+  CUDA_PATH: cu126
+  CUDA_REFERENCE: nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04@sha256:b3e7fba84d169f46939f00c25be7d016f712a8d651f4756d6a55e693d84d94f2
+  CUDNN_VERSION: "9"
+  DEBIAN_VERSION: "13"
+  PACKAGE_NAME: pytorch-2.13-cuda12.6-python3.11
+  PIP_CMAKE_VERSION: 4.1.2
+  PIP_IPYTHON_VERSION: 9.6.0
+  PIP_NUMPY_VERSION: 2.3.4
+  PIP_PYYAML_VERSION: 6.0.3
+  PYTHON_MINOR: "3.11"
+  PYTHON_VERSION: 3.11.16-0
+  PYTORCH_CUDA_VERSION: 12.6.3
+  PYTORCH_CUDNN_VERSION: 9.20.0.48
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.13"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.13.0
+  TAG_CUDA_VERSION: "12.6"
+  TAG_CUDNN_VERSION: "9"
+  TAG_TORCH_VERSION: "2.13"
+  TORCH_MAJOR_MINOR: "2.13"
+  TORCH_VERSION: 2.13.0
+  TORCHAUDIO_MAJOR_MINOR: "2.11"
+  TORCHAUDIO_VERSION: 2.11.0
+  TORCHVISION_VERSION: 0.28.0
+  TRACKED_CUDA_VERSION: "12.6"
+  VERSION: 2.13.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: pytorch build
+      environment:
+        CUDA_PATH: cu126
+        INDEX_ARGS: --index-url https://download.pytorch.org/whl/cu126/
+        INSTALL_CHANNEL: whl
+        PATH: /usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - build-essential
+          - ca-certificates
+          - ccache
+          - cmake
+          - ninja-build
+          - coreutils
+          - curl
+          - bash
+          - grep
+          - libc-bin
+          - sed
+          - libjpeg-dev
+          - libpython-3.11-minimal=3.11.16-0
+          - libpython-3.11-stdlib=3.11.16-0
+          - libpython-3.11=3.11.16-0
+          - libpython-3.11-dev=3.11.16-0
+          - python-3.11-minimal=3.11.16-0
+          - python-3.11=3.11.16-0
+          - python-3.11-dev=3.11.16-0
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - diffutils
+          - findutils
+          - gawk
+          - make
+          - rsync
+        files:
+          - url: git+https://github.com/pytorch/pytorch.git#v2.13.0
+            checksum: cf30153c4c131c8164ee7798e5022d810682e2cb
+            path: ${source.dir}/pytorch-src
+            spdx:
+              name: pytorch
+              version: 2.13.0
+              packages:
+                - name: pytorch
+                  purl: pkg:github/pytorch/pytorch@2.13.0
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04@sha256:b3e7fba84d169f46939f00c25be7d016f712a8d651f4756d6a55e693d84d94f2
+            includes:
+              - usr/local/cuda-*
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create cuda symlinks
+          work-dir: /usr/local
+          runs: |
+            set -eux -o pipefail
+
+            [ -d /usr/local/cuda-12.6 ]
+            ln -sf cuda-12.6 /usr/local/cuda-12
+            ln -sf cuda-12 /usr/local/cuda
+        - name: run ccache (logic from dev-base build in upstream)
+          work-dir: ${source.dir}/pytorch-src
+          runs: |
+            set -eux -o pipefail
+
+            /usr/sbin/update-ccache-symlinks
+            mkdir -p /opt/ccache
+            ccache --set-config=cache_dir=/opt/ccache
+        - name: snapshot site-packages before pytorch pip installs
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${source.dir}/site-packages-before"
+            if [ -d "/usr/lib/python3.11/site-packages" ]; then
+              cp -a "/usr/lib/python3.11/site-packages/." \
+                "${source.dir}/site-packages-before/"
+            fi
+        - name: install runtime requirements
+          work-dir: ${source.dir}/pytorch-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install PyYAML==6.0.3 numpy==2.3.4 ipython==9.6.0 cmake==4.1.2
+            pip install urllib3==2.7.0
+            pip install pillow==12.3.0
+            pip install filelock==3.20.3
+        - name: install OpenAI triton from binary captured by the pytorch dev team
+          work-dir: ${source.dir}/pytorch-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            make triton
+        - name: install primary torch package
+          work-dir: ${source.dir}
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install $INDEX_ARGS torch==2.13.0
+            python3 -c 'import torch'
+        - name: verify pytorch base package and GPU integration
+          runs: |
+            set -eux -o pipefail
+
+            IS_CUDA=$(python3 -c 'import torch; print(torch.cuda._is_compiled())')
+            if [ "${IS_CUDA}" != "True" ]; then
+              echo "ERROR: CUDA support not found in PyTorch installation for ${ARCH}!"
+              exit 1
+            fi
+        - name: install torchvision, torchaudio matching versions in upstream
+          work-dir: ${source.dir}
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pip install $INDEX_ARGS \
+              torch==2.13.0 \
+              torchvision==0.28.0 \
+              torchaudio==2.11.0
+
+            python3 -c "import torchvision"
+            python3 -c "import torchaudio"
+        - name: remove site-packages setuptools
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /usr/lib/python3.11/site-packages/setuptools
+            rm -rf /usr/lib/python3.11/site-packages/setuptools-*
+        - name: stage pip-installed site-packages delta
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/python3.11/site-packages"
+            rsync -a --compare-dest="${source.dir}/site-packages-before" \
+              "/usr/lib/python3.11/site-packages/" \
+              "${target.dir}/usr/lib/python3.11/site-packages/"
+        - name: cleanup staged site-packages
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}/usr/lib/python3.11/site-packages"
+            find "${root}" \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
+            find "${root}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete || true
+            rm -rf "${root}"/cmake "${root}"/cmake-*.dist-info
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.11
+            description: PyTorch deep learning framework with CUDA 12.6
+            files:
+              - usr/lib/python3.11/site-packages
+            formats:
+              - deb
+            license: BSD-3-Clause
+            name: pytorch-2.13-cuda12.6-python3.11
+            rel: 0
+            url: https://pytorch.org/
+            version: 2.13.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
