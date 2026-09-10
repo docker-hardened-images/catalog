@@ -42,10 +42,14 @@ contents:
       work-dir: /go/src/github.com/hashicorp/vault
       caches:
         - path: /go/pkg/mod
+        - path: /root/.local/share/pnpm
       contents:
         packages:
           - binutils
           - libcap2-bin
+          - node-corepack
+          - nodejs-22
+          - npm
         files:
           - url: git+https://github.com/hashicorp/vault.git#v2.1.0
             checksum: cb6a54face072e372480d7cc2e64a3110b84756f
@@ -76,6 +80,28 @@ contents:
               - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
               - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
             download: true
+        - name: build UI assets
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@10.22.0 --activate
+            make static-dist
+        - name: install production UI dependencies for SBOM
+          work-dir: /go/src/github.com/hashicorp/vault/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+            pnpm install --prod --frozen-lockfile --ignore-scripts
+        - name: UI SBOM
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: vault-ui
+            source: /go/src/github.com/hashicorp/vault/ui
         - name: patch go 1.27 http test expectations
           uses: git/patch@v1
           with:
@@ -186,7 +212,7 @@ contents:
               - -X github.com/hashicorp/vault/version.GitCommit=cb6a54face072e372480d7cc2e64a3110b84756f
               - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
             output: ${target.dir}/usr/local/bin/vault
-            tags: vault
+            tags: vault,ui
         - name: setcap
           runs: |
             set -eux -o pipefail
@@ -224,6 +250,10 @@ contents:
           gid: 0
         - source: /opt/docker/sbom/vault
           target: /opt/docker/sbom/vault
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/vault-ui
+          target: /opt/docker/sbom/vault-ui
           uid: 0
           gid: 0
   artifacts:
