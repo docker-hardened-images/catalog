@@ -1,0 +1,46 @@
+#!/bin/bash
+
+cd /srv/gitlab
+
+WAIT_FOR_TIMEOUT="${WAIT_FOR_TIMEOUT:-30}"
+SLEEP_DURATION="${SLEEP_DURATION:-1}"
+
+DATABASE_FILE=database.yml
+SCHEMA_DIR=db
+SCHEMA_MIGRATIONS_DIR=schema_migrations
+
+# Allow skipping database post-migrations in version checks
+## This will cause the codebase version to be pulled from the
+## latest entry in `migrate/` instead of `schema_migrations/`
+if [ -n "${BYPASS_POST_DEPLOYMENT}" ]; then
+  SCHEMA_MIGRATIONS_DIR=migrate
+  echo "NOTICE: Bypassing post-migrations for database version checks"
+fi
+
+# Allow for re-direction to the Geo database
+if [ "${DB_SCHEMA_TARGET,,}" == "geo" ]; then
+  SCHEMA_DIR=ee/db/geo
+
+  # Retain support for older database file if needed
+  if [ -f "config/database_geo.yml" ]; then
+    DATABASE_FILE=database_geo.yml
+  fi
+fi
+
+# set the desired directory to retrieve schema versions
+SCHEMA_VERSIONS_DIR="$(pwd)/${SCHEMA_DIR}/${SCHEMA_MIGRATIONS_DIR}"
+
+CLICKHOUSE_SCHEMA_VERSIONS_DIR="$(pwd)/${SCHEMA_DIR}/click_house/${SCHEMA_MIGRATIONS_DIR}"
+CLICKHOUSE_DATABASE_FILE=click_house.yml
+
+# export variables for rails-dependencies
+export WAIT_FOR_TIMEOUT
+export SLEEP_DURATION
+export SCHEMA_VERSIONS_DIR
+export CLICKHOUSE_SCHEMA_VERSIONS_DIR
+export CLICKHOUSE_DATABASE_FILE
+export DB_SCHEMA_TARGET
+export DATABASE_FILE
+
+# the called script should `exec` the arguments passed to this script
+exec /opt/gitlab/cng-scripts/rails-dependencies "$@"

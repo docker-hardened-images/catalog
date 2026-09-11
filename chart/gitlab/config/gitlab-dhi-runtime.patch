@@ -1,0 +1,111 @@
+diff --git a/charts/gitlab/charts/gitlab-exporter/templates/deployment.yaml b/charts/gitlab/charts/gitlab-exporter/templates/deployment.yaml
+index 094002f..2ec6084 100644
+--- a/charts/gitlab/charts/gitlab-exporter/templates/deployment.yaml
++++ b/charts/gitlab/charts/gitlab-exporter/templates/deployment.yaml
+@@ -92,0 +93,8 @@ spec:
++          command: ["/bin/sh", "-c"]
++          args:
++            - |
++              set -e
++              ruby -rerb -ryaml -e 'File.write(ARGV[1], ERB.new(File.read(ARGV[0])).result)' \
++                /var/opt/gitlab-exporter/templates/gitlab-exporter.yml.erb \
++                /tmp/gitlab-exporter.yml
++              exec /usr/local/bin/gitlab-exporter web -c /tmp/gitlab-exporter.yml
+diff --git a/charts/gitlab/charts/gitlab-shell/templates/configmap.yml b/charts/gitlab/charts/gitlab-shell/templates/configmap.yml
+index d5d5127..58c56a4 100644
+--- a/charts/gitlab/charts/gitlab-shell/templates/configmap.yml
++++ b/charts/gitlab/charts/gitlab-shell/templates/configmap.yml
+@@ -21 +21 @@ data:
+-  config.yml.tpl: |
++  config.yml: |
+@@ -89,5 +89,3 @@ data:
+-      {%- range file.Walk ( env.Getenv "KEYS_DIRECTORY" "/etc/ssh" ) %}
+-        {%- if filepath.Base . | filepath.Match "ssh_host_*_key" %}
+-        - {%.%}
+-        {%- end %}
+-      {%- end %}
++        - /etc/gitlab-secrets/ssh/ssh_host_rsa_key
++        - /etc/gitlab-secrets/ssh/ssh_host_ecdsa_key
++        - /etc/gitlab-secrets/ssh/ssh_host_ed25519_key
+diff --git a/charts/gitlab/charts/gitlab-shell/templates/deployment.yaml b/charts/gitlab/charts/gitlab-shell/templates/deployment.yaml
+index e98def9..bf0cb85 100644
+--- a/charts/gitlab/charts/gitlab-shell/templates/deployment.yaml
++++ b/charts/gitlab/charts/gitlab-shell/templates/deployment.yaml
+@@ -118,0 +119,4 @@ spec:
++            - name: shell-config
++              mountPath: /srv/gitlab-shell/config.yml
++              subPath: config.yml
++              readOnly: true
+diff --git a/charts/gitlab/charts/sidekiq/templates/deployment.yaml b/charts/gitlab/charts/sidekiq/templates/deployment.yaml
+index 4cd2191..beeae15 100644
+--- a/charts/gitlab/charts/sidekiq/templates/deployment.yaml
++++ b/charts/gitlab/charts/sidekiq/templates/deployment.yaml
+@@ -156 +156 @@ spec:
+-            - /scripts/wait-for-deps
++            - /opt/gitlab/cng-scripts/wait-for-deps
+@@ -193,0 +194,14 @@ spec:
++          command: ["/scripts/entrypoint.sh"]
++          args:
++            - /bin/bash
++            - -c
++            - |
++              set -e
++              touch /var/log/gitlab/production.log
++              cd /srv/gitlab
++              exec bin/sidekiq-cluster \
++                -r /srv/gitlab \
++                -e production \
++                -c "${SIDEKIQ_CONCURRENCY:-20}" \
++                -t "$SIDEKIQ_TIMEOUT" \
++                "${SIDEKIQ_QUEUES:-*}"
+diff --git a/charts/gitlab/charts/webservice/templates/configmap.yml b/charts/gitlab/charts/webservice/templates/configmap.yml
+index 873eb99..832fae6 100644
+--- a/charts/gitlab/charts/webservice/templates/configmap.yml
++++ b/charts/gitlab/charts/webservice/templates/configmap.yml
+@@ -214 +214 @@ data:
+-  workhorse-config.toml.tpl: |
++  workhorse-config.toml: |
+@@ -234 +233,0 @@ data:
+-    {{- include "workhorse.object_storage.config" $ | nindent 4 }}
+diff --git a/charts/gitlab/charts/webservice/templates/deployment.yaml b/charts/gitlab/charts/webservice/templates/deployment.yaml
+index 6dac90b..ce302fd 100644
+--- a/charts/gitlab/charts/webservice/templates/deployment.yaml
++++ b/charts/gitlab/charts/webservice/templates/deployment.yaml
+@@ -159 +159 @@ spec:
+-            - /scripts/wait-for-deps
++            - /opt/gitlab/cng-scripts/wait-for-deps
+@@ -406,0 +407,4 @@ spec:
++            - name: workhorse-config
++              mountPath: /srv/gitlab/config/workhorse-config.toml
++              subPath: workhorse-config.toml
++              readOnly: true
+diff --git a/charts/gitlab/charts/webservice/templates/tests/test-runner.yaml b/charts/gitlab/charts/webservice/templates/tests/test-runner.yaml
+index e7b6667..20a518e 100644
+--- a/charts/gitlab/charts/webservice/templates/tests/test-runner.yaml
++++ b/charts/gitlab/charts/webservice/templates/tests/test-runner.yaml
+@@ -1,0 +2 @@
++{{- $imageCfg := dict "global" $.Values.global.image "local" $.Values.global.gitlabBase.image -}}
+@@ -13,0 +15 @@ spec:
++  {{- include "gitlab.image.pullSecrets" $imageCfg | indent 2 }}
+@@ -16 +18 @@ spec:
+-    image: {{ include "webservice.image" . }}
++    image: {{ include "gitlab.configure.image" (dict "root" $ "image" .Values.init.image) | quote }}
+diff --git a/templates/_certificates.tpl b/templates/_certificates.tpl
+index df42f6d..29a0d34 100644
+--- a/templates/_certificates.tpl
++++ b/templates/_certificates.tpl
+@@ -10,0 +11,14 @@
++  command: ["/bin/sh", "-c"]
++  args:
++    - |
++      set -e
++      rm -rf /etc/ssl/certs/*
++      update-ca-certificates
++      for certificate in /etc/ssl/certs/*.pem /etc/ssl/certs/*.crt; do
++        [ -e "$certificate" ] || continue
++        origin="$(readlink -f "$certificate")"
++        if [ "${origin%/*}" != /etc/ssl/certs ]; then
++          rm "$certificate"
++          cp "$origin" "$certificate"
++        fi
++      done
