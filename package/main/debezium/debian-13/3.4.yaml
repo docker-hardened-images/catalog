@@ -1,0 +1,302 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-debezium
+variant: runtime
+tags:
+  - 3.4.3
+  - 3.4.3-r0
+  - 3.4.3-debian13
+  - 3.4.3-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-18"
+vars:
+  COMMIT_SHA: 508459f9f6f9c654fe5be2d686ce7ca045dfe2c0
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:709b6d7d35af9e9d79a539588cb501fdce3301f2522da28b920690320b80870e
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.4"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.4.3
+  VERSION: 3.4.3.Final
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: debezium
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:709b6d7d35af9e9d79a539588cb501fdce3301f2522da28b920690320b80870e
+      work-dir: ${source.dir}/debezium
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - gzip
+        files:
+          - url: git+https://github.com/debezium/debezium.git#v3.4.3.Final
+            checksum: 508459f9f6f9c654fe5be2d686ce7ca045dfe2c0
+            path: ${source.dir}/debezium
+            spdx:
+              name: debezium
+              version: 3.4.3.Final
+              packages:
+                - name: debezium-connector-mysql
+                  purl: pkg:maven/io.debezium/debezium-connector-mysql@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-mariadb
+                  purl: pkg:maven/io.debezium/debezium-connector-mariadb@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-postgres
+                  purl: pkg:maven/io.debezium/debezium-connector-postgres@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-mongodb
+                  purl: pkg:maven/io.debezium/debezium-connector-mongodb@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-sqlserver
+                  purl: pkg:maven/io.debezium/debezium-connector-sqlserver@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-oracle
+                  purl: pkg:maven/io.debezium/debezium-connector-oracle@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-connector-jdbc
+                  purl: pkg:maven/io.debezium/debezium-connector-jdbc@3.4.3.Final
+                  license: Apache-2.0
+                - name: debezium-scripting
+                  purl: pkg:maven/io.debezium/debezium-scripting@3.4.3.Final
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+          environment:
+            MAVEN_MIRROR_OF: central,confluent
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: remove unresolvable confluent test dependency
+          runs: |
+            set -eux -o pipefail
+
+            grep -rl "kafka-connect-avro-converter" --include=pom.xml . | while read -r pom; do
+              xq-python -x 'walk(
+                if type == "object" and has("dependency") then
+                  if (.dependency | type) == "array" then
+                    .dependency |= map(select(.groupId != "io.confluent" or .artifactId != "kafka-connect-avro-converter"))
+                  elif .dependency.groupId == "io.confluent" and .dependency.artifactId == "kafka-connect-avro-converter" then
+                    del(.dependency)
+                  else
+                    .
+                  end
+                else
+                  .
+                end
+              )' "$pom" > /tmp/pom.xml.patched
+              mv /tmp/pom.xml.patched "$pom"
+            done
+        - name: remove mongodb test source with unresolvable confluent import
+          runs: |
+            set -eux -o pipefail
+
+            rm -f debezium-connector-mongodb/src/test/java/io/debezium/connector/mongodb/transforms/ToAvroMongoDataConverterTest.java
+        - name: remove oracle xstream support from the assembly profile
+          runs: |
+            set -eux -o pipefail
+
+            xq-python -x '.project.profiles.profile |= map(
+              if .id == "assembly" then
+                del(.dependencies) |
+                .build.plugins.plugin |= map(select(.artifactId != "maven-compiler-plugin"))
+              else
+                .
+              end
+            )' debezium-connector-oracle/pom.xml > /tmp/oracle-pom.xml.patched
+            mv /tmp/oracle-pom.xml.patched debezium-connector-oracle/pom.xml
+        - name: disable central-publishing build extension
+          runs: |
+            set -eux -o pipefail
+
+            test "$(grep -c '<extensions>true</extensions>' pom.xml)" = "1"
+            sed -i '\|<extensions>true</extensions>|d' pom.xml
+            test "$(grep -c '<extensions>true</extensions>' pom.xml)" = "0"
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/debezium
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: patch debezium-connector-jdbc maven dependencies
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/debezium/debezium-connector-jdbc
+            properties: ${source.dir}/patch/jdbc-mvn-properties.json
+        - name: patch debezium-connector-oracle netty-transport-native-epoll
+          runs: |
+            set -eux -o pipefail
+
+            xq-python -x '.project.dependencyManagement.dependencies.dependency = [
+              {"groupId": "io.netty", "artifactId": "netty-transport-native-epoll", "classifier": "linux-x86_64", "version": "4.1.136.Final"},
+              {"groupId": "io.netty", "artifactId": "netty-transport-native-epoll", "classifier": "linux-aarch_64", "version": "4.1.136.Final"}
+            ]' debezium-connector-oracle/pom.xml > /tmp/oracle-pom.xml.patched
+            mv /tmp/oracle-pom.xml.patched debezium-connector-oracle/pom.xml
+        - name: install prerequisites
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn install -B -Dmaven.test.skip=true -Ddocker.skip=true -DskipITs=true \
+              -pl debezium-connector-mysql,debezium-connector-mariadb,debezium-connector-postgres,debezium-connector-mongodb,debezium-connector-sqlserver,debezium-connector-oracle,debezium-connector-jdbc,debezium-scripting/debezium-scripting \
+              -am \
+              -Dmaven.javadoc.skip=true
+        - name: test
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn test -B \
+              -pl debezium-connector-mysql,debezium-connector-mariadb,debezium-connector-postgres,debezium-connector-mongodb,debezium-connector-sqlserver,debezium-connector-oracle,debezium-connector-jdbc,debezium-scripting/debezium-scripting \
+              -Dtest='!*SourceInfoTest,!*IT,!*EventRouterTest,!*KafkaSchemaHistoryTest' \
+              -Dsurefire.failIfNoSpecifiedTests=false \
+              -Dmaven.javadoc.skip=true
+        - name: build
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn package -B -Dmaven.test.skip=true \
+              -pl debezium-connector-mysql,debezium-connector-mariadb,debezium-connector-postgres,debezium-connector-mongodb,debezium-connector-sqlserver,debezium-connector-oracle,debezium-connector-jdbc,debezium-scripting/debezium-scripting \
+              -am \
+              -Passembly \
+              -Dmaven.javadoc.skip=true
+        - name: stage connector plugins
+          runs: |
+            set -eux -o pipefail
+
+            for module in debezium-connector-mysql debezium-connector-mariadb debezium-connector-postgres \
+              debezium-connector-mongodb debezium-connector-sqlserver debezium-connector-oracle \
+              debezium-connector-jdbc; do
+              archive_count=$(find "${module}/target" -maxdepth 1 -name "*.tar.gz" | wc -l)
+              if [ "$archive_count" -ne 1 ]; then
+                echo "expected exactly one plugin archive for ${module}, found ${archive_count}" >&2
+                exit 1
+              fi
+              archive=$(find "${module}/target" -maxdepth 1 -name "*.tar.gz" -print -quit)
+              dest="${target.dir}/usr/share/kafka/connect/${module}"
+              install -d "$dest"
+              tar -xzf "$archive" --strip-components=1 -C "$dest"
+            done
+
+            scripting_archive_count=$(find "debezium-scripting/debezium-scripting/target" -maxdepth 1 -name "*.tar.gz" | wc -l)
+            if [ "$scripting_archive_count" -ne 1 ]; then
+              echo "expected exactly one plugin archive for debezium-scripting, found ${scripting_archive_count}" >&2
+              exit 1
+            fi
+            scripting_archive=$(find "debezium-scripting/debezium-scripting/target" -maxdepth 1 -name "*.tar.gz" -print -quit)
+            scripting_dest="${target.dir}/usr/share/kafka/connect/debezium-scripting"
+            install -d "$scripting_dest"
+            tar -xzf "$scripting_archive" --strip-components=1 -C "$scripting_dest"
+        - name: debezium sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: debezium-maven
+            source: ${target.dir}/usr/share/kafka/connect
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - ca-certificates
+              - coreutils
+            description: Debezium change data capture connector for MySQL (Kafka Connect plugin)
+            files:
+              - usr/share/kafka/connect/debezium-connector-mysql
+            formats:
+              - deb
+            license: Apache-2.0
+            name: debezium-connector-mysql
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-mariadb
+                name: debezium-connector-mariadb
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-postgres
+                name: debezium-connector-postgres
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-mongodb
+                name: debezium-connector-mongodb
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-sqlserver
+                name: debezium-connector-sqlserver
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-oracle
+                name: debezium-connector-oracle
+              - files:
+                  - path: usr/share/kafka/connect/debezium-connector-jdbc
+                name: debezium-connector-jdbc
+              - files:
+                  - path: usr/share/kafka/connect/debezium-scripting
+                name: debezium-scripting
+            url: https://debezium.io/
+            version: 3.4.3.Final
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/debezium/patch/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/debezium/patch/mvn-properties.json
+        - type: file
+          path: ${source.dir}/patch/jdbc-mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/debezium/patch/jdbc-mvn-properties.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
