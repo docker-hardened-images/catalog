@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-debian13
+
+name: agentgateway 1.x (dev)
+image: dhi.io/agentgateway
+variant: dev
+tags:
+  - 1-dev
+  - 1.2-dev
+  - 1.2.1-dev
+  - 1-debian13-dev
+  - 1.2-debian13-dev
+  - 1.2.1-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-05-20"
+vars:
+  COMMIT_SHA: 6a2d02dbb35a289738d0fdba88e5a474e432a72a
+  RUST_REFERENCE: dhi/rust:1.95.0-debian13-dev@sha256:1e64686b22eb66e73775d799a68b9e647267d93b9966b969216448da6b9620e1
+  NODE_REFERENCE: dhi/node:24.14.0-debian13-dev@sha256:placeholder
+  SEMVER_MAJOR_MINOR_VERSION: "1.2"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.2.1
+  VERSION: 1.2.1
+contents:
+  packages:
+    - '!base-files'
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libgcc-s1
+    - mawk
+    - perl-base
+    - sed
+    - util-linux
+  builds:
+    - name: agentgateway-ui
+      uses: dhi.io/node:24.14.0-debian13-dev
+      work-dir: ${source.dir}/agentgateway/ui
+      contents:
+        files:
+          - url: git+https://github.com/agentgateway/agentgateway.git#v1.2.1
+            checksum: 6a2d02dbb35a289738d0fdba88e5a474e432a72a
+            path: ${source.dir}/agentgateway
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build ui
+          runs: |
+            set -eux -o pipefail
+
+            npm install
+            npm run build
+      outputs:
+        - source: ${source.dir}/agentgateway/ui/out
+          target: /ui/out
+          uid: 0
+          gid: 0
+    - name: agentgateway
+      uses: dhi.io/rust:1.95.0-debian13-dev@sha256:1e64686b22eb66e73775d799a68b9e647267d93b9966b969216448da6b9620e1
+      contents:
+        packages:
+          - build-essential
+          - pkg-config
+          - libssl-dev
+          - ca-certificates
+        files:
+          - url: git+https://github.com/agentgateway/agentgateway.git#v1.2.1
+            checksum: 6a2d02dbb35a289738d0fdba88e5a474e432a72a
+            path: ${source.dir}/agentgateway
+            spdx:
+              name: agentgateway
+              version: 1.2.1
+              packages:
+                - name: agentgateway
+                  purl: pkg:cargo/agentgateway@1.2.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build
+          work-dir: ${source.dir}/agentgateway
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # Copy pre-built UI assets
+            cp -r /ui/out ui/out
+
+            export VERSION="${vars.VERSION}"
+            export GIT_REVISION="${vars.COMMIT_SHA}"
+
+            cargo build --release --features "agentgateway/ui"
+
+            install -D target/release/agentgateway \
+              '${target.dir}/app/agentgateway'
+      outputs:
+        - source: ${target.dir}/app/agentgateway
+          target: /app/agentgateway
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/agentgateway
+          target: /opt/docker/sbom/agentgateway
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: dhi.io/static:20250419-glibc-debian13@sha256:placeholder
+      includes:
+        - bin
+        - etc
+        - home
+        - lib
+        - lib64
+        - opt
+        - sbin
+        - tmp
+        - usr
+        - var
+      excludes:
+        - etc/group
+        - etc/os-release
+        - etc/passwd
+        - var/lib/dpkg/status
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /
+environment:
+  DEBIAN_FRONTEND: noninteractive
+annotations:
+  org.opencontainers.image.description: A minimal agentgateway data plane image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /app/agentgateway
