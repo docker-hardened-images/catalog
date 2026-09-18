@@ -1,0 +1,231 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-libnvidia-container
+variant: runtime
+tags:
+  - 1.20.0
+  - 1.20.0-r2
+  - 1.20.0-debian13
+  - 1.20.0-r2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-13"
+vars:
+  COMMIT_SHA: 3e428194f8616a81e16834d27365e4a663668533
+  ELFTOOLCHAIN_SHA256: 44f14591fcf21294387215dd7562f3fb4bec2f42f476cf32420a6bbabb2bd2b5
+  ELFTOOLCHAIN_VERSION: 0.7.1
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-0
+  LIBTIRPC_SHA256: b47d3ac19d3549e54a05d0019a6c400674da716123858cfdb6d3bdd70a66c702
+  LIBTIRPC_VERSION: 1.3.7
+  NVIDIA_MODPROBE_SHA256: 5687b0dfa6087dd480ae91e91ff1dca975794e35a2edcf9ec08d8f9cb98ef905
+  NVIDIA_MODPROBE_VERSION: 550.54.14
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "1.20"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.20.0
+  VERSION: 1.20.0
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: libnvidia-container
+      work-dir: ${source.dir}
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - bzip2
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - bmake
+          - libc-bin
+          - libcap-dev
+          - libseccomp-dev
+          - lsb-release
+          - m4
+          - mawk
+          - patch
+          - pkg-config
+          - rpcsvc-proto
+          - sed
+          - tar
+          - util-linux
+          - golang-1.26=1.26.8-0
+          - golang-1.26-oci-config=1.26.8-0
+        files:
+          - url: git+https://github.com/NVIDIA/libnvidia-container.git#v1.20.0
+            checksum: 3e428194f8616a81e16834d27365e4a663668533
+            path: ${source.dir}
+            spdx:
+              name: libnvidia-container
+              version: 1.20.0
+              packages:
+                - name: libnvidia-container
+                  purl: pkg:dhi/libnvidia-container@1.20.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/NVIDIA/nvidia-modprobe/archive/550.54.14.tar.gz
+            checksum: sha256:5687b0dfa6087dd480ae91e91ff1dca975794e35a2edcf9ec08d8f9cb98ef905
+            path: ${source.dir}/deps/dl/nvidia-modprobe.tar.gz
+            spdx:
+              name: nvidia-modprobe
+              version: 550.54.14
+              packages:
+                - name: nvidia-modprobe
+                  purl: pkg:github/nvidia/nvidia-modprobe@550.54.14
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: https://downloads.sourceforge.net/project/libtirpc/libtirpc/1.3.7/libtirpc-1.3.7.tar.bz2
+            checksum: sha256:b47d3ac19d3549e54a05d0019a6c400674da716123858cfdb6d3bdd70a66c702
+            path: ${source.dir}/deps/dl/libtirpc.tar.bz2
+            spdx:
+              name: libtirpc
+              version: 1.3.7
+              packages:
+                - name: libtirpc
+                  purl: pkg:generic/libtirpc@1.3.7
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+          - url: https://downloads.sourceforge.net/project/elftoolchain/Sources/elftoolchain-0.7.1/elftoolchain-0.7.1.tar.bz2
+            checksum: sha256:44f14591fcf21294387215dd7562f3fb4bec2f42f476cf32420a6bbabb2bd2b5
+            path: ${source.dir}/deps/dl/elftoolchain.tar.bz2
+            spdx:
+              name: elftoolchain
+              version: 0.7.1
+              packages:
+                - name: elftoolchain
+                  purl: pkg:generic/elftoolchain@0.7.1
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage vendored build inputs
+          runs: |
+            set -eux -o pipefail
+
+            grep -q '^VERSION  := 1.3.2$' mk/libtirpc.mk
+            sed -i "s|^VERSION  := 1.3.2$|VERSION  := 1.3.7|" mk/libtirpc.mk
+
+            grep -Eq "^VERSION[[:space:]]+:= 550.54.14$" mk/nvidia-modprobe.mk
+            mkdir -p "deps/src/nvidia-modprobe-550.54.14"
+            tar -C "deps/src/nvidia-modprobe-550.54.14" --strip-components=1 \
+              -xzf deps/dl/nvidia-modprobe.tar.gz "nvidia-modprobe-550.54.14/modprobe-utils"
+            patch -d "deps/src/nvidia-modprobe-550.54.14" -p1 < mk/nvidia-modprobe.patch
+            touch "deps/src/nvidia-modprobe-550.54.14/.download_stamp"
+
+            mkdir -p "deps/src/libtirpc-1.3.7"
+            tar -C "deps/src/libtirpc-1.3.7" --strip-components=1 \
+              -xjf deps/dl/libtirpc.tar.bz2
+            touch "deps/src/libtirpc-1.3.7/.download_stamp"
+
+            grep -Eq "^VERSION[[:space:]]+:= 0.7.1$" mk/elftoolchain.mk
+            mkdir -p "deps/src/elftoolchain-0.7.1"
+            tar -C "deps/src/elftoolchain-0.7.1" --strip-components=1 \
+              -xjf deps/dl/elftoolchain.tar.bz2 \
+              "elftoolchain-0.7.1/mk" \
+              "elftoolchain-0.7.1/common" \
+              "elftoolchain-0.7.1/libelf"
+            cp mk/native-elf-format "deps/src/elftoolchain-0.7.1/common/"
+            grep -q '^SHLIB_MAJOR=	1$' "deps/src/elftoolchain-0.7.1/libelf/Makefile"
+            sed -i '/^SHLIB_MAJOR=	1$/d' "deps/src/elftoolchain-0.7.1/libelf/Makefile"
+            touch "deps/src/elftoolchain-0.7.1/.download_stamp"
+        - name: update go dependencies
+          uses: go/bump@v2
+          work-dir: ${source.dir}/src/nvcgo
+          with:
+            deps: []
+            download: true
+        - name: build
+          runs: |
+            set -eux -o pipefail
+
+            export MANTARGET=man
+            make -j "$(nproc)" WITH_NVCGO=yes WITH_LIBELF=no WITH_TIRPC=yes WITH_SECCOMP=yes \
+              LIB_VERSION=1.20.0 REVISION=3e428194f8616a81e16834d27365e4a663668533 COMPILER=/usr/bin/gcc
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            export MANTARGET=man
+            make install DESTDIR="${target.dir}" prefix=/usr libdir="/usr/lib/$(gcc -dumpmachine)" \
+              WITH_NVCGO=yes WITH_LIBELF=no WITH_TIRPC=yes WITH_SECCOMP=yes \
+              LIB_VERSION=1.20.0 REVISION=3e428194f8616a81e16834d27365e4a663668533 COMPILER=/usr/bin/gcc
+
+            rm -rf "${target.dir}/usr/include" "${target.dir}/usr/share" "${target.dir}/usr/lib/debug"
+            find "${target.dir}/usr/lib" \( -name '*.a' -o -name '*.pc' \) -delete
+            find "${target.dir}/usr/lib" -name '*.so' -type l -delete
+            find "${target.dir}/usr/lib" -type d -empty -delete
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            libdir="${target.dir}/usr/lib/$(gcc -dumpmachine)"
+            LD_LIBRARY_PATH="${libdir}" \
+              "${target.dir}/usr/bin/nvidia-container-cli" --version | grep -F "1.20.0"
+
+            for f in "${target.dir}/usr/bin/nvidia-container-cli" "${libdir}"/libnvidia-container*.so.1.20.0; do
+              for lib in $(readelf -d "${f}" | awk '/NEEDED/ { print $NF }' | tr -d '[]'); do
+                case "${lib}" in
+                  libc.so.6 | ld-linux-*.so.* | libdl.so.2 | libm.so.6 | libpthread.so.0 | librt.so.1) ;;
+                  libcap.so.2 | libseccomp.so.2 | libnvidia-container.so.1) ;;
+                  *)
+                    echo "unexpected NEEDED ${lib} in ${f}" >&2
+                    exit 1
+                    ;;
+                esac
+              done
+            done
+        - name: stage sbom fragments
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            for component in libnvidia-container libtirpc elftoolchain nvidia-modprobe; do
+              cp -a "/opt/docker/sbom/${component}" "${target.dir}/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - libcap2
+              - libseccomp2
+            description: NVIDIA container runtime library
+            files:
+              - usr/lib
+              - opt/docker/sbom
+            formats:
+              - deb
+            license: Apache-2.0
+            name: libnvidia-container1
+            rel: 2
+            subpackages:
+              - depends:
+                  - libc6
+                  - libcap2
+                  - libnvidia-container1
+                files:
+                  - path: usr/bin/nvidia-container-cli
+                name: libnvidia-container-tools
+            url: https://github.com/NVIDIA/libnvidia-container
+            version: 1.20.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
