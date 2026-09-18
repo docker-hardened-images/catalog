@@ -1,0 +1,53 @@
+Subject: Adapt JanusGraph Docker entrypoint to yq-go v4
+Origin: DHI-internal packaging compatibility patch
+Description: The upstream Dockerfile downloads mikefarah/yq v3, whose
+ write/delete CLI (`yq w/d -P -i file key val`) is incompatible with the v4
+ expression syntax. Both DHI variants depend on yq-go v4 (the apk via Alpine's
+ `yq`, the deb via the yq-go package), so this patch keeps the upstream
+ gremlinserver environment-variable behavior while using v4 syntax. Path
+ segments are quoted as `["seg"]` so keys containing characters like hyphens
+ are not misread as expressions.
+ .
+ The upstream entrypoint also invokes /usr/local/bin/load-initdb.sh, a path
+ created by upstream's Dockerfile COPY. Distro packages must not install into
+ /usr/local, so this patch repoints the call at the packaged copy under
+ ${JANUS_HOME}/docker/, matching the janusgraph-server.sh call on the next line.
+ .
+ Two known behavior differences from upstream yq v3, both on the default path:
+ gremlinserver.* values are written as YAML strings rather than native scalars
+ (SnakeYAML coerces them for typed bean properties, so this is not fatal), and
+ the dotted-path builder does not support indexed paths such as
+ serializers[0].className, which upstream yq v3 accepted.
+Upstream source: https://github.com/JanusGraph/janusgraph/blob/v1.1.0/janusgraph-dist/docker/docker-entrypoint.sh
+
+--- a/janusgraph-dist/docker/docker-entrypoint.sh
++++ b/janusgraph-dist/docker/docker-entrypoint.sh
+@@ -49,12 +49,16 @@
+       fi
+     elif [[ "${envvar_key}" =~ gremlinserver(%d)?[.]{1}(.+) ]]; then
+       # Check for edit mode %d after prefix
+-      if [[ ${BASH_REMATCH[1]} == "%d" ]]; then edit_mode="d"; else edit_mode="w"; fi
++      if [[ ${BASH_REMATCH[1]} == "%d" ]]; then edit_mode="delete"; else edit_mode="write"; fi
+       # strip namespace from env variable and get value
+       envvar_key=${BASH_REMATCH[2]}
+-      if [[ edit_mode == "d" ]]; then envvar_val=""; fi
+       # add new or update existing field in configuration file
+-      yq ${edit_mode} -P -i ${JANUSGRAPH_SERVER_YAML} ${envvar_key} ${envvar_val}
++      yq_path=$(printf '%s' "${envvar_key}" | awk -F. '{ out = ""; for (i = 1; i <= NF; i++) { gsub(/"/, "\\\"", $i); out = out "[\"" $i "\"]" } print out }')
++      if [[ ${edit_mode} == "delete" ]]; then
++        yq -i "del(.${yq_path})" ${JANUSGRAPH_SERVER_YAML}
++      else
++        envvar_val="${envvar_val}" yq -i ".${yq_path} = strenv(envvar_val)" ${JANUSGRAPH_SERVER_YAML}
++      fi
+     else
+       continue
+     fi
+@@ -77,7 +81,7 @@
+       rm -f "$F"
+     fi
+ 
+-    /usr/local/bin/load-initdb.sh &
++    ${JANUS_HOME}/docker/load-initdb.sh &
+ 
+     exec ${JANUS_HOME}/bin/janusgraph-server.sh ${JANUSGRAPH_SERVER_YAML}
+   fi

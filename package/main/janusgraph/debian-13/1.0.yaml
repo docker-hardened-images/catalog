@@ -1,0 +1,204 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-janusgraph
+variant: runtime
+tags:
+  - 1.0.1
+  - 1.0.1-r0
+  - 1.0.1-debian13
+  - 1.0.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-11-08"
+vars:
+  COMMIT_SHA: 30890c3959610e0a4687194d22f533dc71c2a766
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk17-debian13-dev@sha256:6bd511e5ba7a082e6a4299bef7b35b57327a5a67dde8bece3b4f1dfc6ec77776
+  PACKAGE_NAME: janusgraph-1.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.1
+  VERSION: 1.0.1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: janusgraph
+      uses: dhi.io/maven:3.9.16-jdk17-debian13-dev@sha256:6bd511e5ba7a082e6a4299bef7b35b57327a5a67dde8bece3b4f1dfc6ec77776
+      work-dir: ${source.dir}/janusgraph
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - unzip
+          - yq
+        files:
+          - url: git+https://github.com/JanusGraph/janusgraph.git#v1.0.1
+            checksum: 30890c3959610e0a4687194d22f533dc71c2a766
+            path: ${source.dir}/janusgraph
+            spdx:
+              name: janusgraph
+              version: 1.0.1
+              packages:
+                - name: janusgraph
+                  purl: pkg:github/JanusGraph/janusgraph@v1.0.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: patch docker entrypoint for yq-go
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/yq-entrypoint.patch
+        - name: patch maven dependencies
+          uses: mvn/patch@v1
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/janusgraph
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: short out upstream docker image build
+          runs: |
+            set -eux -o pipefail
+
+            sed -i '0,/^set -e$/s//exit 0\nset -e/' janusgraph-dist/docker/build-and-push-image.sh
+            grep -q '^exit 0$' janusgraph-dist/docker/build-and-push-image.sh
+        - name: build distribution
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -Pjanusgraph-release,skip-docker \
+              -DskipTests=true \
+              -Dgpg.skip=true \
+              -Dmaven.javadoc.skip=true
+        - name: stage distribution
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/janusgraph"
+            zipfile=$(find janusgraph-dist/target -maxdepth 1 -name "janusgraph-1.0.1.zip" -print -quit)
+            test -n "${zipfile}"
+            scratch=$(mktemp -d)
+            unzip -q "${zipfile}" -d "${scratch}"
+            cp -a "${scratch}/janusgraph-1.0.1/." \
+              "${target.dir}/usr/share/janusgraph/"
+            rm -rf "${scratch}"
+            rm -rf \
+              "${target.dir}/usr/share/janusgraph/elasticsearch" \
+              "${target.dir}/usr/share/janusgraph/javadocs" \
+              "${target.dir}/usr/share/janusgraph/log" \
+              "${target.dir}/usr/share/janusgraph/examples" \
+              "${target.dir}/usr/share/janusgraph"/conf/janusgraph-*.properties
+            mv \
+              "${target.dir}/usr/share/janusgraph/conf/gremlin-server/gremlin-server.yaml" \
+              "${target.dir}/usr/share/janusgraph/conf/janusgraph-server.yaml"
+            rm -rf "${target.dir}/usr/share/janusgraph/conf/gremlin-server"
+            cp -a janusgraph-dist/docker/conf/. "${target.dir}/usr/share/janusgraph/conf/"
+            cp -a janusgraph-dist/docker/scripts/remote-connect.groovy "${target.dir}/usr/share/janusgraph/scripts/"
+            install -D -m 0755 janusgraph-dist/docker/docker-entrypoint.sh \
+              "${target.dir}/usr/share/janusgraph/docker/docker-entrypoint.sh"
+            install -D -m 0755 janusgraph-dist/docker/load-initdb.sh \
+              "${target.dir}/usr/share/janusgraph/docker/load-initdb.sh"
+
+            mkdir -p "${target.dir}/usr/bin"
+            ln -s ../share/janusgraph/bin/janusgraph-server.sh "${target.dir}/usr/bin/janusgraph"
+            ln -s ../share/janusgraph/bin/gremlin.sh "${target.dir}/usr/bin/gremlin"
+        - name: maven sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: janusgraph-maven
+            source: ${target.dir}/usr/share/janusgraph
+        - uses: dhi/build-pkg:0
+          privileged: true
+          with:
+            depends:
+              - bash
+              - ca-certificates
+              - coreutils
+              - findutils
+              - gawk
+              - grep
+              - krb5-user
+              - sed
+              - yq-go
+            description: Distributed graph database optimized for large-scale graphs
+            files:
+              - usr/bin/gremlin
+              - usr/bin/janusgraph
+              - usr/share/janusgraph
+            formats:
+              - deb
+            license: Apache-2.0
+            name: janusgraph-1.0
+            rel: 0
+            url: https://janusgraph.org/
+            version: 1.0.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/yq-entrypoint.patch
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/yq-entrypoint.patch
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-properties.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
