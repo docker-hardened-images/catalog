@@ -46,15 +46,15 @@ publish applications and `dhi.io/aspnetcore:<version>` to run them:
 
 ```bash
 # Create a new web API project using DHI's SDK
-docker run -v $(pwd):/app -w /app dhi.io/dotnet:8-sdk \
+docker run -v $(pwd):/app -w /app dhi.io/dotnet:10-sdk \
   dotnet new webapi -n MyApi --no-https
 
 # Build the application using DHI's SDK
-docker run -v $(pwd):/app -w /app dhi.io/dotnet:8-sdk \
+docker run -v $(pwd):/app -w /app dhi.io/dotnet:10-sdk \
   dotnet publish MyApi -c Release -o ./published
 
 # Run with DHI runtime (note: this is a web API, so it needs proper setup)
-docker run -v $(pwd)/published:/app -p 8080:8080 dhi.io/aspnetcore:8 \
+docker run -v $(pwd)/published:/app -p 8080:8080 dhi.io/aspnetcore:10 \
   dotnet /app/MyApi.dll
 ```
 
@@ -71,15 +71,15 @@ same runtime family as the final ASP.NET Core image.
 For example:
 
 ```docker
-FROM dhi.io/aspnetcore:8-dev AS aspnet-runtime-root
+FROM dhi.io/aspnetcore:10-dev AS aspnet-runtime-root
 RUN apt-get update && apt-get install -y --no-install-recommends <package>
 
-FROM dhi.io/dotnet:8-sdk AS builder
+FROM dhi.io/dotnet:10-sdk AS builder
 WORKDIR /src
 COPY . .
 RUN dotnet publish -c Release -o /app/publish
 
-FROM dhi.io/aspnetcore:8
+FROM dhi.io/aspnetcore:10
 WORKDIR /app
 COPY --from=builder /app/publish .
 COPY --from=aspnet-runtime-root /usr/lib/<library> /usr/lib/<library>
@@ -93,7 +93,7 @@ Use DHI's SDK for building and DHI runtime for production:
 
 ```docker
 # Build stage
-FROM dhi.io/dotnet:8-sdk AS builder
+FROM dhi.io/dotnet:10-sdk AS builder
 WORKDIR /src
 COPY ["MyApp.csproj", "."]
 RUN dotnet restore
@@ -101,7 +101,7 @@ COPY . .
 RUN dotnet publish -c Release -o /app/publish
 
 # Runtime stage
-FROM dhi.io/aspnetcore:8
+FROM dhi.io/aspnetcore:10
 WORKDIR /app
 COPY --from=builder /app/publish .
 USER 1001
