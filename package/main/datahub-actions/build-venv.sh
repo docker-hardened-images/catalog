@@ -2,7 +2,7 @@
 # Shared datahub-actions venv staging for debian.
 # Expects (exported by the definition pipeline — melange vars are not
 # expanded inside this file):
-#   SOURCE_DIR  - work dir containing acryl_datahub_actions.tar.gz
+#   SOURCE_DIR  - work dir containing datahub-src/ monorepo checkout
 #   TARGET_DIR  - package root
 #   PYTHON_BIN  - interpreter path (e.g. /usr/bin/python3.10)
 #   EXTRAS      - pip extras for acryl-datahub-actions (e.g. all)
@@ -40,7 +40,7 @@ uv pip install \
   --python "${VENV}/bin/python" \
   --override "${SOURCE_DIR}/overrides.txt" \
   --no-binary cryptography \
-  "${SOURCE_DIR}/acryl_datahub_actions.tar.gz[${EXTRAS}]"
+  "${SOURCE_DIR}/datahub-src/datahub-actions[${EXTRAS}]"
 
 # drop caches, tests, and uv/pip build-env leaks from the shipped venv
 find "${VENV}" \
