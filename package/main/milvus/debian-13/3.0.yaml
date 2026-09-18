@@ -1,0 +1,454 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-milvus
+variant: runtime
+tags:
+  - 3.0.1
+  - 3.0.1-r1
+  - 3.0.1-debian13
+  - 3.0.1-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  CARGO_VERSION: 1.97.1-0
+  COMMIT_SHA: 658cbd16899bb715a17d4d6f727531a376678ca6
+  GOLANG_VERSION: 1.26.8-0
+  MILVUS_ENTITLEMENT: ""
+  MILVUS_PACKAGE_SUFFIX: ""
+  MILVUS_STORAGE_COMMIT_SHA: 3ae6ac424b8dd3b7dcd06698f6779bb87e269dee
+  MILVUS_STORAGE_PIN: 3ae6ac4
+  PACKAGE_NAME: milvus-3.0
+  REL: "1"
+  RUSTC_VERSION: 1.97.1-0
+  SEMVER_MAJOR_MINOR_VERSION: "3.0"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.0.1
+  VERSION: 3.0.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: milvus-3.0
+      work-dir: ${source.dir}/milvus
+      environment:
+        GOFLAGS: -mod=mod
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - libc-bin
+          - findutils
+          - diffutils
+          - sed
+          - grep
+          - gawk
+          - tar
+          - gzip
+          - bzip2
+          - xz-utils
+          - unzip
+          - file
+          - make
+          - gcc
+          - g++
+          - binutils
+          - pkgconf
+          - autoconf
+          - automake
+          - libtool
+          - m4
+          - patch
+          - patchelf
+          - linux-libc-dev
+          - git
+          - ca-certificates
+          - curl
+          - perl
+          - python3
+          - python3-venv
+          - golang-1.26=1.26.8-0
+          - libc6-dev
+          - cargo-1.97=1.97.1-0
+          - rustc-1.97=1.97.1-0
+          - libcurl4t64
+          - libsqlite3-0
+          - libssl3t64
+          - zlib1g
+          - libssl-dev
+          - libclang-dev
+          - libaio-dev
+        files:
+          - url: git+https://github.com/milvus-io/milvus#v3.0.1
+            checksum: 658cbd16899bb715a17d4d6f727531a376678ca6
+            path: ${source.dir}/milvus
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/milvus-io/milvus-storage#3ae6ac424b8dd3b7dcd06698f6779bb87e269dee
+            checksum: 3ae6ac424b8dd3b7dcd06698f6779bb87e269dee
+            path: ${source.dir}/milvus-storage
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install conan toolchain
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m venv /opt/conan-venv
+            /opt/conan-venv/bin/pip install conan==2.25.1 cmake==3.31.10
+
+            /opt/conan-venv/bin/conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
+            /opt/conan-venv/bin/conan download 'aws-sdk-cpp/1.11.842@milvus/dev#363556887f622db23a10168c108dd55d' -r default-conan-local2 --only-recipe
+            aws_cache="$(/opt/conan-venv/bin/conan cache path 'aws-sdk-cpp/1.11.842@milvus/dev#363556887f622db23a10168c108dd55d')"
+            mkdir -p "${source.dir}/aws-sdk-cpp-recipe"
+            cp "$aws_cache/conanfile.py" "$aws_cache/conandata.yml" "${source.dir}/aws-sdk-cpp-recipe/"
+        - name: apply dhi patches
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/3.0/dhi-build-gcc14-third-party-flags.patch
+              - ${source.dir}/patch/3.0/dhi-cve-conan-third-party-pins.patch
+              - ${source.dir}/patch/3.0/dhi-build-tantivy-system-cargo.patch
+              - ${source.dir}/patch/dhi-cve-avro-map-alloc-cap.patch
+        - name: patch the aws-sdk-cpp conan recipe
+          uses: patch@v1
+          work-dir: ${source.dir}/aws-sdk-cpp-recipe
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/3.0/dhi-build-aws-sdk-cpp-conan-zlib.patch
+        - name: export the patched aws-sdk-cpp conan recipe
+          runs: |
+            set -eux -o pipefail
+
+            /opt/conan-venv/bin/conan export "${source.dir}/aws-sdk-cpp-recipe" --name aws-sdk-cpp --version 1.11.842 --user milvus --channel dev 2>&1 | tee /tmp/aws-sdk-cpp-export.log
+            grep -q 'Exported: aws-sdk-cpp/1.11.842@milvus/dev#aa0f9d1c24c8d33e75e9d0369a7f1c8f' /tmp/aws-sdk-cpp-export.log
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            replaces:
+              - go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.60.0
+              - github.com/hamba/avro/v2=github.com/iskorotkov/avro/v2@v2.34.0
+        - name: bump pinned go dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go get \
+              github.com/iskorotkov/avro/v2@v2.33.1 \
+              golang.org/x/crypto@v0.56.0 \
+              github.com/apache/thrift@v0.24.0 \
+              github.com/klauspost/compress@v1.18.7 \
+              google.golang.org/grpc@v1.83.2 \
+              go.opentelemetry.io/otel@v1.44.0 \
+              go.opentelemetry.io/otel/sdk@v1.44.0 \
+              go.opentelemetry.io/otel/trace@v1.44.0 \
+              go.opentelemetry.io/otel/metric@v1.44.0 \
+              go.opentelemetry.io/otel/sdk/metric@v1.44.0 \
+              go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.44.0 \
+              go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0 \
+              go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.44.0 \
+              go.etcd.io/etcd/server/v3@v3.5.33 \
+              go.etcd.io/etcd/client/pkg/v3@v3.5.33 \
+              go.etcd.io/etcd/client/v3@v3.5.33 \
+              go.etcd.io/etcd/client/v2@v2.305.33 \
+              go.etcd.io/etcd/api/v3@v3.5.33 \
+              go.etcd.io/etcd/raft/v3@v3.5.33 \
+              go.etcd.io/etcd/pkg/v3@v3.5.33 \
+              github.com/gorilla/websocket@v1.5.3 \
+              go.mongodb.org/mongo-driver@v1.17.7 \
+              github.com/cilium/ebpf@v0.22.0 \
+              github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 \
+              github.com/aws/aws-sdk-go-v2/service/bedrockruntime@v1.50.4 \
+              github.com/quic-go/quic-go@v0.59.1
+
+            test "$(go list -m -f '{{.Replace.Version}}' go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc)" = v0.60.0
+            test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = v1.83.2
+            test "$(go list -m -f '{{.Replace.Path}} {{.Replace.Version}}' github.com/hamba/avro/v2)" = 'github.com/iskorotkov/avro/v2 v2.34.0'
+            test "$(go list -m -f '{{.Version}}' github.com/iskorotkov/avro/v2)" = v2.33.1
+            test "$(go list -m -f '{{.Version}}' github.com/quic-go/quic-go)" = v0.59.1
+
+            make download-milvus-proto get-proto-deps
+        - name: update tantivy binding dependencies
+          work-dir: ${source.dir}/milvus/internal/core/thirdparty/tantivy/tantivy-binding
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update -p rustls-webpki --precise 0.103.15
+            cargo update -p rustls --precise 0.23.45
+            cargo update -p oneshot --precise 0.1.13
+            cargo update -p tar --precise 0.4.46
+            cargo update -p bytes --precise 1.11.1
+            cargo update -p time --precise 0.3.47
+            cargo update -p rand@0.9.2 --precise 0.9.3
+            cargo update -p rand@0.8.5 --precise 0.8.6
+            cargo update -p anyhow --precise 1.0.103
+            cargo update -p h2 --precise 0.4.16
+            cargo update -p event-listener --precise 5.4.2
+            cargo update -p memmap2@0.9.8 --precise 0.9.11
+            cargo update -p crossbeam-epoch --precise 0.9.20
+        - name: update storage bridge dependencies
+          work-dir: ${source.dir}/milvus-storage/cpp/src/format/bridge/rust
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update -p rustls-webpki --precise 0.103.15
+            cargo update -p rustls --precise 0.23.45
+            cargo update -p lz4_flex@0.11.5 --precise 0.11.6
+            cargo update -p serde_with --precise 3.21.0
+            cargo update -p cxx --precise 1.0.195
+            cargo update -p rsa --precise 0.9.10
+            cargo update -p rand@0.9.2 --precise 0.9.3
+            cargo update -p rand@0.8.5 --precise 0.8.6
+            cargo update -p anyhow --precise 1.0.103
+            cargo update -p h2 --precise 0.4.16
+            cargo update -p event-listener --precise 5.4.2
+            cargo update -p crossbeam-epoch --precise 0.9.20
+
+            grep -A1 'name = "aws-lc-sys"' Cargo.lock | grep -q 'version = "0.45.0"'
+        - name: build milvus c++ core
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/opt/conan-venv/bin:$PATH"
+
+            grep -q "^set( milvus-storage_VERSION 3ae6ac4)" internal/core/thirdparty/milvus-storage/CMakeLists.txt
+            case "3ae6ac424b8dd3b7dcd06698f6779bb87e269dee" in
+              "3ae6ac4"*) ;;
+              *)
+                echo "milvus-storage checkout 3ae6ac424b8dd3b7dcd06698f6779bb87e269dee is not the pinned 3ae6ac4"
+                exit 1
+                ;;
+            esac
+
+            mem_gb=$(awk '/MemTotal/ { printf "%d", $2 / 1048576 }' /proc/meminfo)
+            jobs=$((mem_gb / 6))
+            [ "$jobs" -ge 1 ] || jobs=1
+            [ "$jobs" -le "$(nproc)" ] || jobs=$(nproc)
+            export jobs
+            export CARGO_BUILD_JOBS="$jobs"
+            export CMAKE_EXTRA_ARGS="-DFETCHCONTENT_SOURCE_DIR_MILVUS-STORAGE=${source.dir}/milvus-storage"
+            echo "core build jobs: $jobs (${mem_gb} GiB, $(nproc) cpus)"
+
+            make build-cpp print-build-info 2>&1 | tee /tmp/core-build.log || {
+              grep -n -B2 -A12 -E '(^|[^[:alnum:]_./-])error(\[|:)|Error [0-9]+$|FAILED|undefined reference|collect2|Killed|could not compile|failed to run custom build|signal: 9' /tmp/core-build.log | tail -n 200
+              exit 1
+            }
+        - name: build milvus binary
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/opt/conan-venv/bin:$PATH"
+
+            make build-go MILVUS_VERSION=3.0.1 BUILD_TAGS=v3.0.1
+
+            install -D -m 0755 bin/milvus "${target.dir}/usr/bin/milvus"
+        - name: assemble install tree
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/milvus"
+            cp -a internal/core/output/lib/*.so* "${target.dir}/usr/lib/milvus/"
+            if [ -d internal/core/output/lib64 ]; then
+              cp -a internal/core/output/lib64/*.so* "${target.dir}/usr/lib/milvus/"
+            fi
+            rm -f "${target.dir}"/usr/lib/milvus/libssl.so* "${target.dir}"/usr/lib/milvus/libcrypto.so*
+            rm -f "${target.dir}"/usr/lib/milvus/libfollybenchmark.so*
+            rm -f "${target.dir}"/usr/lib/milvus/libevent_extra*.so* "${target.dir}"/usr/lib/milvus/libevent_openssl*.so* "${target.dir}"/usr/lib/milvus/libevent_pthreads*.so*
+            rm -f "${target.dir}"/usr/lib/milvus/librdkafka++*.so*
+
+            mkdir -p "${target.dir}/usr/share/milvus"
+            cp -a configs "${target.dir}/usr/share/milvus/configs"
+            rm -rf "${target.dir}/usr/share/milvus/configs/pgo" "${target.dir}/usr/share/milvus/configs/cert"
+
+            patchelf --force-rpath --set-rpath /usr/lib/milvus "${target.dir}/usr/bin/milvus"
+            find "${target.dir}/usr/lib/milvus" -name '*.so*' ! -type l -exec patchelf --force-rpath --set-rpath /usr/lib/milvus {} +
+
+            LD_LIBRARY_PATH="${target.dir}/usr/lib/milvus" ldd "${target.dir}/usr/bin/milvus" | tee /tmp/ldd-milvus.txt
+            if grep -q 'not found' /tmp/ldd-milvus.txt; then
+              echo "unresolved shared object in milvus"
+              exit 1
+            fi
+            for lib in "${target.dir}"/usr/lib/milvus/*.so*; do
+              [ -L "$lib" ] && continue
+              LD_LIBRARY_PATH="${target.dir}/usr/lib/milvus" ldd "$lib" | tee "/tmp/ldd-lib.txt"
+              if grep -q 'not found' /tmp/ldd-lib.txt; then
+                echo "unresolved shared object in $lib"
+                exit 1
+              fi
+            done
+        - name: generate third-party sbom fragments
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/opt/conan-venv/bin:$PATH"
+
+            conan graph info internal/core --format=json --no-remote -s build_type=Release -s compiler.version="$(gcc -dumpversion)" -s compiler.libcxx=libstdc++11 -s compiler.cppstd=20 -s:b compiler.cppstd=20 > /tmp/conan-graph.json
+            python3 - /tmp/conan-graph.json /tmp/conan-components.txt << 'PY'
+            import json, sys
+            graph, out = sys.argv[1:3]
+            nodes = json.load(open(graph))["graph"]["nodes"]
+            with open(out, "w") as f:
+                for key, node in nodes.items():
+                    if key == "0" or node.get("context") != "host" or not node.get("name"):
+                        continue
+                    lic = node.get("license") or []
+                    lic = " AND ".join(lic) if isinstance(lic, list) else str(lic)
+                    f.write("\t".join((node["name"], node["version"], lic, node.get("homepage") or "")) + "\n")
+            PY
+
+            {
+              (cd internal/core/thirdparty/tantivy/tantivy-binding && cargo tree --locked --offline -e normal --prefix none --format '{p}')
+              (cd "${source.dir}/milvus-storage/cpp/src/format/bridge/rust" && cargo tree --locked --offline -e normal --prefix none --format '{p}')
+            } | sed 's/ (\*)$//' | sort -u > /tmp/cargo-tree.txt
+            wc -l /tmp/conan-components.txt /tmp/cargo-tree.txt
+
+            python3 - "${target.dir}/opt/docker/sbom/milvus-3.0-thirdparty" /tmp/conan-components.txt /tmp/cargo-tree.txt << 'PY'
+            import json, os, re, sys
+
+            out, components_path, tree_path = sys.argv[1:4]
+            os.makedirs(out, exist_ok=True)
+
+            def write(kind, name, version, purl, license, homepage):
+                slug = re.sub(r'[^A-Za-z0-9.-]+', '-', f"{name}-{version}")
+                doc = {
+                    "spdxVersion": "SPDX-2.3",
+                    "dataLicense": "CC0-1.0",
+                    "SPDXID": "SPDXRef-DOCUMENT",
+                    "name": f"SPDX document for {name} {version}",
+                    "documentNamespace": f"https://dhi.io/spdx/milvus-thirdparty/{kind}-{slug}",
+                    "creationInfo": {"creators": ["Organization: Docker, Inc.", "Tool: dhi/build"], "created": "1970-01-01T00:00:00Z"},
+                    "packages": [{
+                        "name": name,
+                        "SPDXID": f"SPDXRef-{kind}-{slug}",
+                        "versionInfo": version,
+                        "downloadLocation": homepage or "NOASSERTION",
+                        "filesAnalyzed": False,
+                        "licenseConcluded": "NOASSERTION",
+                        "licenseDeclared": license or "NOASSERTION",
+                        "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": purl}],
+                    }],
+                }
+                path = os.path.join(out, f".spdx.{kind}-{slug}.json")
+                if os.path.exists(path):
+                    raise SystemExit(f"duplicate fragment {path}")
+                with open(path, "w") as f:
+                    json.dump(doc, f, indent=2)
+                    f.write("\n")
+
+            count = 0
+            for line in open(components_path):
+                name, version, lic, homepage = line.rstrip("\n").split("\t")
+                if name in ("gtest", "benchmark", "openssl"):
+                    continue
+                write("conan", name, version, f"pkg:conan/{name}@{version}", lic, homepage)
+                count += 1
+            print(f"conan components: {count}")
+
+            crates = 0
+            for line in open(tree_path):
+                m = re.match(r'^(\S+) v(\S+)$', line.strip())
+                if not m:
+                    continue
+                name, version = m.group(1), m.group(2)
+                write("cargo", name, version, f"pkg:cargo/{name}@{version}", None, f"https://crates.io/crates/{name}")
+                crates += 1
+            if crates == 0:
+                raise SystemExit("cargo tree produced no registry crates")
+            print(f"cargo crates: {crates}")
+            PY
+
+            ls -A "${target.dir}/opt/docker/sbom/milvus-3.0-thirdparty" | wc -l
+        - name: strip debug symbols
+          runs: |
+            set -eux -o pipefail
+
+            strip -s "${target.dir}/usr/bin/milvus"
+            find "${target.dir}/usr/lib/milvus" -name '*.so*' ! -name 'libmilvus-planparser.so' -exec strip --strip-unneeded {} +
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: milvus-3.0-fips
+            deb:
+              depends:
+                - milvus-3.0-libs
+                - libstdc++6
+                - libgomp1
+                - libatomic1
+                - libaio1t64
+                - libssl3t64
+                - zlib1g
+                - libzstd1
+            description: Milvus high-performance, cloud-native vector database
+            files:
+              - usr/bin/milvus
+            formats:
+              - deb
+            license: Apache-2.0
+            name: milvus-3.0
+            rel: 1
+            subpackages:
+              - deb:
+                  depends:
+                    - libstdc++6
+                    - libgomp1
+                    - libatomic1
+                    - libaio1t64
+                    - libssl3t64
+                    - zlib1g
+                    - libzstd1
+                description: Milvus shared C++ core libraries and default configuration
+                files:
+                  - path: usr/lib/milvus
+                  - path: usr/share/milvus
+                  - path: opt/docker/sbom/milvus-3.0-thirdparty
+                name: milvus-3.0-libs
+            url: https://github.com/milvus-io/milvus
+            version: 3.0.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/3.0/dhi-build-gcc14-third-party-flags.patch
+          uid: 0
+          gid: 0
+          source: package/main/milvus/patch/3.0/dhi-build-gcc14-third-party-flags.patch
+        - type: file
+          path: ${source.dir}/patch/3.0/dhi-cve-conan-third-party-pins.patch
+          uid: 0
+          gid: 0
+          source: package/main/milvus/patch/3.0/dhi-cve-conan-third-party-pins.patch
+        - type: file
+          path: ${source.dir}/patch/3.0/dhi-build-tantivy-system-cargo.patch
+          uid: 0
+          gid: 0
+          source: package/main/milvus/patch/3.0/dhi-build-tantivy-system-cargo.patch
+        - type: file
+          path: ${source.dir}/patch/3.0/dhi-build-aws-sdk-cpp-conan-zlib.patch
+          uid: 0
+          gid: 0
+          source: package/main/milvus/patch/3.0/dhi-build-aws-sdk-cpp-conan-zlib.patch
+        - type: file
+          path: ${source.dir}/patch/dhi-cve-avro-map-alloc-cap.patch
+          uid: 0
+          gid: 0
+          source: package/main/milvus/patch/dhi-cve-avro-map-alloc-cap.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
