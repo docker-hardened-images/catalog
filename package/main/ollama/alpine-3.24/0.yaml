@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-ollama
+variant: runtime
+tags:
+  - 0.33.2-alpine3.24
+  - 0.33.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-27"
+vars:
+  COMMIT_SHA: f96e7aa0513b9973a0ccc71be414c2ecb9d65b1a
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.1-r0
+  LLAMA_CPP_COMMIT_SHA: d222767c7a6516559a3f49e7721b6c6b1acc87b4
+  LLAMA_CPP_TAG_VERSION: b10630
+  LLAMA_CPP_VERSION: b10630
+  PACKAGE_NAME: ollama
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.33"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.33.2
+  VERSION: 0.33.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: ollama
+      work-dir: /go/src/github.com/ollama/ollama
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - cmake
+          - git
+          - linux-headers
+          - golang-1.27=1.27.1-r0
+          - golang-1.27-oci-config=1.27.1-r0
+        files:
+          - url: git+https://github.com/ollama/ollama.git#v0.33.2
+            checksum: f96e7aa0513b9973a0ccc71be414c2ecb9d65b1a
+            path: /go/src/github.com/ollama/ollama
+            spdx:
+              name: ollama
+              version: 0.33.2
+              packages:
+                - name: ollama
+                  purl: pkg:golang/github.com/ollama/ollama@0.33.2
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ggml-org/llama.cpp.git#b10630
+            checksum: d222767c7a6516559a3f49e7721b6c6b1acc87b4
+            path: ${source.dir}/llama-cpp
+            spdx:
+              name: llama.cpp
+              version: b10630
+              packages:
+                - name: llama.cpp
+                  purl: pkg:github/ggml-org/llama.cpp@b10630
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/buger/jsonparser@v1.1.2
+              - golang.org/x/crypto@v0.56.0
+              - golang.org/x/image@v0.45.0
+              - golang.org/x/mod@v0.40.0
+              - github.com/klauspost/compress@v1.18.7
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test ./envconfig/... ./format/... ./types/... ./template/... ./server/... ./api/... ./llm/... ./discover/... ./x/...
+        - name: build llama-server
+          runs: |
+            set -eux -o pipefail
+
+            cmake -S llama/server -B build/llama-server \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=ON \
+              -DGGML_BACKEND_DL=ON \
+              -DGGML_NATIVE=OFF \
+              -DGGML_OPENMP=OFF \
+              -DGGML_CPU_ALL_VARIANTS=ON \
+              -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=${source.dir}/llama-cpp
+            cmake --build build/llama-server --target llama-server --target llama-quantize -- -j "$(nproc)"
+            cmake --install build/llama-server --component llama-server --strip --prefix "${target.dir}/usr"
+        - name: build ollama
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -extldflags=-static
+              - -X github.com/ollama/ollama/version.Version=0.33.2
+              - -X github.com/ollama/ollama/server.mode=release
+            output: ${target.dir}/usr/bin/ollama
+        - name: build ollama dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -extldflags=-static
+              - -X github.com/ollama/ollama/version.Version=0.33.2
+              - -X github.com/ollama/ollama/server.mode=release
+            output: ${target.dir}/usr/bin/ollama-dev
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libgcc
+              - libstdc++
+            description: Ollama, a tool for running large language models locally (CPU inference)
+            files:
+              - usr/bin/ollama
+              - usr/lib/ollama
+            formats:
+              - apk
+            license: MIT
+            name: ollama
+            rel: 0
+            subpackages:
+              - depends:
+                  - libgcc
+                  - libstdc++
+                files:
+                  - path: usr/bin/ollama
+                    source: usr/bin/ollama-dev
+                name: ollama-dev
+                replaces:
+                  - ollama
+            url: https://ollama.com
+            version: 0.33.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
