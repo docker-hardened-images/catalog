@@ -51,6 +51,7 @@ export UV_NO_BINARY_PACKAGE=cryptography
 # idna 3.15 clears CVE-2026-45409.
 # python-dotenv 1.2.2 clears CVE-2026-28684.
 # pygments 2.20.0 clears CVE-2026-4539 (LOW).
+# anyio 4.14.2 clears CVE-2026-63374, CVE-2026-64847.
 uv lock \
   --upgrade-package "fastmcp==3.4.7" \
   --upgrade-package "starlette==1.6.0" \
@@ -60,7 +61,8 @@ uv lock \
   --upgrade-package "requests==2.33.0" \
   --upgrade-package "idna==3.15" \
   --upgrade-package "python-dotenv==1.2.2" \
-  --upgrade-package "pygments==2.20.0"
+  --upgrade-package "pygments==2.20.0" \
+  --upgrade-package "anyio==4.14.2"
 uv sync --locked --no-dev --no-editable
 
 find "${VENV}" \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
