@@ -1,0 +1,156 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-confluent-docker-utils
+variant: runtime
+tags:
+  - 0.0.172
+  - 0.0.172-r1
+  - 0.0.172-debian13
+  - 0.0.172-r1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 0bc1c0d549cf3bf5dc9f269b3d6bb8d286d5201f
+  PACKAGE_NAME: confluent-docker-utils
+  PYTHON_MINOR: "3.13"
+  PYTHON_VERSION: 3.13.15-1
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "0.0"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.0.172
+  UV_VERSION: 0.12.10
+  VERSION: 0.0.172
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: confluent-docker-utils
+      work-dir: ${source.dir}
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - gzip
+          - sed
+          - tar
+          - libpython-3.13=3.13.15-1
+          - libpython-3.13-minimal=3.13.15-1
+          - libpython-3.13-stdlib=3.13.15-1
+          - python-3.13=3.13.15-1
+          - python-3.13-minimal=3.13.15-1
+          - libbz2-1.0
+          - libc6
+          - libcrypt1
+          - libdb5.3t64
+          - libexpat1
+          - libffi8
+          - libgdbm-compat4t64
+          - libgdbm6
+          - liblzma5
+          - libncursesw6
+          - libreadline8t64
+          - libsqlite3-0
+          - libtinfo6
+          - libuuid1
+          - libzstd1
+          - zlib1g
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.10/uv-${ARCH}-unknown-linux-gnu.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.12.10/uv-${ARCH}-unknown-linux-gnu.tar.gz.sha256
+            path: ${source.dir}/uv-unknown-linux-gnu.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/confluentinc/confluent-docker-utils.git#v0.0.172
+            checksum: 0bc1c0d549cf3bf5dc9f269b3d6bb8d286d5201f
+            path: ${source.dir}/confluent-docker-utils
+            spdx:
+              name: confluent-docker-utils
+              version: 0.0.172
+              packages:
+                - name: confluent-docker-utils
+                  purl: pkg:github/confluentinc/confluent-docker-utils@0.0.172
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv-unknown-linux-gnu.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.13
+            bash "${source.dir}/build-venv.sh"
+        - name: python sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: confluent-docker-utils-python
+            source: ${target.dir}/usr/lib/confluent-docker-utils
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            for d in confluent-docker-utils confluent-docker-utils-python; do
+              test -d "/opt/docker/sbom/$d"
+              cp -a "/opt/docker/sbom/$d" "${target.dir}/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.13
+            description: dub CLI from confluent-docker-utils, used by Confluent Platform launch scripts; cub omitted (needs a JVM)
+            files:
+              - usr/lib/confluent-docker-utils
+              - usr/bin/dub
+              - opt/docker/sbom/confluent-docker-utils
+              - opt/docker/sbom/confluent-docker-utils-python
+            formats:
+              - deb
+            license: Apache-2.0
+            name: confluent-docker-utils
+            rel: 1
+            url: https://github.com/confluentinc/confluent-docker-utils
+            version: 0.0.172
+      paths:
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/confluent-docker-utils/build-venv.sh
+        - type: file
+          path: ${source.dir}/requirements-lock.txt
+          uid: 0
+          gid: 0
+          source: package/main/confluent-docker-utils/requirements-lock.txt
+        - type: file
+          path: ${source.dir}/build-constraints.txt
+          uid: 0
+          gid: 0
+          source: package/main/confluent-docker-utils/build-constraints.txt
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
