@@ -1,0 +1,400 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-gitlab-rails
+variant: runtime
+tags:
+  - 18.11.11-alpine3.24
+  - 18.11.11-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-16"
+vars:
+  COMMIT_SHA: a89df1873534989410955eac34d2b8b0c248d155
+  COREPACK_VERSION: 0.35.0-r0
+  DEVFILE_COMMIT_SHA: 8a4dc1fa50f1c799536bd0779c4cb96336f11ff8
+  DEVFILE_OUT: /srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out
+  DEVFILE_VERSION: 0.5.2
+  DOCUTILS_VERSION: "0.19"
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.1-r0
+  MACHINE_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  NODEJS_VERSION: 22.23.2-r0
+  NPM_VERSION: 11.19.1-r0
+  PACKAGE_NAME: gitlab-rails-18
+  PYTHON_MAJOR_MINOR_VERSION: "3.12"
+  PYTHON_VERSION: 3.12.14-r1
+  REL: "0"
+  RUBY_MAJOR_MINOR_VERSION: "3.3"
+  RUBY_VERSION: 3.3.12-r3
+  SEMVER_MAJOR_MINOR_VERSION: "18.11"
+  SEMVER_MAJOR_VERSION: "18"
+  SEMVER_VERSION: 18.11.11
+  VERSION: 18.11.11
+  YARN_VERSION: 1.22.22_git20260611-r1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: gitlab-rails
+      work-dir: /srv/gitlab
+      contents:
+        packages:
+          - ruby-3.3
+          - ruby-3.3-dev
+          - ruby3.3-bundler
+          - python-3.12
+          - python-3.12-dev
+          - py3.12-pip
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - curl
+          - diffutils
+          - findutils
+          - gawk
+          - git
+          - grep
+          - gzip
+          - patch
+          - sed
+          - tar
+          - tzdata
+          - musl-utils
+          - autoconf
+          - automake
+          - libtool
+          - bison
+          - flex
+          - build-base
+          - cmake
+          - pkgconf
+          - linux-headers
+          - file-dev
+          - gettext-dev
+          - gdbm-dev
+          - gmp-dev
+          - icu-dev
+          - jemalloc-dev
+          - krb5-dev
+          - libffi-dev
+          - libucontext-dev
+          - libpq-dev
+          - libssh2-dev
+          - libxml2-dev
+          - libxslt-dev
+          - openssl-dev
+          - re2-dev
+          - readline-dev
+          - sqlite-dev
+          - yaml-dev
+          - zlib-dev
+          - nodejs-22
+          - npm
+          - corepack
+          - yarn
+          - golang-1.27=1.27.1-r0
+          - golang-1.27-oci-config=1.27.1-r0
+        files:
+          - url: git+https://gitlab.com/gitlab-org/gitlab-foss.git#v18.11.11
+            checksum: a89df1873534989410955eac34d2b8b0c248d155
+            path: /srv/gitlab
+            spdx:
+              name: gitlab-ce
+              version: 18.11.11
+              packages:
+                - name: gitlab-ce
+                  purl: pkg:gitlab/gitlab-org/gitlab-foss@v18.11.11
+                  license: MIT AND CC-BY-SA-4.0
+            uid: 0
+            gid: 0
+          - url: git+https://gitlab.com/gitlab-org/ruby/gems/devfile-gem.git#0.5.2
+            checksum: 8a4dc1fa50f1c799536bd0779c4cb96336f11ff8
+            path: /go/src/devfile-gem
+            spdx:
+              name: devfile-gem
+              version: 0.5.2
+              packages:
+                - name: devfile-gem
+                  purl: pkg:golang/gitlab-org/ruby/gems/devfile-gem@0.5.2
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare source tree
+          runs: |
+            set -eux -o pipefail
+
+            adduser -D -u 1000 -s /bin/bash git
+
+            rm -rf /srv/gitlab/.git
+        - name: widen GitLab 18 gem constraints for security fixes
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/gem-constraints-18.patch
+        - name: bump vulnerable gem versions in lockfile
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export BUNDLE_JOBS=1
+
+            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron graphql puma concurrent-ruby websocket-driver excon css_parser loofah rails-html-sanitizer json msgpack oauth2 ruby-lsp prawn-svg sys-filesystem --conservative
+
+            echo "Lockfile updated:"
+            grep -E "activestorage|addressable|^    faraday |^    net-imap |^    nokogiri |^    sidekiq-cron |^    graphql |^    puma |^    concurrent-ruby |^    websocket-driver |^    excon |^    css_parser |^    loofah |^    rails-html-sanitizer |^    json |^    msgpack |^    oauth2 |^    ruby-lsp |^    prawn-svg " Gemfile.lock | head -32 || true
+        - name: add musl platforms to lockfile
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export BUNDLE_JOBS=1
+
+            bundle lock --add-platform aarch64-linux-musl x86_64-linux-musl
+        - name: install node dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            yarn install --production --pure-lockfile
+        - name: bundle install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            printf '#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n' | cat - /usr/include/fortify/stdlib.h > /tmp/stdlib.h
+            mv /tmp/stdlib.h /usr/include/fortify/stdlib.h
+
+            bundle config set --local version system
+            bundle config set --local clean 'true'
+            bundle config set --local deployment 'true'
+            bundle config set --local without 'development test mysql aws'
+
+            bundle install --jobs 4 --retry 5
+        - name: compile gettext
+          runs: |
+            set -eux -o pipefail
+
+            CI=true RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true \
+              bundle exec rake gettext:compile
+        - name: configure and compile assets
+          runs: |
+            set -eux -o pipefail
+
+            cp config/gitlab.yml.example config/gitlab.yml
+            cp config/resque.yml.example config/resque.yml
+            cp config/secrets.yml.example config/secrets.yml
+            cp config/database.yml.postgresql config/database.yml
+            sed --in-place "/geo:/,/^$/d" config/database.yml
+            sed --in-place "/embedding:/,/^$/d" config/database.yml
+            sed --in-place "/host: localhost/d" config/gitlab.yml
+            sed --in-place "/port: 80/d" config/gitlab.yml
+            sed --in-place "s/# user:.*/user: git/" config/gitlab.yml
+            sed --in-place "s:/home/git/repositories:/var/opt/gitlab/repo:" config/gitlab.yml
+
+            echo 'gitlab-cloud-native-image' > INSTALLATION_TYPE
+
+            mkdir -p tmp
+            node scripts/frontend/infection_scanner/infection_scanner.mjs || true
+
+            CI=true RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true \
+              bundle exec rake gitlab:assets:compile
+        - name: cleanup
+          runs: |
+            set -eux -o pipefail
+
+            rm -f config/gitlab.yml config/database.yml config/resque.yml config/secrets.yml
+            rm -f .gitlab_workhorse_secret .gitlab_kas_secret .gitlab_shell_secret
+            rm -rf log && ln -s /var/log/gitlab log
+
+            rm -rf node_modules/ tmp/ spec/ storybook/
+            rm -rf qa/ rubocop/ tooling/ .gitlab/ .github/ docker/
+            rm -rf changelogs/ danger/ Dangerfile workhorse/
+            rm -f package.json yarn.lock Gemfile.next.lock
+
+            find . -mindepth 2 \( -name 'Gemfile.lock' -o -name 'Gemfile.next.lock' \) -type f -delete
+
+            find public/assets/webpack -name '*.map' -type f -delete 2> /dev/null || true
+
+            RUBY_DIR="vendor/bundle/ruby"
+
+            rm -rf ${RUBY_DIR}/*/cache
+
+            rm -rf ${RUBY_DIR}/*/gems/*/spec \
+              ${RUBY_DIR}/*/gems/*/test \
+              ${RUBY_DIR}/*/gems/*/tests
+
+            rm -rf ${RUBY_DIR}/*/gems/rugged*/vendor \
+              ${RUBY_DIR}/*/gems/libyajl2*/**/vendor
+
+            rm -rf ${RUBY_DIR}/*/gems/grpc-*/include \
+              ${RUBY_DIR}/*/gems/grpc-*/src/core \
+              ${RUBY_DIR}/*/gems/grpc-*/src/ruby/ext \
+              ${RUBY_DIR}/*/gems/grpc-*/src/ruby/spec \
+              ${RUBY_DIR}/*/gems/grpc-*/third_party
+
+            rm -rf ${RUBY_DIR}/*/extensions/*/*/*/mkmf.log \
+              ${RUBY_DIR}/*/extensions/*/*/*/gem_make.out
+
+            rm -rf ${RUBY_DIR}/*/gems/*/ext/*.c \
+              ${RUBY_DIR}/*/gems/*/ext/*/*.c \
+              ${RUBY_DIR}/*/gems/*/ext/*.o \
+              ${RUBY_DIR}/*/gems/*/ext/*/*.o
+
+            rm -rf ${RUBY_DIR}/*/gems/*/*.gemspec \
+              ${RUBY_DIR}/*/gems/*/*.md \
+              ${RUBY_DIR}/*/gems/*/*.rdoc \
+              ${RUBY_DIR}/*/gems/*/*.sh \
+              ${RUBY_DIR}/*/gems/*/*.txt \
+              ${RUBY_DIR}/*/gems/*/*LICENSE* \
+              ${RUBY_DIR}/*/gems/*/CHANGES* \
+              ${RUBY_DIR}/*/gems/*/Gemfile \
+              ${RUBY_DIR}/*/gems/*/Guardfile \
+              ${RUBY_DIR}/*/gems/*/README* \
+              ${RUBY_DIR}/*/gems/*/Rakefile \
+              ${RUBY_DIR}/*/gems/*/run_tests.rb \
+              ${RUBY_DIR}/*/gems/*/Documentation \
+              ${RUBY_DIR}/*/gems/*/bench \
+              ${RUBY_DIR}/*/gems/*/contrib \
+              ${RUBY_DIR}/*/gems/*/doc \
+              ${RUBY_DIR}/*/gems/*/doc-api \
+              ${RUBY_DIR}/*/gems/*/examples \
+              ${RUBY_DIR}/*/gems/*/fixtures \
+              ${RUBY_DIR}/*/gems/*/gemfiles \
+              ${RUBY_DIR}/*/gems/*/libtest \
+              ${RUBY_DIR}/*/gems/*/man \
+              ${RUBY_DIR}/*/gems/*/sample_documents \
+              ${RUBY_DIR}/*/gems/*/samples \
+              ${RUBY_DIR}/*/gems/*/sample \
+              ${RUBY_DIR}/*/gems/*/script \
+              ${RUBY_DIR}/*/gems/*/t
+
+            find ${RUBY_DIR} -name '*.gem' -type f -delete 2> /dev/null || true
+        - name: install docutils
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3.12 -m pip install --compile --no-cache-dir \
+              --target="${target.dir}/usr/lib/python3.12/site-packages" \
+              "docutils==0.19"
+        - name: generate bootsnap cache
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /srv/gitlab/bootsnap
+            ENABLE_BOOTSNAP=1 BOOTSNAP_CACHE_DIR=/srv/gitlab/bootsnap \
+              bundle exec bootsnap precompile --gemfile \
+              --exclude '/srv/gitlab/config/*.yml|/srv/gitlab/public' .
+        - name: bump devfile go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/devfile-gem/ext
+          with:
+            deps:
+              - golang.org/x/crypto@v0.53.0
+              - github.com/cloudflare/circl@v1.6.4
+              - github.com/go-git/go-git/v5@v5.19.2
+              - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
+              - github.com/containerd/containerd@v1.7.33
+            download: true
+        - name: test devfile
+          work-dir: /go/src/devfile-gem/ext
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+          runs: |
+            set -eux -o pipefail
+
+            export GOTOOLCHAIN=local
+
+            go test ./...
+        - name: clear upstream devfile binary
+          runs: |
+            set -eux -o pipefail
+
+            test -d "/srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out" || {
+              echo "devfile gem dir not found: /srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out"
+              exit 1
+            }
+            rm -f "/srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out"/devfile-*-linux
+            rm -rf "/srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out/../ext"
+        - name: build devfile binary
+          uses: go/build@v1
+          work-dir: /go/src/devfile-gem/ext
+          with:
+            cgo_enabled: 0
+            fips: false
+            output: /srv/gitlab/vendor/bundle/ruby/3.3.0/gems/devfile-0.5.2-${MACHINE_ARCH}-linux/out/devfile-${target.arch}-linux
+            packages: .
+        - name: stage package payload
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/srv
+            cp -a /srv/gitlab ${target.dir}/srv/
+        - name: ruby dependencies sbom
+          uses: sbom@v1
+          with:
+            prefix: gitlab-rails-gems
+            source: ${target.dir}/srv/gitlab/vendor/bundle
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - icu-libs
+                - jemalloc
+                - krb5-libs
+                - libbz2
+                - libcom_err
+                - libcrypto3
+                - libgcc
+                - libmagic
+                - libpq
+                - libseccomp
+                - libssh2
+                - libssl3
+                - libstdc++
+                - re2
+                - xz-libs
+                - yaml
+                - zlib
+                - zstd-libs
+            depends:
+              - ruby-3.3
+              - ruby3.3-bundler
+              - python-3.12
+            description: GitLab Rails application tree (source, gems, compiled assets) shared by GitLab component images
+            files:
+              - srv/gitlab
+              - usr/lib/python3.12/site-packages
+            formats:
+              - apk
+            license: MIT AND CC-BY-SA-4.0
+            name: gitlab-rails-18
+            rel: 0
+            url: https://gitlab.com/gitlab-org/gitlab-foss
+            version: 18.11.11
+      paths:
+        - type: file
+          path: ${source.dir}/patch/gem-constraints-18.patch
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/gitlab-rails/patch/gem-constraints-18.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
