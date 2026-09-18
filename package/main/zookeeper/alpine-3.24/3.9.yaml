@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-zookeeper
+variant: runtime
+tags:
+  - 3.9.5-alpine3.24
+  - 3.9.5-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 293c895a8d966a3ecb92872be4a1daf87d725da2
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:645612ac05bca83249c2a1c532128d6e5d397bdf1e0de52abc4d164034a784d2
+  MAVEN_VERSION: 3.9.16
+  PACKAGE_HOME: /usr/share/zookeeper
+  PACKAGE_NAME: zookeeper-3.9
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.9"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.9.5
+  VERSION: 3.9.5
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: zookeeper
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:645612ac05bca83249c2a1c532128d6e5d397bdf1e0de52abc4d164034a784d2
+      work-dir: ${source.dir}/zookeeper
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - net-tools
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/apache/zookeeper.git#release-3.9.5
+            checksum: 293c895a8d966a3ecb92872be4a1daf87d725da2
+            path: ${source.dir}/zookeeper
+            spdx:
+              name: zookeeper
+              version: 3.9.5
+              packages:
+                - name: zookeeper
+                  purl: pkg:maven/org.apache.zookeeper/zookeeper@3.9.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: install xq-python for the pom patch
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            apt-get update -qq
+            apt-get install -y -qq yq
+            command -v xq-python
+        - name: pin vulnerable dependency versions
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/zookeeper
+            properties: ${source.dir}/patch/mvn-properties-3.9.json
+        - name: build distribution
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean install -DskipTests -Dmaven.javadoc.skip=true
+        - name: stage distribution
+          runs: |
+            set -eux -o pipefail
+
+            STAGE="${target.dir}/usr/share/zookeeper"
+            mkdir -p "$STAGE"
+
+            tar -zxf "zookeeper-assembly/target/apache-zookeeper-3.9.5-bin.tar.gz" \
+              -C "$STAGE" --strip-components=1
+
+            find "$STAGE/bin" -name '*.cmd' -delete
+
+            rm -rf "$STAGE/docs"
+
+            find "$STAGE/lib" \( -name '*-osx-*.jar' -o -name '*-windows-*.jar' \) -delete
+
+            mkdir -p "${target.dir}/usr/bin"
+            for cli in zkCli.sh zkServer.sh zkCleanup.sh zkServer-initialize.sh zkSnapshotComparer.sh zkSnapShotToolkit.sh zkTxnLogToolkit.sh; do
+              test -f "$STAGE/bin/$cli"
+              printf '#!/bin/bash\nexec %s/bin/%s "$@"\n' "/usr/share/zookeeper" "$cli" \
+                > "${target.dir}/usr/bin/$cli"
+              chmod 0755 "${target.dir}/usr/bin/$cli"
+            done
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: zookeeper
+            source: ${target.dir}/usr/share/zookeeper
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+              - coreutils
+              - grep
+              - sed
+            description: Apache ZooKeeper distributed coordination service
+            files:
+              - usr/share/zookeeper
+              - usr/bin
+            license: Apache-2.0
+            name: zookeeper-3.9
+            rel: 0
+            url: https://zookeeper.apache.org/
+            version: 3.9.5
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-3.9.json
+          uid: 0
+          gid: 0
+          source: package/main/zookeeper/alpine-3.24/patch/mvn-properties-3.9.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
