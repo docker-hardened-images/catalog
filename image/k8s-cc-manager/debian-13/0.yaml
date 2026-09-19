@@ -1,0 +1,193 @@
+# syntax=dhi.io/build:2-debian13
+
+name: NVIDIA k8s-cc-manager 0.x
+image: dhi.io/k8s-cc-manager
+variant: runtime
+tags:
+  - "0"
+  - "0.4"
+  - 0.4.1
+  - 0-debian
+  - 0-debian13
+  - 0.4-debian
+  - 0.4-debian13
+  - 0.4.1-debian
+  - 0.4.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-16"
+vars:
+  COMMIT_SHA: 55b4f83be22eba4116744142cd8d02d42ad21c5d
+  GPU_ADMIN_TOOLS_COMMIT_SHA: 6495b91c33a5e9f7fdd969c8daf7887b61b0a3f3
+  GPU_ADMIN_TOOLS_VERSION: 2025.11.21
+  SEMVER_MAJOR_MINOR_VERSION: "0.4"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.4.1
+  VERSION: 0.4.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - busybox
+    - ca-certificates-bundle
+    - libffi8
+    - libstdc++6
+    - python-3.13
+    - tzdata
+  builds:
+    - name: k8s-cc-manager
+      work-dir: ${source.dir}/k8s-cc-manager
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - libstdc++6
+          - patch
+          - build-essential
+          - libffi-dev
+        files:
+          - url: git+https://github.com/NVIDIA/k8s-cc-manager.git#v0.4.1
+            checksum: 55b4f83be22eba4116744142cd8d02d42ad21c5d
+            path: ${source.dir}/k8s-cc-manager
+            spdx:
+              name: k8s-cc-manager
+              version: 0.4.1
+              packages:
+                - name: k8s-cc-manager
+                  purl: pkg:github/NVIDIA/k8s-cc-manager@0.4.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/NVIDIA/gpu-admin-tools.git#v2025.11.21
+            checksum: 6495b91c33a5e9f7fdd969c8daf7887b61b0a3f3
+            path: ${source.dir}/gpu-admin-tools
+            spdx:
+              name: gpu-admin-tools
+              version: 2025.11.21
+              packages:
+                - name: gpu-admin-tools
+                  purl: pkg:github/NVIDIA/gpu-admin-tools@2025.11.21
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: fix watch reconnect sleep import
+          uses: patch@v1
+          with:
+            options: -p1
+            patch: ${source.dir}/import-time.patch
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/app"
+            python3 -m venv "${target.dir}/app/.venv"
+        - name: install python dependencies and remove build-only pip
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            "${target.dir}/app/.venv/bin/python3" -m pip install -r requirements.txt
+
+            "${target.dir}/app/.venv/bin/python3" -m pip install "urllib3==2.7.0"
+            "${target.dir}/app/.venv/bin/python3" -m pip install "cryptography==50.0.0"
+
+            "${target.dir}/app/.venv/bin/python3" -m pip uninstall --yes pip
+        - name: install application code
+          runs: |
+            set -eux -o pipefail
+
+            cp main.py gpu_operator_eviction.py "${target.dir}/app/"
+        - name: vendor gpu-admin-tools
+          runs: |
+            set -eux -o pipefail
+
+            cp -a "${source.dir}/gpu-admin-tools" "${target.dir}/app/gpu-admin-tools"
+            rm -rf "${target.dir}/app/gpu-admin-tools/.git"
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            find "${target.dir}/app/.venv" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: k8s-cc-manager-python
+            source: ${target.dir}/app/.venv
+        - name: verify python dependencies sbom
+          runs: |
+            set -eux -o pipefail
+
+            sbom=/opt/docker/sbom/k8s-cc-manager-python/.spdx.k8s-cc-manager-python.json
+            test -s "${sbom}"
+            jq -e '.packages[] | select(.name == "kubernetes")' "${sbom}" > /dev/null
+      paths:
+        - type: file
+          path: ${source.dir}/import-time.patch
+          uid: 0
+          gid: 0
+          source: image/k8s-cc-manager/patches/import-time.patch
+      outputs:
+        - source: ${target.dir}/app
+          target: /app
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /app
+environment:
+  PATH: /app/.venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: symlink
+    path: /usr/bin/rm
+    uid: 0
+    gid: 0
+    source: /usr/bin/busybox
+annotations:
+  org.opencontainers.image.description: A minimal NVIDIA k8s-cc-manager image
+  org.opencontainers.image.licenses: Apache-2.0 AND MIT
+entrypoint:
+  - /app/.venv/bin/python
+  - /app/main.py
