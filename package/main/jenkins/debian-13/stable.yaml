@@ -4,9 +4,9 @@ image: dhi.io/pkg-jenkins
 variant: runtime
 tags:
   - 2.568.3
-  - 2.568.3-r0
+  - 2.568.3-r1
   - 2.568.3-debian13
-  - 2.568.3-r0-debian13
+  - 2.568.3-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -18,9 +18,10 @@ vars:
   DOCKER_REPO_VERSION: 2.568.3
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 21.0.12.8-0
+  LIBC6_VERSION: 2.41-12+deb13u4+dhi0
   MAVEN_VERSION: 3.9.16
   PACKAGE_NAME: jenkins
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "2.568"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.568.3
@@ -55,6 +56,7 @@ contents:
           - zip
           - curl
           - xmlstarlet
+          - libc6=2.41-12+deb13u4+dhi0
           - eclipse-temurin-21-jdk=21.0.12.8-0
         files:
           - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.568.3
@@ -119,6 +121,18 @@ contents:
                 - name: jackson-core
                   purl: pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.6
                   license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.85/bcprov-jdk18on-1.85.jar
+            checksum: sha256:20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
+            path: ${source.dir}/patch/deps/bcprov-jdk18on-1.85.jar
+            spdx:
+              name: bcprov-jdk18on
+              version: "1.85"
+              packages:
+                - name: bcprov-jdk18on
+                  purl: pkg:maven/org.bouncycastle/bcprov-jdk18on@1.85
+                  license: MIT
             uid: 0
             gid: 0
       pipeline:
@@ -302,6 +316,44 @@ contents:
               exit 1
             fi
             jar tf "${patch_dir}/verified-mina-sshd-api-core.hpi" | grep -q "${new_mina_path}"
+        - name: patch bundled bcprov-jdk18on in bouncycastle-api
+          work-dir: ${source.dir}/jenkins
+          runs: |
+            set -eux -o pipefail
+
+            patch_dir="$(mktemp -d)"
+            trap 'rm -rf "${patch_dir}"' EXIT
+
+            war_file="war/target/jenkins.war"
+            hpi_path="WEB-INF/detached-plugins/bouncycastle-api.hpi"
+            old_bcprov_path="WEB-INF/optional-lib/bcprov-jdk18on-1.84.jar"
+            new_bcprov_path="WEB-INF/optional-lib/bcprov-jdk18on-1.85.jar"
+
+            unzip -q "${war_file}" "${hpi_path}" -d "${patch_dir}"
+            hpi_file="${patch_dir}/${hpi_path}"
+
+            if jar tf "${hpi_file}" | grep -q "${old_bcprov_path}"; then
+              zip -q -d "${hpi_file}" "${old_bcprov_path}"
+            fi
+
+            mkdir -p "${patch_dir}/hpi-overlay/WEB-INF/optional-lib"
+            cp "${source.dir}/patch/deps/bcprov-jdk18on-1.85.jar" "${patch_dir}/hpi-overlay/${new_bcprov_path}"
+            (cd "${patch_dir}/hpi-overlay" && jar --update --file "${hpi_file}" "${new_bcprov_path}")
+
+            if jar tf "${hpi_file}" | grep -q "${old_bcprov_path}"; then
+              echo "ERROR: ${old_bcprov_path} is still present in ${hpi_path}" >&2
+              exit 1
+            fi
+            jar tf "${hpi_file}" | grep -q "${new_bcprov_path}"
+
+            (cd "${patch_dir}" && jar --update --file "${source.dir}/jenkins/${war_file}" "${hpi_path}")
+
+            unzip -p "${war_file}" "${hpi_path}" > "${patch_dir}/verified-bouncycastle-api.hpi"
+            if jar tf "${patch_dir}/verified-bouncycastle-api.hpi" | grep -q "${old_bcprov_path}"; then
+              echo "ERROR: ${old_bcprov_path} is still present in repacked ${war_file}" >&2
+              exit 1
+            fi
+            jar tf "${patch_dir}/verified-bouncycastle-api.hpi" | grep -q "${new_bcprov_path}"
         - name: install
           work-dir: ${source.dir}/jenkins
           runs: |
@@ -331,7 +383,7 @@ contents:
               - deb
             license: MIT
             name: jenkins
-            rel: 0
+            rel: 1
             url: https://www.jenkins.io/
             version: 2.568.3
       paths:
