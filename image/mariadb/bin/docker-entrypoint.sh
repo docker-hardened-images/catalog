@@ -56,7 +56,7 @@ if [ "$1" = "mariadbd" ]; then
       exit 1
     fi
     echo "Initializing database..."
-    mariadb-install-db --auth-root-authentication-method=normal --datadir="${MARIADB_DATA_DIR}"
+    mariadb-install-db --basedir=/opt/mariadb --auth-root-authentication-method=normal --datadir="${MARIADB_DATA_DIR}"
     echo "Starting database for initialization"
     mariadbd --skip-networking --datadir="${MARIADB_DATA_DIR}" &
     while ! test -S /run/mariadb/mariadb.sock; do
