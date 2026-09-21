@@ -10,7 +10,7 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-Replace `<tag>` with the tag you want to run, for example `7.0`.
+Replace `<tag>` with the tag you want to run, for example `8.0`.
 
 ## Start a Percona Server for MongoDB image
 
