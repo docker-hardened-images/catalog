@@ -15,8 +15,9 @@ JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.6.jar"
 JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.6.jar"
 JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.6.jar"
 JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.6.jar"
+BCPROV_185="${PATCH_DIR}/bcprov-jdk18on-1.85.jar"
 
-for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3"; do
+for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3" "$BCPROV_185"; do
     if [ ! -f "$jar" ]; then
         echo "missing patch dependency: $jar" >&2
         exit 1
@@ -112,6 +113,16 @@ rm -rf "$VERIFY_WORK"
 # replaces META-INF/MANIFEST.MF with a minimal manifest and drops
 # Spring-Boot-Version (see TestWarManifest).
 (cd "$WAR_WORK" && jar uf "$WAR_PATH" "$HZ_JAR")
+
+OLD_BCPROV="$(find "$WAR_WORK/BOOT-INF/lib" -maxdepth 1 -type f -name 'bcprov-jdk18on-*.jar' 2>/dev/null | head -1 || true)"
+if [ -n "$OLD_BCPROV" ]; then
+    OLD_BCPROV_REL="${OLD_BCPROV#"$WAR_WORK/"}"
+    zip -d "$WAR_PATH" "$OLD_BCPROV_REL" >/dev/null
+    install -D -m 0644 "$BCPROV_185" "$WAR_WORK/BOOT-INF/lib/bcprov-jdk18on-1.85.jar"
+    (cd "$WAR_WORK" && jar uf "$WAR_PATH" BOOT-INF/lib/bcprov-jdk18on-1.85.jar)
+    jar tf "$WAR_PATH" | grep -q 'BOOT-INF/lib/bcprov-jdk18on-1.85.jar'
+    ! jar tf "$WAR_PATH" | grep -q 'BOOT-INF/lib/bcprov-jdk18on-1.84.jar'
+fi
 
 VERIFY_MANIFEST="$(mktemp -d)"
 (
