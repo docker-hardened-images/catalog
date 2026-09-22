@@ -1,0 +1,95 @@
+Origin: DHI, adapting https://github.com/codecov/codecov-gateway/blob/main/entrypoint.sh
+Description: Run the upstream gateway entrypoint on the hardened package layout.
+ The HAProxy templates are read from /etc/codecov-gateway, where the package
+ installs them read-only, and are still rendered into /etc/haproxy, the one
+ directory the runtime user owns. The preflight tests each backend by nc's exit
+ status instead of grepping BusyBox's "open" message, so it also works with the
+ OpenBSD netcat the Debian variant ships. BUILD_ID defaults to the commit id the
+ package records, so /gateway_health reports "<version> <commit>" as upstream.
+Forwarded: not-needed
+Upstream: https://github.com/codecov/codecov-gateway (tag self-hosted-26.4.1)
+--- a/entrypoint.sh
++++ b/entrypoint.sh
+@@ -1,12 +1,17 @@
+ #!/bin/sh
+ set -e
+ 
++if [ -z "$BUILD_ID" ] && [ -r /etc/codecov-gateway/build-id ]; then
++  BUILD_ID="$(cat /etc/codecov-gateway/build-id)"
++fi
++export BUILD_ID
++
+ _preflight() {
+   echo 'Codecov preflight started.'
+   COUNTER=0
+   echo 'Waiting for Codecov Default to start ...'
+ 
+-  while [ -z "`nc -vz $CODECOV_DEFAULT_HOST $CODECOV_DEFAULT_PORT 2>&1 | grep open`" ]; do
++  while ! nc -vz "$CODECOV_DEFAULT_HOST" "$CODECOV_DEFAULT_PORT" >/dev/null 2>&1; do
+     COUNTER=$(($COUNTER+1))
+     if [ "$COUNTER" -gt 30 ]; then
+       echo "Timeout waiting for Codecov Default to start"
+@@ -24,7 +29,7 @@
+   COUNTER=0
+ 
+   echo 'Waiting for Codecov api to start ...'
+-  while [ -z "`nc -vz $CODECOV_API_HOST $CODECOV_API_PORT 2>&1 | grep open`" ]; do
++  while ! nc -vz "$CODECOV_API_HOST" "$CODECOV_API_PORT" >/dev/null 2>&1; do
+ 
+     COUNTER=$(($COUNTER+1))
+     if [ "$COUNTER" -gt 60 ]; then
+@@ -40,7 +45,7 @@
+   echo 'Codecov api started.'
+   COUNTER=0
+   echo 'Waiting for Codecov ia to start ...'
+-    while [ -z "`nc -vz $CODECOV_IA_HOST $CODECOV_IA_PORT 2>&1 | grep open`" ]; do
++    while ! nc -vz "$CODECOV_IA_HOST" "$CODECOV_IA_PORT" >/dev/null 2>&1; do
+ 
+       COUNTER=$(($COUNTER+1))
+       if [ "$COUNTER" -gt 30 ]; then
+@@ -67,10 +72,10 @@
+   export CODECOV_GATEWAY_ROUTING_MAP=${routing_map}
+   if [ "$CODECOV_GATEWAY_SSL_ENABLED" ]; then
+     echo 'Codecov gateway ssl enabled'
+-    envsubst < /etc/haproxy/3-ssl.conf.template > /etc/haproxy/2-frontends.conf
++    envsubst < /etc/codecov-gateway/3-ssl.conf.template > /etc/haproxy/2-frontends.conf
+   else
+     echo 'Codecov gateway ssl disabled'
+-    envsubst < /etc/haproxy/2-http.conf.template > /etc/haproxy/2-frontends.conf
++    envsubst < /etc/codecov-gateway/2-http.conf.template > /etc/haproxy/2-frontends.conf
+   fi
+   ssl_string="ssl verify none "
+   if [ $CODECOV_DEFAULT_SCHEME = "https" ]; then
+@@ -85,12 +90,12 @@
+ 
+   if [ "$CODECOV_GATEWAY_CHROOT_DISABLED" ]; then
+     echo 'Codecov gateway chroot disabled'
+-    envsubst < /etc/haproxy/0-haproxy-no-chroot.conf.template > /etc/haproxy/0-haproxy.conf
++    envsubst < /etc/codecov-gateway/0-haproxy-no-chroot.conf.template > /etc/haproxy/0-haproxy.conf
+   else
+-    envsubst < /etc/haproxy/0-haproxy.conf.template > /etc/haproxy/0-haproxy.conf
++    envsubst < /etc/codecov-gateway/0-haproxy.conf.template > /etc/haproxy/0-haproxy.conf
+   fi
+   BACKENDS="-f /etc/haproxy/1-backends.conf"
+-  envsubst < /etc/haproxy/1-backends.conf.template > /etc/haproxy/1-backends.conf
++  envsubst < /etc/codecov-gateway/1-backends.conf.template > /etc/haproxy/1-backends.conf
+   if [ "$CODECOV_API_ADMIN_ENABLED" = "true" ]; then
+       echo 'Codecov api admin endpoint proxy enabled'
+   else
+@@ -104,14 +109,14 @@
+       echo 'Codecov api admin debug endpoint proxy disabled'
+       export API_ADMIN_DEBUG_PATH_PREFIX="# (disabled) "
+   fi
+-  envsubst < /etc/haproxy/codecov.map.template > /etc/haproxy/codecov.map
++  envsubst < /etc/codecov-gateway/codecov.map.template > /etc/haproxy/codecov.map
+   MINIO_FILE=""
+   if [ "$CODECOV_GATEWAY_MINIO_ENABLED" ] && [ "$routing_map" != "proxy" ]; then
+       echo 'Codecov gateway minio enabled'
+       if [ $CODECOV_MINIO_SCHEME = "https" ]; then
+           export CODECOV_MINIO_SSL_FLAG=$ssl_string
+       fi
+-      envsubst < /etc/haproxy/1-minio.conf.template > /etc/haproxy/1-minio.conf
++      envsubst < /etc/codecov-gateway/1-minio.conf.template > /etc/haproxy/1-minio.conf
+       cat /etc/haproxy/minio.map >> /etc/haproxy/codecov.map
+       MINIO_FILE="-f /etc/haproxy/1-minio.conf"
+   fi

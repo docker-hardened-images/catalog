@@ -1,0 +1,103 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-codecov-gateway
+variant: runtime
+tags:
+  - 26.4.1-alpine3.24
+  - 26.4.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: f84892435ab50c2186398f6c9a417a779cf2c760
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "26.4"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.4.1
+  VERSION: 26.4.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: codecov-gateway
+      work-dir: ${source.dir}/codecov-gateway
+      contents:
+        packages:
+          - busybox
+        files:
+          - url: git+https://github.com/codecov/codecov-gateway.git#self-hosted-26.4.1
+            checksum: f84892435ab50c2186398f6c9a417a779cf2c760
+            path: ${source.dir}/codecov-gateway
+            spdx:
+              name: codecov-gateway
+              version: 26.4.1
+              packages:
+                - name: codecov-gateway
+                  purl: pkg:github/codecov/codecov-gateway@self-hosted-26.4.1
+                  license: FSL-1.1-ALv2
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch entrypoint
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-build-entrypoint.patch
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            install -d -m 0755 "${target.dir}/etc/codecov-gateway" "${target.dir}/etc/haproxy" "${target.dir}/usr/bin"
+            for f in 0-haproxy.conf 0-haproxy-no-chroot.conf 1-backends.conf 1-minio.conf 2-http.conf 3-ssl.conf codecov.map; do
+              install -m 0644 "config/$f" "${target.dir}/etc/codecov-gateway/$f.template"
+            done
+            install -m 0644 -t "${target.dir}/etc/haproxy" config/proxy.map config/minio.map
+            install -m 0755 entrypoint.sh "${target.dir}/usr/bin/codecov-gateway"
+            printf '%s\n' "f84892435ab50c2186398f6c9a417a779cf2c760" | cut -c1-7 > "${target.dir}/etc/codecov-gateway/build-id"
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - busybox
+                - gettext-envsubst
+                - haproxy
+            deb:
+              depends:
+                - bash
+                - coreutils
+                - gettext-base
+                - haproxy-3.4
+                - libcrypt1
+                - netcat-openbsd
+            description: Codecov self-hosted gateway, the HAProxy routing layer in front of the Codecov API and frontend
+            files:
+              - usr/bin/codecov-gateway
+              - etc/codecov-gateway
+              - etc/haproxy/minio.map
+              - etc/haproxy/proxy.map
+            license: FSL-1.1-ALv2
+            name: codecov-gateway
+            rel: 0
+            url: https://github.com/codecov/codecov-gateway
+            version: 26.4.1
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/codecov-gateway/patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
