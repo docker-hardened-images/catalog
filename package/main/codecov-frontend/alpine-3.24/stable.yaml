@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-codecov-frontend
+variant: runtime
+tags:
+  - 26.7.6-alpine3.24
+  - 26.7.6-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 8a439ca365bfddecba4d116849c96d47e69a3c9f
+  NODEJS_VERSION: 24.21.0-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "26.7"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.7.6
+  VERSION: 26.7.6
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: codecov-frontend
+      work-dir: ${source.dir}/gazebo
+      caches:
+        - path: /root/.yarn/berry/cache
+      contents:
+        packages:
+          - busybox
+          - ca-certificates-bundle
+          - nodejs-24=24.21.0-r0
+        files:
+          - url: git+https://github.com/codecov/gazebo.git#self-hosted-26.7.6
+            checksum: 8a439ca365bfddecba4d116849c96d47e69a3c9f
+            path: ${source.dir}/gazebo
+            spdx:
+              name: codecov-frontend
+              version: 26.7.6
+              packages:
+                - name: codecov-frontend
+                  purl: pkg:github/codecov/gazebo@self-hosted-26.7.6
+                  license: FSL-1.1-ALv2
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch start script
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-build-start-nginx.patch
+        - name: install dependencies
+          privileged: true
+          environment:
+            HUSKY: "0"
+          runs: |
+            set -eux -o pipefail
+
+            node - << 'EOF'
+            const fs = require("fs");
+            const pins = {
+              "@babel/runtime": "7.29.7",
+              "@remix-run/router": "1.23.4",
+              "dompurify": "3.4.15",
+              "js-cookie": "3.0.7",
+              "lodash": "4.18.1",
+              "prismjs": "1.30.0",
+              "qs": "6.16.0",
+              "react-router-dom-v5-compat": "6.30.6",
+              "uuid@^8.0.0": "11.1.1",
+            };
+            const packageName = (descriptor) => descriptor.match(/^(@?[^@]+)/)[1];
+            const lock = fs.readFileSync("yarn.lock", "utf8");
+            const release = (v) => v.split(".").map(Number);
+            const compare = (a, b) => {
+              const x = release(a), y = release(b);
+              for (let i = 0; i < Math.max(x.length, y.length); i++) {
+                const d = (x[i] || 0) - (y[i] || 0);
+                if (d) return d;
+              }
+              return 0;
+            };
+            const stale = Object.entries(pins).filter(([descriptor, pin]) => {
+              const locked = [...lock.matchAll(new RegExp(`^  resolution: "${packageName(descriptor)}@npm:([^"]+)"$`, "gm"))].map((m) => m[1]);
+              return locked.length > 0 && locked.every((v) => compare(v, pin) >= 0);
+            });
+            if (stale.length) {
+              console.error("upstream lock already at or past " + stale.map(([n, p]) => `${n}@${p}`).join(" ") + ": drop the pin");
+              process.exit(1);
+            }
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            Object.assign(pkg.resolutions, pins);
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            EOF
+            yarn="$(echo .yarn/releases/yarn-*.cjs)"
+            node "$yarn" install
+            for pin in "@babel/runtime@npm:7.29.7" "@remix-run/router@npm:1.23.4" "dompurify@npm:3.4.15" \
+              "js-cookie@npm:3.0.7" "lodash@npm:4.18.1" "prismjs@npm:1.30.0" "qs@npm:6.16.0" \
+              "react-router-dom-v5-compat@npm:6.30.6" "react-router@npm:6.30.6" "uuid@npm:11.1.1"; do
+              grep -q "^  resolution: \"${pin}\"" yarn.lock
+            done
+        - name: build
+          environment:
+            REACT_APP_CODECOV_VERSION: 26.7.6
+            REACT_APP_ENV: ENTERPRISE
+          runs: |
+            set -eux -o pipefail
+
+            yarn="$(echo .yarn/releases/yarn-*.cjs)"
+            node "$yarn" build
+            rm -f build/mockServiceWorker.js
+            test -s build/index.html
+            test -z "$(find build -name "*.map")"
+
+            install -d "${target.dir}/usr/share/codecov-frontend" "${target.dir}/etc/codecov-frontend" "${target.dir}/usr/bin"
+            cp -a build "${target.dir}/usr/share/codecov-frontend/gazebo"
+            install -m 0644 docker/nginx.conf "${target.dir}/etc/codecov-frontend/nginx.conf.template"
+            install -m 0644 docker/nginx-no-ipv6.conf "${target.dir}/etc/codecov-frontend/nginx-no-ipv6.conf.template"
+            install -m 0755 docker/start-nginx.sh "${target.dir}/usr/bin/codecov-frontend"
+        - name: prune dev dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            node - << 'EOF'
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            delete pkg.scripts.postinstall;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            EOF
+            yarn="$(echo .yarn/releases/yarn-*.cjs)"
+            node "$yarn" workspaces focus --production
+        - name: sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: codecov-frontend
+            source: ${source.dir}/gazebo/node_modules
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - busybox
+                - gettext-envsubst
+            deb:
+              depends:
+                - bash
+                - gettext-base
+                - sed
+            depends:
+              - nginx-mainline
+            description: Codecov self-hosted frontend, the Gazebo single-page application served by nginx
+            files:
+              - usr/bin/codecov-frontend
+              - usr/share/codecov-frontend
+              - etc/codecov-frontend
+            license: FSL-1.1-ALv2
+            name: codecov-frontend
+            rel: 0
+            url: https://github.com/codecov/gazebo
+            version: 26.7.6
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/codecov-frontend/patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
