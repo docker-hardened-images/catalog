@@ -1,0 +1,239 @@
+# syntax=dhi.io/build:2-debian13
+
+name: DozerDB 5.26.27.0 (dev)
+image: dhi.io/dozerdb
+variant: dev
+tags:
+  - 5-dev
+  - 5.26-dev
+  - 5.26.27-dev
+  - 5.26.27.0-dev
+  - 5-debian-dev
+  - 5-debian13-dev
+  - 5.26-debian-dev
+  - 5.26-debian13-dev
+  - 5.26.27-debian-dev
+  - 5.26.27-debian13-dev
+  - 5.26.27.0-debian-dev
+  - 5.26.27.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-12"
+vars:
+  DOCKER_NEO4J_PUBLISH_COMMIT_SHA: 3e584bcdacb6b8f64729dd4a4850f4b06a605238
+  DOZERDB_VERSION: 5.26.27.0
+  GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:fc41f434294f5397fed2c3a2437604e46e54217b53f25425cc734e54a63e9a91
+  NEO4J_VERSION: 5.26.27
+  SEMVER_MAJOR_MINOR_VERSION: "5.26"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.26.27.0
+  VERSION: 5.26.27.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - grep
+    - jq
+    - libc-bin
+    - mawk
+    - perl-base
+    - procps
+    - sed
+    - tini
+    - util-linux
+    - wget
+  builds:
+    - name: dozerdb
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - eclipse-temurin-21-jre
+          - findutils
+          - grep
+          - gzip
+          - jq
+          - sed
+          - tar
+        files:
+          # DozerDB does not publish a source tag or commit that maps exactly to this release.
+          # This checksum-pinned upstream distribution is therefore the reproducibility boundary.
+          - url: https://dist.dozerdb.org/dozerdb-5.26.27.0-unix.tar.gz
+            checksum: sha256:19888fc3f658fe69640ac3f90ad9c1177a50ae5f03fbf6c1835438ffe770264e
+            path: ${source.dir}/dozerdb-5.26.27.0-unix.tar.gz
+            spdx:
+              name: dozerdb
+              version: 5.26.27.0
+              packages:
+                - name: dozerdb
+                  purl: pkg:generic/dozerdb@5.26.27.0
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/neo4j/docker-neo4j-publish.git#3e584bcdacb6b8f64729dd4a4850f4b06a605238
+            checksum: 3e584bcdacb6b8f64729dd4a4850f4b06a605238
+            path: ${source.dir}/docker-neo4j-publish
+            spdx:
+              name: docker-neo4j-publish
+              version: 3e584bcdacb6b8f64729dd4a4850f4b06a605238
+              packages:
+                - name: docker-neo4j-publish
+                  purl: pkg:github/neo4j/docker-neo4j-publish@3e584bcdacb6b8f64729dd4a4850f4b06a605238
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install distribution and startup scripts
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/var/lib/neo4j
+            tar -xzf ${source.dir}/dozerdb-5.26.27.0-unix.tar.gz \
+              -C ${target.dir}/var/lib/neo4j \
+              --strip-components=1
+
+            cp -R \
+              ${source.dir}/docker-neo4j-publish/5.26.27/trixie/community/local-package \
+              ${target.dir}/startup
+            install -m 0644 ${source.dir}/neo4j-plugins.json \
+              ${target.dir}/startup/neo4j-plugins.json
+
+            # gosu is the hardened replacement for the upstream su-exec helper.
+            sed -i 's/su-exec/gosu/g' ${target.dir}/startup/docker-entrypoint.sh
+            mv ${target.dir}/startup/neo4j-admin-report.sh \
+              ${target.dir}/var/lib/neo4j/bin/neo4j-admin-report
+
+            sed -i 's/Package Type:.*/Package Type: docker trixie/' \
+              ${target.dir}/var/lib/neo4j/packaging_info
+            chmod 0755 ${target.dir}/startup/*.sh
+            chmod 0755 ${target.dir}/var/lib/neo4j/bin/*
+        - name: verify distribution
+          runs: |
+            set -eux -o pipefail
+
+            test -f ${target.dir}/var/lib/neo4j/lib/dozerdb-core-5.26.27-1.1.0.jar
+            test -f ${target.dir}/var/lib/neo4j/lib/dozerdb-browser-5.26.27.0.jar
+            test -d ${target.dir}/var/lib/neo4j/data
+            test -d ${target.dir}/var/lib/neo4j/logs
+            test -d ${target.dir}/var/lib/neo4j/plugins
+            test -d ${target.dir}/var/lib/neo4j/import
+
+            bash -n ${target.dir}/startup/docker-entrypoint.sh
+            jq -e '
+              has("apoc") and
+              has("apoc-extended") and
+              has("graph-data-science") and
+              has("open-gds") and
+              has("n10s") and
+              has("genai")
+            ' ${target.dir}/startup/neo4j-plugins.json
+
+            version_output="$(JAVA_HOME=/usr/lib/jvm/temurin-21 ${target.dir}/var/lib/neo4j/bin/neo4j version)"
+            echo "${version_output}"
+            echo "${version_output}" | grep -F '5.26.27'
+            java -version 2>&1 | grep -F '21.'
+      paths:
+        - type: file
+          path: ${source.dir}/neo4j-plugins.json
+          uid: 0
+          gid: 0
+          source: image/dozerdb/config/neo4j-plugins.json
+      outputs:
+        - source: ${target.dir}/var/lib/neo4j
+          target: /var/lib/neo4j
+          uid: 7474
+          gid: 7474
+          mode: "0744"
+        - source: ${target.dir}/startup
+          target: /startup
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/startup/docker-entrypoint.sh
+          target: /usr/local/bin/docker-entrypoint.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/dozerdb
+          target: /opt/docker/sbom/dozerdb
+          uid: 0
+          gid: 0
+  artifacts:
+    - name: ${GOSU_REFERENCE}
+      includes:
+        - opt/docker/sbom/gosu
+        - usr/local/sbin/gosu
+      uid: 0
+      gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: neo4j
+      uid: 7474
+      gid: 7474
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: neo4j
+      gid: 7474
+      members:
+        - neo4j
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  LANG: C.UTF-8
+  NEO4J_EDITION: community
+  NEO4J_HOME: /var/lib/neo4j
+  PATH: /usr/local/sbin:/var/lib/neo4j/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+paths:
+  - type: symlink
+    path: /data
+    uid: 7474
+    gid: 7474
+    source: /var/lib/neo4j/data
+  - type: symlink
+    path: /logs
+    uid: 7474
+    gid: 7474
+    source: /var/lib/neo4j/logs
+annotations:
+  org.opencontainers.image.description: A minimal DozerDB image
+  org.opencontainers.image.licenses: GPL-3.0
+entrypoint:
+  - /usr/bin/tini
+  - -g
+  - --
+  - /startup/docker-entrypoint.sh
+cmd:
+  - neo4j
+ports:
+  - 7473/tcp
+  - 7474/tcp
+  - 7687/tcp
