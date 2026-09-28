@@ -21,8 +21,8 @@ vars:
   COUCHDB_DOCKER_DEFAULT_INI_CHECKSUM: sha256:341de88134122400019a4cbf398dc35774bdd4f2dab3b6b9ad4fec596e627656
   COUCHDB_DOCKER_ENTRYPOINT_CHECKSUM: sha256:d3042b6e100bfe2b9f124f654afc6bdbcad9e9e870511c60e9010da759b60962
   COUCHDB_DOCKER_VM_ARGS_CHECKSUM: sha256:5f84c4bfc47f16f404443dc1437829372ab9ee126d30fc819a2927a4cd333da7
-  ERLANG_DEV_REFERENCE: dhi/erlang-otp:27.3-debian13-dev@sha256:801a1ef064c59eeffe9a8a5b7f6aa66fcc178aec2d82c8754de44899b6ffdba5
-  ERLANG_REFERENCE: dhi/erlang-otp:27.3-debian13@sha256:e35cf33030d0b13111649e59db19eb5e16b2382bf45f4c23b4a986a5eea99a2f
+  ERLANG_DEV_REFERENCE: dhi/erlang-otp:27.3-debian13-dev@sha256:92909a1b0a08a97740b7374728f16904ba91b9a3134b9dc5e60c8666cdf7f7cf
+  ERLANG_REFERENCE: dhi/erlang-otp:27.3-debian13@sha256:0296da1411212f09314407414f7272d7709c9b0d5e9724f9df319ac429db0b26
   GOSU_REFERENCE: dhi/pkg-gosu:1.19-debian13@sha256:a4046334ab89599751b3ccbcbbfd539a6b1365b493686ebb2c09c427f2fef55b
   REBAR_COMMIT_SHA: 619df55d9dab109cbd1b5d9ed1d45c93f5450e24
   REBAR_VERSION: 3.27.0
@@ -74,9 +74,12 @@ contents:
       mode: "0644"
   builds:
     - name: build couchdb
-      uses: dhi.io/erlang-otp:27.3-debian13-dev@sha256:801a1ef064c59eeffe9a8a5b7f6aa66fcc178aec2d82c8754de44899b6ffdba5
+      environment:
+        ERL_ROOTDIR: /usr/local/lib/erlang
+        PATH: /usr/local/bin:/usr/bin:/bin
       contents:
         packages:
+          - '!base-files'
           - bash
           - build-essential
           - ca-certificates
@@ -116,7 +119,6 @@ contents:
           - python3
           - python3.13-venv
           - sed
-          - base-files
           - libc6
           - libstdc++6
           - mawk
@@ -174,6 +176,14 @@ contents:
             gid: 65532
             mode: "0644"
         artifacts:
+          - name: dhi.io/erlang-otp:27.3-debian13-dev@sha256:92909a1b0a08a97740b7374728f16904ba91b9a3134b9dc5e60c8666cdf7f7cf
+            includes:
+              - usr/local/bin/erl
+              - usr/local/bin/erlc
+              - usr/local/bin/escript
+              - usr/local/lib/erlang
+            uid: 0
+            gid: 0
           - name: dhi.io/pkg-gosu:1.19-debian13@sha256:a4046334ab89599751b3ccbcbbfd539a6b1365b493686ebb2c09c427f2fef55b
             includes:
               - usr/local/sbin/gosu
@@ -224,6 +234,8 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            sed -i 's/-W //' src/docs/Makefile
+
             mkdir -p ${target.dir}/opt/couchdb
 
             make -j "$(nproc)"
@@ -240,15 +252,28 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            # Create symlink for Mix elixir-init step
             mkdir -p bin
             ln -sf /usr/local/bin/rebar3 ./bin/rebar3
 
-            # Create non-root user for tests to properly validate file permissions
             useradd -u 1000 -m -s /bin/bash testuser || true
+
+            export MIX_ENV=integration
+            export ELIXIR_ERL_OPTIONS=+fnu
+            make elixir-init
+            mix deps.compile
+
             chown -R testuser:testuser ${source.dir}/couchdb
-            # Run full test suite as non-root using gosu
-            cd ${source.dir}/couchdb && gosu testuser make check
+            cp -a /root/.mix /home/testuser/
+            chown -R testuser:testuser /home/testuser
+
+            cd ${source.dir}/couchdb
+            gosu testuser env \
+              PATH="/usr/local/bin:/usr/bin:/bin" \
+              ERL_ROOTDIR="/usr/local/lib/erlang" \
+              HOME="/home/testuser" \
+              MIX_ENV=integration \
+              ELIXIR_ERL_OPTIONS=+fnu \
+              make check
       outputs:
         - source: ${target.dir}/opt/couchdb
           target: /opt/couchdb
@@ -259,7 +284,7 @@ contents:
           uid: 0
           gid: 0
   artifacts:
-    - name: dhi.io/erlang-otp:27.3-debian13@sha256:e35cf33030d0b13111649e59db19eb5e16b2382bf45f4c23b4a986a5eea99a2f
+    - name: dhi.io/erlang-otp:27.3-debian13@sha256:0296da1411212f09314407414f7272d7709c9b0d5e9724f9df319ac429db0b26
       includes:
         - /usr/local/**
       uid: 0
