@@ -1,0 +1,240 @@
+diff --git a/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller.go b/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller.go
+index 4892065c58..87ca9e740b 100644
+--- a/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller.go
++++ b/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller.go
+@@ -18,6 +18,7 @@ import (
+ 	"context"
+ 	"crypto/sha256"
+ 	"encoding/base64"
++	"encoding/json"
+ 	"fmt"
+ 	"net"
+ 	"regexp"
+@@ -43,7 +44,6 @@ import (
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
+ 	client "github.com/projectcalico/calico/libcalico-go/lib/clientv3"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/ipam"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	cnet "github.com/projectcalico/calico/libcalico-go/lib/net"
+ )
+ 
+diff --git a/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller_fv_test.go b/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller_fv_test.go
+index 13a8369535..bdfd9a4b25 100644
+--- a/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller_fv_test.go
++++ b/kube-controllers/pkg/controllers/loadbalancer/loadbalancer_controller_fv_test.go
+@@ -16,6 +16,7 @@ package loadbalancer
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"fmt"
+ 	"time"
+ 
+@@ -32,7 +33,6 @@ import (
+ 	"github.com/projectcalico/calico/kube-controllers/tests/testutils"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/apiconfig"
+ 	client "github.com/projectcalico/calico/libcalico-go/lib/clientv3"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/options"
+ )
+ 
+diff --git a/lib/std/uniquelabels/unique_labels.go b/lib/std/uniquelabels/unique_labels.go
+index 110b6b3697..a8c212cc5a 100644
+--- a/lib/std/uniquelabels/unique_labels.go
++++ b/lib/std/uniquelabels/unique_labels.go
+@@ -106,16 +106,29 @@ func (i Map) Equals(other Map) bool {
+ // MarshalJSON implements the json.Marshaler interface. Must be defined on the
+ // value receiver so that Map can be embedded in other structs.
+ func (i Map) MarshalJSON() ([]byte, error) {
+-	return json.Marshal(i.m)
++	// Convert to map[string]string before marshaling to avoid a panic in
++	// Go 1.26's encoding/json mapEncoder when encoding map keys of type
++	// uniquestr.Handle (which wraps unique.Handle[string]).
++	return json.Marshal(i.RecomputeOriginalMap())
+ }
+ 
+ // UnmarshalJSON implements the json.Unmarshaler interface.  Must be defined on
+ // the pointer receiver so that it can have side effects.
+ func (i *Map) UnmarshalJSON(data []byte) error {
+-	var hm handleMap
+-	if err := json.Unmarshal(data, &hm); err != nil {
++	// Unmarshal via map[string]string to avoid Go 1.26 encoding/json issues
++	// with unique.Handle[string]-based map keys.
++	var sm map[string]string
++	if err := json.Unmarshal(data, &sm); err != nil {
+ 		return err
+ 	}
++	if sm == nil {
++		i.m = nil
++		return nil
++	}
++	hm := make(handleMap, len(sm))
++	for k, v := range sm {
++		hm[uniquestr.Make(k)] = uniquestr.Make(v)
++	}
+ 	i.m = hm
+ 	return nil
+ }
+diff --git a/libcalico-go/lib/backend/k8s/conversion/workload_endpoint_default.go b/libcalico-go/lib/backend/k8s/conversion/workload_endpoint_default.go
+index 3c59de8fee..b6556e37ab 100644
+--- a/libcalico-go/lib/backend/k8s/conversion/workload_endpoint_default.go
++++ b/libcalico-go/lib/backend/k8s/conversion/workload_endpoint_default.go
+@@ -17,6 +17,7 @@ package conversion
+ import (
+ 	"crypto/sha1"
+ 	"encoding/hex"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"maps"
+@@ -34,7 +35,6 @@ import (
+ 
+ 	"github.com/projectcalico/calico/libcalico-go/lib/apis/internalapi"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/names"
+ 	cnet "github.com/projectcalico/calico/libcalico-go/lib/net"
+ )
+diff --git a/libcalico-go/lib/backend/k8s/resources/node.go b/libcalico-go/lib/backend/k8s/resources/node.go
+index 000c7fa094..a7edfb9e80 100644
+--- a/libcalico-go/lib/backend/k8s/resources/node.go
++++ b/libcalico-go/lib/backend/k8s/resources/node.go
+@@ -16,6 +16,7 @@ package resources
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"reflect"
+@@ -35,7 +36,6 @@ import (
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/api"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
+ 	cerrors "github.com/projectcalico/calico/libcalico-go/lib/errors"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/net"
+ 	validatorv3 "github.com/projectcalico/calico/libcalico-go/lib/validator/v3"
+ )
+diff --git a/libcalico-go/lib/backend/k8s/resources/resources.go b/libcalico-go/lib/backend/k8s/resources/resources.go
+index 545d05282b..7cee301587 100644
+--- a/libcalico-go/lib/backend/k8s/resources/resources.go
++++ b/libcalico-go/lib/backend/k8s/resources/resources.go
+@@ -15,6 +15,7 @@
+ package resources
+ 
+ import (
++	"encoding/json"
+ 	"strings"
+ 
+ 	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
+@@ -25,7 +26,6 @@ import (
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/api"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/k8s/conversion"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ )
+ 
+ const (
+diff --git a/libcalico-go/lib/backend/k8s/resources/workloadendpoint.go b/libcalico-go/lib/backend/k8s/resources/workloadendpoint.go
+index 3998db1a3f..a2437b4c4f 100644
+--- a/libcalico-go/lib/backend/k8s/resources/workloadendpoint.go
++++ b/libcalico-go/lib/backend/k8s/resources/workloadendpoint.go
+@@ -16,6 +16,7 @@ package resources
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"strings"
+@@ -34,7 +35,6 @@ import (
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/k8s/conversion"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
+ 	cerrors "github.com/projectcalico/calico/libcalico-go/lib/errors"
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/names"
+ )
+ 
+diff --git a/libcalico-go/lib/backend/model/keys.go b/libcalico-go/lib/backend/model/keys.go
+index af2b97a6a9..42592bd6a5 100644
+--- a/libcalico-go/lib/backend/model/keys.go
++++ b/libcalico-go/lib/backend/model/keys.go
+@@ -15,6 +15,7 @@
+ package model
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	net2 "net"
+ 	"reflect"
+@@ -26,7 +27,6 @@ import (
+ 	"k8s.io/apimachinery/pkg/labels"
+ 	"k8s.io/apimachinery/pkg/types"
+ 
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/namespace"
+ 	"github.com/projectcalico/calico/libcalico-go/lib/net"
+ )
+diff --git a/libcalico-go/lib/net/ip.go b/libcalico-go/lib/net/ip.go
+index 620ed3339a..9249accda9 100644
+--- a/libcalico-go/lib/net/ip.go
++++ b/libcalico-go/lib/net/ip.go
+@@ -15,10 +15,9 @@
+ package net
+ 
+ import (
++	"encoding/json"
+ 	"math/big"
+ 	"net"
+-
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ )
+ 
+ // Sub class net.IP so that we can add JSON marshalling and unmarshalling.
+diff --git a/libcalico-go/lib/net/ipnet.go b/libcalico-go/lib/net/ipnet.go
+index 60fe0ac101..1da0257cad 100644
+--- a/libcalico-go/lib/net/ipnet.go
++++ b/libcalico-go/lib/net/ipnet.go
+@@ -15,10 +15,9 @@
+ package net
+ 
+ import (
++	"encoding/json"
+ 	"math/big"
+ 	"net"
+-
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ )
+ 
+ // Sub class net.IPNet so that we can add JSON marshalling and unmarshalling.
+diff --git a/libcalico-go/lib/net/mac.go b/libcalico-go/lib/net/mac.go
+index a8013e93e7..3dfe5818cb 100644
+--- a/libcalico-go/lib/net/mac.go
++++ b/libcalico-go/lib/net/mac.go
+@@ -15,9 +15,8 @@
+ package net
+ 
+ import (
++	"encoding/json"
+ 	"net"
+-
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ )
+ 
+ // Sub class net.HardwareAddr so that we can add JSON marshalling and unmarshalling.
+diff --git a/libcalico-go/lib/packedmap/packedmap_test.go b/libcalico-go/lib/packedmap/packedmap_test.go
+index e23fae01c4..3d496ad5d7 100644
+--- a/libcalico-go/lib/packedmap/packedmap_test.go
++++ b/libcalico-go/lib/packedmap/packedmap_test.go
+@@ -15,10 +15,9 @@
+ package packedmap
+ 
+ import (
++	"encoding/json"
+ 	"reflect"
+ 	"testing"
+-
+-	"github.com/projectcalico/calico/libcalico-go/lib/json"
+ )
+ 
+ type exampleStruct struct {
