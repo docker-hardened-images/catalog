@@ -1,0 +1,34 @@
+// Maven Central rate-limits the build network (HTTP 429 on every request), so
+// route Central through the GCS read replica everywhere upstream declares it:
+// the root buildscript classpath (nexus-workflow, osdetector, snakeyaml,
+// dependency-check-gradle), project repositories, and plugin resolution.
+//
+// Upstream settings.gradle has no pluginManagement block, so plugin resolution
+// defaults to the Gradle Plugin Portal alone. The portal answers plugins it
+// does not host with a 303 to Central, which puts us back on the rate-limited
+// host, so the mirror is listed first and the portal only serves what is
+// portal-only (com.gradle.enterprise).
+def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+def mavenCentralHosts = ["repo.maven.apache.org", "repo1.maven.org"]
+
+def mirrorMavenCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
+        mavenCentralHosts.contains(repo.url.host)) {
+        repo.setUrl(mavenCentralMirror)
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement.repositories.configureEach(mirrorMavenCentral)
+    settings.pluginManagement.repositories.maven {
+        name = "GCS Maven Central mirror"
+        url = mavenCentralMirror
+    }
+    settings.pluginManagement.repositories.gradlePluginPortal()
+    settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+}
+
+allprojects {
+    buildscript.repositories.configureEach(mirrorMavenCentral)
+    repositories.configureEach(mirrorMavenCentral)
+}

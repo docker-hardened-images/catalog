@@ -5,27 +5,27 @@ image: dhi.io/rundeck
 variant: runtime
 tags:
   - "6"
-  - "6.1"
-  - 6.1.0
+  - "6.2"
+  - 6.2.1
   - 6-debian
   - 6-debian13
-  - 6.1-debian
-  - 6.1-debian13
-  - 6.1.0-debian
-  - 6.1.0-debian13
+  - 6.2-debian
+  - 6.2-debian13
+  - 6.2.1-debian
+  - 6.2.1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-08-03"
 vars:
-  COMMIT_SHA: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+  COMMIT_SHA: e649f088e039b0fabbbb7039f730cbbcc183f82d
   FLAVORED_SUFFIX: ""
-  SEMVER_MAJOR_MINOR_VERSION: "6.1"
+  SEMVER_MAJOR_MINOR_VERSION: "6.2"
   SEMVER_MAJOR_VERSION: "6"
-  SEMVER_VERSION: 6.1.0
+  SEMVER_VERSION: 6.2.1
   SUFFIX: ""
-  VERSION: 6.1.0
+  VERSION: 6.2.1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -74,15 +74,15 @@ contents:
           - nodejs-24
           - npm
         files:
-          - url: git+https://github.com/rundeck/rundeck.git#660dce23aca2697e16e4590c5d84e3f70c5a2632
-            checksum: 660dce23aca2697e16e4590c5d84e3f70c5a2632
+          - url: git+https://github.com/rundeck/rundeck.git#e649f088e039b0fabbbb7039f730cbbcc183f82d
+            checksum: e649f088e039b0fabbbb7039f730cbbcc183f82d
             path: ${source.dir}/rundeck
             spdx:
               name: rundeck
-              version: 6.1.0
+              version: 6.2.1
               packages:
                 - name: rundeck
-                  purl: pkg:github/rundeck/rundeck@6.1.0
+                  purl: pkg:github/rundeck/rundeck@6.2.1
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -95,7 +95,7 @@ contents:
             export JAVA_HOME=/usr/lib/jvm/temurin-21
             export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
             export NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
-            export CIRCLE_TAG=v6.1.0
+            export CIRCLE_TAG=v6.2.1
             export CI=true
 
             node --version
@@ -105,7 +105,13 @@ contents:
             find . -name package-lock.json -exec \
               sed -i 's#https://npm.artifacts.pd-internal.com/npm/#https://registry.npmjs.org/#g' {} +
 
-            ./gradlew --no-daemon --stacktrace :rundeckapp:bootWar -x test
+            MIRROR='https://maven-central.storage-download.googleapis.com/maven2/'
+            find . -type f -name '*.gradle' -print0 | xargs -0 sed -i \
+              -e "s|mavenCentral()|maven { url '${MIRROR}' }|g" \
+              -e "s|gradlePluginPortal()|maven { url '${MIRROR}' }; gradlePluginPortal()|g"
+
+            ./gradlew --init-script "${source.dir}/dhi-plugin-management.init.gradle" \
+              --no-daemon --stacktrace :rundeckapp:bootWar -x test
         - name: install rundeck
           runs: |
             set -eux -o pipefail
@@ -119,7 +125,8 @@ contents:
             app="${target.dir}/home/rundeck"
             mkdir -p "$app/docker-lib" "$app/etc" "$app/container-plugins" \
               "$app/libext" "$app/server/config" "$app/server/data" \
-              "$app/var/logs" "$app/user-assets" "${target.dir}/etc/remco"
+              "$app/var/logs" "$app/user-assets" "$app/repository" \
+              "$app/projects" "${target.dir}/etc/remco"
 
             export PATH="/usr/lib/jvm/temurin-21/bin:$PATH"
             java -jar "$war" --installonly --basedir "$app"
@@ -128,6 +135,19 @@ contents:
             cp -a docker/official/remco/. "${target.dir}/etc/remco/"
             cp -a docker/official/lib/. "$app/docker-lib/"
             cp -a docker/official/etc/. "$app/etc/"
+
+            # libext is omitted: 110_sideload_container_plugins.sh copies
+            # container-plugins/.keep into libext at startup as nonroot; a
+            # root-owned libext/.keep from install blocks that cp.
+            for dir in container-plugins server/data var/logs user-assets repository projects; do
+              touch "$app/${dir}/.keep"
+            done
+      paths:
+        - type: file
+          path: ${source.dir}/dhi-plugin-management.init.gradle
+          uid: 0
+          gid: 0
+          source: image/rundeck/files/plugin-management.init.gradle
       outputs:
         - source: ${target.dir}/home/rundeck
           target: /home/rundeck
@@ -169,6 +189,12 @@ paths:
     mode: "0770"
     recursive: true
   - type: directory
+    path: /home/rundeck/var
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
     path: /home/rundeck/var/logs
     uid: 65532
     gid: 65532
@@ -188,6 +214,18 @@ paths:
     recursive: true
   - type: directory
     path: /home/rundeck/libext
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/repository
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+    recursive: true
+  - type: directory
+    path: /home/rundeck/projects
     uid: 65532
     gid: 65532
     mode: "0770"
