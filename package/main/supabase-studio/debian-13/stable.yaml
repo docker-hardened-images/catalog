@@ -3,8 +3,10 @@
 image: dhi.io/pkg-supabase-studio
 variant: runtime
 tags:
-  - 2026.09.07-2
-  - 2026.09.07-2-debian13
+  - 2026.09.07
+  - 2026.09.07-r4
+  - 2026.09.07-debian13
+  - 2026.09.07-r4-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,12 +14,11 @@ dates:
   release: "2026-08-03"
 vars:
   COMMIT_SHA: 79964102d369991a3b3adda27dc1f528c3a77457
-  DHI_REL: "2"
-  DHI_VERSION: 2026.09.07-2
+  DHI_TEST_DEB_EXPECTED_FILES: /usr/lib/supabase-studio/apps/studio/server.js
   NODEJS_VERSION: 22.23.3-0
   PACKAGE_NAME: supabase-studio
   PNPM_VERSION: 11.13.1
-  REL: "2"
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "2026.09"
   SEMVER_MAJOR_VERSION: "2026"
   SEMVER_VERSION: 2026.09.07
@@ -54,8 +55,7 @@ contents:
           - bash
           - ca-certificates
           - coreutils
-          - debhelper
-          - dpkg-dev
+          - dpkg
           - findutils
           - g++
           - gcc
@@ -117,12 +117,14 @@ contents:
 
             rm -f apps/studio/.env
 
-            yq -Y -i '.overrides."sharp" = "0.35.0"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."fast-uri" = "3.1.5"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."next" = "16.3.3"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."sharp" = "0.35.4"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."fast-uri" = "3.1.6"' pnpm-workspace.yaml
+            yq -Y -i '.overrides."qs" = "6.16.0"' pnpm-workspace.yaml
             yq -Y -i '.overrides."mermaid" = "11.16.1"' pnpm-workspace.yaml
             yq -Y -i '.overrides."dompurify" = "3.4.13"' pnpm-workspace.yaml
             yq -Y -i '.overrides."@hono/node-server" = "1.19.15"' pnpm-workspace.yaml
-            yq -Y -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + ["sharp", "fast-uri", "mermaid", "dompurify", "@hono/node-server"])' pnpm-workspace.yaml
+            yq -Y -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + ["next", "sharp", "fast-uri", "qs", "mermaid", "dompurify", "@hono/node-server"])' pnpm-workspace.yaml
 
             pnpm install --lockfile-only
             pnpm install --frozen-lockfile
@@ -151,9 +153,9 @@ contents:
 
             SHARP_LIBVIPS_NAME=$(basename "$(dirname "${SHARP_LIBVIPS_TARGET}")")
             SHARP_LIBVIPS_LINK="${SHARP_BINDING_PACKAGE}/node_modules/@img/${SHARP_LIBVIPS_NAME}"
-            test ! -e "${SHARP_LIBVIPS_LINK}"
-            test ! -L "${SHARP_LIBVIPS_LINK}"
-            ln -s "../../../$(basename "${SHARP_LIBVIPS_PACKAGE}")/node_modules/@img/${SHARP_LIBVIPS_NAME}" "${SHARP_LIBVIPS_LINK}"
+            if [ ! -e "${SHARP_LIBVIPS_LINK}" ] && [ ! -L "${SHARP_LIBVIPS_LINK}" ]; then
+              ln -s "../../../$(basename "${SHARP_LIBVIPS_PACKAGE}")/node_modules/@img/${SHARP_LIBVIPS_NAME}" "${SHARP_LIBVIPS_LINK}"
+            fi
 
             test -f "${DEST}/apps/studio/server.js"
             test -n "$(find "${SHARP_LIBVIPS_TARGET}" -name 'libvips-cpp.so.*' -type f -print -quit)"
@@ -197,40 +199,64 @@ contents:
               fi
             done
             set -x
-        - name: stage built payload for dpkg
+        - name: generate production sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: supabase-studio-node-modules
+            source: ${target.dir}/usr/lib/supabase-studio
+        - name: encode next.js bracket routes
           runs: |
             set -eux -o pipefail
 
-            rm -rf "${source.dir}/supabase-studio-pkg/pkg-staging"
-            mkdir -p "${source.dir}/supabase-studio-pkg/pkg-staging"
-            cp -a "${target.dir}/usr/lib/supabase-studio/." "${source.dir}/supabase-studio-pkg/pkg-staging/"
-        - uses: dpkg/bump@v1
-          work-dir: ${source.dir}/supabase-studio-pkg
+            find "${target.dir}/usr/lib/supabase-studio" -depth -name '*\[*' | while IFS= read -r f; do
+              dir=$(dirname "$f")
+              base=$(basename "$f")
+              safe=$(printf '%s' "$base" | sed 's/\[/__DHI_LB__/g; s/\]/__DHI_RB__/g')
+              mv "$f" "${dir}/${safe}"
+            done
+        - uses: dhi/build-pkg:0
           with:
-            changelog:
-              - Update sharp to 0.35.0 to fix GHSA-f88m-g3jw-g9cj
-              - Update fast-uri to 3.1.5 to fix CVE-2026-18446
-              - Update mermaid to 11.16.1 to fix CVE-2026-71436, CVE-2026-71437, CVE-2026-71438, CVE-2026-71439 and CVE-2026-50159
-              - Update dompurify to 3.4.13 to fix GHSA-55q2-fjhq-7xh7
-              - Update @hono/node-server to 1.19.15 to fix GHSA-frvp-7c67-39w9
-            version: 2026.09.07-2
-        - uses: dpkg/build@v1
-          work-dir: ${source.dir}/supabase-studio-pkg
-          with:
-            args: -b -uc -us -d
-      paths:
-        - type: directory
-          path: ${source.dir}/supabase-studio-pkg/debian
-          uid: 0
-          gid: 0
-          mode: "0600"
-          source: package/main/supabase-studio/debian-13/debian
-        - type: file
-          path: ${source.dir}/supabase-studio-pkg/debian/rules
-          uid: 0
-          gid: 0
-          mode: "0755"
-          source: package/main/supabase-studio/debian-13/debian/rules
+            depends:
+              - ca-certificates-bundle
+              - libc6
+              - libgomp1
+              - libstdc++6
+              - netbase
+              - nodejs-22
+              - tzdata
+            description: Supabase Studio self-hosted dashboard (web)
+            files:
+              - usr/lib/supabase-studio
+            formats:
+              - deb
+            license: Apache-2.0
+            name: supabase-studio
+            priority: optional
+            rel: 4
+            section: misc
+            url: https://github.com/supabase/supabase
+            version: 2026.09.07
+        - name: restore next.js bracket routes in the deb
+          runs: |
+            set -eux -o pipefail
+
+            restore_brackets() {
+              find "$1" -depth -name '*__DHI_LB__*' | while IFS= read -r f; do
+                dir=$(dirname "$f")
+                base=$(basename "$f")
+                real=$(printf '%s' "$base" | sed 's#__DHI_LB__#[#g; s#__DHI_RB__#]#g')
+                mv "$f" "${dir}/${real}"
+              done
+            }
+
+            find "${target.dir}/packages/deb" -name '*.deb' ! -name '*-dbgsym*' | while IFS= read -r deb; do
+              tmp=$(mktemp -d)
+              dpkg-deb -R "$deb" "$tmp"
+              restore_brackets "$tmp"
+              dpkg-deb -b "$tmp" "$deb"
+              rm -rf "$tmp"
+            done
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
