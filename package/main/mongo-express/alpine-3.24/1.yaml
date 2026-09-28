@@ -1,0 +1,148 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-mongo-express
+variant: runtime
+tags:
+  - 1.0.2-alpine3.24
+  - 1.0.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 486c162ec8bdbc8b8c1c61b36b53dee71fdf7034
+  NODEJS_VERSION: 24.21.0-r0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.0"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.0.2
+  VERSION: 1.0.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: mongo-express
+      work-dir: ${source.dir}/mongo-express
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - libstdc++
+          - corepack
+          - mawk
+          - nodejs-24=24.21.0-r0
+          - python3
+          - sed
+        files:
+          - url: git+https://github.com/mongo-express/mongo-express.git#v1.0.2
+            checksum: 486c162ec8bdbc8b8c1c61b36b53dee71fdf7034
+            path: ${source.dir}/mongo-express
+            spdx:
+              name: mongo-express
+              version: 1.0.2
+              packages:
+                - name: mongo-express
+                  purl: pkg:npm/mongo-express@1.0.2
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: apply csrf fix (CVE-2023-52555)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git apply --whitespace=nowarn "${source.dir}/patch/csrf-cve-2023-52555.patch"
+        - name: remove unused nyc dependency, apply CVE resolutions
+          runs: |
+            set -eux -o pipefail
+
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.version = '1.0.2';
+              delete pkg.dependencies.nyc;
+              pkg.resolutions = {
+                ...pkg.resolutions,
+                'path-to-regexp': '0.1.13',
+                'lodash': '4.18.0',
+                'lodash-es': '4.18.0',
+                'basic-auth-connect': '1.1.0',
+                'body-parser': '1.20.6',
+                'fast-xml-parser': '5.11.0',
+                'express': '4.22.2',
+                'mongodb': '4.17.2',
+                'qs': '6.16.0',
+                'cookie': '0.7.2',
+                'serve-static': '1.16.3',
+                'send': '0.19.2',
+                'es5-ext': '0.10.64',
+                'on-headers': '1.1.0',
+                'morgan': '1.12.1',
+                'uuid': '11.1.1',
+                'socks': '2.8.9',
+              };
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            yarn install
+            yarn build
+            rm -rf lib/scripts
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            rm -rf node_modules
+            yarn workspaces focus --production
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/mongo-express"
+
+            cp -a build public lib node_modules "${target.dir}/usr/lib/mongo-express/"
+            cp app.js config.default.js package.json build-assets.json "${target.dir}/usr/lib/mongo-express/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: Web-based MongoDB admin interface, written with Node.js and Express
+            files:
+              - usr/lib/mongo-express
+            license: MIT
+            name: mongo-express
+            rel: 0
+            url: https://github.com/mongo-express/mongo-express
+            version: 1.0.2
+      paths:
+        - type: file
+          path: ${source.dir}/patch/csrf-cve-2023-52555.patch
+          uid: 0
+          gid: 0
+          source: package/main/mongo-express/patch/csrf-cve-2023-52555.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
