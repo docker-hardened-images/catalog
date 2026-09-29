@@ -4,9 +4,9 @@ image: dhi.io/pkg-spark
 variant: runtime
 tags:
   - 4.0.4
-  - 4.0.4-r6
+  - 4.0.4-r8
   - 4.0.4-debian13
-  - 4.0.4-r6-debian13
+  - 4.0.4-r8-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -15,10 +15,14 @@ vars:
   COMMIT_SHA: c7d67e3f5d4c9d88a480367b44fc54d26adf99ab
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.12.1+1-4
-  MAVEN_VERSION: 3.9.16
+  MAVEN_BOOTSTRAP_CHECKSUM: 80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb
+  MAVEN_BOOTSTRAP_VERSION: 3.9.16
+  MAVEN_COMMIT_SHA: c43a36b8d67be7e0805a411bc0898af1a51f5472
+  MAVEN_GIT_TAG: maven-3.10.0
+  MAVEN_VERSION: 3.10.0
   PACKAGE_HOME: /usr/share/spark
   PACKAGE_NAME: spark-4.0
-  REL: "6"
+  REL: "8"
   SCALA_VERSION: "2.13"
   SEMVER_MAJOR_MINOR_VERSION: "4.0"
   SEMVER_MAJOR_VERSION: "4"
@@ -33,7 +37,7 @@ contents:
       environment:
         JAVA_HOME: /usr/lib/jvm/temurin-21
         MAVEN_ARGS: --batch-mode --no-transfer-progress
-        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+        MAVEN_HOME: /opt/java/apache-maven-3.10.0
       caches:
         - path: /root/.m2/repository
       contents:
@@ -67,14 +71,20 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+          - url: https://repo1.maven.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz
+            checksum: sha256:80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb
             path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/maven.git#maven-3.10.0
+            checksum: c43a36b8d67be7e0805a411bc0898af1a51f5472
+            path: ${source.dir}/maven-src
             spdx:
               name: maven
-              version: 3.9.16
+              version: 3.10.0
               packages:
                 - name: maven
-                  purl: pkg:generic/apache-maven@3.9.16
+                  purl: pkg:generic/apache-maven@3.10.0
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -160,16 +170,22 @@ contents:
             gid: 0
       pipeline:
         - name: install maven
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir -p /opt/java
-            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+            mkdir -p /opt/java /tmp/maven-bootstrap
+            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /tmp/maven-bootstrap
+            export PATH="/tmp/maven-bootstrap/apache-maven-3.9.16/bin:${PATH}"
+
+            cd "${source.dir}/maven-src"
+            mvn -B -DskipTests -pl apache-maven -am package
+            tar -xzf "apache-maven/target/apache-maven-3.10.0-bin.tar.gz" -C /opt/java
 
             mkdir -p /usr/local/bin
-            find "/opt/java/apache-maven-3.9.16/bin" \( -type f -executable -o -type l \) | while read -r file; do
+            find "/opt/java/apache-maven-3.10.0/bin" \( -type f -executable -o -type l \) | while read -r file; do
               filename=$(basename "$file")
-              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+              ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - uses: mvn/mirror@v1
         - name: use maven central when mirror credentials are absent
@@ -215,7 +231,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            ln -sf "/opt/java/apache-maven-3.9.16/bin/mvn" build/mvn
+            ln -sf "/opt/java/apache-maven-3.10.0/bin/mvn" build/mvn
             ./dev/change-scala-version.sh '2.13'
         - name: build
           privileged: true
@@ -280,7 +296,7 @@ contents:
               - deb
             license: Apache-2.0
             name: spark-4.0
-            rel: 6
+            rel: 8
             url: https://spark.apache.org/
             version: 4.0.4
       paths:
