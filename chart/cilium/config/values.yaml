@@ -1,0 +1,270 @@
+image:
+  repository: ${cilium.registry}/${cilium.repository}
+  tag: ${cilium.tag}
+  digest: ${cilium.digest}
+  pullPolicy: IfNotPresent
+  useDigest: true
+
+# Agent pod-level security context.
+# runAsUser: 0 is required for BPF operations. appArmorProfile and seccompProfile
+# must be Unconfined because RuntimeDefault blocks bpf() and perf_event_open().
+podSecurityContext:
+  runAsUser: 0
+  appArmorProfile:
+    type: "Unconfined"
+  seccompProfile:
+    type: "Unconfined"
+
+# Agent container-level security context.
+# privileged: false causes the chart to render the explicit capability lists
+# instead of a blanket privileged: true. Capabilities follow the Cilium
+# system requirements (https://docs.cilium.io/en/stable/operations/system_requirements/).
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_MODULE
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYSLOG
+      # Both PERFMON and BPF require kernel 5.8, container runtime
+      # cri-o >= v1.22.0 or containerd >= v1.5.0.
+      # If available, SYS_ADMIN can be removed.
+      # - PERFMON
+      # - BPF
+    mountCgroup:
+      - SYS_ADMIN
+      - SYS_CHROOT
+      - SYS_PTRACE
+    applySysctlOverwrites:
+      - SYS_ADMIN
+      - SYS_CHROOT
+      - SYS_PTRACE
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_MODULE
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+preflight:
+  image:
+    repository: ${cilium.registry}/${cilium.repository}
+    tag: ${cilium.tag}
+    digest: ${cilium.digest}
+    pullPolicy: IfNotPresent
+    useDigest: true
+  # Preflight runs the same BPF checks as the agent and requires root access.
+  # Mirror the agent podSecurityContext: unconfined profiles are required because
+  # RuntimeDefault blocks bpf() and perf_event_open().
+  podSecurityContext:
+    runAsUser: 0
+    appArmorProfile:
+      type: "Unconfined"
+    seccompProfile:
+      type: "Unconfined"
+  envoy:
+    image:
+      repository: ${cilium-envoy.registry}/${cilium-envoy.repository}
+      tag: ${cilium-envoy.tag}
+      digest: ${cilium-envoy.digest}
+      pullPolicy: IfNotPresent
+      useDigest: true
+
+operator:
+  image:
+    # operator image automatically appends information based on the cloud provider chosen,
+    # use override to use the correct name
+    override: ${cilium-operator.registry}/${cilium-operator.repository}:${cilium-operator.tag}@${cilium-operator.digest}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+hubble:
+  relay:
+    image:
+      repository: ${hubble-relay.registry}/${hubble-relay.repository}
+      tag: ${hubble-relay.tag}
+      digest: ${hubble-relay.digest}
+      pullPolicy: IfNotPresent
+      useDigest: true
+    podSecurityContext:
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      capabilities:
+        drop:
+          - ALL
+    extraVolumes:
+      - name: gops
+        emptyDir: {}
+    extraVolumeMounts:
+      - name: gops
+        mountPath: /home/gops
+  ui:
+    securityContext:
+      runAsUser: 65532
+      runAsGroup: 65532
+      fsGroup: 65532
+    backend:
+      image:
+        repository: ${hubble-ui-backend.registry}/${hubble-ui-backend.repository}
+        tag: ${hubble-ui-backend.tag}
+        digest: ${hubble-ui-backend.digest}
+        pullPolicy: IfNotPresent
+        useDigest: true
+      securityContext:
+        allowPrivilegeEscalation: false
+    frontend:
+      image:
+        repository: ${hubble-ui.registry}/${hubble-ui.repository}
+        tag: ${hubble-ui.tag}
+        digest: ${hubble-ui.digest}
+        pullPolicy: IfNotPresent
+        useDigest: true
+      securityContext:
+        allowPrivilegeEscalation: false
+
+envoy:
+  image:
+    repository: ${cilium-envoy.registry}/${cilium-envoy.repository}
+    tag: ${cilium-envoy.tag}
+    digest: ${cilium-envoy.digest}
+    pullPolicy: IfNotPresent
+    useDigest: true
+  podSecurityContext:
+    appArmorProfile:
+      type: Unconfined
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # Replace SYS_ADMIN with PERFMON+BPF (valid for Linux >= 5.8, satisfied by Debian 13 kernel 6.x).
+    # SYS_ADMIN is near-root and triggers Kubescape C-0057; PERFMON+BPF cover all required eBPF operations.
+    capabilities:
+      envoy:
+        - NET_ADMIN
+        - PERFMON
+        - BPF
+
+standaloneDnsProxy:
+  image:
+    repository: ${cilium-dnsproxy.registry}/${cilium-dnsproxy.repository}
+    tag: ${cilium-dnsproxy.tag}
+    digest: ${cilium-dnsproxy.digest}
+    pullPolicy: IfNotPresent
+    useDigest: true
+
+certgen:
+  image:
+    repository: ${cilium-certgen.registry}/${cilium-certgen.repository}
+    tag: ${cilium-certgen.tag}
+    digest: ${cilium-certgen.digest}
+    pullPolicy: IfNotPresent
+    useDigest: true
+
+clustermesh:
+  apiserver:
+    image:
+      repository: ${cilium-clustermesh-apiserver.registry}/${cilium-clustermesh-apiserver.repository}
+      tag: ${cilium-clustermesh-apiserver.tag}
+      digest: ${cilium-clustermesh-apiserver.digest}
+      pullPolicy: IfNotPresent
+      useDigest: true
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+
+nodeinit:
+  image:
+    repository: ${cilium-startup-script.registry}/${cilium-startup-script.repository}
+    tag: ${cilium-startup-script.tag}
+    digest: ${cilium-startup-script.digest}
+    pullPolicy: IfNotPresent
+    useDigest: true
+  # nodeinit requires SYS_MODULE, NET_ADMIN, SYS_ADMIN and other capabilities; no SC override
+
+encryption:
+  ztunnel:
+    image:
+      repository: ${ztunnel.registry}/${ztunnel.repository}
+      tag: ${ztunnel.tag}
+      digest: ${ztunnel.digest}
+      pullPolicy: IfNotPresent
+      useDigest: true
+    # ztunnel requires privileged access for encryption; no SC override
+
+authentication:
+  mutual:
+    spire:
+      install:
+        initImage:
+          repository: ${busybox.registry}/${busybox.repository}
+          tag: ${busybox.tag}
+          digest: ${busybox.digest}
+          pullPolicy: IfNotPresent
+          useDigest: true
+        agent:
+          image:
+            repository: ${spire-agent.registry}/${spire-agent.repository}
+            tag: ${spire-agent.tag}
+            digest: ${spire-agent.digest}
+            pullPolicy: IfNotPresent
+            useDigest: true
+          podSecurityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+        server:
+          image:
+            repository: ${spire-server.registry}/${spire-server.repository}
+            tag: ${spire-server.tag}
+            digest: ${spire-server.digest}
+            pullPolicy: IfNotPresent
+            useDigest: true
+          podSecurityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

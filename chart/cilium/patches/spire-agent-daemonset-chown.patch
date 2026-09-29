@@ -1,0 +1,121 @@
+From: Docker Hardened Images <dhi@docker.com>
+Subject: [PATCH] fix spire-agent non-root permissions on /run/spire
+Source: https://github.com/cilium/cilium/blob/v1.20.2/install/kubernetes/cilium/templates/spire/agent/daemonset.yaml
+
+kubelet creates every hostPath volume with `DirectoryOrCreate` as root:root,
+mode 0755, on the host, and never honors a pod's fsGroup or
+runAsUser/runAsGroup for hostPath (fsGroup-based ownership only applies to
+volume types kubelet itself manages the lifecycle of, e.g. emptyDir and
+CSI/PV-backed volumes - hostPath is a direct passthrough to the host
+filesystem and is deliberately left untouched). DHI's values.yaml runs
+spire-agent as a non-root podSecurityContext (runAsUser/runAsGroup 65532).
+
+Two directories need to be owned by that uid/gid before the agent container
+starts:
+
+- dir(adminSocketPath) (/run/spire/sockets), the hostPath spire-agent mounts
+  to create its own "agent" subdirectory and bind agentSocketPath
+  (/run/spire/sockets/agent/agent.sock) - without this, the agent fails with
+  "create UDS listener: ... bind: permission denied". This chown is
+  recursive: /run/spire/sockets is a hostPath, so it persists across pod
+  restarts on the same node, and can already contain a stale root-owned
+  "agent" subdirectory or socket file left behind by an earlier attempt
+  before this fix existed. A non-recursive chown of the parent alone doesn't
+  reach pre-existing content.
+- /run/spire itself, where spire-agent writes its own state-cache file
+  (agent-data.json) directly - without this, the agent fails with "failed to
+  write data file: ... permission denied".
+
+/run/spire is not itself a volume upstream - it's just the common parent of
+the config/bundle/sockets mounts, auto-created per-container by kubelet.
+Since each container in a pod has its own independent root filesystem,
+chowning a plain (non-volume-backed) directory in one container is invisible
+to every other container - only genuine shared volumes propagate ownership
+changes across containers. This patch adds a dedicated `spire-agent-data`
+emptyDir volume mounted at /run/spire in both the new initContainer and the
+spire-agent container (nesting under the existing, more specific
+config/bundle/sockets mounts exactly as Linux mount nesting allows), so the
+initContainer's chown of /run/spire is actually visible to spire-agent.
+Scoped to a pod-local emptyDir (chowned non-recursively - it's always
+freshly empty, no possibility of stale content) rather than widening the
+existing node-persistent /run/spire/sockets hostPath, to avoid changing that
+hostPath's blast radius (still shared with cilium-agent's own daemonset,
+unmodified).
+
+Add a minimal-privilege leading initContainer (runAsUser/runAsGroup 0,
+capabilities dropped except CHOWN/DAC_OVERRIDE) that chowns both directories
+to the agent's uid/gid before the non-root agent container starts. No other
+template changes needed. cilium-agent (root, privileged) keeps full access
+to /run/spire/sockets regardless of its ownership.
+
+--- a/templates/spire/agent/daemonset.yaml
++++ b/templates/spire/agent/daemonset.yaml
+@@ -53,10 +53,35 @@
+       initContainers:
++        - name: init-agent-socket-dir
++          image: {{ include "cilium.image" .Values.authentication.mutual.spire.install.initImage | quote }}
++          imagePullPolicy: {{ .Values.authentication.mutual.spire.install.initImage.pullPolicy }}
++          securityContext:
++            runAsNonRoot: false
++            runAsUser: 0
++            runAsGroup: 0
++            allowPrivilegeEscalation: false
++            capabilities:
++              drop:
++                - ALL
++              add:
++                - CHOWN
++                - DAC_OVERRIDE
++          command:
++            - /bin/sh
++            - -c
++            - |
++              chown {{ .Values.authentication.mutual.spire.install.agent.podSecurityContext.runAsUser }}:{{ .Values.authentication.mutual.spire.install.agent.podSecurityContext.runAsGroup }} /run/spire
++              chown -R {{ .Values.authentication.mutual.spire.install.agent.podSecurityContext.runAsUser }}:{{ .Values.authentication.mutual.spire.install.agent.podSecurityContext.runAsGroup }} {{ dir .Values.authentication.mutual.spire.adminSocketPath }}
++          volumeMounts:
++            - name: spire-agent-data
++              mountPath: /run/spire
++            - name: spire-agent-socket
++              mountPath: {{ dir .Values.authentication.mutual.spire.adminSocketPath }}
+         - name: init
+           image: {{ include "cilium.image" .Values.authentication.mutual.spire.install.initImage | quote }}
+           imagePullPolicy: {{ .Values.authentication.mutual.spire.install.initImage.pullPolicy }}
+           command:
+             - /bin/sh
+             - -c
+             - |
+               {{- tpl (.Files.Get "files/spire/wait-for-spire.bash") . | nindent 14 }}
+       containers:
+@@ -75,11 +75,13 @@
+           volumeMounts:
++            - name: spire-agent-data
++              mountPath: /run/spire
+             - name: spire-config
+               mountPath: /run/spire/config
+               readOnly: true
+             - name: spire-bundle
+               mountPath: /run/spire/bundle
+             - name: spire-agent-socket
+               mountPath: /run/spire/sockets
+               readOnly: false
+             - name: spire-agent
+               mountPath: /var/run/secrets/tokens
+@@ -126,16 +126,18 @@
+       volumes:
++        - name: spire-agent-data
++          emptyDir: {}
+         - name: spire-config
+           configMap:
+             name: spire-agent
+         - name: spire-bundle
+           configMap:
+             name: spire-bundle
+         - name: spire-agent-socket
+           hostPath:
+             path: /run/spire/sockets
+             type: DirectoryOrCreate
+         - name: spire-agent
+           projected:
+             sources:
+             - serviceAccountToken:
+                 path: spire-agent
