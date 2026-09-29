@@ -1,4 +1,4 @@
-## About Calico CNI
+## About Calico Node
 
 Calico Node is Calico's per-host DaemonSet container image. Provides CNI networking and policy for Kubernetes.
 

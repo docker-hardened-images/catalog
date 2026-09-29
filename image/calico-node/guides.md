@@ -10,6 +10,17 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
+## What's included in this calico-node image
+
+- `calico-node` — Main daemon that runs Felix (the policy/dataplane engine) and confd, and supervises the other services
+  in this image via runit
+- `bird` — BIRD Internet Routing Daemon (IPv4) used to distribute BGP routing information between nodes
+- `bird6` — IPv6 variant of the BIRD BGP daemon
+- `birdcl` — Control CLI for inspecting and manipulating the running IPv4 BIRD daemon
+- `birdcl6` — Control CLI for inspecting and manipulating the running IPv6 BIRD daemon
+- `mountns` — Internal helper invoked by Felix to mount the host's root cgroup2 filesystem so eBPF programs can be
+  attached correctly
+
 ## Deploy with the Tigera Operator
 
 The recommended way to deploy Calico in production is using the
