@@ -4,9 +4,9 @@ image: dhi.io/pkg-keycloak
 variant: runtime
 tags:
   - 26.7.4
-  - 26.7.4-r5
+  - 26.7.4-r7
   - 26.7.4-debian13
-  - 26.7.4-r5-debian13
+  - 26.7.4-r7-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -21,11 +21,13 @@ vars:
   COMMIT_SHA: aa9fe3fba0c6cd5770f19a49378c55f4378cf544
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.12.1+1-4
-  MAVEN_VERSION: 3.9.16
+  MAVEN_COMMIT_SHA: c43a36b8d67be7e0805a411bc0898af1a51f5472
+  MAVEN_GIT_TAG: maven-3.10.0
+  MAVEN_VERSION: 3.10.0
   NODEJS_VERSION: 24.21.0-1
   PACKAGE_HOME: /usr/share/keycloak
   PACKAGE_NAME: keycloak-26.7
-  REL: "5"
+  REL: "7"
   SEMVER_MAJOR_MINOR_VERSION: "26.7"
   SEMVER_MAJOR_VERSION: "26"
   SEMVER_VERSION: 26.7.4
@@ -38,7 +40,7 @@ contents:
       work-dir: ${source.dir}/keycloak
       environment:
         JAVA_HOME: /usr/lib/jvm/temurin-21
-        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+        MAVEN_HOME: /opt/java/apache-maven-3.10.0
       caches:
         - path: /root/.m2/repository
       contents:
@@ -89,28 +91,40 @@ contents:
             uid: 0
             gid: 0
           - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
-            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            checksum: sha256:80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb
+            path: ${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/maven.git#maven-3.10.0
+            checksum: c43a36b8d67be7e0805a411bc0898af1a51f5472
+            path: ${source.dir}/maven-src
             spdx:
               name: maven
-              version: 3.9.16
+              version: 3.10.0
               packages:
                 - name: maven
-                  purl: pkg:generic/apache-maven@3.9.16
+                  purl: pkg:generic/apache-maven@3.10.0
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
         - name: install maven
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir -p /opt/java
-            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+            mkdir -p /opt/java /tmp/maven-bootstrap
+            tar -xzf "${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz" -C /tmp/maven-bootstrap
+            export PATH="/tmp/maven-bootstrap/apache-maven-3.9.16/bin:${PATH}"
+
+            cd "${source.dir}/maven-src"
+            mvn -B -DskipTests -pl apache-maven -am package
+            tar -xzf "apache-maven/target/apache-maven-3.10.0-bin.tar.gz" -C /opt/java
 
             mkdir -p /usr/local/bin
-            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+            find "/opt/java/apache-maven-3.10.0/bin" -type f -executable -o -type l | while read -r file; do
               filename=$(basename "$file")
-              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+              ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - uses: mvn/mirror@v1
         - name: configure maven mirror
@@ -289,7 +303,7 @@ contents:
               - deb
             license: Apache-2.0
             name: keycloak-26.7
-            rel: 5
+            rel: 7
             url: https://www.keycloak.org/
             version: 26.7.4
       paths:
