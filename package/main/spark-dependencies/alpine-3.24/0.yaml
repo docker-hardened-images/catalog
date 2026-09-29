@@ -1,0 +1,325 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-spark-dependencies
+variant: runtime
+tags:
+  - 0.7.2-alpine3.24
+  - 0.7.2-r3-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: a1fe4109084fcece8914b591dd69429f13bd8b45
+  ELASTICSEARCH7_SPARK_VERSION: 7.17.29
+  ELASTICSEARCH8_SPARK_VERSION: 8.13.4
+  ELASTICSEARCH9_SPARK_VERSION: 9.1.3
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:3869c98211853628827bcbb9a1720e510e7f57d8438a23dadd88846dc4160868
+  PACKAGE_HOME: /usr/share/spark-dependencies
+  PACKAGE_NAME: spark-dependencies
+  REL: "3"
+  SEMVER_MAJOR_MINOR_VERSION: "0.7"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.7.2
+  VERSION: 0.7.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: spark-dependencies
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:3869c98211853628827bcbb9a1720e510e7f57d8438a23dadd88846dc4160868
+      work-dir: ${source.dir}/spark-dependencies
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/jaegertracing/spark-dependencies.git#v0.7.2
+            checksum: a1fe4109084fcece8914b591dd69429f13bd8b45
+            path: ${source.dir}/spark-dependencies
+            spdx:
+              name: spark-dependencies
+              version: 0.7.2
+              packages:
+                - name: spark-dependencies
+                  purl: pkg:github/jaegertracing/spark-dependencies@0.7.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install xq-python for mvn/patch
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            apt-get update -qq
+            apt-get install -y -qq yq
+            command -v xq-python
+        - uses: mvn/mirror@v1
+        - name: use maven central when mirror credentials are absent
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
+              rm -f /root/.m2/settings.xml
+            fi
+        - name: pin vulnerable dependency versions
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/spark-dependencies
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: pin vulnerable direct dependency versions
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-direct-dependencies.json
+            dependencies-key: dependencies
+            mvn-root: ${source.dir}/spark-dependencies
+        - name: set release version
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B versions:set -DnewVersion="0.7.2" -DprocessAllModules
+        - name: run common module tests
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B test -pl jaeger-spark-dependencies-common -am -Dlicense.skip=true
+        - name: build cassandra jar
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B clean package -pl jaeger-spark-dependencies-cassandra -am \
+              -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dlicense.skip=true
+        - name: build opensearch jar
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B clean package -pl jaeger-spark-dependencies-opensearch -am \
+              -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dlicense.skip=true
+        - name: build elasticsearch9 jar
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B clean package -pl jaeger-spark-dependencies-elasticsearch -am \
+              -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dlicense.skip=true \
+              -Dversion.elasticsearch.spark=9.1.3
+
+            mkdir -p /tmp/staged-jars
+            cp jaeger-spark-dependencies-elasticsearch/target/jaeger-spark-dependencies-elasticsearch-0.7.2.jar \
+              /tmp/staged-jars/spark-dependencies-elasticsearch9.jar
+        - name: build elasticsearch8 jar
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B clean package -pl jaeger-spark-dependencies-elasticsearch -am \
+              -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dlicense.skip=true \
+              -Dversion.elasticsearch.spark=8.13.4
+
+            mkdir -p /tmp/staged-jars
+            cp jaeger-spark-dependencies-elasticsearch/target/jaeger-spark-dependencies-elasticsearch-0.7.2.jar \
+              /tmp/staged-jars/spark-dependencies-elasticsearch8.jar
+        - name: build elasticsearch7 jar
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B clean package -pl jaeger-spark-dependencies-elasticsearch -am \
+              -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dlicense.skip=true \
+              -Dversion.elasticsearch.spark=7.17.29
+
+            mkdir -p /tmp/staged-jars
+            cp jaeger-spark-dependencies-elasticsearch/target/jaeger-spark-dependencies-elasticsearch-0.7.2.jar \
+              /tmp/staged-jars/spark-dependencies-elasticsearch7.jar
+        - name: stage jars
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/spark-dependencies"
+            mkdir -p "$dest"
+            cp jaeger-spark-dependencies-cassandra/target/jaeger-spark-dependencies-cassandra-0.7.2.jar \
+              "$dest/spark-dependencies-cassandra.jar"
+            cp jaeger-spark-dependencies-opensearch/target/jaeger-spark-dependencies-opensearch-0.7.2.jar \
+              "$dest/spark-dependencies-opensearch.jar"
+            cp /tmp/staged-jars/spark-dependencies-elasticsearch7.jar "$dest/spark-dependencies-elasticsearch7.jar"
+            cp /tmp/staged-jars/spark-dependencies-elasticsearch8.jar "$dest/spark-dependencies-elasticsearch8.jar"
+            cp /tmp/staged-jars/spark-dependencies-elasticsearch9.jar "$dest/spark-dependencies-elasticsearch9.jar"
+        - name: install shared modules for sbom resolution
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B install -pl jaeger-spark-dependencies-common,jaeger-spark-dependencies-test -am \
+              -Dmaven.test.skip=true -Dlicense.skip=true
+        - name: copy jars for sbom
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${source.dir}/spark-dependencies-deps"
+            mvn -B dependency:copy-dependencies \
+              -pl jaeger-spark-dependencies-common,jaeger-spark-dependencies-cassandra,jaeger-spark-dependencies-opensearch \
+              -DincludeScope=runtime \
+              -DoutputDirectory="${source.dir}/spark-dependencies-deps"
+
+            for es_version in 9.1.3 8.13.4 7.17.29; do
+              mvn -B dependency:copy-dependencies \
+                -pl jaeger-spark-dependencies-elasticsearch \
+                -Dversion.elasticsearch.spark="$es_version" \
+                -DincludeScope=runtime \
+                -DoutputDirectory="${source.dir}/spark-dependencies-deps"
+            done
+        - name: maven sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: spark-dependencies-maven
+            source: ${source.dir}/spark-dependencies-deps
+        - uses: dhi/build-pkg:0
+          with:
+            description: Spark job that analyzes Jaeger tracing data to build service dependency graphs
+            formats:
+              - apk
+            license: Apache-2.0
+            name: spark-dependencies
+            rel: 3
+            subpackages:
+              - depends:
+                  - eclipse-temurin-21-jre
+                files:
+                  - path: usr/share/spark-dependencies/spark-dependencies-cassandra.jar
+                name: spark-dependencies-cassandra
+              - depends:
+                  - eclipse-temurin-21-jre
+                files:
+                  - path: usr/share/spark-dependencies/spark-dependencies-elasticsearch7.jar
+                name: spark-dependencies-elasticsearch7
+              - depends:
+                  - eclipse-temurin-21-jre
+                files:
+                  - path: usr/share/spark-dependencies/spark-dependencies-elasticsearch8.jar
+                name: spark-dependencies-elasticsearch8
+              - depends:
+                  - eclipse-temurin-21-jre
+                files:
+                  - path: usr/share/spark-dependencies/spark-dependencies-elasticsearch9.jar
+                name: spark-dependencies-elasticsearch9
+              - depends:
+                  - eclipse-temurin-21-jre
+                files:
+                  - path: usr/share/spark-dependencies/spark-dependencies-opensearch.jar
+                name: spark-dependencies-opensearch
+            url: https://github.com/jaegertracing/spark-dependencies
+            version: 0.7.2
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/spark-dependencies/patch/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/mvn-direct-dependencies.json
+          uid: 0
+          gid: 0
+          source: package/main/spark-dependencies/patch/mvn-direct-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          uid: 0
+          gid: 0
+          source: package/main/spark-dependencies/patch/mvn-properties.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
