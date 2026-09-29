@@ -83,18 +83,15 @@ docker run --rm --network db-cache-network busybox \
 
 ### Multi-stage Dockerfile integration
 
-Memcached DHI images do NOT provide dev variants. For build stages that require shell access and package managers, use
-standard Docker Official memcached images.
+Use the `dev` variant for build stages that need shell access and a package manager, and the runtime variant for the
+final stage.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-# Build stage - Use standard memcached image (has shell and package managers)
-FROM memcached:1.6.39-alpine AS builder
+# Build stage - Use the Docker Hardened memcached dev variant (has shell and package manager)
+FROM dhi.io/memcached:<tag>-dev AS builder
 
 USER root
-
-# Install configuration tools
-RUN apk add --no-cache curl bash jq
 
 # Create configuration
 RUN mkdir -p /app/config && \
@@ -168,6 +165,14 @@ docker run --rm -it --pid container:my-image \
   dhi.io/memcached:<tag> /dbg/bin/sh
 ```
 
+### FIPS variant TLS support
+
+The `debian13-fips` variant links OpenSSL and supports TLS (`memcached -Z` with a certificate and key), so
+FIPS-validated TLS connections are available. The `alpine3.24-fips` variant does not: Alpine's memcached build has no
+TLS support (`memcached -Z` reports "This server is not built with TLS support"). Choose the Debian FIPS variant when
+FIPS-validated TLS is required; both distros' FIPS variants provide the validated OpenSSL module for the container's own
+TLS certificate operations regardless.
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use.
@@ -179,8 +184,19 @@ directly or as the `FROM` image in the final stage of a multi-stage build. These
 - Do not include a shell or a package manager
 - Contain only the minimal set of libraries needed to run the app
 
-**Note:** Memcached DHI does NOT provide dev variants. For build stages requiring shell access or package managers, use
-standard Docker Official memcached images (such as `memcached:alpine` or `memcached:bookworm`).
+Build-time variants typically include `dev` in the tag name and are intended for use in the first stage of a multi-stage
+Dockerfile. These images typically:
+
+- Run as the root user
+- Include a shell and package manager
+- Are used to build or compile applications
+
+FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+To view the image variants and get more information about them, select the Tags tab for this repository, and then select
+a tag.
 
 ## Migrate to a Docker Hardened Image
 
@@ -191,13 +207,13 @@ following table of migration notes:
 | Item               | Migration note                                                                                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Base image         | Replace your base images in your Dockerfile with a Docker Hardened Image.                                                                                                                   |
-| Package management | Non-dev images, intended for runtime, don't contain package managers. Memcached DHI has no dev variants - use standard memcached images for build stages.                                   |
+| Package management | Non-dev images, intended for runtime, don't contain package managers. Use package managers only in images with a `dev` tag.                                                                 |
 | Non-root user      | By default, non-dev images, intended for runtime, run as the nonroot user. Ensure that necessary files and directories are accessible to the nonroot user.                                  |
-| Multi-stage build  | Use standard memcached images (with shell/package managers) for build stages and Docker Hardened memcached for runtime.                                                                     |
+| Multi-stage build  | Utilize images with a `dev` tag for build stages and non-dev images for runtime.                                                                                                            |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                          |
 | Ports              | Non-dev hardened images run as a nonroot user by default. Memcached default port 11211 is not privileged and works without issues.                                                          |
 | Entry point        | Docker Hardened Images may have different entry points than images such as Docker Official Images. Inspect entry points for Docker Hardened Images and update your Dockerfile if necessary. |
-| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use standard memcached images in build stages to run shell commands and then copy artifacts to the runtime stage.  |
+| No shell           | By default, non-dev images, intended for runtime, don't contain a shell. Use `dev` images in build stages to run shell commands and then copy artifacts to the runtime stage.               |
 
 The following steps outline the general migration process.
 
