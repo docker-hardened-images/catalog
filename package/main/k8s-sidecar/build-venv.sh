@@ -23,6 +23,7 @@ cd "${SRC}"
 "${VENV}/bin/python" -m pip install --no-cache-dir .
 "${VENV}/bin/python" -m pip install --no-cache-dir "urllib3==2.7.0"
 "${VENV}/bin/python" -m pip install --no-cache-dir "cryptography==50.0.0"
+"${VENV}/bin/python" -m pip install --no-cache-dir "oauthlib==4.0.0"
 
 find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \) || true
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
