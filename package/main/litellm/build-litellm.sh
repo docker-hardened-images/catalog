@@ -104,7 +104,7 @@ apply_npm_patch "tar" "tar-7.5.21.tgz"
 apply_npm_patch "minimatch" "minimatch-10.2.3.tgz"
 apply_npm_patch "@isaacs/brace-expansion" "isaacs-brace-expansion-5.0.1.tgz" 1
 apply_npm_patch "brace-expansion" "brace-expansion-5.0.9.tgz"
-apply_npm_patch "ip-address" "ip-address-10.3.1.tgz"
+apply_npm_patch "ip-address" "ip-address-10.5.1.tgz"
 apply_npm_patch "tinyglobby/node_modules/picomatch" "picomatch-4.0.4.tgz"
 apply_npm_patch "undici" "undici-6.28.0.tgz"
 apply_npm_patch "@sigstore/core" "sigstore-core-3.2.1.tgz"
