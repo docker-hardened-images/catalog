@@ -3,25 +3,27 @@
 image: dhi.io/pkg-activemq-artemis
 variant: runtime
 tags:
-  - 2.56.0
-  - 2.56.0-r0
-  - 2.56.0-debian13
-  - 2.56.0-r0-debian13
+  - 2.57.0
+  - 2.57.0-r0
+  - 2.57.0-debian13
+  - 2.57.0-r0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
-  COMMIT_SHA: 002fc7a0848edb8e2440748b2241c3983ecc0f89
+  COMMIT_SHA: 20cab945f0944d669a0aac383a7578e2a6fd7346
   JDK_MAJOR_VERSION: "21"
-  JDK_VERSION: 21.0.12.8-0
-  MAVEN_VERSION: 3.9.16
+  JDK_VERSION: 1:21.0.12.1+1-4
+  MAVEN_COMMIT_SHA: c43a36b8d67be7e0805a411bc0898af1a51f5472
+  MAVEN_GIT_TAG: maven-3.10.0
+  MAVEN_VERSION: 3.10.0
   PACKAGE_NAME: activemq-artemis
   REL: "0"
-  SEMVER_MAJOR_MINOR_VERSION: "2.56"
+  SEMVER_MAJOR_MINOR_VERSION: "2.57"
   SEMVER_MAJOR_VERSION: "2"
-  SEMVER_VERSION: 2.56.0
-  VERSION: 2.56.0
+  SEMVER_VERSION: 2.57.0
+  VERSION: 2.57.0
 contents:
   packages:
     - base-files
@@ -30,7 +32,7 @@ contents:
       work-dir: ${source.dir}/activemq-artemis
       environment:
         JAVA_HOME: /usr/lib/jvm/temurin-21
-        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+        MAVEN_HOME: /opt/java/apache-maven-3.10.0
       caches:
         - path: /root/.m2/repository
       contents:
@@ -47,28 +49,34 @@ contents:
           - gzip
           - sed
           - tar
-          - eclipse-temurin-21-jdk=21.0.12.8-0
+          - eclipse-temurin-21-jdk=1:21.0.12.1+1-4
         files:
-          - url: git+https://github.com/apache/activemq-artemis.git#2.56.0
-            checksum: 002fc7a0848edb8e2440748b2241c3983ecc0f89
+          - url: git+https://github.com/apache/activemq-artemis.git#2.57.0
+            checksum: 20cab945f0944d669a0aac383a7578e2a6fd7346
             path: ${source.dir}/activemq-artemis
             spdx:
               name: activemq-artemis
-              version: 2.56.0
+              version: 2.57.0
               packages:
                 - name: activemq-artemis
-                  purl: pkg:dhi/activemq-artemis@2.56.0
+                  purl: pkg:dhi/activemq-artemis@2.57.0
                   license: Apache-2.0
             uid: 0
             gid: 0
           - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
-            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            checksum: sha256:80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb
+            path: ${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/maven.git#maven-3.10.0
+            checksum: c43a36b8d67be7e0805a411bc0898af1a51f5472
+            path: ${source.dir}/maven-src
             spdx:
               name: maven
-              version: 3.9.16
+              version: 3.10.0
               packages:
                 - name: maven
-                  purl: pkg:generic/apache-maven@3.9.16
+                  purl: pkg:generic/apache-maven@3.10.0
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -94,16 +102,22 @@ contents:
             gid: 0
       pipeline:
         - name: install maven
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir -p /opt/java
-            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+            mkdir -p /opt/java /tmp/maven-bootstrap
+            tar -xzf "${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz" -C /tmp/maven-bootstrap
+            export PATH="/tmp/maven-bootstrap/apache-maven-3.9.16/bin:${PATH}"
+
+            cd "${source.dir}/maven-src"
+            mvn -B -DskipTests -pl apache-maven -am package
+            tar -xzf "apache-maven/target/apache-maven-3.10.0-bin.tar.gz" -C /opt/java
 
             mkdir -p /usr/local/bin
-            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+            find "/opt/java/apache-maven-3.10.0/bin" -type f -executable -o -type l | while read -r file; do
               filename=$(basename "$file")
-              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+              ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - name: configure maven mirror
           runs: |
@@ -144,7 +158,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            dist_lib="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.56.0-bin/apache-artemis-2.56.0/lib"
+            dist_lib="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.57.0-bin/apache-artemis-2.57.0/lib"
             netty_version="4.1.137.Final"
 
             for arch in x86_64 aarch_64; do
@@ -177,7 +191,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            dist="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.56.0-bin/apache-artemis-2.56.0"
+            dist="${source.dir}/activemq-artemis/artemis-distribution/target/apache-artemis-2.57.0-bin/apache-artemis-2.57.0"
             install -d "${target.dir}/usr/share/activemq-artemis"
             cp -a "${dist}/." "${target.dir}/usr/share/activemq-artemis/"
             install -D -m 0755 "${source.dir}/entrypoint.sh" \
@@ -196,7 +210,7 @@ contents:
             name: activemq-artemis
             rel: 0
             url: https://activemq.apache.org/components/artemis/
-            version: 2.56.0
+            version: 2.57.0
       paths:
         - type: file
           path: ${source.dir}/entrypoint.sh
