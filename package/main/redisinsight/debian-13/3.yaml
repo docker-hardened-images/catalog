@@ -1,0 +1,225 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-redisinsight
+variant: runtime
+tags:
+  - 3.8.0
+  - 3.8.0-r0
+  - 3.8.0-debian13
+  - 3.8.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-04"
+vars:
+  COMMIT_SHA: bdbb6eca1fcca1bb8a79ac28dc26a7a27fa30541
+  NODEJS_VERSION: 24.21.0-1
+  PACKAGE_NAME: redisinsight-3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.8"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.8.0
+  VERSION: 3.8.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: redisinsight
+      work-dir: ${source.dir}/src
+      shell: /bin/bash
+      environment:
+        GITHUB_SHA: bdbb6eca1fcca1bb8a79ac28dc26a7a27fa30541
+        NODE_OPTIONS: --max-old-space-size=6144
+        RI_ENCRYPTION_KEYTAR: "false"
+        RI_STATICS_AUTO_UPDATE: "false"
+        RI_STATICS_INIT_DEFAULTS: "false"
+        SKIP_POSTINSTALL: "1"
+        YARN_CACHE_FOLDER: /usr/local/share/.cache/yarn
+        npm_config_python: python3
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - g++
+          - git
+          - grep
+          - gzip
+          - libc6
+          - libstdc++6
+          - make
+          - node-corepack
+          - nodejs-24=24.21.0-1
+          - npm
+          - pkg-config
+          - python3
+          - python3-setuptools
+          - sed
+          - yarn-classic
+        files:
+          - url: git+https://github.com/redis/RedisInsight.git#3.8.0
+            checksum: bdbb6eca1fcca1bb8a79ac28dc26a7a27fa30541
+            path: ${source.dir}/src
+            spdx:
+              name: redisinsight
+              version: 3.8.0
+              packages:
+                - name: redisinsight
+                  purl: pkg:github/redis/RedisInsight@3.8.0
+                  license: SSPL-1.0
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/redis/RedisInsight/bdbb6eca1fcca1bb8a79ac28dc26a7a27fa30541/docker-entry.sh
+            checksum: sha256:2185da1aee7e3127713bc54d192cb464bd415c485fa0cf613ae1a2e7ed4251db
+            path: ${source.dir}/docker-entry.sh
+            uid: 0
+            gid: 0
+            mode: "0755"
+      pipeline:
+        - name: install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install -g node-gyp@11.5.0
+            yarn install --frozen-lockfile --network-timeout 600000
+            yarn --cwd redisinsight/api install --ignore-scripts --frozen-lockfile --network-timeout 600000
+        - name: bump api dependencies
+          uses: yarn/bump@v2
+          with:
+            bumps: ${source.dir}/patches/yarn-bumps.json
+            yarn-root: ${source.dir}/src/redisinsight/api
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            (
+              cd redisinsight/api
+              ../../node_modules/.bin/patch-package
+            )
+            mod="redisinsight/api/node_modules/better-sqlite3"
+            prebuild=""
+            if [ -x "${mod}/node_modules/.bin/prebuild-install" ]; then
+              prebuild="$(pwd)/${mod}/node_modules/.bin/prebuild-install"
+            elif [ -x redisinsight/api/node_modules/.bin/prebuild-install ]; then
+              prebuild="$(pwd)/redisinsight/api/node_modules/.bin/prebuild-install"
+            fi
+            (
+              cd "${mod}"
+              if [ -n "${prebuild}" ]; then
+                "${prebuild}" || node-gyp rebuild
+              else
+                node-gyp rebuild
+              fi
+            )
+            test -f "${mod}/build/Release/better_sqlite3.node"
+            (
+              cd redisinsight/api
+              yarn generate:api-client
+            )
+            yarn build:ui
+            yarn build:statics
+            yarn build:api
+        - name: prod install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf redisinsight/api/node_modules
+            yarn --cwd redisinsight/api install --production --ignore-scripts --frozen-lockfile --network-timeout 600000
+            (
+              cd redisinsight/api
+              ../../node_modules/.bin/patch-package
+            )
+            mod="redisinsight/api/node_modules/better-sqlite3"
+            prebuild=""
+            if [ -x "${mod}/node_modules/.bin/prebuild-install" ]; then
+              prebuild="$(pwd)/${mod}/node_modules/.bin/prebuild-install"
+            elif [ -x redisinsight/api/node_modules/.bin/prebuild-install ]; then
+              prebuild="$(pwd)/redisinsight/api/node_modules/.bin/prebuild-install"
+            fi
+            (
+              cd "${mod}"
+              if [ -n "${prebuild}" ]; then
+                "${prebuild}" || node-gyp rebuild
+              else
+                node-gyp rebuild
+              fi
+            )
+            test -f "${mod}/build/Release/better_sqlite3.node"
+            cp redisinsight/api/.yarnclean.prod redisinsight/api/.yarnclean
+            yarn --cwd redisinsight/api autoclean --force
+        - name: patch file-type
+          uses: patch@v1
+          work-dir: ${source.dir}/src/redisinsight/api
+          with:
+            options: -p1 --batch --forward
+            patches:
+              - ${source.dir}/patches/file-type-asf-position-guard.patch
+        - name: stage
+          runs: |
+            set -eux -o pipefail
+
+            test -f redisinsight/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+            test -d redisinsight/api/dist/src
+            test -f redisinsight/api/dist/src/main.js
+            test -d redisinsight/ui/dist
+            dest="${target.dir}/usr/lib/redisinsight-3"
+            mkdir -p "${dest}/redisinsight/api" "${dest}/redisinsight/ui"
+            cp -a redisinsight/api/dist "${dest}/redisinsight/api/dist"
+            cp -a redisinsight/api/node_modules "${dest}/redisinsight/api/node_modules"
+            cp -a redisinsight/ui/dist "${dest}/redisinsight/ui/dist"
+            cp -a "${source.dir}/docker-entry.sh" "${dest}/docker-entry.sh"
+        - name: api sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: redisinsight-3
+            source: ${source.dir}/src/redisinsight/api/node_modules
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+              - libstdc++6
+            description: Redis Insight, a Redis GUI
+            files:
+              - usr/lib/redisinsight-3
+            formats:
+              - deb
+            license: SSPL-1.0
+            name: redisinsight-3
+            rel: 0
+            url: https://github.com/redis/RedisInsight
+            version: 3.8.0
+      paths:
+        - type: file
+          path: ${source.dir}/patches/yarn-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/redisinsight/patch/yarn-bumps.json
+        - type: file
+          path: ${source.dir}/patches/file-type-asf-position-guard.patch
+          uid: 0
+          gid: 0
+          source: package/main/redisinsight/patch/file-type-asf-position-guard.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
