@@ -1,0 +1,93 @@
+From: Docker Hardened Images <dhi@docker.com>
+Subject: [PATCH] run the gitlab-runner binary directly on the hardened image
+Source: https://gitlab.com/gitlab-org/charts/gitlab-runner/-/tree/v0.93.0/templates
+
+The upstream chart scripts assume the upstream runner image: dumb-init as
+PID 1, an /entrypoint wrapper script, procps for pgrep, and a named
+gitlab-runner user. The hardened image ships none of these and runs the
+gitlab-runner binary directly as uid 65532.
+
+- templates/deployment.yaml: start the ConfigMap entrypoint script under
+  bash directly; the script ends by exec-ing gitlab-runner, which then
+  runs as PID 1. The readiness probe scans /proc command lines with grep
+  instead of pgrep.
+- templates/configmap.yaml: call the gitlab-runner binary where the
+  scripts call /entrypoint; drop --user=gitlab-runner (the image has no
+  such user, and the pod securityContext already pins uid 65532);
+  check-live scans /proc with grep. The bracketed [-] in the grep
+  patterns keeps a probe from matching its own command line.
+- templates/_helpers.tpl: the preStop unregister hook execs the binary
+  at its installed path.
+
+--- a/templates/_helpers.tpl
++++ b/templates/_helpers.tpl
+@@ -112,7 +112,7 @@
+ lifecycle:
+   preStop:
+     exec:
+-      command: ["/entrypoint", "unregister", "--all-runners"]
++      command: ["/usr/bin/gitlab-runner", "unregister", "--all-runners"]
+ {{- end -}}
+ {{- end -}}
+ 
+--- a/templates/configmap.yaml
++++ b/templates/configmap.yaml
+@@ -71,7 +71,7 @@
+     fi
+ 
+     {{- if .Values.runners.configOverride }}
+-    if ! /entrypoint verify --url=; then
++    if ! gitlab-runner verify --url=; then
+       exit 1
+     fi
+     {{- else }}
+@@ -86,10 +86,7 @@
+     fi
+ 
+     # Start the runner
+-    exec /entrypoint run \
+-    {{- if and .Values.runners.executor (ne "shell" ((.Values.runners.executor) | toString)) }}
+-      --user=gitlab-runner \
+-    {{- end }}
++    exec gitlab-runner run \
+       --working-directory=/home/gitlab-runner
+ 
+   {{- if .Values.runners.configOverride }}
+@@ -152,7 +149,7 @@
+ 
+     for i in $(seq 1 "${MAX_REGISTER_ATTEMPTS}"); do
+       echo "Registration attempt ${i} of ${MAX_REGISTER_ATTEMPTS}"
+-      /entrypoint register \
++      gitlab-runner register \
+         {{- if and (hasKey .Values.runners "name") .Values.runners.name }}
+         --name={{ .Values.runners.name | quote -}} \
+         {{- end }}
+@@ -189,7 +186,7 @@
+     # default timeout is 3 seconds, can be overriden
+     VERIFY_TIMEOUT=${1:-${VERIFY_TIMEOUT:-3}}
+ 
+-    if ! /usr/bin/pgrep -f ".*register-the-runner"  > /dev/null && ! /usr/bin/pgrep -f "gitlab.*runner"  > /dev/null ; then
++    if ! grep -saq -e "register-the[-]runner" -e "gitlab[-]runner" /proc/[0-9]*/cmdline ; then
+       exit 1
+     fi
+ 
+--- a/templates/deployment.yaml
++++ b/templates/deployment.yaml
+@@ -74,7 +74,7 @@
+         {{- if .Values.useTini }}
+         command: ["/usr/local/bin/tini", "--", "/bin/bash", "/configmaps/entrypoint"]
+         {{- else }}
+-        command: ["/usr/bin/dumb-init", "--", "/bin/bash", "/configmaps/entrypoint"]
++        command: ["/bin/bash", "/configmaps/entrypoint"]
+         {{- end }}
+         {{- if .Values.deploymentLifecycle }}
+         lifecycle: {{ toYaml .Values.deploymentLifecycle | nindent 10 }}
+@@ -97,7 +97,7 @@
+           {{- end }}
+         readinessProbe:
+           exec:
+-            command: ["/usr/bin/pgrep","gitlab.*runner"]
++            command: ["/bin/bash", "-c", "grep -saq gitlab[-]runner /proc/[0-9]*/cmdline"]
+           initialDelaySeconds: {{ default 60 .Values.readinessProbe.initialDelaySeconds }}
+           timeoutSeconds: {{ default 4 .Values.probeTimeoutSeconds }}
+           periodSeconds: {{ default 60 .Values.readinessProbe.periodSeconds }}
