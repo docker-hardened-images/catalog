@@ -1,0 +1,145 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-ansible
+variant: runtime
+tags:
+  - 14.4.0-alpine3.24
+  - 14.4.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ANSIBLE_CORE_VERSION: 2.21.4
+  CARGO_VERSION: 1.96.1-r0
+  PYTHON_MINOR: "3.13"
+  PYTHON_VERSION: 3.13.15-r2
+  REL: "0"
+  RUST_VERSION: 1.96.1-r0
+  SEMVER_MAJOR_MINOR_VERSION: "14.4"
+  SEMVER_MAJOR_VERSION: "14"
+  SEMVER_VERSION: 14.4.0
+  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.12.19
+  VERSION: 14.4.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: ansible
+      work-dir: ${source.dir}
+      environment:
+        CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        OPENSSL_NO_VENDOR: "1"
+        OPENSSL_STATIC: "0"
+        UV_CACHE_DIR: /root/.cache/uv-musl
+        UV_COMPILE_BYTECODE: "1"
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv-musl
+        - path: /root/.cargo
+      contents:
+        packages:
+          - bash
+          - build-base
+          - busybox
+          - ca-certificates-bundle
+          - cargo=1.96.1-r0
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - libffi-dev
+          - openssl-dev
+          - pkgconf
+          - rust=1.96.1-r0
+          - sed
+          - python-3.13=3.13.15-r2
+          - python-3.13-dev=3.13.15-r2
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.12.19/uv-${UV_ARCH}.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.12.19/uv-${UV_ARCH}.tar.gz.sha256
+            path: ${source.dir}/uv.tar.gz
+            spdx:
+              name: uv-binary
+              version: 0.12.19
+              packages:
+                - name: uv
+                  purl: pkg:github/astral-sh/uv@0.12.19
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv.tar.gz" -C /usr/local/bin --strip-components=1
+            chmod +x /usr/local/bin/uv
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" \
+              TARGET_DIR="${target.dir}" \
+              PYTHON_BIN=/usr/bin/python3.13 \
+              ANSIBLE_VERSION="14.4.0" \
+              ANSIBLE_CORE_VERSION="2.21.4"
+            bash "${source.dir}/build-ansible.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - libcrypto3
+                - libgcc
+                - libssl3
+            depends:
+              - python-3.13
+              - openssh-client
+            description: Ansible community package, the batteries-included distribution
+            files:
+              - usr/lib/ansible
+              - usr/bin/ansible
+              - usr/bin/ansible-community
+              - usr/bin/ansible-config
+              - usr/bin/ansible-console
+              - usr/bin/ansible-doc
+              - usr/bin/ansible-galaxy
+              - usr/bin/ansible-inventory
+              - usr/bin/ansible-playbook
+              - usr/bin/ansible-pull
+              - usr/bin/ansible-vault
+            formats:
+              - apk
+            license: GPL-3.0-or-later
+            name: ansible-14
+            rel: 0
+            url: https://docs.ansible.com/
+            version: 14.4.0
+      paths:
+        - type: file
+          path: ${source.dir}/requirements.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/ansible/requirements.txt
+        - type: file
+          path: ${source.dir}/build-ansible.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/ansible/build-ansible.sh
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
