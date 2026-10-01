@@ -17,8 +17,9 @@ VENV="${TARGET_DIR}/usr/lib/datahub-actions"
 
 mkdir -p "${TARGET_DIR}/usr/lib" "${TARGET_DIR}/usr/bin"
 
-# overrides: urllib3 >= 2.7.0 (CVE-2026-44431, CVE-2026-21441,
-# CVE-2025-66471, CVE-2025-66418), lxml >= 6.1.0 (CVE-2026-41066),
+# overrides: urllib3 >= 2.8.0 (CVE-2026-97689, CVE-2026-97687, CVE-2026-97688,
+# CVE-2026-44431, CVE-2026-21441, CVE-2025-66471, CVE-2025-66418),
+# lxml >= 6.1.0 (CVE-2026-41066),
 # cryptography >= 50.0.0 (CVE-2026-69247, CVE-2026-69249, CVE-2026-69248),
 # setuptools >= 83.0.0 (CVE-2026-59890).
 # cryptography from sdist (--no-binary-package): the PyPI wheels bundle a
@@ -26,7 +27,7 @@ mkdir -p "${TARGET_DIR}/usr/lib" "${TARGET_DIR}/usr/bin"
 # outside datahub's <47 pin); building from source links the patched
 # system OpenSSL and stays within the supported version range.
 cat > "${SOURCE_DIR}/overrides.txt" << 'EOF'
-urllib3>=2.7.0
+urllib3>=2.8.0
 lxml>=6.1.0
 cryptography>=50.0.0
 setuptools>=83.0.0
@@ -46,6 +47,11 @@ uv pip install \
 find "${VENV}" \
   \( -type d \( -name __pycache__ -o -name test -o -name tests -o -name tmp \) -prune -exec rm -rf {} + \) || true
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
+# Keep pip. DataHub's ingestion executor runs `python -m pip download` to
+# bootstrap per-source environments (acryl-datahub base requirements). No pip
+# release vendors a fixed urllib3 yet (26.2.1 still pins urllib3==2.7.0 in
+# vendor.txt and bom.cdx.json), so those findings stay visible.
 
 # Relative link so deb --root installs (buildpkg TestDEB) resolve under the
 # chroot; absolute /usr/lib/... targets break -e path checks there.
