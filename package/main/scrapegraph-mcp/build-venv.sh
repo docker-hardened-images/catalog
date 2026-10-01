@@ -44,8 +44,9 @@ export UV_NO_BINARY_PACKAGE=cryptography
 # install from that lock rather than re-resolving the world, each needs naming
 # here explicitly -- a full `uv lock --upgrade` would sweep them up as a side
 # effect, but at the cost of an unreproducible closure.
-# urllib3 2.7.0 clears CVE-2025-66418, CVE-2025-66471, CVE-2026-21441,
-#   CVE-2026-44431 (highest floor is 2.7.0).
+# urllib3 2.8.0 clears CVE-2026-97689, CVE-2026-97687, CVE-2026-97688 (fixed in
+#   2.8.0) and earlier floors CVE-2025-66418, CVE-2025-66471, CVE-2026-21441,
+#   CVE-2026-44431 (2.7.0+).
 # click 8.3.3 clears CVE-2026-7246.
 # requests 2.33.0 clears CVE-2026-25645.
 # idna 3.15 clears CVE-2026-45409.
@@ -56,7 +57,7 @@ uv lock \
   --upgrade-package "fastmcp==3.4.7" \
   --upgrade-package "starlette==1.6.0" \
   --upgrade-package "cryptography==50.0.0" \
-  --upgrade-package "urllib3==2.7.0" \
+  --upgrade-package "urllib3==2.8.0" \
   --upgrade-package "click==8.3.3" \
   --upgrade-package "requests==2.33.0" \
   --upgrade-package "idna==3.15" \
