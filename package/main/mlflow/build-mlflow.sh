@@ -33,11 +33,18 @@ export LDFLAGS="${LDFLAGS:-} $("${PYTHON_BIN}-config" --ldflags)"
 "${VENV}/bin/python3" -m pip install --no-build-isolation --no-binary=psycopg2 --no-cache-dir "psycopg2==2.9.12"
 
 # Remediate CVEs by upgrading packages
-"${VENV}/bin/python3" -m pip install --upgrade "urllib3==2.7.0"
+"${VENV}/bin/python3" -m pip install --upgrade "urllib3==2.8.0"
 "${VENV}/bin/python3" -m pip install --upgrade "cryptography==50.0.0"
 "${VENV}/bin/python3" -m pip install --upgrade "pillow==12.3.0"
 "${VENV}/bin/python3" -m pip install --upgrade "starlette==1.3.1"
 "${VENV}/bin/python3" -m pip install --upgrade "gitpython==3.1.60"  # CVE-2026-87817, CVE-2026-87818, CVE-2026-87819
+
+"${VENV}/bin/python3" -m pip uninstall -y pip setuptools wheel
+sp="$(echo "${VENV}"/lib/python*/site-packages)"
+rm -rf "${sp}"/pip "${sp}"/pip-*.dist-info \
+  "${sp}"/setuptools "${sp}"/setuptools-*.dist-info "${sp}"/pkg_resources \
+  "${sp}"/_distutils_hack "${sp}"/distutils-precedence.pth \
+  "${sp}"/wheel "${sp}"/wheel-*.dist-info
 
 find "${VENV}" \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) -prune -exec rm -rf {} + || true
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
