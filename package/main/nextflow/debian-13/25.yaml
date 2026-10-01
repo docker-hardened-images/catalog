@@ -1,0 +1,128 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-nextflow
+variant: runtime
+tags:
+  - 25.10.7
+  - 25.10.7-r0
+  - 25.10.7-debian13
+  - 25.10.7-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-05-08"
+vars:
+  COMMIT_SHA: d014dd1bf4531f85e8f1ac89aa32dda6300563da
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 1:21.0.12.1+1-4
+  PACKAGE_NAME: nextflow-25
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "25.10"
+  SEMVER_MAJOR_VERSION: "25"
+  SEMVER_VERSION: 25.10.7
+  VERSION: 25.10.7
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: nextflow-25
+      work-dir: ${source.dir}/nextflow
+      environment:
+        BUILD_PACK: "1"
+        GRADLE_USER_HOME: /root/.gradle
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+      caches:
+        - path: /root/.gradle
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - gzip
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk=1:21.0.12.1+1-4
+        files:
+          - url: git+https://github.com/nextflow-io/nextflow.git#v25.10.7
+            checksum: d014dd1bf4531f85e8f1ac89aa32dda6300563da
+            path: ${source.dir}/nextflow
+            spdx:
+              name: nextflow
+              version: 25.10.7
+              packages:
+                - name: nextflow
+                  purl: pkg:github/nextflow-io/nextflow@25.10.7
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: pack one-jar
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            git config --global --add safe.directory "${PWD}"
+            rm -f /root/.gradle/init.d/gradle-mirror.init.gradle
+            ./gradlew packOne --no-daemon --console=plain \
+              --init-script "${source.dir}/dhi-deps.init.gradle" \
+              -Dorg.gradle.java.installations.auto-detect=true \
+              -Dorg.gradle.java.installations.paths="${JAVA_HOME}" \
+              -Dorg.gradle.java.installations.auto-download=false
+        - name: stage launcher jar and entrypoint
+          runs: |
+            set -eux -o pipefail
+
+            jar="modules/nextflow/build/libs/nextflow-25.10.7-one.jar"
+            test -f "${jar}"
+            install -d \
+              "${target.dir}/usr/bin" \
+              "${target.dir}/usr/lib/nextflow" \
+              "${target.dir}/usr/share/nextflow/framework/25.10.7"
+            install -m 0755 nextflow "${target.dir}/usr/bin/nextflow"
+            install -m 0755 docker/entry.sh "${target.dir}/usr/lib/nextflow/entry.sh"
+            install -m 0644 "${jar}" \
+              "${target.dir}/usr/share/nextflow/framework/25.10.7/nextflow-25.10.7-one.jar"
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: nextflow
+            source: ${target.dir}/usr/share/nextflow
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - eclipse-temurin-21-jre
+              - bash
+              - gawk
+              - sed
+            description: Nextflow workflow runtime
+            files:
+              - usr/bin/nextflow
+              - usr/lib/nextflow/entry.sh
+              - usr/share/nextflow
+            license: Apache-2.0
+            name: nextflow-25
+            rel: 0
+            url: https://www.nextflow.io/
+            version: 25.10.7
+      paths:
+        - type: file
+          path: ${source.dir}/dhi-deps.init.gradle
+          uid: 0
+          gid: 0
+          source: package/main/nextflow/files/dhi-deps.init.gradle
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
