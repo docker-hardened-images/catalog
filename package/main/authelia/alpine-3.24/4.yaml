@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-authelia
+variant: runtime
+tags:
+  - 4.39.28-alpine3.24
+  - 4.39.28-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2019-12-10"
+vars:
+  COMMIT_SHA: 8da42b2348b0351c6284a2940a9c5eec3d4cd3fd
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.1-r0
+  NODEJS_VERSION: 24.21.0-r0
+  PACKAGE_NAME: authelia-4
+  PNPM_VERSION: 12.8.2
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.39"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.39.28
+  VERSION: 4.39.28
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: authelia-4
+      work-dir: /go/src/github.com/authelia/authelia
+      caches:
+        - path: /root/.cache/go-build
+        - path: /pnpm/store
+      contents:
+        packages:
+          - bash
+          - build-base
+          - ca-certificates-bundle
+          - corepack
+          - coreutils
+          - findutils
+          - git
+          - golang-1.27=1.27.1-r0
+          - golang-1.27-oci-config=1.27.1-r0
+          - nodejs-24=24.21.0-r0
+        files:
+          - url: git+https://github.com/authelia/authelia.git#v4.39.28
+            checksum: 8da42b2348b0351c6284a2940a9c5eec3d4cd3fd
+            path: /go/src/github.com/authelia/authelia
+            spdx:
+              name: authelia
+              version: 4.39.28
+              packages:
+                - name: authelia
+                  purl: pkg:golang/github.com/authelia/authelia/v4@4.39.28
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build frontend
+          work-dir: /go/src/github.com/authelia/authelia/web
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PNPM_HOME=/pnpm
+            export PATH="${PNPM_HOME}:${PATH}"
+
+            corepack enable
+            corepack prepare pnpm@12.8.2 --activate
+            pnpm install --frozen-lockfile --ignore-scripts --store-dir /pnpm/store
+            pnpm build
+        - name: stage openapi into portal
+          work-dir: /go/src/github.com/authelia/authelia
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf internal/server/public_html/api
+            mv api internal/server/public_html/api
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./internal/utils/... -count=1 -skip '/ShouldHandlePerms'
+        - name: build authelia dev
+          uses: go/build@v1
+          environment:
+            CGO_CFLAGS: -O2 -pipe -fno-plt -fstack-protector-strong
+            CGO_CXXFLAGS: -O2 -pipe -fno-plt
+            CGO_LDFLAGS: -Wl,-O1,-sort-common,-as-needed,-z,relro,-z,now
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            extra-args: -buildmode=pie
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -X github.com/authelia/authelia/v4/internal/utils.BuildTag=v4.39.28
+              - -X 'github.com/authelia/authelia/v4/internal/utils.BuildState=tagged clean'
+              - -X github.com/authelia/authelia/v4/internal/utils.BuildCommit=8da42b2348b0351c6284a2940a9c5eec3d4cd3fd
+            output: ${target.dir}/usr/bin/authelia-dev
+            packages: ./cmd/authelia
+            strip: false
+        - name: build authelia
+          uses: go/build@v1
+          environment:
+            CGO_CFLAGS: -O2 -pipe -fno-plt -fstack-protector-strong
+            CGO_CXXFLAGS: -O2 -pipe -fno-plt
+            CGO_LDFLAGS: -Wl,-O1,-sort-common,-as-needed,-z,relro,-z,now
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 1
+            extra-args: -buildmode=pie
+            fips: false
+            ldflags:
+              - -linkmode=external
+              - -s
+              - -w
+              - -X github.com/authelia/authelia/v4/internal/utils.BuildTag=v4.39.28
+              - -X 'github.com/authelia/authelia/v4/internal/utils.BuildState=tagged clean'
+              - -X github.com/authelia/authelia/v4/internal/utils.BuildCommit=8da42b2348b0351c6284a2940a9c5eec3d4cd3fd
+            output: ${target.dir}/usr/bin/authelia
+            packages: ./cmd/authelia
+            strip: true
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - musl
+            description: Authelia authentication and authorization server
+            files:
+              - usr/bin/authelia
+            formats:
+              - apk
+            license: Apache-2.0
+            name: authelia-4
+            rel: 0
+            subpackages:
+              - depends:
+                  - musl
+                files:
+                  - path: usr/bin/authelia
+                    source: usr/bin/authelia-dev
+                name: authelia-4-dev
+            url: https://www.authelia.com
+            version: 4.39.28
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
