@@ -42,6 +42,27 @@ export PG_CONFIG="${PG_CONFIG:-/usr/bin/pg_config}"
   'tornado>=6.5.6' \
   'pyasn1>=0.6.4'
 
+# moment (jupyterhub static asset): CVE-2026-17495 — tarball staged in definition contents.files
+MOMENT_TARBALL="${SOURCE_DIR}/moment-2.31.0.tgz"
+MOMENT_COMPONENT="${VENV}/share/jupyterhub/static/components/moment"
+if [ -f "${MOMENT_TARBALL}" ] && [ -d "${MOMENT_COMPONENT}" ]; then
+  rm -rf "${MOMENT_COMPONENT}"
+  mkdir -p "${MOMENT_COMPONENT}"
+  "${PYTHON_BIN}" - "${MOMENT_TARBALL}" "${MOMENT_COMPONENT}" <<'PY'
+import shutil
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+archive, dest = Path(sys.argv[1]), Path(sys.argv[2])
+with tempfile.TemporaryDirectory() as tmp:
+    with tarfile.open(archive, "r:gz") as tf:
+        tf.extractall(tmp)
+    shutil.copytree(Path(tmp) / "package", dest, dirs_exist_ok=True)
+PY
+fi
+
 find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \)
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
