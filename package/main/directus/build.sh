@@ -58,6 +58,9 @@ node -e '
   const fs = require("node:fs");
   const overrides = {
     "fast-uri@3": "3.1.8", // CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172, GHSA-qw65-cvwx-89v3, GHSA-58mr-gqgx-xq4g, GHSA-hrr3-gc8f-f4qj
+    "axios": "1.20.0", // CVE-2026-101898, CVE-2026-101899, CVE-2026-101900, CVE-2026-101901, CVE-2026-101902, CVE-2026-101903, CVE-2026-101904, CVE-2026-101905, CVE-2026-101906, CVE-2026-101907, CVE-2026-101908, CVE-2026-101909
+    "basic-ftp": "6.2.1", // CVE-2026-102990
+    "axios-cache-interceptor": "1.12.3", // typed against axios 1.19+, needed to compile update-check with axios 1.20
     "brace-expansion@5": "5.0.12", // CVE-2026-102276, CVE-2026-102277, CVE-2026-102278
     "ip-address@10": "10.7.1", // CVE-2026-101911, CVE-2026-101912
     "nodemailer": "10.0.9", // CVE-2026-100699, CVE-2026-100700
