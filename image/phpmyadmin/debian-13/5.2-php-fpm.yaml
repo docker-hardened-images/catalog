@@ -1,0 +1,315 @@
+# syntax=dhi.io/build:2-debian13
+
+name: phpMyAdmin 5.2.x (php-fpm)
+image: dhi.io/phpmyadmin
+variant: runtime
+flavor: php-fpm
+tags:
+  - 5-php-fpm
+  - 5.2-php-fpm
+  - 5.2.3-php-fpm
+  - 5-debian-php-fpm
+  - 5-debian13-php-fpm
+  - 5.2-debian-php-fpm
+  - 5.2-debian13-php-fpm
+  - 5.2.3-debian-php-fpm
+  - 5.2.3-debian13-php-fpm
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-05-11"
+vars:
+  PHP_INI_DIR: /etc/php-8.3
+  PHP_MAJOR_MINOR_VERSION: "8.3"
+  PHP_UPSTREAM_VERSION: 8.3.35
+  PHP_VERSION: 8.3.35-0
+  SEMVER_MAJOR_MINOR_VERSION: "5.2"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.2.3
+  UPLOADPROGRESS_COMMIT_SHA: ee6d6b5dcbd39a7aedb6da886960fe7359fe2945
+  UPLOADPROGRESS_VERSION: 2.0.2
+  VERSION: 5.2.3-0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - ca-certificates-bundle
+    - coreutils
+    - dash
+    - dhi-phpmyadmin=5.2.3-0
+    - libargon2-1
+    - libbz2-1.0
+    - libcurl4t64
+    - libfreetype6
+    - libicu76
+    - libjpeg62-turbo
+    - libonig5
+    - libpcre2-8-0
+    - libpng16-16t64
+    - libreadline8t64
+    - libsodium23
+    - libsqlite3-0
+    - libssl3t64
+    - libwebp7
+    - libxml2
+    - libxpm4
+    - libzip5
+    - php-8.3-fpm=8.3.35-0
+    - tzdata
+    - zlib1g
+  builds:
+    - name: phpmyadmin
+      contents:
+        packages:
+          - autoconf
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - gawk
+          - grep
+          - m4
+          - sed
+          - php-8.3=8.3.35-0
+          - php-8.3-dev=8.3.35-0
+          - php-8.3-fpm=8.3.35-0
+          - pkg-config
+          - libargon2-1
+          - libcurl4t64
+          - libicu76
+          - libonig5
+          - libreadline8t64
+          - libsodium23
+          - libsqlite3-0
+          - libssl3t64
+          - libxml2
+          - zlib1g
+          - libbz2-dev
+          - libfreetype-dev
+          - libjpeg62-turbo-dev
+          - libpcre2-dev
+          - libpng-dev
+          - libwebp-dev
+          - libxpm-dev
+          - libzip-dev
+          - tar
+          - xz-utils
+        files:
+          - url: git+https://github.com/php/pecl-php-uploadprogress.git#uploadprogress-2.0.2
+            checksum: ee6d6b5dcbd39a7aedb6da886960fe7359fe2945
+            path: ${source.dir}/uploadprogress-src
+            spdx:
+              name: uploadprogress
+              version: 2.0.2
+              packages:
+                - name: uploadprogress
+                  purl: pkg:pecl/uploadprogress@2.0.2
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.3.35.tar.xz
+            path: ${source.dir}/php-src.tar.xz
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.3.35.tar.xz.asc
+            path: ${source.dir}/php-src.tar.xz.asc
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php source GPG
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/php-src.tar.xz
+            keys: ${source.dir}/php-keyring.asc
+            signature: ${source.dir}/php-src.tar.xz.asc
+        - name: extract php source
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${source.dir}/php-src
+            tar -x --strip-components=1 -C ${source.dir}/php-src -f ${source.dir}/php-src.tar.xz
+        - name: build php extensions
+          runs: |
+            set -eux -o pipefail
+
+            build_ext() {
+              ext=$1
+              shift
+              cd ${source.dir}/php-src/ext/$ext
+              phpize
+              ./configure --with-php-config=/usr/bin/php-config "$@"
+              make -j"$(nproc)"
+              make install
+            }
+
+            build_ext bz2
+            build_ext gd --with-freetype --with-jpeg --with-webp --with-xpm
+            build_ext mysqli
+            build_ext zip
+            build_ext bcmath
+
+            cd ${source.dir}/uploadprogress-src
+            phpize
+            ./configure --with-php-config=/usr/bin/php-config
+            make -j"$(nproc)"
+            make install
+        - name: configure php
+          runs: |
+            set -eux -o pipefail
+
+            for ext in bz2 gd mysqli zip bcmath uploadprogress; do
+              echo "extension=${ext}.so" > /etc/php-8.3/conf.d/${ext}.ini
+            done
+            cat << 'EOF' > /etc/php-8.3/conf.d/opcache-tuning.ini
+            opcache.memory_consumption=128
+            opcache.interned_strings_buffer=8
+            opcache.max_accelerated_files=4000
+            opcache.revalidate_freq=60
+            EOF
+            cat << 'EOF' > /etc/php-8.3/conf.d/phpmyadmin.ini
+            expose_php = Off
+            fastcgi.logging = Off
+            session.cookie_httponly = 1
+            session.use_strict_mode = 1
+            EOF
+            cat << 'EOF' > /etc/php-8.3/conf.d/phpmyadmin-misc.ini
+            allow_url_fopen = Off
+            max_execution_time = ${MAX_EXECUTION_TIME}
+            max_input_vars = 10000
+            memory_limit = ${MEMORY_LIMIT}
+            post_max_size = ${UPLOAD_LIMIT}
+            upload_max_filesize = ${UPLOAD_LIMIT}
+            date.timezone = ${TZ}
+            session.save_path = ${SESSION_SAVE_PATH}
+            EOF
+            mkdir -p ${target.dir}/etc/php-8.3
+            cp -a /etc/php-8.3/conf.d ${target.dir}/etc/php-8.3/
+            cp /etc/php-8.3/php.ini-production ${target.dir}/etc/php-8.3/php.ini
+        - name: add phpmyadmin sbom
+          uses: spdx@v1
+          with:
+            license: GPL-2.0-only
+            name: phpmyadmin
+            purl: pkg:composer/phpmyadmin/phpmyadmin@5.2.3
+            version: 5.2.3
+      paths:
+        - type: file
+          path: ${source.dir}/php-keyring.asc
+          uid: 0
+          gid: 0
+          source: image/phpmyadmin/key/php8.3.keyring.asc
+      outputs:
+        - source: /usr/lib/php/extensions
+          target: /usr/lib/php/extensions
+          uid: 0
+          gid: 0
+        - source: ${target.dir}/etc/php-8.3
+          target: /etc/php-8.3
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/phpmyadmin
+          target: /opt/docker/sbom/phpmyadmin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/uploadprogress
+          target: /opt/docker/sbom/uploadprogress
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/www/html
+stop-signal: SIGQUIT
+environment:
+  MAX_EXECUTION_TIME: "600"
+  MEMORY_LIMIT: 512M
+  SESSION_SAVE_PATH: /sessions
+  TZ: UTC
+  UPLOAD_LIMIT: 2048K
+paths:
+  - type: directory
+    path: /var/www
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /var/www/html
+    uid: 0
+    gid: 0
+    source: /usr/share/phpmyadmin
+  - type: directory
+    path: /var/lib/phpmyadmin/tmp
+    uid: 65532
+    gid: 65532
+    mode: "0700"
+  - type: directory
+    path: /var/lib/phpmyadmin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/phpmyadmin/bin/docker-entrypoint.sh
+  - type: file
+    path: /etc/php-8.3/php-fpm.d/www.conf
+    uid: 0
+    gid: 0
+    mode: "0644"
+    source: image/phpmyadmin/config/www.conf
+  - type: file
+    path: /etc/phpmyadmin/config.inc.php
+    uid: 0
+    gid: 0
+    mode: "0444"
+    source: image/phpmyadmin/config/config.inc.php
+  - type: file
+    path: /etc/phpmyadmin/helpers.php
+    uid: 0
+    gid: 0
+    mode: "0444"
+    source: image/phpmyadmin/config/helpers.php
+  - type: directory
+    path: /etc/phpmyadmin
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /sessions
+    uid: 65532
+    gid: 65532
+    mode: "0700"
+annotations:
+  org.opencontainers.image.description: A minimal phpMyAdmin image
+  org.opencontainers.image.licenses: GPL-2.0-only
+entrypoint:
+  - docker-entrypoint.sh
+cmd:
+  - php-fpm
+ports:
+  - 9000/tcp
