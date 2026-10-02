@@ -10,6 +10,17 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
+### What's included in this Rust image
+
+This Docker Hardened Rust image includes the Rust toolchain and essential build tools in a single, security-hardened
+package:
+
+- `rustc`: Rust compiler, and the default command the image runs
+- `cargo`: Rust package manager and build tool
+- `sfw`: Socket Firewall, which mediates network access while `cargo` fetches crates (`sfw` variants only)
+- OpenSSL development headers and `pkg-config`, so crates such as `openssl-sys` link the validated FIPS provider rather
+  than a bundled copy (`fips-dev` variants only)
+
 ## Start a Rust instance
 
 Run the following command to run a Rust instance.
@@ -131,6 +142,61 @@ curl http://localhost:8000/
 # Clean up
 docker stop my-rust-app && docker rm my-rust-app
 ```
+
+## Image variants
+
+The Rust Hardened Image is available as runtime, dev, Socket Firewall, and FIPS variants.
+
+Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
+their tag.
+
+**Runtime variants** are designed to run your application in production. These images are intended to be used either
+directly or as the FROM image in the final stage of a multi-stage build. These images typically:
+
+- Run as a nonroot user
+- Do not include a shell or a package manager
+- Contain only the minimal set of libraries needed to run the app
+
+**Build-time variants** typically include `dev` in the tag name and are intended for use in the first stage of a
+multi-stage Dockerfile. These images typically:
+
+- Run as the root user
+
+- Include a shell and package manager
+
+- Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
+
+### Build crates against the FIPS OpenSSL provider
+
+The Rust standard library and Cargo do not perform cryptography themselves, so a FIPS Rust image supplies the validated
+OpenSSL provider that your crates link against. Crates that bind to the system OpenSSL, such as `openssl` and
+`openssl-sys`, pick it up through `pkg-config`. The `fips-dev` variant ships the matching OpenSSL headers so those
+crates compile in the build stage:
+
+```Dockerfile
+FROM dhi.io/rust:<tag>-fips-dev AS build
+WORKDIR /build
+
+RUN --mount=type=bind,source=src,target=src \
+    --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
+    --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
+    cargo build --locked --release && \
+    cp /build/target/release/my-app /build/my-app
+
+FROM dhi.io/rust:<tag>-fips AS final
+
+COPY --from=build /build/my-app ./my-app
+
+CMD ["./my-app"]
+```
+
+Crates that use a bundled or pure-Rust cryptographic implementation instead of the system OpenSSL — for example the
+`openssl` crate's `vendored` feature, or `ring` — are not covered by the validated module. Select an OpenSSL-backed
+provider, such as `rustls-openssl`, when the module boundary has to hold.
 
 ## Docker Official Images vs Docker Hardened Images
 
