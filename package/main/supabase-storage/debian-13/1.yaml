@@ -1,0 +1,232 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-supabase-storage
+variant: runtime
+tags:
+  - 1.74.1
+  - 1.74.1-r0
+  - 1.74.1-debian13
+  - 1.74.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-04-11"
+vars:
+  COMMIT_SHA: b41d14fa15547284b351ea024f8c83a201cdc83a
+  DHI_TEST_DEB_EXPECTED_FILES: /usr/lib/supabase-storage/dist/start/server.js /usr/lib/supabase-storage/migrations/tenant /usr/lib/supabase-storage/migrations/multitenant /usr/lib/supabase-storage/migrations/vector_store /usr/lib/supabase-storage/package.json /usr/lib/supabase-storage/watt.json /usr/lib/supabase-storage/watt.storage.json /usr/lib/supabase-storage/node_modules/fs-xattr/build/Release/xattr.node
+  NODE_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  NODEJS_VERSION: 24.21.0-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.74"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.74.1
+  VERSION: 1.74.1
+contents:
+  packages:
+    - base-files
+  builds:
+    - name: supabase-storage
+      work-dir: ${source.dir}/supabase-storage
+      environment:
+        NPM_CONFIG_ALLOW_GIT: root
+      caches:
+        - path: /root/.npm
+        - path: /root/.cache/node-gyp
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - g++
+          - git
+          - libc6
+          - libstdc++6
+          - make
+          - mawk
+          - nodejs-24=24.21.0-1
+          - npm
+          - python-3.13
+          - sed
+        files:
+          - url: git+https://github.com/supabase/storage.git#v1.74.1
+            checksum: b41d14fa15547284b351ea024f8c83a201cdc83a
+            path: ${source.dir}/supabase-storage
+            spdx:
+              name: supabase-storage
+              version: 1.74.1
+              packages:
+                - name: supabase-storage
+                  purl: pkg:github/supabase/storage@1.74.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump dependencies
+          uses: npm/bump@v1
+          privileged: true
+          environment:
+            DHI_NO_SFW: "true"
+          with:
+            bumps: ${source.dir}/patch/npm-bump.json
+            npm-root: ${source.dir}/supabase-storage
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PYTHON="$(command -v python3.13 || command -v python3)"
+
+            npm pkg set --json "allowScripts.fs-xattr"=true
+
+            PG_BOSS_REF="$(node -p "require('./package-lock.json').packages['node_modules/pg-boss'].resolved.split('#')[1]")"
+            npm pkg set "dependencies.pg-boss=github:supabase/pg-boss#$PG_BOSS_REF"
+
+            npm install --package-lock-only
+
+            npm ci
+
+            npm run build
+
+            npm prune --omit=dev
+        - name: prune non-runtime files
+          runs: |
+            set -eux -o pipefail
+
+            find dist -type f \( -name '*.test.js' -o -name '*.test.js.map' \) -delete
+
+            find node_modules -depth -type d \
+              \( -name test -o -name tests -o -name __tests__ -o -name fixtures \
+              -o -name .github \) \
+              -exec rm -rf {} +
+
+            find node_modules -type f \
+              \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) \
+              -delete
+
+            find node_modules -depth -type d -path '*/prebuilds/*' ! -name "linux-${NODE_ARCH}" \
+              -exec rm -rf {} +
+
+            find node_modules -type f -path '*/prebuilds/*' -name '*.musl.*' -delete
+
+            NODE_ABI="$(node -p 'process.versions.modules')"
+            find node_modules -type f -path '*/prebuilds/*' -name '*abi*.node' \
+              ! -name "*abi$NODE_ABI.node" -delete
+
+            find node_modules -depth -type d \( -name obj.target -o -name .deps \) \
+              -exec rm -rf {} +
+            find node_modules -path '*/build/*' -type f \
+              \( -name '*.o' -o -name '*.d' -o -name 'Makefile' -o -name '*.mk' \
+              -o -name 'binding.Makefile' -o -name 'config.gypi' \) -delete
+
+            bracketed="$(find dist node_modules \( -name '*[[]*' -o -name '*[]]*' \) -print -quit)"
+            if [ -n "$bracketed" ]; then
+              echo "[ERROR] bracketed paths remain; dhi/build-pkg cannot glob them" >&2
+              find dist node_modules \( -name '*[[]*' -o -name '*[]]*' \) >&2
+              exit 1
+            fi
+        - name: npm dependencies sbom (resolver)
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /opt/docker/sbom/supabase-storage-npm-resolver
+            npm sbom --omit=dev --package-lock-only --sbom-format=spdx \
+              > /opt/docker/sbom/supabase-storage-npm-resolver/.spdx.supabase-storage-npm-resolver.json
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf .git
+
+            mkdir -p "${target.dir}/usr/lib/supabase-storage"
+            cp -a \
+              dist \
+              migrations \
+              node_modules \
+              package.json \
+              watt.json \
+              watt.storage.json \
+              "${target.dir}/usr/lib/supabase-storage/"
+        - name: npm dependencies sbom (cataloger)
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: supabase-storage-npm
+            source: ${target.dir}/usr/lib/supabase-storage/node_modules
+        - name: verify sbom coverage
+          runs: |
+            set -eux -o pipefail
+
+            node "${source.dir}/verify-sbom-coverage.cjs" \
+              "${target.dir}/usr/lib/supabase-storage/node_modules" \
+              /opt/docker/sbom/supabase-storage-npm/.spdx.supabase-storage-npm.json \
+              /opt/docker/sbom/supabase-storage-npm-resolver/.spdx.supabase-storage-npm-resolver.json
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/supabase-storage-npm \
+              /opt/docker/sbom/supabase-storage-npm-resolver \
+              "${target.dir}/opt/docker/sbom/"
+        - name: verify payload
+          runs: |
+            set -eux -o pipefail
+
+            staged="${target.dir}/usr/lib/supabase-storage"
+
+            test -f "$staged/dist/start/server.js"
+            test -d "$staged/migrations/tenant"
+            test -f "$staged/node_modules/fs-xattr/build/Release/xattr.node"
+
+            (cd "$staged" && node -e "require('fs-xattr')")
+            (cd "$staged" && node -e "require('@datadog/pprof')")
+
+            unreadable="$(find "$staged" \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -print -quit)"
+            if [ -n "$unreadable" ]; then
+              echo "[ERROR] staged payload has paths a non-root runtime uid cannot read or traverse" >&2
+              find "$staged" \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) >&2
+              exit 1
+            fi
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: Supabase Storage - S3 compatible object storage service that stores metadata in Postgres
+            files:
+              - opt/docker/sbom/supabase-storage-npm
+              - opt/docker/sbom/supabase-storage-npm-resolver
+              - usr/lib/supabase-storage
+            formats:
+              - deb
+            license: Apache-2.0
+            name: supabase-storage
+            rel: 0
+            url: https://github.com/supabase/storage
+            version: 1.74.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bump.json
+          uid: 0
+          gid: 0
+          source: package/main/supabase-storage/patch/npm-bump.json
+        - type: file
+          path: ${source.dir}/verify-sbom-coverage.cjs
+          uid: 0
+          gid: 0
+          source: package/main/supabase-storage/verify-sbom-coverage.cjs
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
