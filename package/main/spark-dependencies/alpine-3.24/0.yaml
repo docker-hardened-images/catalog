@@ -65,7 +65,7 @@ contents:
             set -eux -o pipefail
 
             apt-get update -qq
-            apt-get install -y -qq yq
+            apt-get install -y -qq yq xmlstarlet
             command -v xq-python
         - uses: mvn/mirror@v1
         - name: use maven central when mirror credentials are absent
@@ -95,6 +95,23 @@ contents:
             dependencies: ${source.dir}/patch/mvn-direct-dependencies.json
             dependencies-key: dependencies
             mvn-root: ${source.dir}/spark-dependencies
+        - name: protect at.yawk.lz4 classes from shade minimizeJar
+          work-dir: ${source.dir}/spark-dependencies
+          runs: |
+            set -eux -o pipefail
+
+            for module in jaeger-spark-dependencies-cassandra jaeger-spark-dependencies-elasticsearch; do
+              xmlstarlet ed -L \
+                -N m="http://maven.apache.org/POM/4.0.0" \
+                -s "//m:plugin[m:artifactId='maven-shade-plugin']//m:filters" -t elem -n filterTMP -v "" \
+                -s "//m:plugin[m:artifactId='maven-shade-plugin']//m:filters/filterTMP" -t elem -n artifact -v "at.yawk.lz4:*" \
+                -s "//m:plugin[m:artifactId='maven-shade-plugin']//m:filters/filterTMP" -t elem -n includes -v "" \
+                -s "//m:plugin[m:artifactId='maven-shade-plugin']//m:filters/filterTMP/includes" -t elem -n include -v "**" \
+                -r "//m:plugin[m:artifactId='maven-shade-plugin']//m:filters/filterTMP" -v filter \
+                "$module/pom.xml"
+
+              grep -q 'at.yawk.lz4:\*' "$module/pom.xml"
+            done
         - name: set release version
           privileged: true
           secrets:
