@@ -1,0 +1,45 @@
+# Subject: gh-152563: restore the Python 3.13 musl test skip
+#
+# CPython issue GH-131032 reported that test_math.test_fma_zero_result fails on
+# Alpine because of a bug in musl's fma implementation. The accepted Python
+# 3.13 backport GH-131179 made support.linked_to_musl() return a boolean and
+# skipped this test whenever that boolean was true.
+#
+# Upstream later taught linked_to_musl() to return a musl version tuple in
+# GH-131313, but that change was not backported to Python 3.13. GH-155753 then
+# backported only the dependent test change which compares linked_to_musl()
+# with (1, 2, 6). Consequently, the Python 3.13.16 release evaluates
+# True < (1, 2, 6) on Alpine, raises TypeError while importing test_math, and
+# fails the profile-guided optimization build in test_cmath and test_math.
+# Glibc builds short-circuit when linked_to_musl() returns False and are not
+# affected.
+#
+# Restore the exact skip condition from the accepted Python 3.13 backport.
+# This is a narrow partial revert of GH-155753 until upstream resolves the
+# incomplete 3.13 backport.
+#
+# Original Alpine/musl issue:
+# https://github.com/python/cpython/issues/131032
+# Accepted Python 3.13 skip backport:
+# https://github.com/python/cpython/pull/131179
+# https://github.com/python/cpython/commit/050813c026c742f2cbdcfefc3a062d0105e2195c
+# Tuple-returning prerequisite not backported to Python 3.13:
+# https://github.com/python/cpython/pull/131313
+# https://github.com/python/cpython/commit/23487115e10984865845416370b2d32b045cdf71
+# Musl 1.2.6 issue and incomplete Python 3.13 backport:
+# https://github.com/python/cpython/issues/152563
+# https://github.com/python/cpython/pull/155753
+# https://github.com/python/cpython/commit/8e85d73bd6b18681ef4a9a17d5c9674fd711c7ce
+diff --git a/Lib/test/test_math.py b/Lib/test/test_math.py
+index 00cbcb8..17d3785 100644
+--- a/Lib/test/test_math.py
++++ b/Lib/test/test_math.py
+@@ -2743,7 +2743,7 @@ class MathTests(unittest.TestCase):
+     @unittest.skipIf(
+         sys.platform.startswith(("freebsd", "wasi", "netbsd", "emscripten"))
+         or (sys.platform == "android" and platform.machine() == "x86_64")
+-        or (support.linked_to_musl() and support.linked_to_musl() < (1, 2, 6)),  # gh-131032
++        or support.linked_to_musl(),  # gh-131032
+         f"this platform doesn't implement IEE 754-2008 properly")
+     def test_fma_zero_result(self):
+         nonnegative_finites = [0.0, 1e-300, 2.3, 1e300]
