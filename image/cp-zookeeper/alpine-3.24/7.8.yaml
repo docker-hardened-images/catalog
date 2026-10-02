@@ -1,0 +1,216 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+name: Confluent Platform ZooKeeper 7.8.x
+image: dhi.io/cp-zookeeper
+variant: runtime
+tags:
+  - 7.8-alpine
+  - 7.8.11-alpine
+  - 7.8-alpine3.24
+  - 7.8.11-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-11-23"
+vars:
+  COMMIT_SHA: 727f4b1a2ae68df00e31a146f1eb355e1fb6facb
+  COMMON_DOCKER_COMMIT_SHA: 97a62d1a250f6b5e035e0a4c20d521f2e827d853
+  COMMON_DOCKER_VERSION: 7.8.11
+  DUB_VERSION: 0.0.172-r9
+  JAVA_FIPS_SUFFIX: ""
+  JDK_MAJOR_VERSION: "21"
+  SEMVER_MAJOR_MINOR_VERSION: "7.8"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.8.11
+  VERSION: 7.8.11
+  ZOOKEEPER_HOME: /usr/share/zookeeper
+  ZOOKEEPER_VERSION: 3.8.7-r7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+    - bash
+    - busybox
+    - ca-certificates-bundle
+    - confluent-docker-utils=0.0.172-r9
+    - coreutils
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - grep
+    - python-3.13
+    - sed
+    - tzdata
+    - zookeeper-3.8=3.8.7-r7
+  builds:
+    - name: confluent-launch-scripts
+      work-dir: ${source.dir}/kafka-images/zookeeper/include/etc/confluent/docker
+      contents:
+        packages:
+          - bash
+          - coreutils
+        files:
+          - url: git+https://github.com/confluentinc/kafka-images.git#v7.8.11
+            checksum: 727f4b1a2ae68df00e31a146f1eb355e1fb6facb
+            path: ${source.dir}/kafka-images
+            spdx:
+              name: kafka-images
+              version: 7.8.11
+              packages:
+                - name: kafka-images
+                  purl: pkg:github/confluentinc/kafka-images@7.8.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/confluentinc/common-docker.git#v7.8.11
+            checksum: 97a62d1a250f6b5e035e0a4c20d521f2e827d853
+            path: ${source.dir}/common-docker
+            spdx:
+              name: common-docker
+              version: 7.8.11
+              packages:
+                - name: common-docker
+                  purl: pkg:github/confluentinc/common-docker@7.8.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage confluent launch scripts
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/etc/confluent/docker"
+            mkdir -p "$DEST"
+
+            for f in *; do
+              case "$f" in
+                configure | ensure | launch | run | *.template) ;;
+                *)
+                  echo "FATAL: unhandled upstream launch-script file: $f" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            for f in configure ensure launch run; do
+              install -m 0755 "$f" "$DEST/$f"
+            done
+            for f in *.template; do
+              install -m 0644 "$f" "$DEST/$f"
+            done
+
+            install -m 0644 \
+              "${source.dir}/common-docker/base/include/etc/confluent/docker/bash-config" \
+              "$DEST/bash-config"
+
+            test -f "$DEST/zookeeper.properties.template"
+      outputs:
+        - source: ${target.dir}/etc/confluent/docker
+          target: /etc/confluent/docker
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kafka-images
+          target: /opt/docker/sbom/kafka-images
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/common-docker
+          target: /opt/docker/sbom/common-docker
+          uid: 0
+          gid: 0
+accounts:
+  run-as: appuser
+  users:
+    - name: appuser
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: appuser
+      gid: 1000
+      members:
+        - appuser
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/appuser
+environment:
+  COMPONENT: zookeeper
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  ZOOKEEPER_HOME: /usr/share/zookeeper
+paths:
+  - type: directory
+    path: /var/lib/zookeeper
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: directory
+    path: /var/lib/zookeeper/data
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/lib/zookeeper/log
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/zookeeper
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/zookeeper/secrets
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /home/appuser
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: file
+    path: /etc/kafka/logback.xml
+    uid: 1000
+    gid: 1000
+    mode: "0640"
+    source: image/cp-zookeeper/config/logback.xml
+  - type: file
+    path: /usr/bin/zookeeper-run-class
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-run-class
+  - type: file
+    path: /usr/bin/zookeeper-server-start
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-server-start
+  - type: file
+    path: /usr/bin/zookeeper-shell
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-shell
+annotations:
+  org.opencontainers.image.description: Confluent Platform ZooKeeper - Apache ZooKeeper configured through ZOOKEEPER_* environment variables by the Confluent container launch scripts
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /etc/confluent/docker/run
+ports:
+  - 2181/tcp
+  - 2888/tcp
+  - 3888/tcp

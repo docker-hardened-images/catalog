@@ -1,0 +1,264 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Confluent Platform ZooKeeper 7.6.x (dev)
+image: dhi.io/cp-zookeeper
+variant: dev
+tags:
+  - 7.6-dev
+  - 7.6.14-dev
+  - 7.6-debian-dev
+  - 7.6-debian13-dev
+  - 7.6.14-debian-dev
+  - 7.6.14-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-02-07"
+vars:
+  COMMIT_SHA: a9306a386b1fe6de3473429c6f0c2e0f127ccddb
+  COMMON_DOCKER_COMMIT_SHA: 61ba31c05f9c01db2b3215087c63d18d9b974e97
+  COMMON_DOCKER_VERSION: 7.6.14
+  DUB_VERSION: 0.0.172-9
+  JAVA_FIPS_SUFFIX: ""
+  JDK_MAJOR_VERSION: "21"
+  SEMVER_MAJOR_MINOR_VERSION: "7.6"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.6.14
+  VERSION: 7.6.14
+  ZOOKEEPER_HOME: /usr/share/zookeeper
+  ZOOKEEPER_VERSION: 3.8.7-7
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - confluent-docker-utils=0.0.172-9
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - grep
+    - hostname
+    - libc-bin
+    - mawk
+    - perl-base
+    - procps
+    - python-3.13
+    - sed
+    - tzdata
+    - util-linux
+    - zookeeper-3.8=3.8.7-7
+  builds:
+    - name: confluent-launch-scripts
+      work-dir: ${source.dir}/kafka-images/zookeeper/include/etc/confluent/docker
+      contents:
+        packages:
+          - bash
+          - coreutils
+        files:
+          - url: git+https://github.com/confluentinc/kafka-images.git#v7.6.14
+            checksum: a9306a386b1fe6de3473429c6f0c2e0f127ccddb
+            path: ${source.dir}/kafka-images
+            spdx:
+              name: kafka-images
+              version: 7.6.14
+              packages:
+                - name: kafka-images
+                  purl: pkg:github/confluentinc/kafka-images@7.6.14
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/confluentinc/common-docker.git#v7.6.14
+            checksum: 61ba31c05f9c01db2b3215087c63d18d9b974e97
+            path: ${source.dir}/common-docker
+            spdx:
+              name: common-docker
+              version: 7.6.14
+              packages:
+                - name: common-docker
+                  purl: pkg:github/confluentinc/common-docker@7.6.14
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage confluent launch scripts
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/etc/confluent/docker"
+            mkdir -p "$DEST"
+
+            for f in *; do
+              case "$f" in
+                configure | ensure | launch | run | *.template) ;;
+                *)
+                  echo "FATAL: unhandled upstream launch-script file: $f" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            for f in configure ensure launch run; do
+              install -m 0755 "$f" "$DEST/$f"
+            done
+            for f in *.template; do
+              install -m 0644 "$f" "$DEST/$f"
+            done
+
+            install -m 0644 \
+              "${source.dir}/common-docker/base/include/etc/confluent/docker/bash-config" \
+              "$DEST/bash-config"
+
+            test -f "$DEST/zookeeper.properties.template"
+      outputs:
+        - source: ${target.dir}/etc/confluent/docker
+          target: /etc/confluent/docker
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kafka-images
+          target: /opt/docker/sbom/kafka-images
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/common-docker
+          target: /opt/docker/sbom/common-docker
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: appuser
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: appuser
+      gid: 1000
+      members:
+        - appuser
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/appuser
+environment:
+  COMPONENT: zookeeper
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  ZOOKEEPER_HOME: /usr/share/zookeeper
+paths:
+  - type: directory
+    path: /var/lib/zookeeper
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: directory
+    path: /var/lib/zookeeper/data
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/lib/zookeeper/log
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/zookeeper
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /etc/zookeeper/secrets
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /home/appuser
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: file
+    path: /etc/kafka/logback.xml
+    uid: 1000
+    gid: 1000
+    mode: "0640"
+    source: image/cp-zookeeper/config/logback.xml
+  - type: file
+    path: /usr/bin/zookeeper-run-class
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-run-class
+  - type: file
+    path: /usr/bin/zookeeper-server-start
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-server-start
+  - type: file
+    path: /usr/bin/zookeeper-shell
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-zookeeper/bin/zookeeper-shell
+annotations:
+  org.opencontainers.image.description: Confluent Platform ZooKeeper - Apache ZooKeeper configured through ZOOKEEPER_* environment variables by the Confluent container launch scripts
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /etc/confluent/docker/run
+ports:
+  - 2181/tcp
+  - 2888/tcp
+  - 3888/tcp
