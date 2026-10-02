@@ -30,7 +30,8 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # CVE-2026-59950: mcp <1.28.1 misses WebSocket origin validation.
 # GHSA-4xgf-cpjx-pc3j: pydantic-settings 2.14.1 path traversal.
 # CVE-2026-69247: cryptography <50.0.0 Bleichenbacher oracle in PKCS#7 decryption.
-uv lock --upgrade-package "mcp==1.28.1" --upgrade-package "pydantic-settings>=2.14.2" --upgrade-package "cryptography>=50.0.0"
+# CVE-2026-102274: pyjwt <=2.13.0 exceptional-condition handling.
+uv lock --upgrade-package "mcp==1.28.1" --upgrade-package "pydantic-settings>=2.14.2" --upgrade-package "cryptography>=50.0.0" --upgrade-package "pyjwt>=2.14.0"
 uv sync --locked --no-dev --no-editable
 
 # Drop caches/tests from the shipped venv. Prune the directory branch so -exec
