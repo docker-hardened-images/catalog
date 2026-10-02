@@ -1,0 +1,270 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Adminer 6.x (php8.5-fpm)
+image: dhi.io/adminer
+variant: runtime
+flavor: php8.5-fpm
+tags:
+  - 6-php8.5-fpm
+  - 6.1-php8.5-fpm
+  - 6.1.1-php8.5-fpm
+  - 6-debian-php8.5-fpm
+  - 6-debian13-php8.5-fpm
+  - 6.1-debian-php8.5-fpm
+  - 6.1-debian13-php8.5-fpm
+  - 6.1.1-debian-php8.5-fpm
+  - 6.1.1-debian13-php8.5-fpm
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-14"
+vars:
+  PHP_INI_DIR: /etc/php-8.5
+  PHP_MAJOR_MINOR: "8.5"
+  PHP_SRC_ASC_CHECKSUM: 129bdc610d10f883e0a0127b0688dff98473e410469364414960d1d859451b32
+  PHP_SRC_CHECKSUM: d9be75c08e8c316f4c8f4194d8fbe1750a15f6a6d9d4e3fe72082abeeb800360
+  PHP_SRC_VERSION: 8.5.11
+  PHP_VERSION: 8.5.11-0
+  SEMVER_MAJOR_MINOR_VERSION: "6.1"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.1.1
+  VERSION: 6.1.1-0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - adminer=6.1.1-0
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - coreutils
+    - libargon2-1
+    - libcurl4t64
+    - libicu76
+    - libodbc2
+    - libonig5
+    - libpq5
+    - libreadline8t64
+    - libsodium23
+    - libsqlite3-0
+    - libstdc++6
+    - libsybdb5
+    - libxml2
+    - php-8.5-fpm=8.5.11-0
+    - php-8.5=8.5.11-0
+    - tzdata
+  files:
+    - url: https://raw.githubusercontent.com/TimWolla/docker-adminer/5f14885ec2f8ad8b2a5b94b42017cced5cae3e45/5/entrypoint.sh
+      checksum: sha256:05a961567e9c7b5a2e54ec606da958f1bceb41f650ac748dfd101e09928ec50f
+      path: /entrypoint.sh
+      spdx:
+        name: docker-adminer-entrypoint
+        version: 5f14885ec2f8ad8b2a5b94b42017cced5cae3e45
+        packages:
+          - name: docker-adminer-entrypoint
+            purl: pkg:github/timwolla/docker-adminer@5f14885ec2f8ad8b2a5b94b42017cced5cae3e45
+            license: (Apache-2.0 OR GPL-2.0-only)
+      uid: 0
+      gid: 0
+      mode: "0755"
+  builds:
+    - name: build php extensions
+      work-dir: ${source.dir}
+      shell: bash
+      contents:
+        packages:
+          - autoconf
+          - bash
+          - build-essential
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - php-8.5=8.5.11-0
+          - php-8.5-dev=8.5.11-0
+          - make
+          - pkg-config
+          - sed
+          - tar
+          - xz-utils
+          - libpq-dev
+          - unixodbc-dev
+          - freetds-dev
+        files:
+          - url: https://www.php.net/distributions/php-8.5.11.tar.xz.asc
+            checksum: sha256:129bdc610d10f883e0a0127b0688dff98473e410469364414960d1d859451b32
+            path: ${source.dir}/php-8.5.11.tar.xz.asc
+            spdx:
+              name: php-signature
+              version: 8.5.11
+              packages:
+                - name: php-signature
+                  purl: pkg:generic/php@8.5.11
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.5.11.tar.xz
+            checksum: sha256:d9be75c08e8c316f4c8f4194d8fbe1750a15f6a6d9d4e3fe72082abeeb800360
+            path: ${source.dir}/php-8.5.11.tar.xz
+            spdx:
+              name: php
+              version: 8.5.11
+              packages:
+                - name: php
+                  purl: pkg:generic/php@8.5.11
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php-8.5.11.tar.xz
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/php-8.5.11.tar.xz
+            keys: ${source.dir}/keyring.asc
+            signature: ${source.dir}/php-8.5.11.tar.xz.asc
+        - name: extract php source
+          runs: |
+            set -eux -o pipefail
+
+            test "$(php-config --version)" = "8.5.11"
+
+            PHP_SRC_DIR="${source.dir}/php-src"
+            mkdir -p "$PHP_SRC_DIR"
+            tar xf "${source.dir}/php-8.5.11.tar.xz" -C "$PHP_SRC_DIR" --strip-components=1
+        - name: build database extensions
+          runs: |
+            set -eux -o pipefail
+
+            build_ext() {
+              local ext=$1
+              shift
+              cd "${source.dir}/php-src/ext/$ext"
+              phpize
+              ./configure "$@"
+              make -j$(nproc)
+              make install
+            }
+
+            build_ext mysqli
+            build_ext pdo_pgsql --with-pdo-pgsql=/usr
+            build_ext pdo_odbc --with-pdo-odbc=unixODBC,/usr
+            build_ext pdo_dblib --with-pdo-dblib
+      paths:
+        - type: file
+          path: ${source.dir}/keyring.asc
+          uid: 0
+          gid: 0
+          source: image/adminer/key/php8.5.keyring.asc
+      outputs:
+        - source: /usr/lib/php/extensions
+          target: /usr/lib/php/extensions
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /var/www/html
+stop-signal: SIGQUIT
+paths:
+  - type: file
+    path: /etc/php-8.5/conf.d/adminer-upload-limits.ini
+    content: |
+      upload_max_filesize = 128M
+      post_max_size = 128M
+      memory_limit = 1G
+      max_execution_time = 600
+      max_input_vars = 5000
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.5/conf.d/docker-php-ext-mysqli.ini
+    content: extension=mysqli.so
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.5/conf.d/docker-php-ext-pdo_pgsql.ini
+    content: extension=pdo_pgsql.so
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.5/conf.d/docker-php-ext-pdo_odbc.ini
+    content: extension=pdo_odbc.so
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: file
+    path: /etc/php-8.5/conf.d/docker-php-ext-pdo_dblib.ini
+    content: extension=pdo_dblib.so
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: directory
+    path: /var/www/html
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/www/html/plugins-enabled
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: symlink
+    path: /var/www/html/adminer.php
+    uid: 0
+    gid: 0
+    source: /usr/share/adminer/adminer.php
+  - type: symlink
+    path: /var/www/html/index.php
+    uid: 0
+    gid: 0
+    source: /usr/share/adminer/index.php
+  - type: symlink
+    path: /var/www/html/plugin-loader.php
+    uid: 0
+    gid: 0
+    source: /usr/share/adminer/plugin-loader.php
+  - type: symlink
+    path: /var/www/html/designs
+    uid: 0
+    gid: 0
+    source: /usr/share/adminer/designs
+  - type: symlink
+    path: /var/www/html/plugins
+    uid: 0
+    gid: 0
+    source: /usr/share/adminer/plugins
+annotations:
+  org.opencontainers.image.description: Adminer - database management in a single PHP file
+  org.opencontainers.image.licenses: Apache-2.0 OR GPL-2.0-only
+entrypoint:
+  - /entrypoint.sh
+cmd:
+  - php-fpm
+ports:
+  - 9000/tcp
