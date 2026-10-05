@@ -3,33 +3,33 @@
 image: dhi.io/pkg-kafka
 variant: runtime
 tags:
-  - 4.3.1
-  - 4.3.1-r9
-  - 4.3.1-debian13
-  - 4.3.1-r9-debian13
+  - 3.9.2
+  - 3.9.2-r0
+  - 3.9.2-debian13
+  - 3.9.2-r0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
-  release: "2026-05-13"
+  release: "2024-11-06"
 vars:
-  COMMIT_SHA: 26b251a451ce941d3d7a55e6487bcb7f16b5ad48
-  GRADLE_PACKAGE: gradle-9
-  GRADLE_VERSION: 9.8.0-0
+  COMMIT_SHA: 5e9866f43ab8e7e41ef39e5584ac50019381328d
+  GRADLE_PACKAGE: gradle-8
+  GRADLE_VERSION: 8.14.5-1
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.12.1+1-4
-  PACKAGE_NAME: kafka-4.3
-  REL: "9"
+  PACKAGE_NAME: kafka-3.9
+  REL: "0"
   SCALA_VERSION: "2.13"
-  SEMVER_MAJOR_MINOR_VERSION: "4.3"
-  SEMVER_MAJOR_VERSION: "4"
-  SEMVER_VERSION: 4.3.1
-  VERSION: 4.3.1
+  SEMVER_MAJOR_MINOR_VERSION: "3.9"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.9.2
+  VERSION: 3.9.2
 contents:
   packages:
     - base-files
   builds:
-    - name: kafka-4.3
+    - name: kafka-3.9
       work-dir: ${source.dir}/kafka
       environment:
         JAVA_HOME: /usr/lib/jvm/temurin-21
@@ -51,29 +51,21 @@ contents:
           - tar
           - eclipse-temurin-21-jdk=1:21.0.12.1+1-4
           - eclipse-temurin-21-jdk-oci-config=1:21.0.12.1+1-4
-          - gradle-9=9.8.0-0
+          - gradle-8=8.14.5-1
         files:
-          - url: git+https://github.com/apache/kafka.git#4.3.1
-            checksum: 26b251a451ce941d3d7a55e6487bcb7f16b5ad48
+          - url: git+https://github.com/apache/kafka.git#3.9.2
+            checksum: 5e9866f43ab8e7e41ef39e5584ac50019381328d
             path: ${source.dir}/kafka
             spdx:
               name: kafka
-              version: 4.3.1
+              version: 3.9.2
               packages:
                 - name: kafka
-                  purl: pkg:github/apache/kafka@4.3.1
+                  purl: pkg:github/apache/kafka@3.9.2
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
-        - name: apply jline remote-telnet cve patch
-          uses: git/patch@v1
-          with:
-            patch: ${source.dir}/patch/jline-remote-telnet-cve.patch
-        - name: apply gradle 9.5 projectdependency compatibility patch
-          uses: git/patch@v1
-          with:
-            patch: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
         - name: configure gradle mirror
           runs: |
             set -eux -o pipefail
@@ -147,6 +139,68 @@ contents:
                 }
             }
             EOF
+        - name: configure settings plugin mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle/init.d
+            cat > /root/.gradle/init.d/settings-plugins.gradle << 'EOF'
+            beforeSettings { settings ->
+                settings.pluginManagement.repositories {
+                    maven { url = "https://maven-central.storage-download.googleapis.com/maven2/" }
+                    gradlePluginPortal()
+                }
+            }
+            EOF
+        - name: configure kafka 3.9 dependency overrides
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle/init.d
+            cat > /root/.gradle/init.d/kafka-3.9-overrides.gradle << 'EOF'
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        def grp = details.requested.group
+                        def name = details.requested.name
+                        def ver = details.requested.version
+                        if (grp.startsWith("com.fasterxml.jackson") &&
+                                (ver == "2.16.2" || ver == "2.15.2" || ver == "2.18.11")) {
+                            details.useVersion("2.18.11")
+                            details.because("CVE remediation: CVE-2026-18401 (GHSA-72hv-8253-57qq), GHSA-r7wm-3cxj-wff9, CVE-2026-19032, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-59888, CVE-2026-68497, CVE-2026-68498 (GHSA-649p-m576-vr99), CVE-2026-77310, CVE-2026-83557, CVE-2026-89425, CVE-2026-91776, CVE-2026-91777")
+                        }
+                        if (grp.startsWith("org.eclipse.jetty") && name.startsWith("jetty-") &&
+                                (ver == "9.4.57.v20241219" || ver == "9.4.58.v20250814")) {
+                            details.useVersion("9.4.58.v20250814")
+                            details.because("newest published 9.4 release, matching the upstream 3.9 branch pin")
+                        }
+                        if (grp == "org.apache.zookeeper" && name.startsWith("zookeeper") &&
+                                (ver == "3.8.4" || ver == "3.8.7")) {
+                            details.useVersion("3.8.7")
+                            details.because("CVE remediation: CVE-2026-24281, CVE-2026-24308; 3.8.7 adds the quorum TLS hostname check in FIPS mode and the setWatches and deleteContainer ACL checks")
+                        }
+                        if (grp == "io.netty" && name.startsWith("netty-") &&
+                                (ver == "4.1.125.Final" || ver == "4.1.137.Final")) {
+                            details.useVersion("4.1.137.Final")
+                            details.because("CVE remediation: CVE-2026-42583, CVE-2026-44249, CVE-2026-45416, CVE-2026-45536, CVE-2026-50010, CVE-2026-59901, CVE-2026-62243, CVE-2026-75595, CVE-2026-75596")
+                        }
+                        if (grp == "org.jline" && name == "jline" &&
+                                (ver == "3.25.1" || ver == "3.30.17")) {
+                            details.useVersion("3.30.17")
+                            details.because("CVE remediation: CVE-2026-56740, CVE-2026-56741, CVE-2026-77420, CVE-2026-77421, CVE-2026-77422, CVE-2026-77423, GHSA-c87g-867h-cqr6, GHSA-6r3w-6jpj-x5w6, GHSA-7h86-pjwh-gpqj, GHSA-m935-wqpj-pvp3")
+                        }
+                        if (grp == "org.slf4j" && name == "slf4j-api" && ver == "2.0.13") {
+                            details.useVersion("1.7.36")
+                            details.because("ZooKeeper 3.8.7 requests the SLF4J 2 API; Kafka 3.9 binds SLF4J 1.7 through reload4j")
+                        }
+                        if (grp == "javax.xml.bind" && name == "jaxb-api" && ver == "2.2.12") {
+                            details.useVersion("2.3.1")
+                            details.because("jackson-module-jaxb-annotations 2.18 requests an older JAXB API than the 2.3.1 Kafka 3.9 declares")
+                        }
+                    }
+                }
+            }
+            EOF
         - name: build kafka distribution
           privileged: true
           runs: |
@@ -166,10 +220,10 @@ contents:
 
             mkdir -p ${target.dir}/usr/share/kafka
 
-            tar -xzf "core/build/distributions/kafka_2.13-4.3.1.tgz" \
+            tar -xzf "core/build/distributions/kafka_2.13-3.9.2.tgz" \
               --strip-components=1 \
               -C ${target.dir}/usr/share/kafka
-        - name: verify forced dependency versions
+        - name: verify forced dependency versions for 3.9
           runs: |
             set -eux -o pipefail
 
@@ -194,20 +248,27 @@ contents:
             expect zstd-jni 1.5.7-20 'zstd-jni-*.jar'
             expect slf4j-api 1.7.36 'slf4j-*.jar'
             expect jaxb-api 2.3.1 'jaxb-api-*.jar'
-            expect jackson-databind 2.21.7 'jackson-databind-*.jar'
-            expect jackson-core 2.21.7 'jackson-core-*.jar'
-            expect jackson-annotations 2.21 'jackson-annotations-*.jar'
-            jackson="$(find "${libs}" -maxdepth 1 -name 'jackson-databind-[0-9]*.jar' -printf '%f\n' | sed -E 's/^jackson-databind-//; s/\.jar$//')"
-            test -z "$(find "${libs}" -name 'jackson-*.jar' ! -name 'jackson-annotations-*' ! -name "*-${jackson}.jar")"
-            expect snakeyaml 2.5 'snakeyaml-*.jar'
-            expect jetty-security 12.0.38 'jetty-*.jar'
-            expect log4j-core 2.25.5 'log4j-*.jar'
-            jline="$(find "${libs}" -maxdepth 1 -name 'jline-*.jar' -printf '%f\n' | sed -E 's/^jline(-[a-z]+)*-//; s/\.jar$//' | sort -u)"
-            test -n "${jline}"
-            test "$(printf '%s\n' "${jline}" | wc -l)" -eq 1
-            test "$(printf '%s\n%s\n' 4.4.3 "${jline}" | sort -V | head -n 1)" = 4.4.3
-            forbid 'netty-*.jar'
-            forbid 'zookeeper*.jar'
+            expect jackson-databind 2.18.11 'jackson-*.jar'
+            expect jackson-core 2.18.11 'jackson-core-*.jar'
+            expect jackson-annotations 2.18.11 'jackson-annotations-*.jar'
+            expect jetty-security 9.4.58.v20250814 'jetty-*.jar'
+            expect zookeeper 3.8.7 'zookeeper*.jar'
+            expect commons-io 2.17.0 'commons-io-*.jar'
+            forbid 'jakarta.xml.bind-api-*.jar'
+            expect netty-common 4.1.137.Final 'netty-*.jar'
+            expect jline 3.30.17 'jline-*.jar'
+            forbid 'log4j-*.jar'
+        - name: stage kraft server properties
+          runs: |
+            set -eux -o pipefail
+
+            cp config/kraft/server.properties docker/server.properties
+
+            sed -i \
+              -e 's|^advertised\.listeners=PLAINTEXT://localhost:9092,CONTROLLER://localhost:9093$|advertised.listeners=PLAINTEXT://localhost:9092|' \
+              docker/server.properties
+
+            test -n "$(sed -n '\|^advertised\.listeners=PLAINTEXT://localhost:9092$|p' docker/server.properties)"
         - name: install docker server properties
           runs: |
             set -eux -o pipefail
@@ -222,26 +283,16 @@ contents:
             files:
               - usr/share/kafka
             license: Apache-2.0
-            name: kafka-4.3
-            rel: 9
+            name: kafka-3.9
+            rel: 0
             url: https://kafka.apache.org/
-            version: 4.3.1
+            version: 3.9.2
       paths:
         - type: file
           path: ${source.dir}/patch/fips-sha256-log-cleaner.patch
           uid: 0
           gid: 0
           source: package/main/kafka/patch/fips-sha256-log-cleaner.patch
-        - type: file
-          path: ${source.dir}/patch/jline-remote-telnet-cve.patch
-          uid: 0
-          gid: 0
-          source: package/main/kafka/patch/jline-remote-telnet-cve.patch
-        - type: file
-          path: ${source.dir}/patch/gradle-9.5-projectdependency-4.3.patch
-          uid: 0
-          gid: 0
-          source: package/main/kafka/patch/gradle-9.5-projectdependency-4.3.patch
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
