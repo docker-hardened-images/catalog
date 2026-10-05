@@ -1,27 +1,15 @@
 Downstream runtime patch: backport Ceph's importlib.metadata compatibility
-change so ceph-volume does not depend on the removed pkg_resources module.
 Upstream commit: https://github.com/ceph/ceph/commit/8c78a22d2cf69892570f635735d9735169b64a75
 
 diff --git a/src/ceph-volume/ceph_volume/main.py b/src/ceph-volume/ceph_volume/main.py
-index 7a5b006..d654a26 100644
+index f8eca65ec497..4f27f429e89e 100644
 --- a/src/ceph-volume/ceph_volume/main.py
 +++ b/src/ceph-volume/ceph_volume/main.py
-@@ -1,9 +1,30 @@
- from __future__ import print_function
- import argparse
- import os
--import pkg_resources
- import sys
- import logging
--
-+
-+
-+# `iter_entry_points` from `pkg_resources` takes one argument whereas
-+# `entry_points` from `importlib.metadata` does not.
-+try:
-+    from importlib.metadata import entry_points
-+
-+    def get_entry_points(group: str):  # type: ignore
+@@ -11,8 +11,16 @@
+     from importlib.metadata import entry_points
+ 
+     def get_entry_points(group: str):  # type: ignore
+-        return entry_points().get(group, [])  # type: ignore
 +        eps = entry_points()
 +        if hasattr(eps, 'select'):
 +            # New importlib.metadata uses .select()
@@ -30,24 +18,8 @@ index 7a5b006..d654a26 100644
 +            # Fallback to older EntryPoints that returns dicts
 +            return eps.get(group, [])  # type: ignore
 +
-+except ImportError:
+ except ImportError:
 +    # Fallback to `pkg_resources` for older versions
-+    from pkg_resources import iter_entry_points as entry_points  # type: ignore
-+
-+    def get_entry_points(group: str):  # type: ignore
-+        return entry_points(group=group)  # type: ignore
-+
- from ceph_volume.decorators import catches
- from ceph_volume import log, devices, configuration, conf, exceptions, terminal, inventory, drive_group, activate
-@@ -170,9 +191,9 @@ def _load_library_extensions():
-     """
-     logger = logging.getLogger('ceph_volume.plugins')
-     group = 'ceph_volume_handlers'
--    entry_points = pkg_resources.iter_entry_points(group=group)
-+
-     plugins = []
--    for ep in entry_points:
-+    for ep in get_entry_points(group=group):
-         try:
-             logger.debug('loading %s' % ep.name)
-             plugin = ep.load()
+     from pkg_resources import iter_entry_points as entry_points  # type: ignore
+ 
+     def get_entry_points(group: str):  # type: ignore
