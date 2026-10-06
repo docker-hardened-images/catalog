@@ -28,7 +28,7 @@ export PG_CONFIG="${PG_CONFIG:-/usr/bin/pg_config}"
 # aiohttp: CVE-2026-22815 CVE-2026-34513 CVE-2026-34514 CVE-2026-34515 CVE-2026-34516
 #   CVE-2026-34517 CVE-2026-34518 CVE-2026-34519 CVE-2026-34520 CVE-2026-34525
 # cryptography: CVE-2026-39892
-# urllib3: CVE-2026-44431 CVE-2026-44432
+# urllib3: CVE-2026-44431 CVE-2026-44432 CVE-2026-97687 CVE-2026-97688 CVE-2026-97689
 # idna: CVE-2026-45409
 # pyjwt: CVE-2026-48522 CVE-2026-48524 CVE-2026-48525 CVE-2026-48526
 # tornado: CVE-2026-49854
@@ -36,7 +36,7 @@ export PG_CONFIG="${PG_CONFIG:-/usr/bin/pg_config}"
 "${PYTHON_BIN}" -m pip --python "${VENV_PY}" install --no-cache-dir --upgrade \
   'aiohttp>=3.13.4' \
   'cryptography>=46.0.7' \
-  'urllib3>=2.7.0' \
+  'urllib3==2.8.0' \
   'idna>=3.15' \
   'pyjwt>=2.13.0' \
   'tornado>=6.5.6' \
@@ -62,6 +62,9 @@ with tempfile.TemporaryDirectory() as tmp:
     shutil.copytree(Path(tmp) / "package", dest, dirs_exist_ok=True)
 PY
 fi
+
+# pip vendors urllib3 2.7.0; the runtime venv does not need pip after staging.
+"${PYTHON_BIN}" -m pip --python "${VENV_PY}" uninstall -y pip setuptools wheel
 
 find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \)
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
