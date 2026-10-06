@@ -5,18 +5,18 @@ image: dhi.io/kafka
 variant: dev
 tags:
   - 4.2-dev
-  - 4.2.1-dev
+  - 4.2.2-dev
   - 4.2-debian-dev
   - 4.2-debian13-dev
-  - 4.2.1-debian-dev
-  - 4.2.1-debian13-dev
+  - 4.2.2-debian-dev
+  - 4.2.2-debian13-dev
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-02-17"
 vars:
-  COMMIT_SHA: 18d5ecd939c8d510fdd72d0abb1f7099659dcd58
+  COMMIT_SHA: c5e942859576203e1b00260070fe6241b64db251
   GRADLE_PACKAGE: gradle-9
   JAVA_FIPS_SUFFIX: ""
   JDK_MAJOR_VERSION: "21"
@@ -25,8 +25,8 @@ vars:
   SCALA_VERSION: "2.13"
   SEMVER_MAJOR_MINOR_VERSION: "4.2"
   SEMVER_MAJOR_VERSION: "4"
-  SEMVER_VERSION: 4.2.1
-  VERSION: 4.2.1
+  SEMVER_VERSION: 4.2.2
+  VERSION: 4.2.2
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -72,25 +72,20 @@ contents:
           - eclipse-temurin-21-jdk
           - gradle-9
         files:
-          - url: git+https://github.com/apache/kafka.git#4.2.1
-            checksum: 18d5ecd939c8d510fdd72d0abb1f7099659dcd58
+          - url: git+https://github.com/apache/kafka.git#4.2.2
+            checksum: c5e942859576203e1b00260070fe6241b64db251
             path: ${source.dir}/kafka
             spdx:
               name: kafka
-              version: 4.2.1
+              version: 4.2.2
               packages:
                 - name: kafka
-                  purl: pkg:github/apache/kafka@4.2.1
+                  purl: pkg:github/apache/kafka@4.2.2
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
         - uses: gradle/mirror@v1
-        - name: apply upstream jline dependency cleanup
-          uses: git/patch@v1
-          work-dir: ${source.dir}/kafka
-          with:
-            patch: ${source.dir}/patch/jline-dependency-cleanup.patch
         - name: apply gradle 9.5 projectdependency compatibility patch
           uses: git/patch@v1
           work-dir: ${source.dir}/kafka
@@ -149,6 +144,22 @@ contents:
                 }
             }
             EOF
+        - name: configure jline override for 4.2.2
+          runs: |
+            set -eux -o pipefail
+
+            cat >> /root/.gradle/init.gradle << 'EOF'
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        if (details.requested.group == "org.jline") {
+                            details.useVersion("3.30.17")
+                            details.because("CVE remediation: CVE-2026-77420, CVE-2026-77421, CVE-2026-77422")
+                        }
+                    }
+                }
+            }
+            EOF
         - name: build kafka distribution
           work-dir: ${source.dir}/kafka
           privileged: true
@@ -178,7 +189,7 @@ contents:
 
             mkdir -p ${target.dir}/opt/kafka
 
-            tar -xzf "core/build/distributions/kafka_2.13-4.2.1.tgz" \
+            tar -xzf "core/build/distributions/kafka_2.13-4.2.2.tgz" \
               --strip-components=1 \
               -C ${target.dir}/opt/kafka
         - name: verify forced dependency versions
@@ -237,11 +248,6 @@ contents:
           uid: 0
           gid: 0
           source: image/kafka/patch/fips-sha256-log-cleaner.patch
-        - type: file
-          path: ${source.dir}/patch/jline-dependency-cleanup.patch
-          uid: 0
-          gid: 0
-          source: image/kafka/patch/jline-dependency-cleanup.patch
         - type: file
           path: ${source.dir}/patch/gradle-9.5-projectdependency-4.2.patch
           uid: 0
