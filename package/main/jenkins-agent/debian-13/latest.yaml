@@ -4,9 +4,9 @@ image: dhi.io/pkg-jenkins-agent
 variant: runtime
 tags:
   - 3390.v3381cf39b.501
-  - 3390.v3381cf39b.501-r2
+  - 3390.v3381cf39b.501-r3
   - 3390.v3381cf39b.501-debian13
-  - 3390.v3381cf39b.501-r2-debian13
+  - 3390.v3381cf39b.501-r3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,10 +14,12 @@ vars:
   COMMIT_SHA: 3381cf39b501b3004fc5e6241a6c20d7abf8fed5
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.12.1+1-4
-  MAVEN_VERSION: 3.9.16
+  MAVEN_COMMIT_SHA: c43a36b8d67be7e0805a411bc0898af1a51f5472
+  MAVEN_GIT_TAG: maven-3.10.0
+  MAVEN_VERSION: 3.10.0
   PACKAGE_NAME: jenkins-agent
   PACKAGE_VERSION: 3390.v3381cf39b.501
-  REL: "2"
+  REL: "3"
   VERSION: 3390.v3381cf39b_501
 contents:
   packages:
@@ -27,7 +29,7 @@ contents:
       work-dir: ${source.dir}/remoting
       environment:
         JAVA_HOME: /usr/lib/jvm/temurin-21
-        MAVEN_HOME: /opt/java/apache-maven-3.9.16
+        MAVEN_HOME: /opt/java/apache-maven-3.10.0
       caches:
         - path: /root/.m2/repository
       contents:
@@ -46,6 +48,7 @@ contents:
           - sed
           - tar
           - curl
+          - xmlstarlet
           - eclipse-temurin-21-jdk=1:21.0.12.1+1-4
         files:
           - url: git+https://github.com/jenkinsci/remoting.git#3390.v3381cf39b_501
@@ -61,28 +64,40 @@ contents:
             uid: 0
             gid: 0
           - url: https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
-            path: ${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz
+            checksum: sha256:80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb
+            path: ${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/apache/maven.git#maven-3.10.0
+            checksum: c43a36b8d67be7e0805a411bc0898af1a51f5472
+            path: ${source.dir}/maven-src
             spdx:
               name: maven
-              version: 3.9.16
+              version: 3.10.0
               packages:
                 - name: maven
-                  purl: pkg:generic/apache-maven@3.9.16
+                  purl: pkg:generic/apache-maven@3.10.0
                   license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
         - name: install maven
+          privileged: true
           runs: |
             set -eux -o pipefail
 
-            mkdir -p /opt/java
-            tar -xzf "${source.dir}/maven/apache-maven-3.9.16-bin.tar.gz" -C /opt/java
+            mkdir -p /opt/java /tmp/maven-bootstrap
+            tar -xzf "${source.dir}/maven/apache-maven-bootstrap-bin.tar.gz" -C /tmp/maven-bootstrap
+            export PATH="/tmp/maven-bootstrap/apache-maven-3.9.16/bin:${PATH}"
+
+            cd "${source.dir}/maven-src"
+            mvn -B -DskipTests -pl apache-maven -am package
+            tar -xzf "apache-maven/target/apache-maven-3.10.0-bin.tar.gz" -C /opt/java
 
             mkdir -p /usr/local/bin
-            find "/opt/java/apache-maven-3.9.16/bin" -type f -executable -o -type l | while read -r file; do
+            find "/opt/java/apache-maven-3.10.0/bin" -type f -executable -o -type l | while read -r file; do
               filename=$(basename "$file")
-              ln -sf "/opt/java/apache-maven-3.9.16/bin/$filename" "/usr/local/bin/$filename"
+              ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - uses: mvn/mirror@v1
         - name: use maven central when mirror credentials are absent
@@ -98,6 +113,17 @@ contents:
 
             if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
               rm -f /root/.m2/settings.xml
+            fi
+        - name: remove git-changelist-maven-extension
+          work-dir: ${source.dir}/remoting
+          runs: |
+            set -eux -o pipefail
+
+            ext_xml=".mvn/extensions.xml"
+            if [ -f "${ext_xml}" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='git-changelist-maven-extension']" \
+                "${ext_xml}"
             fi
         - name: build
           privileged: true
@@ -158,7 +184,7 @@ contents:
               - deb
             license: MIT
             name: jenkins-agent
-            rel: 2
+            rel: 3
             url: https://github.com/jenkinsci/remoting
             version: 3390.v3381cf39b.501
 os-release:
