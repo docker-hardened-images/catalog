@@ -13,10 +13,10 @@ set -euo pipefail
 WAR_PATH="${1:?usage: patch-hazelcast-jackson.sh <war.war>}"
 PATCH_DIR="${2:?usage: patch-hazelcast-jackson.sh <war.war> <patch-deps-dir>}"
 
-JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.6.jar"
-JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.6.jar"
-JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.6.jar"
-JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.6.jar"
+JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.7.jar"
+JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.7.jar"
+JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.7.jar"
+JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.7.jar"
 
 for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3"; do
     if [ ! -f "$jar" ]; then
@@ -95,10 +95,10 @@ version=${version}
 EOF
         }
 
-        write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.6
-        write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.6
-        write_pom_properties tools.jackson.core jackson-core 3.1.6
-        write_pom_properties tools.jackson.core jackson-databind 3.1.6
+        write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.7
+        write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.7
+        write_pom_properties tools.jackson.core jackson-core 3.1.7
+        write_pom_properties tools.jackson.core jackson-databind 3.1.7
 
         # Scout indexes pom.xml before pom.properties; drop stale shaded metadata.
         rm -f \
@@ -121,9 +121,9 @@ EOF
                 META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties \
                 META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties \
                 META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
-            grep -q 'version=2.21.6' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
-            grep -q 'version=2.21.6' META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties
-            grep -q 'version=3.1.6' META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
+            grep -q 'version=2.21.7' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
+            grep -q 'version=2.21.7' META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties
+            grep -q 'version=3.1.7' META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
         )
         rm -rf "$VERIFY_WORK"
     )
