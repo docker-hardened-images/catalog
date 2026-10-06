@@ -437,21 +437,61 @@ regulated industries.
 
 - **OpenSSL FIPS Provider**: FIPS 140-validated cryptographic operations at the OS level
 - **BouncyCastle FIPS**: FIPS-validated Java cryptographic provider libraries
-- **Enforced FIPS mode**: Pre-configured with `KAFKA_OPTS="-Dorg.bouncycastle.fips.approved_only=true"` to ensure only
-  FIPS-approved algorithms are used
+- **FIPS mode**: `KAFKA_OPTS` defaults to `-Dorg.bouncycastle.fips.approved_only=false` plus the BCFKS trust store of
+  the FIPS JRE, which runs BouncyCastle FIPS in general mode so Kafka can load PKCS12 key material; see the
+  approved-only steps below for the strict mode
 
 **Key characteristics:**
 
-- Non-FIPS algorithms (like MD5) will cause runtime failures
+- In approved-only mode, non-FIPS algorithms (like MD5) cause runtime failures; the log cleaner is patched to SHA-256 so
+  that mode works
 - All TLS/SSL operations use FIPS-validated cryptographic modules
-- BouncyCastle FIPS libraries are automatically included in `/opt/kafka/libs/`
+- The FIPS Java package's BouncyCastle jars are linked into `/opt/kafka/libs/` under version-less names (`bc-fips.jar`,
+  `bctls-fips.jar`, `bcutil-fips.jar`, `bcpkix-fips.jar`)
+
+**Strict approved-only mode:**
+
+BouncyCastle FIPS rejects PKCS12 key and trust stores in approved-only mode, so convert them to BCFKS first. `keytool`
+does not pick the BouncyCastle FIPS provider up from the image environment, so pass it explicitly; the image entrypoint
+always starts the broker, hence `--entrypoint`:
+
+```bash
+$ docker run --rm --entrypoint bash -v "$PWD/secrets:/etc/kafka/secrets" dhi.io/kafka:4.1-debian13-fips -c '
+    "$JAVA_HOME/bin/keytool" -importkeystore -noprompt \
+    -providerclass org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider \
+    -providerpath /usr/lib/bouncycastle/current/bc-fips.jar \
+    -srcprovidername BCFIPS -destprovidername BCFIPS \
+    -srckeystore /etc/kafka/secrets/kafka.keystore.p12 -srcstoretype PKCS12 -srcstorepass changeit \
+    -destkeystore /etc/kafka/secrets/kafka.keystore.bcfks -deststoretype BCFKS -deststorepass changeit'
+```
+
+Repeat the conversion for the trust store, then point the broker at the converted stores and switch the mode. Setting
+`KAFKA_OPTS` replaces the image default as a whole, so restate the trust store settings:
+
+```yaml
+    environment:
+      KAFKA_OPTS: >-
+        -Dorg.bouncycastle.fips.approved_only=true
+        -Djavax.net.ssl.trustStore=/usr/lib/bouncycastle/cacerts.bcfks
+        -Djavax.net.ssl.trustStoreType=BCFKS
+        -Djavax.net.ssl.trustStorePassword=changeit
+      KAFKA_SSL_KEYSTORE_TYPE: BCFKS
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.keystore.bcfks
+      KAFKA_SSL_KEYSTORE_PASSWORD: changeit
+      KAFKA_SSL_TRUSTSTORE_TYPE: BCFKS
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.bcfks
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: changeit
+```
+
+In approved-only mode BouncyCastle refuses every non-approved algorithm (MD5, RC4, TLS 1.0 and 1.1); the log cleaner's
+SHA-256 patch keeps compaction working there.
 
 **Example usage:**
 
 ```yaml
 services:
   kafka:
-    image: dhi.io/kafka:4.1-fips-debian13
+    image: dhi.io/kafka:4.1-debian13-fips
     ports:
       - "9092:9092"
     environment:
