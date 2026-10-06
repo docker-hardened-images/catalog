@@ -3,14 +3,14 @@
 image: dhi.io/pkg-python3-pip
 variant: runtime
 tags:
-  - 26.2.1-0
-  - 26.2.1-0-debian13
+  - 26.2.1-1
+  - 26.2.1-1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  DHI_REL: "0"
-  DHI_VERSION: 26.2.1-0
+  DHI_REL: "1"
+  DHI_VERSION: 26.2.1-1
   PACKAGE_WORK_DIR: python3-pip
   PIP_CHECKSUM: sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
   PIP_URL: https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl
@@ -27,6 +27,8 @@ contents:
           - coreutils
           - debhelper
           - dpkg-dev
+          - python3
+          - python3-wheel
           - unzip
         files:
           - url: https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl
@@ -42,11 +44,31 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: unpack pip wheel
+          runs: |
+            set -eux -o pipefail
+
+            python3 -m wheel unpack pip-26.2.1-py3-none-any.whl --dest pip-wheel
+        - name: apply vendored urllib3 CVE patches
+          uses: patch@v1
+          work-dir: ${source.dir}/python3-pip/pip-wheel/pip-26.2.1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-cve-2026-97687-https-proxy-tls-policy.patch
+              - ${source.dir}/patch/dhi-cve-2026-97688-deflate-infinite-loop.patch
+              - ${source.dir}/patch/dhi-cve-2026-97689-chunk-line-limit.patch
+        - name: repack patched pip wheel
+          runs: |
+            set -eux -o pipefail
+
+            rm pip-26.2.1-py3-none-any.whl
+            python3 -m wheel pack pip-wheel/pip-26.2.1 --dest .
         - uses: dpkg/bump@v1
           with:
             changelog:
-              - DHI Build
-            version: 26.2.1-0
+              - Backport vendored urllib3 fixes for CVE-2026-97687, CVE-2026-97688, and CVE-2026-97689
+            version: 26.2.1-1
         - uses: dpkg/build@v1
           with:
             args: -b -uc -us -d
@@ -57,6 +79,11 @@ contents:
           gid: 0
           mode: "0600"
           source: package/deb/main/python3-pip/debian-13/debian
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/python3-pip/patch
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
