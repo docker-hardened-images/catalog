@@ -4,7 +4,7 @@ image: dhi.io/pkg-spark-dependencies
 variant: runtime
 tags:
   - 0.7.2-alpine3.24
-  - 0.7.2-r7-alpine3.24
+  - 0.7.2-r8-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:0f5e830e75013f85336d2c129136a73b2c7b135a223ae669a7ebe4edb8fba51f
   PACKAGE_HOME: /usr/share/spark-dependencies
   PACKAGE_NAME: spark-dependencies
-  REL: "7"
+  REL: "8"
   SEMVER_MAJOR_MINOR_VERSION: "0.7"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.7.2
@@ -95,6 +95,30 @@ contents:
             dependencies: ${source.dir}/patch/mvn-direct-dependencies.json
             dependencies-key: dependencies
             mvn-root: ${source.dir}/spark-dependencies
+        - name: pin classified netty-transport-native dependencyManagement
+          work-dir: ${source.dir}/spark-dependencies
+          runs: |
+            set -eux -o pipefail
+
+            while IFS=: read -r artifact classifier; do
+              xmlstarlet ed -L \
+                -N m="http://maven.apache.org/POM/4.0.0" \
+                -s "//m:dependencyManagement/m:dependencies" -t elem -n depTMP -v "" \
+                -s "//m:dependencyManagement/m:dependencies/depTMP" -t elem -n groupId -v "io.netty" \
+                -s "//m:dependencyManagement/m:dependencies/depTMP" -t elem -n artifactId -v "$artifact" \
+                -s "//m:dependencyManagement/m:dependencies/depTMP" -t elem -n classifier -v "$classifier" \
+                -s "//m:dependencyManagement/m:dependencies/depTMP" -t elem -n version -v "4.2.17.Final" \
+                -r "//m:dependencyManagement/m:dependencies/depTMP" -v dependency \
+                pom.xml
+            done << 'CLASSIFIERS'
+            netty-transport-native-epoll:linux-x86_64
+            netty-transport-native-epoll:linux-aarch_64
+            netty-transport-native-kqueue:osx-aarch_64
+            netty-transport-native-kqueue:osx-x86_64
+            CLASSIFIERS
+
+            count=$(grep -cE '<classifier>(linux-x86_64|linux-aarch_64|osx-aarch_64|osx-x86_64)</classifier>' pom.xml)
+            [ "$count" -eq 4 ]
         - name: protect at.yawk.lz4 classes from shade minimizeJar
           work-dir: ${source.dir}/spark-dependencies
           runs: |
@@ -288,7 +312,7 @@ contents:
               - apk
             license: Apache-2.0
             name: spark-dependencies
-            rel: 7
+            rel: 8
             subpackages:
               - depends:
                   - eclipse-temurin-21-jre
