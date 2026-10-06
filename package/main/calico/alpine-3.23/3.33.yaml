@@ -1,0 +1,179 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-calico
+variant: runtime
+tags:
+  - 3.33.0-alpine3.23
+  - 3.33.0-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-09-28"
+vars:
+  CALICO_HAS_WEBHOOKS: "true"
+  CNI_PLUGINS_COMMIT_SHA: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+  CNI_PLUGINS_VERSION: v1.9.1
+  COMMIT_SHA: fbaa371111636a37ecc82625fce8453064a7fff2
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.1-r1
+  PACKAGE_NAME: calico-3.33
+  PACKAGE_SUFFIX: "3.33"
+  REGISTRAR_COMMIT_SHA: 6f4e96f4222783370e4d2f3e3fc733b49c194a5f
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.33"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.33.0
+  VERSION: 3.33.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: calico-3.33
+      work-dir: /go/src/github.com/projectcalico/calico
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.1-r1
+          - golang-1.27-oci-config=1.27.1-r1
+        files:
+          - url: git+https://github.com/projectcalico/calico.git#v3.33.0
+            checksum: fbaa371111636a37ecc82625fce8453064a7fff2
+            path: /go/src/github.com/projectcalico/calico
+            spdx:
+              name: calico
+              version: 3.33.0
+              packages:
+                - name: calico
+                  purl: pkg:golang/github.com/projectcalico/calico@3.33.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/containernetworking/plugins.git#v1.9.1
+            checksum: adc3e6b5b581638afbd194cf2e9319ecbb0151a1
+            path: /go/src/github.com/containernetworking/plugins
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/kubernetes-csi/node-driver-registrar.git#6f4e96f4222783370e4d2f3e3fc733b49c194a5f
+            checksum: 6f4e96f4222783370e4d2f3e3fc733b49c194a5f
+            path: /go/src/github.com/kubernetes-csi/node-driver-registrar
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update calico go dependencies (3.33 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - go.etcd.io/etcd/client/pkg/v3@v3.7.1
+            download: true
+        - uses: go/hermetic@v1
+        - name: build calico
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.33.0
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=${SOURCE_DATE_EPOCH}
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=fbaa371111636a37ecc82625fce8453064a7fff2
+            output: ${target.dir}/usr/bin/calico
+            packages: ./cmd/calico
+        - name: build calico dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/projectcalico/calico
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/projectcalico/calico/pkg/buildinfo.Version=3.33.0
+              - -X github.com/projectcalico/calico/pkg/buildinfo.BuildDate=${SOURCE_DATE_EPOCH}
+              - -X github.com/projectcalico/calico/pkg/buildinfo.GitRevision=fbaa371111636a37ecc82625fce8453064a7fff2
+            output: ${target.dir}/usr/bin/calico-dev
+            packages: ./cmd/calico
+            strip: false
+        - name: install config and licenses
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/etc/calico"
+            install -m 0644 \
+              /go/src/github.com/projectcalico/calico/docker/calico/typha.cfg \
+              "${target.dir}/etc/calico/typha.cfg"
+
+            install -d "${target.dir}/licences"
+            install -m 0644 \
+              /go/src/github.com/projectcalico/calico/LICENSE.md \
+              "${target.dir}/licences/LICENSE"
+        - name: build node-driver-registrar
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-csi/node-driver-registrar
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=3.33.0
+            output: ${target.dir}/usr/bin/node-driver-registrar
+            packages: ./cmd/csi-node-driver-registrar
+        - name: build node-driver-registrar dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-csi/node-driver-registrar
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=3.33.0
+            output: ${target.dir}/usr/bin/node-driver-registrar-dev
+            packages: ./cmd/csi-node-driver-registrar
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Calico component binaries from projectcalico/calico
+            files:
+              - usr/bin/calico
+              - etc/calico/typha.cfg
+              - licences/LICENSE
+            license: Apache-2.0
+            name: calico-3.33
+            provides: calico=$pkg_full_version
+            rel: 0
+            replaces: calico
+            subpackages:
+              - files:
+                  - path: usr/bin/calico
+                    source: usr/bin/calico-dev
+                name: calico-3.33-dev
+              - files:
+                  - path: usr/bin/node-driver-registrar
+                name: calico-node-driver-registrar-3.33
+              - files:
+                  - path: usr/bin/node-driver-registrar
+                    source: usr/bin/node-driver-registrar-dev
+                name: calico-node-driver-registrar-3.33-dev
+            url: https://github.com/projectcalico/calico
+            version: 3.33.0
+      paths:
+        - type: file
+          path: /src/patch/marshall-json.patch
+          uid: 0
+          gid: 0
+          source: package/main/calico/patch/marshall-json.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
