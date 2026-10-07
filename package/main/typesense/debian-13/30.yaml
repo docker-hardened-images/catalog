@@ -1,0 +1,436 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-typesense
+variant: runtime
+tags:
+  - 30.2-r0
+  - 30.2-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-01-27"
+vars:
+  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
+  BAZEL_VERSION: 6.2.0
+  COMMIT_SHA: d45d46baf3996d1de8bf96a87f375cfb43691560
+  CURL_SHA256: d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1
+  CURL_TAG: curl-8_22_0
+  CURL_TAG_VERSION: "8_22_0"
+  CURL_VERSION: 8.22.0
+  GCC_VERSION: 12.4.0-5
+  LLD_VERSION: 1:19.0-63+dhi1
+  LLVM_VERSION: 1:19.1.7-3+b1
+  OPENSSL_SHA256: 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+  OPENSSL_VERSION: 3.5.9
+  PACKAGE_NAME: typesense-30
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "30.2"
+  SEMVER_MAJOR_VERSION: "30"
+  SEMVER_VERSION: "30.2"
+  VERSION: "30.2"
+  ZLIB_COMMIT_SHA: da607da739fa6047df13e66a2af6b8bec7c2a498
+  ZLIB_SHA256: b9258cf6254e7f7c37f1cd61dba943a1c5ea3cff5718c789834dac359094f5f7
+  ZLIB_VERSION: 1.3.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: typesense
+      work-dir: ${source.dir}/typesense
+      caches:
+        - path: /tmp/bazel-out
+        - path: /tmp/bazel-repo
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - bash
+          - build-essential
+          - bzip2
+          - ca-certificates
+          - coreutils
+          - curl
+          - diffutils
+          - file
+          - findutils
+          - flex
+          - bison
+          - g++-12
+          - gawk
+          - gcc-12=12.4.0-5
+          - git
+          - grep
+          - gzip
+          - libtool
+          - libedit2
+          - libffi8
+          - libllvm19=1:19.1.7-3+b1
+          - libxml2
+          - libz3-4
+          - lld-19=1:19.1.7-3+b1
+          - lld=1:19.0-63+dhi1
+          - m4
+          - patch
+          - perl
+          - pkg-config
+          - python-is-python3
+          - python3
+          - sed
+          - unzip
+          - wget
+          - xz-utils
+          - zip
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/typesense/typesense.git#v30.2
+            checksum: d45d46baf3996d1de8bf96a87f375cfb43691560
+            path: ${source.dir}/typesense
+            spdx:
+              name: typesense
+              version: "30.2"
+              packages:
+                - name: typesense
+                  purl: pkg:github/typesense/typesense@v30.2
+                  license: GPL-3.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/bazelbuild/bazel/releases/download/6.2.0/bazel-6.2.0-linux-${BAZEL_ARCH}
+            checksum: https://github.com/bazelbuild/bazel/releases/download/6.2.0/bazel-6.2.0-linux-${BAZEL_ARCH}.sha256
+            path: /usr/local/bin/bazel
+            uid: 0
+            gid: 0
+            mode: "0755"
+          - url: https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz
+            checksum: sha256:603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+            path: ${source.dir}/openssl.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://github.com/curl/curl/releases/download/curl-8_22_0/curl-8.22.0.tar.gz
+            checksum: sha256:d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1
+            path: ${source.dir}/curl.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://github.com/madler/zlib/archive/da607da739fa6047df13e66a2af6b8bec7c2a498.tar.gz
+            checksum: sha256:b9258cf6254e7f7c37f1cd61dba943a1c5ea3cff5718c789834dac359094f5f7
+            path: ${source.dir}/zlib.tar.gz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch workspace pins
+          uses: patch@v1
+          work-dir: ${source.dir}/typesense
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/openssl-local.patch
+              - ${source.dir}/patch/zlib-local.patch
+              - ${source.dir}/patch/snowball-commit.patch
+              - ${source.dir}/patch/rocksdb-werror.patch
+              - ${source.dir}/patch/curl-local.patch
+              - ${source.dir}/patch/onnxruntime-glob.patch
+              - ${source.dir}/patch/sentencepiece-protoc.patch
+        - name: stage tracked libraries
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /opt/dhi/openssl /opt/dhi/curl /opt/dhi/zlib
+            mkdir -p /opt/dhi/openssl /opt/dhi/curl /opt/dhi/zlib
+            tar -xzf "${source.dir}/openssl.tar.gz" -C /opt/dhi/openssl --strip-components=1
+            tar -xzf "${source.dir}/curl.tar.gz" -C /opt/dhi/curl --strip-components=1
+            tar -xzf "${source.dir}/zlib.tar.gz" -C /opt/dhi/zlib --strip-components=1
+            test -f /opt/dhi/openssl/config
+            test -f /opt/dhi/curl/CMakeLists.txt
+            test -f /opt/dhi/zlib/zlib.h
+        - name: compile typesense-server
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/bazel-out /tmp/bazel-repo
+            export LANG=C.UTF-8
+            export LC_ALL=C.UTF-8
+            update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 200
+            update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 200
+            update-alternatives --set gcc /usr/bin/gcc-12
+            update-alternatives --set g++ /usr/bin/g++-12
+            gcc -dumpversion
+            cat > /usr/local/bin/gcc-dhi << 'EOF'
+            #!/bin/sh
+            exec /usr/bin/gcc-12 "$@" -Wno-error=array-bounds -Wno-array-bounds
+            EOF
+            cat > /usr/local/bin/g++-dhi << 'EOF'
+            #!/bin/sh
+            exec /usr/bin/g++-12 "$@" -Wno-error=array-bounds -Wno-array-bounds
+            EOF
+            chmod 755 /usr/local/bin/gcc-dhi /usr/local/bin/g++-dhi
+            update-alternatives --install /usr/bin/gcc gcc /usr/local/bin/gcc-dhi 300
+            update-alternatives --install /usr/bin/g++ g++ /usr/local/bin/g++-dhi 300
+            update-alternatives --set gcc /usr/local/bin/gcc-dhi
+            update-alternatives --set g++ /usr/local/bin/g++-dhi
+            rm /usr/lib/*/libz.so
+            bazel --output_user_root=/tmp/bazel-out build \
+              --verbose_failures \
+              --jobs=6 \
+              --repository_cache=/tmp/bazel-repo \
+              --define=TYPESENSE_VERSION=\"30.2\" \
+              //:typesense-server
+            install -D -m 0755 bazel-bin/typesense-server "${target.dir}/usr/bin/typesense-server"
+            strings "${target.dir}/usr/bin/typesense-server" | grep -F "OpenSSL 3.5.9"
+            strings "${target.dir}/usr/bin/typesense-server" | grep -F "CLIENT libcurl 8.22.0"
+            strings "${target.dir}/usr/bin/typesense-server" | grep -F "deflate 1.3.2"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: openssl
+            purl: pkg:generic/openssl/openssl@3.5.9
+            version: 3.5.9
+        - uses: spdx@v1
+          with:
+            license: curl
+            name: curl
+            purl: pkg:generic/curl/curl@8.22.0
+            version: 8.22.0
+        - uses: spdx@v1
+          with:
+            license: Zlib
+            name: zlib
+            purl: pkg:github/madler/zlib@v1.3.2
+            version: 1.3.2
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: h2o
+            purl: pkg:github/h2o/h2o@1491a703195790278091fd7aee547fbba78e89af
+            version: 1491a703195790278091fd7aee547fbba78e89af
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: brpc
+            purl: pkg:github/apache/brpc@df31bf51f08ca6afa59ef3b4f3749bf20ebd1858
+            version: df31bf51f08ca6afa59ef3b4f3749bf20ebd1858
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: braft
+            purl: pkg:github/baidu/braft@bc527db96420f610257573d80e5f60a8b0d835ef
+            version: bc527db96420f610257573d80e5f60a8b0d835ef
+        - uses: spdx@v1
+          with:
+            license: ICU
+            name: icu
+            purl: pkg:github/typesense/icu@release-71-1-patch
+            version: release-71-1-patch
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: s2geometry
+            purl: pkg:github/google/s2geometry@efb124d8eaf3433323d3e877dedd5e94a63339a3
+            version: efb124d8eaf3433323d3e877dedd5e94a63339a3
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: picotls
+            purl: pkg:github/h2o/picotls@7970614ad049d194fe1691bdf0cc66c6930a3a2f
+            version: 7970614ad049d194fe1691bdf0cc66c6930a3a2f
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: quicly
+            purl: pkg:github/h2o/quicly@46110287eb20e0780cf41bd30fc4715907ccf400
+            version: 46110287eb20e0780cf41bd30fc4715907ccf400
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: crc32c
+            purl: pkg:github/google/crc32c@1.1.2
+            version: 1.1.2
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: rocksdb
+            purl: pkg:github/facebook/rocksdb@v7.8.3
+            version: v7.8.3
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: jemalloc
+            purl: pkg:github/jemalloc/jemalloc@5.3.0
+            version: 5.3.0
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: protobuf
+            purl: pkg:github/protocolbuffers/protobuf@v21.5
+            version: v21.5
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: snappy
+            purl: pkg:github/google/snappy@1.1.7
+            version: 1.1.7
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: leveldb
+            purl: pkg:github/google/leveldb@1.23
+            version: 1.23
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: gflags
+            purl: pkg:github/gflags/gflags@v2.2.2
+            version: v2.2.2
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: glog
+            purl: pkg:github/google/glog@v0.6.0
+            version: v0.6.0
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: libarchive
+            purl: pkg:github/libarchive/libarchive@v3.7.7
+            version: v3.7.7
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: sentencepiece
+            purl: pkg:github/google/sentencepiece@v0.1.98
+            version: v0.1.98
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: onnxruntime
+            purl: pkg:github/microsoft/onnxruntime@rel-1.14.1
+            version: 1.14.1
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: onnxruntime-extensions
+            purl: pkg:github/microsoft/onnxruntime-extensions@81e7799c69044c745239202085eb0a98f102937b
+            version: 81e7799c69044c745239202085eb0a98f102937b
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: opencv
+            purl: pkg:github/opencv/opencv@4.5.4
+            version: 4.5.4
+        - uses: spdx@v1
+          with:
+            license: libpng-2.0
+            name: libpng
+            purl: pkg:github/glennrp/libpng@v1.6.37
+            version: 1.6.37
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause AND IJG AND Zlib
+            name: libjpeg-turbo
+            purl: pkg:github/libjpeg-turbo/libjpeg-turbo@2.1.0
+            version: 2.1.0
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: whisper.cpp
+            purl: pkg:github/ggerganov/whisper.cpp@022756a87204cd06c5d58f67b3708b550dcc38b0
+            version: 022756a87204cd06c5d58f67b3708b550dcc38b0
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: hnswlib
+            purl: pkg:github/typesense/hnswlib@687d981753f8bafcd16421cbd2a166d0b62bc520
+            version: 687d981753f8bafcd16421cbd2a166d0b62bc520
+        - uses: spdx@v1
+          with:
+            license: GPL-2.0-or-later
+            name: kakasi
+            purl: pkg:github/typesense/kakasi@77f2d1ce0146d15199ae0db1e61e0b699b0b55f6
+            version: 77f2d1ce0146d15199ae0db1e61e0b699b0b55f6
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: libart
+            purl: pkg:github/kishorenc/libart@bbbf588bca55bce095538ee8ca8b422904baebc5
+            version: bbbf588bca55bce095538ee8ca8b422904baebc5
+        - uses: spdx@v1
+          with:
+            license: GPL-2.0-or-later
+            name: elfutils
+            purl: pkg:generic/elfutils/elfutils@0.191
+            version: 0.191
+        - uses: spdx@v1
+          with:
+            license: LGPL-2.1-or-later
+            name: libiconv
+            purl: pkg:generic/libiconv/libiconv@1.17
+            version: 1.17
+        - name: stage component sbom
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/. "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+            description: Typesense search engine server
+            files:
+              - usr/bin/typesense-server
+              - opt/docker/sbom
+            formats:
+              - deb
+            license: GPL-3.0
+            name: typesense-30
+            rel: 0
+            url: https://typesense.org
+            version: 30.2
+      paths:
+        - type: file
+          path: ${source.dir}/patch/openssl-local.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/openssl-local.patch
+        - type: file
+          path: ${source.dir}/patch/curl-local.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/curl-local.patch
+        - type: file
+          path: ${source.dir}/patch/zlib-local.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/zlib-local.patch
+        - type: file
+          path: ${source.dir}/patch/snowball-commit.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/snowball-commit.patch
+        - type: file
+          path: ${source.dir}/patch/rocksdb-werror.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/rocksdb-werror.patch
+        - type: file
+          path: ${source.dir}/patch/onnxruntime-glob.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/onnxruntime-glob.patch
+        - type: file
+          path: ${source.dir}/patch/sentencepiece-protoc.patch
+          uid: 0
+          gid: 0
+          source: package/main/typesense/patch/sentencepiece-protoc.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
