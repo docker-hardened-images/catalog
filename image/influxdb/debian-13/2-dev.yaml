@@ -23,15 +23,14 @@ vars:
   CLI_VERSION: 2.8.0
   COMMIT_SHA: d4fa1941fd4adb29a556e774de426dfbab72f346
   GO_TAGS: libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm
-  GO_VERSION: 1.26.8
-  GOLANG_REFERENCE: dhi/golang:1.26.8-debian13-dev@sha256:f3f718d75c37f03eadc2df01a3b9e6d467815d7540872211ab7dccddafca843f
+  GOLANG_VERSION: 1.26.8-1
   OPENAPI_COMMIT_SHA: 8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f
   PROTOC_GEN_GO_VERSION: v1.36.5
   SEMVER_MAJOR_MINOR_VERSION: "2.9"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.9.1
-  UI_COMMIT_SHA: 78dfa9097c67dcbe91a417e7feb21ed313629101
-  UI_VERSION: 2.9.0
+  UI_COMMIT_SHA: fdb6b600f5daa380b268276f72301dfdb4a6027a
+  UI_VERSION: 2.10.0
   VERSION: 2.9.1
 contents:
   repositories:
@@ -66,22 +65,29 @@ contents:
     - util-linux
   builds:
     - name: influxdb
-      uses: dhi.io/golang:1.26.8-debian13-dev@sha256:f3f718d75c37f03eadc2df01a3b9e6d467815d7540872211ab7dccddafca843f
+      environment:
+        GOBIN: /go/bin
+        GODEBUG: tarinsecurepath=0,zipinsecurepath=0
+        GOPATH: /go
+        PATH: /go/bin:/usr/lib/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       caches:
         - path: /root/.cargo
+        - path: /go/pkg/mod
       contents:
         packages:
+          - base-files
+          - build-essential
           - libprotobuf-dev
           - libsqlite3-dev
           - pkg-config
           - protobuf-compiler
-          - base-files
           - bash
           - ca-certificates
           - coreutils
           - findutils
           - git
           - libc6
+          - libc-bin
           - libstdc++6
           - cargo-1.97
           - rustc-1.97
@@ -91,13 +97,15 @@ contents:
           - npm
           - sed
           - yarn-classic
+          - ca-certificates-bundle
+          - golang-1.26=1.26.8-1
         files:
           - url: https://raw.githubusercontent.com/influxdata/openapi/8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f/contracts/oss.json
             path: ${source.dir}/swagger.json
             uid: 0
             gid: 0
-          - url: git+https://github.com/influxdata/ui.git#OSS-v2.9.0
-            checksum: 78dfa9097c67dcbe91a417e7feb21ed313629101
+          - url: git+https://github.com/influxdata/ui.git#OSS-v2.10.0
+            checksum: fdb6b600f5daa380b268276f72301dfdb4a6027a
             path: ${source.dir}/ui
             uid: 0
             gid: 0
@@ -120,7 +128,10 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            yarn build
+            export CYPRESS_INSTALL_BINARY=0
+            yarn install --network-timeout 1000000
+            export NODE_OPTIONS="--max-old-space-size=2048"
+            yarn build:ci
         - name: place ui into go source for embedding
           work-dir: ${source.dir}/ui
           runs: |
@@ -140,7 +151,7 @@ contents:
             set -eux -o pipefail
 
             go generate --tags libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm ./static
-        - name: install extra go tools
+        - name: go generate
           work-dir: /go/src/github.com/influxdata/influxdb
           privileged: true
           runs: |
@@ -151,10 +162,6 @@ contents:
             go install golang.org/x/tools/cmd/stringer
             go install golang.org/x/tools/cmd/goimports
             go install github.com/influxdata/pkg-config
-        - name: go generate
-          work-dir: /go/src/github.com/influxdata/influxdb
-          runs: |
-            set -eux -o pipefail
 
             go generate --tags libsqlite3,sqlite_foreign_keys,sqlite_json,assets,noasm ./influxql/... ./models/... ./pkg/... ./storage/... ./tsdb/... ./v1/...
         - name: update go dependencies
@@ -202,7 +209,7 @@ contents:
           work-dir: /go/src/github.com/influxdata/influxdb
           with:
             cgo_enabled: 1
-            extra_env: CARGO=${source.dir}/helpers/bin/cargo-wrapper.sh
+            extra_env: CARGO=${source.dir}/helpers/bin/cargo-wrapper.sh PKG_CONFIG=/go/bin/pkg-config
             ldflags:
               - -X main.commit=d4fa1941fd4adb29a556e774de426dfbab72f346
               - -X main.version=v2.9.1
@@ -232,8 +239,17 @@ contents:
           uid: 0
           gid: 0
     - name: influx-cli
-      uses: dhi.io/golang:1.26.8-debian13-dev@sha256:f3f718d75c37f03eadc2df01a3b9e6d467815d7540872211ab7dccddafca843f
+      caches:
+        - path: /go/pkg/mod
       contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.26=1.26.8-1
+          - mawk
+          - sed
         files:
           - url: git+https://github.com/influxdata/influx-cli.git#v2.8.0
             checksum: 8cdf40161d7662e942582086853fca948fc1a842
