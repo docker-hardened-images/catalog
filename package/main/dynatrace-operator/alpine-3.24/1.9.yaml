@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-dynatrace-operator
+variant: runtime
+tags:
+  - 1.9.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-13"
+  end-of-life: "2027-10-01"
+vars:
+  BUILD_DATE_FORMAT: '%Y-%m-%dT%H:%M:%S+00:00'
+  COMMIT_SHA: 6e82adde010b0b8a3064de041b5faaacdf2fddfe
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.8-r0
+  PACKAGE_NAME: dynatrace-operator-1.9
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.9.0
+  VERSION: 1.9.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: dynatrace-operator-1.9
+      work-dir: /go/src/github.com/Dynatrace/dynatrace-operator
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.8-r0
+          - golang-1.26-oci-config=1.26.8-r0
+        files:
+          - url: git+https://github.com/Dynatrace/dynatrace-operator.git#v1.9.0
+            checksum: 6e82adde010b0b8a3064de041b5faaacdf2fddfe
+            path: /go/src/github.com/Dynatrace/dynatrace-operator
+            spdx:
+              name: dynatrace-operator
+              version: 1.9.0
+              packages:
+                - name: dynatrace-operator
+                  purl: pkg:golang/github.com/Dynatrace/dynatrace-operator@1.9.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/klauspost/compress@v1.19.1
+              - golang.org/x/crypto@v0.57.0
+              - golang.org/x/mod@v0.41.0
+              - google.golang.org/grpc@v1.83.2
+              - github.com/docker/cli@v29.6.2+incompatible
+              - github.com/moby/spdystream@v0.5.1
+              - go.opentelemetry.io/otel/sdk@v1.45.0
+              - go.opentelemetry.io/otel/log@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0
+              - go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
+              - go.opentelemetry.io/contrib/bridges/otelzap@v0.20.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0
+            download: true
+        - name: keep grpc on the fixed release
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.83.2
+            downgrade: true
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            pkgs=""
+            for p in $(go list ./...); do
+              case "$p" in
+                */test/e2e | */test/e2e/* | */test/scenarios | */test/scenarios/* | */test/features | */test/features/* | */test/integration | */test/integration/* | */test/integrationtests | */test/integrationtests/* | */test/benchmarks | */test/benchmarks/*)
+                  continue
+                  ;;
+              esac
+              dir=$(go list -f '{{.Dir}}' "$p")
+              if grep -q -E 'integrationtests|sigs.k8s.io/controller-runtime/pkg/envtest' "$dir"/*_test.go 2> /dev/null; then
+                continue
+              fi
+              pkgs="$pkgs $p"
+            done
+
+            CGO_ENABLED=0 go test -count=1 -timeout 45m \
+              -skip 'TestImageNotPullable|TestOneAgentCodeModulesImageNotPullable|TestInstallAgentFromUrl/error_when_creating_temp_file|TestPublishVolume/sad_path|TestPublishVolume/early_return_-_FS_problem' \
+              $pkgs
+        - name: build dynatrace-operator
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -s -w
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.Version=v1.9.0
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.Commit=6e82adde010b0b8a3064de041b5faaacdf2fddfe
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%S+00:00')
+              - -extldflags=-static
+            output: ${target.dir}/usr/bin/dynatrace-operator
+            packages: ./cmd
+            trimpath: true
+        - name: build dynatrace-operator dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.Version=v1.9.0
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.Commit=6e82adde010b0b8a3064de041b5faaacdf2fddfe
+              - -X github.com/Dynatrace/dynatrace-operator/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%S+00:00')
+              - -extldflags=-static
+            output: ${target.dir}/usr/bin/dynatrace-operator-dev
+            packages: ./cmd
+            strip: false
+            trimpath: true
+        - uses: dhi/build-pkg:0
+          with:
+            description: Dynatrace Operator
+            files:
+              - usr/bin/dynatrace-operator
+            license: Apache-2.0
+            name: dynatrace-operator-1.9
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/dynatrace-operator
+                    source: usr/bin/dynatrace-operator-dev
+                name: dynatrace-operator-1.9-dev
+            url: https://github.com/Dynatrace/dynatrace-operator
+            version: 1.9.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
