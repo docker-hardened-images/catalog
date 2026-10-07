@@ -1,0 +1,159 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-vaultwarden
+variant: runtime
+tags:
+  - 1.37.3
+  - 1.37.3-r0
+  - 1.37.3-debian13
+  - 1.37.3-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2018-08-21"
+vars:
+  CARGO_VERSION: 1.98.1-0
+  COMMIT_SHA: eb212e23fad88e6136723f43e5b73543fa7026d3
+  GCC_DEFAULTS_VERSION: 4:14.2.0-1+dhi0
+  GCC_VERSION: 14.2.0-19+dhi3
+  PACKAGE_NAME: vaultwarden-1
+  REL: "0"
+  RUSTC_VERSION: 1.98.1-0
+  SEMVER_MAJOR_MINOR_VERSION: "1.37"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.37.3
+  VERSION: 1.37.3
+  WEB_VAULT_VERSION: v2026.7.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: vaultwarden
+      work-dir: ${source.dir}/vaultwarden
+      environment:
+        CARGO_HOME: /root/.cargo
+        VW_VERSION: 1.37.3
+        ZSTD_SYS_USE_PKG_CONFIG: "1"
+      caches:
+        - path: /root/.cargo
+      contents:
+        packages:
+          - bash
+          - binutils
+          - build-essential
+          - ca-certificates
+          - cargo-1.98=1.98.1-0
+          - coreutils
+          - gcc-14=14.2.0-19+dhi3
+          - gcc=4:14.2.0-1+dhi0
+          - git
+          - grep
+          - gzip
+          - libmariadb-dev
+          - libpq-dev
+          - libsqlite3-0
+          - libsqlite3-dev
+          - libssl-dev
+          - libzstd-dev
+          - pkg-config
+          - rustc-1.98=1.98.1-0
+          - sed
+          - tar
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/dani-garcia/vaultwarden.git#1.37.3
+            checksum: eb212e23fad88e6136723f43e5b73543fa7026d3
+            path: ${source.dir}/vaultwarden
+            spdx:
+              name: vaultwarden
+              version: 1.37.3
+              packages:
+                - name: vaultwarden
+                  purl: pkg:github/dani-garcia/vaultwarden@1.37.3
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+          - url: https://github.com/dani-garcia/bw_web_builds/releases/download/v2026.7.0/bw_web_v2026.7.0.tar.gz
+            checksum: https://github.com/dani-garcia/bw_web_builds/releases/download/v2026.7.0/sha256sums.txt
+            path: ${source.dir}/bw_web_v2026.7.0.tar.gz
+            spdx:
+              name: bw_web_builds
+              version: v2026.7.0
+              packages:
+                - name: bw_web_builds
+                  purl: pkg:github/dani-garcia/bw_web_builds@v2026.7.0
+                  license: GPL-3.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch rustls
+          uses: patch@v1
+          work-dir: ${source.dir}/vaultwarden
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/rustls-0.23.45.patch
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: vaultwarden-cargo
+            source: ${source.dir}/vaultwarden
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo build --features sqlite_system,mysql,postgresql --locked --release
+
+            install -D -m 755 target/release/vaultwarden "${target.dir}/usr/bin/vaultwarden"
+            install -D -m 755 docker/start.sh "${target.dir}/usr/lib/vaultwarden/start.sh"
+            sed -i 's#^exec /vaultwarden #exec /usr/bin/vaultwarden #' "${target.dir}/usr/lib/vaultwarden/start.sh"
+            grep -q '^exec /usr/bin/vaultwarden ' "${target.dir}/usr/lib/vaultwarden/start.sh"
+            mkdir -p "${target.dir}/usr/share/vaultwarden"
+            tar -xzf "${source.dir}/bw_web_v2026.7.0.tar.gz" -C "${target.dir}/usr/share/vaultwarden"
+            test -f "${target.dir}/usr/share/vaultwarden/web-vault/index.html"
+            test -f "${target.dir}/usr/share/vaultwarden/web-vault/vw-version.json"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+              - dash
+              - libc6
+              - libgcc-s1
+              - libmariadb3
+              - libpq5
+              - libsqlite3-0
+              - libssl3t64
+              - libzstd1
+            description: Unofficial Bitwarden-compatible server written in Rust
+            files:
+              - usr/bin/vaultwarden
+              - usr/lib/vaultwarden
+              - usr/share/vaultwarden
+            formats:
+              - deb
+            license: AGPL-3.0-only
+            name: vaultwarden-1
+            rel: 0
+            url: https://github.com/dani-garcia/vaultwarden
+            version: 1.37.3
+      paths:
+        - type: file
+          path: ${source.dir}/patch/rustls-0.23.45.patch
+          uid: 0
+          gid: 0
+          source: package/main/vaultwarden/patch/rustls-0.23.45.patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
