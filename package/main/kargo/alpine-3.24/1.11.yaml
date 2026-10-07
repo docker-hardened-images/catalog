@@ -1,0 +1,245 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kargo
+variant: runtime
+tags:
+  - 1.11-alpine3.24
+  - 1.11.6-alpine3.24
+  - 1.11.6-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-24"
+vars:
+  COMMIT_SHA: 4f2852603c8046f786c732a049cd38c143d081ff
+  GOLANG_VERSION: 1.27.1-r0
+  HELM_COMMIT_SHA: 144ca65f8501953fa8b41cd1d37c7223051c85b7
+  HELM_SPDX_VERSION: 3.22.0
+  HELM_VERSION: v3.22.0
+  K8S_UTILS_VERSION: v0.0.0-20250604170112-4c0f3b243397
+  K8S_VERSION: v0.34.3
+  KUBE_OPENAPI_VERSION: v0.0.0-20250710124328-f3f2b991d03b
+  KUBECTL_VERSION: v0.34.2
+  NODEJS_SERIES: "26"
+  NODEJS_VERSION: 26.10.0-r0
+  NPM_VERSION: 12.2.0-r0
+  PACKAGE_NAME: kargo-1.11
+  PNPM_VERSION: 9.0.3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.11"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.11.6
+  SHIP_GRPC_HEALTH_PROBE: "false"
+  VERSION: 1.11.6
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kargo-1.11
+      work-dir: /go/src/github.com/akuity/kargo
+      caches:
+        - path: /root/.cache/go-build
+        - path: /root/.local/share/pnpm/store
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.27=1.27.1-r0
+          - golang-1.27-oci-config=1.27.1-r0
+          - nodejs-26=26.10.0-r0
+          - npm-12=12.2.0-r0
+        files:
+          - url: git+https://github.com/akuity/kargo.git#v1.11.6
+            checksum: 4f2852603c8046f786c732a049cd38c143d081ff
+            path: /go/src/github.com/akuity/kargo
+            spdx:
+              name: kargo
+              version: 1.11.6
+              packages:
+                - name: kargo
+                  purl: pkg:golang/github.com/akuity/kargo@1.11.6
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/helm/helm.git#v3.22.0
+            checksum: 144ca65f8501953fa8b41cd1d37c7223051c85b7
+            path: /go/src/github.com/helm/helm
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - helm.sh/helm/v3@v3.20.2
+              - oras.land/oras-go/v2@v2.6.2
+              - google.golang.org/grpc@v1.83.2
+            download: true
+            replaces:
+              - k8s.io/api=k8s.io/api@v0.34.3
+              - k8s.io/apiextensions-apiserver=k8s.io/apiextensions-apiserver@v0.34.3
+              - k8s.io/apimachinery=k8s.io/apimachinery@v0.34.3
+              - k8s.io/apiserver=k8s.io/apiserver@v0.34.3
+              - k8s.io/cli-runtime=k8s.io/cli-runtime@v0.34.3
+              - k8s.io/client-go=k8s.io/client-go@v0.34.3
+              - k8s.io/component-base=k8s.io/component-base@v0.34.3
+              - k8s.io/kubectl=k8s.io/kubectl@v0.34.2
+              - k8s.io/kube-openapi=k8s.io/kube-openapi@v0.0.0-20250710124328-f3f2b991d03b
+              - k8s.io/utils=k8s.io/utils@v0.0.0-20250604170112-4c0f3b243397
+        - uses: go/hermetic@v1
+        - name: install pnpm
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install -g pnpm@9.0.3
+            pnpm --version
+        - name: build ui
+          work-dir: /go/src/github.com/akuity/kargo/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --frozen-lockfile
+            NODE_ENV=production VERSION=v1.11.6 pnpm run build
+            test -f build/index.html
+            rm -rf /go/src/github.com/akuity/kargo/pkg/server/ui
+            mkdir -p /go/src/github.com/akuity/kargo/pkg/server/ui
+            cp -a build/. /go/src/github.com/akuity/kargo/pkg/server/ui/
+            rm -rf node_modules
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            pkgs="./pkg/x/version ./cmd/credential-helper ./pkg/conditions"
+            for p in ./pkg/cache ./pkg/component ./pkg/credentials/basic; do
+              if [ -d "$p" ]; then
+                pkgs="${pkgs} ${p}"
+              fi
+            done
+            go test -count=1 ${pkgs}
+        - name: build credential-helper
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w -s
+            output: ${target.dir}/usr/bin/credential-helper
+            packages: ./cmd/credential-helper
+        - name: build kargo
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w
+              - -X github.com/akuity/kargo/pkg/x/version.version=v1.11.6
+              - -X github.com/akuity/kargo/pkg/x/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/akuity/kargo/pkg/x/version.gitCommit=4f2852603c8046f786c732a049cd38c143d081ff
+              - -X github.com/akuity/kargo/pkg/x/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/kargo
+            packages: ./cmd/controlplane
+        - name: build kargo dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/akuity/kargo/pkg/x/version.version=v1.11.6
+              - -X github.com/akuity/kargo/pkg/x/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/akuity/kargo/pkg/x/version.gitCommit=4f2852603c8046f786c732a049cd38c143d081ff
+              - -X github.com/akuity/kargo/pkg/x/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/kargo-dev
+            packages: ./cmd/controlplane
+            strip: false
+        - name: update helm dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/helm/helm
+          with:
+            deps:
+              - golang.org/x/crypto@v0.57.0
+            tidy: true
+        - name: helm kubernetes version
+          work-dir: /go/src/github.com/helm/helm
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            k8s_version="$(go list -f '{{.Version}}' -m k8s.io/client-go)"
+            major="$(echo "${k8s_version}" | cut -d. -f1 | tr -d v)"
+            echo "$((major + 1))" > /tmp/k8s-major
+            echo "${k8s_version}" | cut -d. -f2 > /tmp/k8s-minor
+        - name: build helm
+          uses: go/build@v1
+          work-dir: /go/src/github.com/helm/helm
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w -s
+              - -X helm.sh/helm/v3/internal/version.version=3.22.0
+              - -X helm.sh/helm/v3/internal/version.gitCommit=144ca65f8501953fa8b41cd1d37c7223051c85b7
+              - -X helm.sh/helm/v3/internal/version.gitTreeState=clean
+              - -X helm.sh/helm/v3/internal/version.metadata=
+              - -X helm.sh/helm/v3/pkg/chartutil.k8sVersionMajor=$(cat /tmp/k8s-major)
+              - -X helm.sh/helm/v3/pkg/chartutil.k8sVersionMinor=$(cat /tmp/k8s-minor)
+              - -X helm.sh/helm/v3/pkg/lint/rules.k8sVersionMajor=$(cat /tmp/k8s-major)
+              - -X helm.sh/helm/v3/pkg/lint/rules.k8sVersionMinor=$(cat /tmp/k8s-minor)
+            output: ${target.dir}/usr/bin/helm
+            packages: ./cmd/helm
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: helm
+            purl: pkg:golang/helm.sh/helm/v3@3.22.0
+            version: 3.22.0
+        - name: sbom
+          uses: sbom@v1
+          with:
+            prefix: kargo
+            source: /go/src/github.com/akuity/kargo
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kargo application lifecycle orchestrator
+            files:
+              - usr/bin/kargo
+              - usr/bin/credential-helper
+              - usr/bin/helm
+            license: Apache-2.0
+            name: kargo-1.11
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/kargo
+                    source: usr/bin/kargo-dev
+                name: kargo-1.11-dev
+            url: https://github.com/akuity/kargo
+            version: 1.11.6
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
