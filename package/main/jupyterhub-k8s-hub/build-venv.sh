@@ -32,6 +32,9 @@ export PG_CONFIG="${PG_CONFIG:-/usr/bin/pg_config}"
 # idna: CVE-2026-45409
 # pyjwt: CVE-2026-48522 CVE-2026-48524 CVE-2026-48525 CVE-2026-48526
 # tornado: CVE-2026-49854
+# oauthlib: CVE-2026-49264 CVE-2026-49265
+# mako: CVE-2026-102991
+# multidict: CVE-2026-104874
 # pyasn1: CVE-2026-59884 CVE-2026-59885 CVE-2026-59886
 "${PYTHON_BIN}" -m pip --python "${VENV_PY}" install --no-cache-dir --upgrade \
   'aiohttp>=3.13.4' \
@@ -40,7 +43,10 @@ export PG_CONFIG="${PG_CONFIG:-/usr/bin/pg_config}"
   'idna>=3.15' \
   'pyjwt>=2.13.0' \
   'tornado>=6.5.6' \
-  'pyasn1>=0.6.4'
+  'pyasn1>=0.6.4' \
+  'oauthlib==4.0.0' \
+  'mako==1.4.3' \
+  'multidict==6.9.1'
 
 # moment (jupyterhub static asset): CVE-2026-17495 — tarball staged in definition contents.files
 MOMENT_TARBALL="${SOURCE_DIR}/moment-2.31.0.tgz"
