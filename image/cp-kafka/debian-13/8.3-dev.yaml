@@ -1,0 +1,302 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Confluent Platform Kafka 8.3.x (dev)
+image: dhi.io/cp-kafka
+variant: dev
+tags:
+  - 8-dev
+  - 8.3-dev
+  - 8.3.2-dev
+  - 8-debian-dev
+  - 8-debian13-dev
+  - 8.3-debian-dev
+  - 8.3-debian13-dev
+  - 8.3.2-debian-dev
+  - 8.3.2-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-17"
+vars:
+  COMMIT_SHA: 2401dbc2e02a75da67a8e7df3e29e4d6b2a6f41c
+  COMMON_DOCKER_COMMIT_SHA: bd975fc90572484669fc5a637a7e798222658bf4
+  COMMON_DOCKER_VERSION: 8.3.2
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_VERSION: 1:25.0.4.1+1-4
+  JDK_MAJOR_VERSION: "25"
+  KAFKA_PACKAGE: kafka-4.3
+  KAFKA_VERSION: 4.3.1-9
+  PACKAGE_FIPS_SUFFIX: ""
+  SEMVER_MAJOR_MINOR_VERSION: "8.3"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.3.2
+  UB_VERSION: 1.0.18-0
+  VERSION: 8.3.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - cp-docker-utils-1=1.0.18-0
+    - diffutils
+    - dpkg
+    - eclipse-temurin-25-jre-oci-config=1:25.0.4.1+1-4
+    - eclipse-temurin-25-jre=1:25.0.4.1+1-4
+    - findutils
+    - grep
+    - hostname
+    - kafka-4.3=4.3.1-9
+    - libasound2t64
+    - libc-bin
+    - libgcc-s1
+    - libstdc++6
+    - mawk
+    - perl-base
+    - procps
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: confluent-launch-scripts
+      work-dir: ${source.dir}/kafka-images/kafka/include/etc/confluent/docker
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - grep
+        files:
+          - url: git+https://github.com/confluentinc/kafka-images.git#v8.3.2
+            checksum: 2401dbc2e02a75da67a8e7df3e29e4d6b2a6f41c
+            path: ${source.dir}/kafka-images
+            spdx:
+              name: kafka-images
+              version: 8.3.2
+              packages:
+                - name: kafka-images
+                  purl: pkg:github/confluentinc/kafka-images@8.3.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/confluentinc/common-docker.git#v8.3.2
+            checksum: bd975fc90572484669fc5a637a7e798222658bf4
+            path: ${source.dir}/common-docker
+            spdx:
+              name: common-docker
+              version: 8.3.2
+              packages:
+                - name: common-docker
+                  purl: pkg:github/confluentinc/common-docker@8.3.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage confluent launch scripts
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/etc/confluent/docker"
+            mkdir -p "$DEST"
+
+            for f in *; do
+              case "$f" in
+                configure | ensure | launch | run | *.template) ;;
+                *)
+                  echo "FATAL: unhandled upstream launch-script file: $f" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            for f in configure ensure launch run; do
+              install -m 0755 "$f" "$DEST/$f"
+            done
+            for f in *.template; do
+              install -m 0644 "$f" "$DEST/$f"
+            done
+
+            install -m 0644 \
+              "${source.dir}/common-docker/base-java-micro/include/etc/confluent/docker/bash-config" \
+              "$DEST/bash-config"
+
+            test -f "$DEST/kafka.properties.template"
+            test -f "$DEST/log4j2.yaml.template"
+
+            ! grep -nE '(^|[^a-z])(cub|dub) ' "$DEST/configure" "$DEST/ensure" "$DEST/launch" "$DEST/run"
+      outputs:
+        - source: ${target.dir}/etc/confluent/docker
+          target: /etc/confluent/docker
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kafka-images
+          target: /opt/docker/sbom/kafka-images
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/common-docker
+          target: /opt/docker/sbom/common-docker
+          uid: 0
+          gid: 0
+    - name: kafka-command-wrappers
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - kafka-4.3=4.3.1-9
+      pipeline:
+        - name: generate bare-name wrappers
+          runs: |
+            set -eux -o pipefail
+
+            BIN="${target.dir}/usr/bin"
+            mkdir -p "$BIN"
+
+            test -f /usr/share/kafka/bin/kafka-server-start.sh
+            test -f /usr/share/kafka/bin/kafka-run-class.sh
+
+            for f in /usr/share/kafka/bin/*.sh; do
+              name="$(basename "$f" .sh)"
+              case "$name" in
+                kafka-server-start | kafka-server-stop | zookeeper-server-stop | trogdor)
+                  continue
+                  ;;
+              esac
+              printf '#!/bin/bash\nexec %s "$@"\n' "$f" > "$BIN/$name"
+              chmod 0755 "$BIN/$name"
+            done
+      outputs:
+        - source: ${target.dir}/usr/bin
+          target: /usr/bin
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: appuser
+      uid: 1000
+      gid: 1000
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: appuser
+      gid: 1000
+      members:
+        - appuser
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/appuser
+environment:
+  COMPONENT: kafka
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-25
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  LOG_DIR: /var/log/kafka
+paths:
+  - type: directory
+    path: /var/lib/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/lib/kafka/data
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka/secrets
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/log/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/log/confluent
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /home/appuser
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: file
+    path: /usr/bin/kafka-server-start
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-kafka/bin/kafka-server-start
+  - type: directory
+    path: /usr/share/java
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/share/java/kafka
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/libs
+  - type: file
+    path: /usr/bin/kafka-server-stop
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-kafka/bin/kafka-server-stop
+annotations:
+  org.opencontainers.image.description: Confluent Platform Kafka - Apache Kafka configured through KAFKA_* environment variables by the Confluent container launch scripts
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /etc/confluent/docker/run
+ports:
+  - 9092/tcp

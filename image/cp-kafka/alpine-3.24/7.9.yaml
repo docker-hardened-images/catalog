@@ -1,0 +1,273 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+name: Confluent Platform Kafka 7.9.x
+image: dhi.io/cp-kafka
+variant: runtime
+tags:
+  - 7-alpine
+  - 7.9-alpine
+  - 7-alpine3.24
+  - 7.9.10-alpine
+  - 7.9-alpine3.24
+  - 7.9.10-alpine3.24
+platforms:
+  - linux/amd64
+dates:
+  release: "2025-02-19"
+vars:
+  COMMIT_SHA: ffd841688b14b1cbf5f3b1c2873ebb53098b172f
+  COMMON_DOCKER_COMMIT_SHA: bdae688c8d580c6860a0cf427d9be1cb4b13ed73
+  COMMON_DOCKER_VERSION: 7.9.10
+  DUB_VERSION: 0.0.172-r10
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_VERSION: 17.0.20.8.1.1-r2
+  JDK_MAJOR_VERSION: "17"
+  KAFKA_PACKAGE: kafka-3.9
+  KAFKA_VERSION: 3.9.2-r0
+  PACKAGE_FIPS_SUFFIX: ""
+  SEMVER_MAJOR_MINOR_VERSION: "7.9"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.9.10
+  VERSION: 7.9.10
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+    - bash
+    - busybox
+    - ca-certificates-bundle
+    - confluent-docker-utils=0.0.172-r10
+    - coreutils
+    - eclipse-temurin-17-jre-oci-config=17.0.20.8.1.1-r2
+    - eclipse-temurin-17-jre=17.0.20.8.1.1-r2
+    - gcompat
+    - grep
+    - kafka-3.9=3.9.2-r0
+    - python-3.13
+    - sed
+    - tzdata
+  builds:
+    - name: confluent-launch-scripts
+      work-dir: ${source.dir}/kafka-images/kafka/include/etc/confluent/docker
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - grep
+          - sed
+        files:
+          - url: git+https://github.com/confluentinc/kafka-images.git#v7.9.10
+            checksum: ffd841688b14b1cbf5f3b1c2873ebb53098b172f
+            path: ${source.dir}/kafka-images
+            spdx:
+              name: kafka-images
+              version: 7.9.10
+              packages:
+                - name: kafka-images
+                  purl: pkg:github/confluentinc/kafka-images@7.9.10
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/confluentinc/common-docker.git#v7.9.10
+            checksum: bdae688c8d580c6860a0cf427d9be1cb4b13ed73
+            path: ${source.dir}/common-docker
+            spdx:
+              name: common-docker
+              version: 7.9.10
+              packages:
+                - name: common-docker
+                  purl: pkg:github/confluentinc/common-docker@7.9.10
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage confluent launch scripts
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/etc/confluent/docker"
+            mkdir -p "$DEST"
+
+            for f in *; do
+              case "$f" in
+                configure | ensure | launch | run | *.template) ;;
+                *)
+                  echo "FATAL: unhandled upstream launch-script file: $f" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            for f in configure ensure launch run; do
+              install -m 0755 "$f" "$DEST/$f"
+            done
+            for f in *.template; do
+              install -m 0644 "$f" "$DEST/$f"
+            done
+
+            install -m 0644 \
+              "${source.dir}/common-docker/base/include/etc/confluent/docker/bash-config" \
+              "$DEST/bash-config"
+
+            test -f "$DEST/kafka.properties.template"
+        - name: replace cub invocations
+          runs: |
+            set -eux -o pipefail
+
+            DEST="${target.dir}/etc/confluent/docker"
+
+            grep -qF 'KAFKA_LISTENERS=$(cub listeners "$KAFKA_ADVERTISED_LISTENERS")' "$DEST/configure"
+            sed -i 's@KAFKA_LISTENERS=$(cub listeners "$KAFKA_ADVERTISED_LISTENERS")@KAFKA_LISTENERS=$(sed -E "s#://[^:]*:#://0.0.0.0:#g" <<< "$KAFKA_ADVERTISED_LISTENERS")@' \
+              "$DEST/configure"
+
+            grep -qF 'cub zk-ready "$KAFKA_ZOOKEEPER_CONNECT" "${KAFKA_CUB_ZK_TIMEOUT:-40}"' "$DEST/ensure"
+            sed -i 's@cub zk-ready "$KAFKA_ZOOKEEPER_CONNECT" "${KAFKA_CUB_ZK_TIMEOUT:-40}"@/etc/confluent/docker/zk-ready "$KAFKA_ZOOKEEPER_CONNECT" "${KAFKA_CUB_ZK_TIMEOUT:-40}"@' \
+              "$DEST/ensure"
+            install -m 0755 "${source.dir}/zk-ready" "$DEST/zk-ready"
+
+            ! grep -nE '(^|[^a-z])cub ' "$DEST/configure" "$DEST/ensure" "$DEST/launch" "$DEST/run"
+      paths:
+        - type: file
+          path: ${source.dir}/zk-ready
+          uid: 0
+          gid: 0
+          source: image/cp-kafka/bin/zk-ready
+      outputs:
+        - source: ${target.dir}/etc/confluent/docker
+          target: /etc/confluent/docker
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kafka-images
+          target: /opt/docker/sbom/kafka-images
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/common-docker
+          target: /opt/docker/sbom/common-docker
+          uid: 0
+          gid: 0
+    - name: kafka-command-wrappers
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - kafka-3.9=3.9.2-r0
+      pipeline:
+        - name: generate bare-name wrappers
+          runs: |
+            set -eux -o pipefail
+
+            BIN="${target.dir}/usr/bin"
+            mkdir -p "$BIN"
+
+            test -f /usr/share/kafka/bin/kafka-server-start.sh
+            test -f /usr/share/kafka/bin/kafka-run-class.sh
+
+            for f in /usr/share/kafka/bin/*.sh; do
+              name="$(basename "$f" .sh)"
+              case "$name" in
+                kafka-server-start | kafka-server-stop | zookeeper-server-stop | trogdor)
+                  continue
+                  ;;
+              esac
+              printf '#!/bin/bash\nexec %s "$@"\n' "$f" > "$BIN/$name"
+              chmod 0755 "$BIN/$name"
+            done
+      outputs:
+        - source: ${target.dir}/usr/bin
+          target: /usr/bin
+          uid: 0
+          gid: 0
+accounts:
+  run-as: appuser
+  users:
+    - name: appuser
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: appuser
+      gid: 1000
+      members:
+        - appuser
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/appuser
+environment:
+  COMPONENT: kafka
+  JAVA_HOME: /usr/lib/jvm/temurin-17
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  LOG_DIR: /var/log/kafka
+paths:
+  - type: directory
+    path: /var/lib/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/lib/kafka/data
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /etc/kafka/secrets
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/log/kafka
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /var/log/confluent
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+  - type: directory
+    path: /home/appuser
+    uid: 1000
+    gid: 1000
+    mode: "0750"
+  - type: file
+    path: /usr/bin/kafka-server-start
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/cp-kafka/bin/kafka-server-start
+  - type: directory
+    path: /usr/share/java
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/share/java/kafka
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/libs
+  - type: directory
+    path: /var/lib/zookeeper
+    uid: 1000
+    gid: 1000
+    mode: "0770"
+annotations:
+  org.opencontainers.image.description: Confluent Platform Kafka - Apache Kafka configured through KAFKA_* environment variables by the Confluent container launch scripts
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /etc/confluent/docker/run
+ports:
+  - 9092/tcp
