@@ -93,6 +93,8 @@ find localstack-core/.filesystem/usr/lib/localstack -maxdepth 1 -name 'service-c
 "${VENV}/bin/python3" -m pip install --upgrade 'idna>=3.15'           # Fix CVE-2026-45409
 "${VENV}/bin/python3" -m pip install --upgrade 'click>=8.3.3'         # Fix CVE-2026-7246
 "${VENV}/bin/python3" -m pip install --upgrade 'h2>=4.4.1'            # Fix CVE-2026-71554
+"${VENV}/bin/python3" -m pip install --upgrade 'pymongo==4.18.2'      # Fix CVE-2026-96748, CVE-2026-96749, CVE-2026-88029, CVE-2026-96747
+"${VENV}/bin/python3" -m pip install --upgrade 'werkzeug==3.1.9'      # Fix CVE-2026-102598
 
 "${VENV}/bin/python3" -m pip uninstall -y pip
 
