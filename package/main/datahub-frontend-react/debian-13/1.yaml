@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-frontend-react
 variant: runtime
 tags:
   - 1.7.0.1
-  - 1.7.0.1-r8
+  - 1.7.0.1-r9
   - 1.7.0.1-debian13
-  - 1.7.0.1-r8-debian13
+  - 1.7.0.1-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -24,7 +24,7 @@ vars:
   OTEL_JAVAAGENT_VERSION: 2.28.0
   PACKAGE_HOME: /usr/share/datahub-frontend-react
   PACKAGE_NAME: datahub-frontend-react
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0
@@ -159,6 +159,18 @@ contents:
                   license: MIT
             uid: 0
             gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/at/yawk/lz4/lz4-java/1.11.2/lz4-java-1.11.2.jar
+            checksum: sha256:8a7458657938e9b692224db83aac458c13abd7a59ab75c3d3b08bd2233a646a2
+            path: ${source.dir}/patch/deps/lz4-java-1.11.2.jar
+            spdx:
+              name: lz4-java
+              version: 1.11.2
+              packages:
+                - name: lz4-java
+                  purl: pkg:maven/at.yawk.lz4/lz4-java@1.11.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - name: install gradle init scripts
           runs: |
@@ -201,19 +213,15 @@ contents:
             grep -q "ext.jacksonVersion = '2.21.7'" build.gradle
             grep -q "ext.jacksonVersion = '2.21.7'" buildSrc/build.gradle
 
-            sed -i \
-              -e "s|at.yawk.lz4:lz4-java:1.10.1|at.yawk.lz4:lz4-java:1.11.1|g" \
-              build.gradle
-            if grep -q "ext.lz4JavaVersion = '1.11.1'" build.gradle; then
-              :
-            elif grep -q 'at.yawk.lz4:lz4-java:1.11.1' build.gradle; then
-              :
-            else
-              echo "expected lz4-java 1.11.1 pin not found in build.gradle" >&2
-              exit 1
-            fi
-            if grep -q 'at.yawk.lz4:lz4-java:1.10.1' build.gradle; then
-              echo "lz4-java 1.10.1 pin still present after sed" >&2
+            find . \( -name '*.gradle' -o -name '*.gradle.kts' -o -name 'gradle.lockfile' \) -print0 \
+              | xargs -0 sed -i \
+                -e 's|at\.yawk\.lz4:lz4-java:1\.10\.1|at.yawk.lz4:lz4-java:1.11.2|g' \
+                -e 's|at\.yawk\.lz4:lz4-java:1\.11\.1|at.yawk.lz4:lz4-java:1.11.2|g' \
+                -e "s|ext.lz4JavaVersion = '1.10.1'|ext.lz4JavaVersion = '1.11.2'|g" \
+                -e "s|ext.lz4JavaVersion = '1.11.1'|ext.lz4JavaVersion = '1.11.2'|g"
+
+            if grep -rE 'at\.yawk\.lz4:lz4-java:1\.(10|11)\.1' --include='*.gradle' --include='*.gradle.kts' --include='gradle.lockfile' .; then
+              echo "lz4-java 1.10.1/1.11.1 pin still present after sed" >&2
               exit 1
             fi
 
@@ -222,8 +230,15 @@ contents:
             // ===== DHI CVE remediation: force minimum versions =====
             allprojects {
                 configurations.configureEach {
+                    resolutionStrategy {
+                        force 'at.yawk.lz4:lz4-java:1.11.2'
+                    }
                     resolutionStrategy.eachDependency { details ->
                         def req = details.requested
+                        if (req.group == 'at.yawk.lz4' && req.name == 'lz4-java') {
+                            details.useVersion '1.11.2'
+                            details.because 'DHI CVE remediation: CVE-2026-106452, CVE-2026-106453, CVE-2026-59949'
+                        }
                         if (req.group == 'com.typesafe.akka' && req.name.startsWith('akka-')) {
                             if (req.name == 'akka-http_2.13' || req.name == 'akka-http-core_2.13' || req.name == 'akka-parsing_2.13') {
                                 details.useVersion '10.5.3'
@@ -360,6 +375,7 @@ contents:
             replace_loose_jar jackson-databind-3.1.6.jar tools-jackson-databind-3.1.7.jar
             replace_loose_jar bcprov-jdk18on-1.84.jar bcprov-jdk18on-1.85.jar
             replace_loose_jar bcpkix-jdk18on-1.84.jar bcpkix-jdk18on-1.85.jar
+            replace_loose_jar lz4-java-1.11.1.jar lz4-java-1.11.2.jar
         - name: fetch otel javaagent
           privileged: true
           runs: |
@@ -416,7 +432,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-frontend-react
-            rel: 8
+            rel: 9
             url: https://datahubproject.io/
             version: 1.7.0.1
       paths:
