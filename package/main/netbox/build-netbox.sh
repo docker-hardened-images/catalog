@@ -65,7 +65,7 @@ rm -f "${APP}/netbox/project-static/yarn.lock"
 rm -f "${APP}/netbox/project-static/package.json"
 rm -f "${APP}/netbox/project-static/netbox-graphiql/package.json"
 
-find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \) || true
+find "${VENV}" \( -type d \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \) || true
 find "${VENV}" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete || true
 
 for f in "${VENV}/bin"/*; do
