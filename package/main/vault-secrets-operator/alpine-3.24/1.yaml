@@ -1,0 +1,154 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-vault-secrets-operator
+variant: runtime
+tags:
+  - 1.6.0-alpine3.24
+  - 1.6.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-09-25"
+vars:
+  COMMIT_SHA: 92e69f61366ec3675af3cb5592f8f4ca3b86efa8
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.1-r1
+  PACKAGE_NAME: vault-secrets-operator-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.6"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.6.0
+  VERSION: 1.6.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: vault-secrets-operator-1
+      work-dir: /go/src/github.com/hashicorp/vault-secrets-operator
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.1-r1
+          - golang-1.27-oci-config=1.27.1-r1
+        files:
+          - url: git+https://github.com/hashicorp/vault-secrets-operator.git#v1.6.0
+            checksum: 92e69f61366ec3675af3cb5592f8f4ca3b86efa8
+            path: /go/src/github.com/hashicorp/vault-secrets-operator
+            spdx:
+              name: vault-secrets-operator
+              version: 1.6.0
+              packages:
+                - name: vault-secrets-operator
+                  purl: pkg:golang/github.com/hashicorp/vault-secrets-operator@1.6.0
+                  license: BUSL-1.1
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.83.2
+            downgrade: true
+            download: true
+            replaces:
+              - google.golang.org/grpc=google.golang.org/grpc@v1.83.2
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -count=1 ./options/ ./template/
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Major=$(echo 1.6.0 | cut -d. -f1)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Minor=$(echo 1.6.0 | cut -d. -f2)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitVersion=1.6.0
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitCommit=92e69f61366ec3675af3cb5592f8f4ca3b86efa8
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitTreeState=clean
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +%Y-%m-%dT%H:%M:%S%z)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GoVersion=$(go env GOVERSION)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Compiler=gc
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Platform=$(go env GOOS)/$(go env GOARCH)
+            output: ${target.dir}/usr/bin/vault-secrets-operator
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Major=$(echo 1.6.0 | cut -d. -f1)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Minor=$(echo 1.6.0 | cut -d. -f2)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitVersion=1.6.0
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitCommit=92e69f61366ec3675af3cb5592f8f4ca3b86efa8
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GitTreeState=clean
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +%Y-%m-%dT%H:%M:%S%z)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.GoVersion=$(go env GOVERSION)
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Compiler=gc
+              - -X github.com/hashicorp/vault-secrets-operator/internal/version.Platform=$(go env GOOS)/$(go env GOARCH)
+            output: ${target.dir}/usr/bin/vault-secrets-operator-dev
+            packages: .
+            strip: false
+        - name: stage share files
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/share/vault-secrets-operator/crds"
+            install -d "${target.dir}/usr/share/doc/vault-secrets-operator"
+            set -- chart/crds/*.yaml
+            test "$#" -eq 8
+            cp -a chart/crds/. "${target.dir}/usr/share/vault-secrets-operator/crds/"
+            install -m 0644 LICENSE "${target.dir}/usr/share/doc/vault-secrets-operator/LICENSE.txt"
+            cp -a "${target.dir}/usr/share/vault-secrets-operator" "${target.dir}/usr/share/vault-secrets-operator-dev"
+            install -d "${target.dir}/usr/share/doc/vault-secrets-operator-dev"
+            cp -a "${target.dir}/usr/share/doc/vault-secrets-operator/LICENSE.txt" "${target.dir}/usr/share/doc/vault-secrets-operator-dev/LICENSE.txt"
+        - uses: dhi/build-pkg:0
+          with:
+            commit: 92e69f61366ec3675af3cb5592f8f4ca3b86efa8
+            description: Vault Secrets Operator
+            files:
+              - usr/bin/vault-secrets-operator
+              - usr/share/vault-secrets-operator/crds
+              - usr/share/doc/vault-secrets-operator/LICENSE.txt
+            license: BUSL-1.1
+            name: vault-secrets-operator-1
+            rel: 0
+            subpackages:
+              - description: Vault Secrets Operator debug build
+                files:
+                  - path: usr/bin/vault-secrets-operator
+                    source: usr/bin/vault-secrets-operator-dev
+                  - path: usr/share/vault-secrets-operator/crds
+                    source: usr/share/vault-secrets-operator-dev/crds
+                  - path: usr/share/doc/vault-secrets-operator/LICENSE.txt
+                    source: usr/share/doc/vault-secrets-operator-dev/LICENSE.txt
+                name: vault-secrets-operator-1-dev
+            url: https://github.com/hashicorp/vault-secrets-operator
+            version: 1.6.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
