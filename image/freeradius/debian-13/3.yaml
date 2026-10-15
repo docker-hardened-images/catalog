@@ -1,0 +1,179 @@
+# syntax=dhi.io/build:2-debian13
+
+name: FreeRADIUS 3.2.x
+image: dhi.io/freeradius
+variant: runtime
+tags:
+  - "3"
+  - "3.2"
+  - 3.2.7
+  - 3-debian
+  - 3-debian13
+  - 3.2-debian
+  - 3.2-debian13
+  - 3.2.7-debian
+  - 3.2.7-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  SEMVER_MAJOR_MINOR_VERSION: "3.2"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.2.7
+  VERSION: 3.2.7+dfsg-1+deb13u2
+contents:
+  repositories:
+    - deb http://deb.debian.org/debian trixie main
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://ftp-master.debian.org/keys/archive-key-13.asc
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - freeradius-common=3.2.7+dfsg-1+deb13u2
+    - freeradius-config=3.2.7+dfsg-1+deb13u2
+    - freeradius=3.2.7+dfsg-1+deb13u2
+    - libcap2
+    - libcrypt1
+    - libct4
+    - libfreeradius3=3.2.7+dfsg-1+deb13u2
+    - libgdbm6t64
+    - libjson-c5
+    - libpam0g
+    - libpcap0.8t64
+    - libperl5.40
+    - libreadline8t64
+    - libsqlite3-0
+    - libssl3t64
+    - libsystemd0
+    - libtalloc2
+    - libwbclient0
+    - perl
+    - tzdata
+  builds:
+    - name: freeradius
+      contents:
+        packages:
+          - base-files
+          - ca-certificates-bundle
+          - coreutils
+          - dash
+          - freeradius-common=3.2.7+dfsg-1+deb13u2
+          - freeradius-config=3.2.7+dfsg-1+deb13u2
+          - freeradius=3.2.7+dfsg-1+deb13u2
+          - grep
+          - libcap2
+          - libcrypt1
+          - libct4
+          - libfreeradius3=3.2.7+dfsg-1+deb13u2
+          - libgdbm6t64
+          - libjson-c5
+          - libpam0g
+          - libpcap0.8t64
+          - libperl5.40
+          - libreadline8t64
+          - libsqlite3-0
+          - libssl3t64
+          - libsystemd0
+          - libtalloc2
+          - libwbclient0
+          - make
+          - openssl
+          - perl
+          - sed
+      pipeline:
+        - name: configure and validate
+          runs: |
+            set -eux -o pipefail
+
+            config=/etc/freeradius/3.0/radiusd.conf
+
+            for site in default inner-tunnel; do
+              ln -s "../sites-available/$site" "/etc/freeradius/3.0/sites-enabled/$site"
+            done
+            for module in always attr_filter chap detail detail.log \
+              digest dynamic_clients eap echo exec expiration expr files \
+              linelog logintime mschap ntlm_auth pap passwd preprocess \
+              radutmp realm replicate soh sradutmp unix unpack utf8; do
+              ln -s "../mods-available/$module" "/etc/freeradius/3.0/mods-enabled/$module"
+            done
+
+            eap=/etc/freeradius/3.0/mods-available/eap
+            sed -i \
+              -e 's|/etc/ssl/private/ssl-cert-snakeoil.key|${certdir}/server.key|' \
+              -e 's|/etc/ssl/certs/ssl-cert-snakeoil.pem|${certdir}/server.pem|' \
+              "$eap"
+            make -C /etc/freeradius/3.0/certs
+
+            # The image starts unprivileged, so FreeRADIUS must not attempt to
+            # change users or groups after startup.
+            sed -i \
+              -e 's/^[[:space:]]*user = freerad/# user = freerad/' \
+              -e 's/^[[:space:]]*group = freerad/# group = freerad/' \
+              "$config"
+
+            test -L /etc/freeradius/3.0/mods-enabled/files
+            ! grep -Eq '^[[:space:]]*(user|group)[[:space:]]*=' "$config"
+            freeradius -XC
+
+            chgrp -R 65532 /etc/freeradius
+            chmod -R g+rX /etc/freeradius
+      outputs:
+        - source: /
+          target: /
+          uid: 0
+          gid: 0
+          diff: true
+accounts:
+  run-as: freerad
+  users:
+    - name: freerad
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: freerad
+      gid: 65532
+      members:
+        - freerad
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  FREERADIUS_VERSION: 3.2.7
+paths:
+  - type: directory
+    path: /run/freeradius
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/cache/freeradius
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /var/lib/freeradius
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /var/log/freeradius
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+annotations:
+  org.opencontainers.image.description: A minimal FreeRADIUS image
+  org.opencontainers.image.licenses: GPL-2.0-or-later
+entrypoint:
+  - freeradius
+cmd:
+  - -f
+ports:
+  - 1812/udp
+  - 1813/udp
