@@ -1,0 +1,18 @@
+Subject: Continue processing zip readers with rejected member names
+
+Origin: DHI-internal (Go 1.26 compatibility)
+Description: Treat zip.ErrInsecurePath as a per-member warning because SanitizeZipMemberName independently rejects non-local names before opening archive members.
+Base-Tree: git https://github.com/seaweedfs/seaweedfs.git b65832bdc9bbbcf3682465b1be598627ac386206
+Verify: cmd `go test ./weed/server -run '^TestExtractZipArchivePut$'` expect "ok"
+Forwarded: no (the 4.49 release and current upstream branch still reject the complete archive under Go 1.26)
+Drop-When: upstream >= 4.50 (once extractZipArchive handles zip.ErrInsecurePath)
+
+Go 1.26 enables archive path validation by default and returns a usable zip reader together with zip.ErrInsecurePath. Continuing with that reader lets the existing sanitizer reject only unsafe members while preserving valid files from the same archive.
+
+--- a/weed/server/filer_server_handlers_extract.go
++++ b/weed/server/filer_server_handlers_extract.go
+@@ -74,2 +74,2 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
+-	zr, err := zip.NewReader(ra, size)
+-	if err != nil {
++	zr, err := zip.NewReader(ra, size)
++	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
