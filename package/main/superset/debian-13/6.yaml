@@ -4,9 +4,9 @@ image: dhi.io/pkg-superset
 variant: runtime
 tags:
   - 6.1.0
-  - 6.1.0-r25
+  - 6.1.0-r26
   - 6.1.0-debian13
-  - 6.1.0-r25-debian13
+  - 6.1.0-r26-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,7 @@ vars:
   PYTHON_MAJOR_MINOR_VERSION: "3.11"
   PYTHON_MINOR: "3.11"
   PYTHON_VERSION: 3.11.18-1
-  REL: "25"
+  REL: "26"
   SEMVER_MAJOR_MINOR_VERSION: "6.1"
   SEMVER_MAJOR_VERSION: "6"
   SEMVER_VERSION: 6.1.0
@@ -121,7 +121,7 @@ contents:
             bumps: ${source.dir}/patch/npm-bumps.json
             npm-root: ${source.dir}/superset/superset-frontend
             omit-dev: false
-        - name: refresh simple-git lockfile for CVE-2026-6951
+        - name: refresh simple-git lockfile
           work-dir: ${source.dir}/superset/superset-frontend
           privileged: true
           runs: |
@@ -169,6 +169,7 @@ contents:
             pkg.overrides = pkg.overrides || {};
             pkg.overrides['fflate@0.7'] = '0.7.5';
             pkg.overrides['fflate@0.8'] = '0.8.3';
+            pkg.overrides['@simple-git/argv-parser'] = '2.0.1';
             fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
             NODE
             npm install --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund
@@ -181,6 +182,13 @@ contents:
           with:
             bumps: ${source.dir}/patch/npm-bumps.json
             npm-root: ${source.dir}/superset/superset-frontend
+        - name: refresh argv-parser for CVE-2026-102829
+          work-dir: ${source.dir}/superset/superset-frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm update @simple-git/argv-parser --omit=dev --prefer-offline --no-audit --no-fund
         - name: ui sbom
           uses: sbom@v1
           with:
@@ -219,7 +227,6 @@ contents:
             uv pip install --upgrade 'msgpack>=1.2.1'
             uv pip install --upgrade 'pyarrow>=17.0.0,<26' # PyArrow 26 requires NumPy 2; Superset 6.1 pins NumPy 1.26.
             uv pip install --upgrade 'geopy>=2.5.0,<3'     # CVE-2026-77387
-            uv pip install --upgrade 'urllib3>=2.6.3'
             uv pip install --upgrade 'pillow>=12.2.0'
             uv pip install --upgrade 'pyasn1>=0.6.3'
             uv pip install --upgrade 'pyopenssl>=26.0.0'
@@ -240,8 +247,21 @@ contents:
             uv pip install --upgrade 'pygments>=2.20.0'
             uv pip install --upgrade 'jaraco-context>=6.1.0'
             uv pip install --upgrade 'click>=8.3.3'
-            uv pip install --upgrade 'setuptools>=83.0.0'
+            uv pip install --upgrade 'setuptools>=84.1.0'
             uv pip install --upgrade 'paramiko>=5.0.0' # CVE-2026-44405
+
+            sp="${root}/.venv/lib/python3.11/site-packages"
+            uv pip install --upgrade 'urllib3==2.8.0'
+            rm -rf "${sp}/pip/_vendor/urllib3"
+            cp -a "${sp}/urllib3" "${sp}/pip/_vendor/urllib3"
+            cp -a "${sp}/urllib3-2.8.0.dist-info/licenses/LICENSE.txt" "${sp}/pip/_vendor/urllib3/LICENSE.txt"
+            sed -i 's/urllib3==2\.7\.0/urllib3==2.8.0/' "${sp}/pip/_vendor/vendor.txt"
+            grep -q 'urllib3==2.8.0' "${sp}/pip/_vendor/vendor.txt"
+            if [ -f "${sp}/pip/_vendor/bom.cdx.json" ]; then
+              sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "${sp}/pip/_vendor/bom.cdx.json"
+              sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "${sp}/pip/_vendor/bom.cdx.json"
+              grep -q 'pkg:pypi/urllib3@2.8.0' "${sp}/pip/_vendor/bom.cdx.json"
+            fi
 
             uv pip install Babel
             pybabel compile -d "${source.dir}/superset/superset/translations" || true
@@ -249,15 +269,21 @@ contents:
             rm -f "${source.dir}/superset/superset/translations"/*/*/*.json
 
             sed -i '1s|.*|#!/bin/sh|' "${source.dir}/superset/docker/entrypoints/run-server.sh"
-        - name: patch pip vendored urllib3
+        - name: apply pip urllib3 vendoring patches
           uses: patch@v1
-          work-dir: ${target.dir}/usr/lib/superset/.venv/lib/python3.11/site-packages
+          work-dir: ${target.dir}/usr/lib/superset/.venv/lib/python3.11/site-packages/pip/_vendor
           with:
-            options: -p1
+            options: -p4
             patches:
-              - ${source.dir}/urllib3-patches/dhi-cve-2026-97687-https-proxy-tls-policy.patch
-              - ${source.dir}/urllib3-patches/dhi-cve-2026-97688-deflate-infinite-loop.patch
-              - ${source.dir}/urllib3-patches/dhi-cve-2026-97689-chunk-line-limit.patch
+              - ${source.dir}/patch/pip-urllib3/urllib3.patch
+              - ${source.dir}/patch/pip-urllib3/urllib3-disable-brotli.patch
+              - ${source.dir}/patch/pip-urllib3/urllib3-fix-emscripten-import.patch
+        - name: rewrite pip urllib3 imports
+          runs: |
+            set -eux -o pipefail
+
+            sp="${target.dir}/usr/lib/superset/.venv/lib/python3.11/site-packages"
+            python3 "${source.dir}/patch/pip-urllib3/rewrite_imports.py" "${sp}/pip/_vendor/urllib3"
         - name: compile patched Python environment
           runs: |
             set -eux -o pipefail
@@ -312,7 +338,7 @@ contents:
               - deb
             license: Apache-2.0
             name: superset
-            rel: 25
+            rel: 26
             url: https://superset.apache.org/
             version: 6.1.0
       paths:
@@ -321,12 +347,26 @@ contents:
           uid: 0
           gid: 0
           source: package/main/superset/patch/npm-bumps.json
-        - type: directory
-          path: ${source.dir}/urllib3-patches
+        - type: file
+          path: ${source.dir}/patch/pip-urllib3/urllib3.patch
           uid: 0
           gid: 0
-          source: package/main/superset/patch/urllib3
-          recursive: true
+          source: package/main/superset/patch/pip-urllib3/urllib3.patch
+        - type: file
+          path: ${source.dir}/patch/pip-urllib3/urllib3-disable-brotli.patch
+          uid: 0
+          gid: 0
+          source: package/main/superset/patch/pip-urllib3/urllib3-disable-brotli.patch
+        - type: file
+          path: ${source.dir}/patch/pip-urllib3/urllib3-fix-emscripten-import.patch
+          uid: 0
+          gid: 0
+          source: package/main/superset/patch/pip-urllib3/urllib3-fix-emscripten-import.patch
+        - type: file
+          path: ${source.dir}/patch/pip-urllib3/rewrite_imports.py
+          uid: 0
+          gid: 0
+          source: package/main/superset/patch/pip-urllib3/rewrite_imports.py
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
