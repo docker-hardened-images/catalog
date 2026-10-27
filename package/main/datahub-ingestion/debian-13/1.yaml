@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-ingestion
 variant: runtime
 tags:
   - 1.7.0.17
-  - 1.7.0.17-r1
+  - 1.7.0.17-r2
   - 1.7.0.17-debian13
-  - 1.7.0.17-r1-debian13
+  - 1.7.0.17-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,15 +16,19 @@ vars:
   ACRYL_DATAHUB_SDIST_CHECKSUM: sha256:bf82ba81014fe7234b15f2e38d92ffd68d08b1742327262d6343e61ab7f473f4
   ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
   EXTRAS: base,datahub-rest,datahub-kafka,snowflake,bigquery,redshift,mysql,postgres,s3-slim,gcs-slim,abs-slim,clickhouse,glue,dbt,looker,lookml,tableau,powerbi,superset,datahub-business-glossary
-  PYTHON_MINOR: "3.10"
-  PYTHON_VERSION: 3.10.22-1
-  REL: "1"
+  PYTHON_MINOR: "3.11"
+  PYTHON_VERSION: 3.11.18-1
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0.17
   UV_VERSION: 0.11.23
   VERSION: 1.7.0.17
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
   builds:
@@ -36,10 +40,6 @@ contents:
       caches:
         - path: /root/.cache/uv
       contents:
-        repositories:
-          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
-        keyring:
-          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
           - build-essential
@@ -64,12 +64,12 @@ contents:
           - sed
           - tar
           - unixodbc-dev
-          - libpython-3.10=3.10.22-1
-          - libpython-3.10-minimal=3.10.22-1
-          - libpython-3.10-stdlib=3.10.22-1
-          - python-3.10-minimal=3.10.22-1
-          - python-3.10=3.10.22-1
-          - python-3.10-dev=3.10.22-1
+          - libpython-3.11=3.11.18-1
+          - libpython-3.11-minimal=3.11.18-1
+          - libpython-3.11-stdlib=3.11.18-1
+          - python-3.11-minimal=3.11.18-1
+          - python-3.11=3.11.18-1
+          - python-3.11-dev=3.11.18-1
           - libstdc++6
         files:
           - url: https://github.com/astral-sh/uv/releases/download/0.11.23/uv-${ARCH}-unknown-linux-gnu.tar.gz
@@ -105,7 +105,8 @@ contents:
             urllib3>=2.8.0
             lxml>=6.1.0
             cryptography>=50.0.0
-            setuptools>=83.0.0
+            filelock>=4.2.1
+            setuptools>=84.1.0
             sqlparse>=0.6.0
             aiohttp>=3.14.4
             certifi>=2026.10.19
@@ -134,7 +135,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            sp="${target.dir}/usr/lib/datahub-ingestion/lib/python3.10/site-packages"
+            sp="${target.dir}/usr/lib/datahub-ingestion/lib/python3.11/site-packages"
             set -- "$sp"/urllib3-*.dist-info/METADATA
             if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
               echo "expected exactly one urllib3 dist-info" >&2
@@ -152,7 +153,7 @@ contents:
             rm -rf "$sp/pip/_vendor/urllib3"
             cp -a "$sp/urllib3" "$sp/pip/_vendor/urllib3"
 
-            python3.10 - "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json" "$urllib3_ver" << 'PY'
+            python3.11 - "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json" "$urllib3_ver" << 'PY'
             import json
             import sys
 
@@ -251,6 +252,50 @@ contents:
               echo "urllib3 metadata still names a different version" >&2
               exit 1
             fi
+        - name: drop pip vendored pkg_resources
+          runs: |
+            set -eux -o pipefail
+
+            sp="${target.dir}/usr/lib/datahub-ingestion/lib/python3.11/site-packages"
+            rm -rf "$sp/pip/_vendor/pkg_resources"
+            sed -i '/^setuptools==/d' "$sp/pip/_vendor/vendor.txt"
+            python3.11 - "$sp/pip/_vendor/bom.cdx.json" << 'PY'
+            import json
+            import sys
+
+            path = sys.argv[1]
+            with open(path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+
+            def is_setuptools_ref(value):
+                return isinstance(value, str) and value.startswith("pkg:pypi/setuptools@")
+
+            doc["components"] = [
+                comp for comp in (doc.get("components") or [])
+                if comp.get("name") != "setuptools"
+            ]
+            kept = []
+            for dep in doc.get("dependencies") or []:
+                if is_setuptools_ref(dep.get("ref")):
+                    continue
+                depends = dep.get("dependsOn")
+                if isinstance(depends, list):
+                    dep["dependsOn"] = [item for item in depends if not is_setuptools_ref(item)]
+                kept.append(dep)
+            doc["dependencies"] = kept
+            rendered = json.dumps(doc)
+            if "setuptools" in rendered:
+                raise SystemExit("setuptools remains in pip vendor bom")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(doc, handle, indent=2)
+                handle.write("\n")
+            PY
+            if grep -E 'setuptools==|pkg:pypi/setuptools@' "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json"; then
+              echo "pip vendor metadata still names setuptools" >&2
+              exit 1
+            fi
+            test ! -e "$sp/pip/_vendor/pkg_resources"
+            PYTHONPATH="$sp" python3.11 -m pip --version
         - name: python dependencies sbom
           uses: sbom@v1
           with:
@@ -290,7 +335,7 @@ contents:
                 - libsasl2-2
                 - unixodbc
             depends:
-              - python-3.10
+              - python-3.11
             description: DataHub metadata ingestion framework
             files:
               - usr/lib/datahub-ingestion
@@ -299,7 +344,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-ingestion
-            rel: 1
+            rel: 2
             url: https://datahubproject.io/
             version: 1.7.0.17
 os-release:
