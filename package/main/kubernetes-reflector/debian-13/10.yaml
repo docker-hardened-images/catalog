@@ -1,0 +1,147 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kubernetes-reflector
+variant: runtime
+tags:
+  - 10.0.65
+  - 10.0.65-r0
+  - 10.0.65-debian13
+  - 10.0.65-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 0d074fb01e3f244692a3e257037362ab9454a68f
+  DOTNET_SDK_VERSION: 10.0.401-1
+  PACKAGE_NAME: kubernetes-reflector-10
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "10.0"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.0.65
+  VERSION: 10.0.65
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: kubernetes-reflector
+      work-dir: ${source.dir}/kubernetes-reflector
+      shell: /bin/bash
+      environment:
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        DOTNET_NOLOGO: "1"
+        DOTNET_ROOT: /usr/lib/dotnet
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+      caches:
+        - path: /root/.nuget/packages
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - dotnet-sdk-10=10.0.401-1
+          - findutils
+          - libc6
+          - libgcc-s1
+          - libgssapi-krb5-2
+          - libicu76
+          - libssl3t64
+          - libstdc++6
+          - tzdata
+          - zlib1g
+        files:
+          - url: git+https://github.com/emberstack/kubernetes-reflector.git#v10.0.65
+            checksum: 0d074fb01e3f244692a3e257037362ab9454a68f
+            path: ${source.dir}/kubernetes-reflector
+            spdx:
+              name: kubernetes-reflector
+              version: 10.0.65
+              packages:
+                - name: kubernetes-reflector
+                  purl: pkg:github/emberstack/kubernetes-reflector@10.0.65
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: restore
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            dotnet restore src/ES.Kubernetes.Reflector/ES.Kubernetes.Reflector.csproj
+        - name: publish
+          runs: |
+            set -eux -o pipefail
+
+            dotnet publish src/ES.Kubernetes.Reflector/ES.Kubernetes.Reflector.csproj \
+              -c Release \
+              -o ${source.dir}/publish \
+              --no-restore \
+              /p:UseAppHost=false
+        - name: stage publish output
+          runs: |
+            set -eux -o pipefail
+
+            src="${source.dir}/publish"
+            dest="${target.dir}/usr/lib/kubernetes-reflector"
+            umask 022
+
+            test -f "${src}/ES.Kubernetes.Reflector.dll"
+            test -f "${src}/ES.Kubernetes.Reflector.deps.json"
+            test -f "${src}/ES.Kubernetes.Reflector.runtimeconfig.json"
+            test -f "${src}/appsettings.json"
+            test -f "${src}/appsettings.Development.json"
+            test ! -e "${src}/ES.Kubernetes.Reflector"
+
+            rm "${src}/web.config"
+            rm -r "${src}/runtimes"
+
+            if find "${src}" \( -name '*.so' -o -name '*.so.*' \) -print -quit | grep -q .; then
+              echo "publish emitted a linux native library" >&2
+              exit 1
+            fi
+
+            find "${src}" -type f -print0 | while IFS= read -r -d '' file; do
+              rel="${file#"${src}/"}"
+              install -D -m 0644 "${file}" "${dest}/${rel}"
+            done
+
+            test -f "${dest}/ES.Kubernetes.Reflector.dll"
+            test -f "${dest}/appsettings.Development.json"
+            test -f "${dest}/ES.Kubernetes.Reflector.xml"
+            test -f "${dest}/ES.Kubernetes.Reflector.staticwebassets.endpoints.json"
+            test ! -e "${dest}/web.config"
+            test ! -d "${dest}/runtimes"
+
+            license="${source.dir}/kubernetes-reflector/LICENSE"
+            test -f "${license}"
+            install -D -m 0644 "${license}" \
+              "${target.dir}/usr/share/licenses/kubernetes-reflector/LICENSE"
+        - name: nuget dependency sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: dotnet-deps-cataloger
+            prefix: kubernetes-reflector-nuget
+            source: ${source.dir}/publish
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes controller that replicates Secrets and ConfigMaps across namespaces
+            files:
+              - usr/lib/kubernetes-reflector
+              - usr/share/licenses/kubernetes-reflector
+            license: MIT
+            name: kubernetes-reflector-10
+            rel: 0
+            url: https://github.com/emberstack/kubernetes-reflector
+            version: 10.0.65
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
