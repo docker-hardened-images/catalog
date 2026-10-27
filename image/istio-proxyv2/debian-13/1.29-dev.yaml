@@ -463,7 +463,34 @@ contents:
               --override_repository=intel_dlb=/src/dlb-stub
               --@envoy//contrib/dlb/source:enabled=false
             "
-            python ${source.dir}/bin/envoy-bazel-to-spdx.py istio-proxyv2-envoy 1.29.10 > /opt/docker/sbom/envoy/.spdx.envoy.json
+            envoy_version=$(tr -d '[:space:]' < ENVOY_VERSION.txt)
+            python ${source.dir}/scripts/envoy-bazel-to-spdx.py \
+              istio-proxyv2-envoy \
+              1.29.10 \
+              "$envoy_version" \
+              > /opt/docker/sbom/envoy/.spdx.envoy.json
+        - name: validate-envoy-sbom
+          work-dir: ${source.dir}/istio-proxy
+          runs: |
+            set -eux -o pipefail
+
+            envoy_version=$(tr -d '[:space:]' < ENVOY_VERSION.txt)
+            ./bazel-bin/envoy --version 2>&1 | grep -F "/${envoy_version}/"
+            jq -e --arg version "$envoy_version" '
+              [
+                .packages[]
+                | select(
+                    .name == "envoy"
+                    and .versionInfo == $version
+                    and any(
+                      .externalRefs[]?;
+                      .referenceType == "purl"
+                      and .referenceLocator == ("pkg:github/envoyproxy/envoy@" + $version)
+                    )
+                  )
+              ]
+              | length == 1
+            ' /opt/docker/sbom/envoy/.spdx.envoy.json
         - name: build-pilot-agent
           privileged: true
           runs: |
@@ -495,10 +522,10 @@ contents:
               '${target.dir}/var/lib/istio/envoy/envoy_bootstrap_tmpl.json'
       paths:
         - type: file
-          path: ${source.dir}/bin/envoy-bazel-to-spdx.py
+          path: ${source.dir}/scripts/envoy-bazel-to-spdx.py
           uid: 0
           gid: 0
-          source: image/istio-proxyv2/bin/envoy-bazel-to-spdx.py
+          source: image/istio-proxyv2/scripts/envoy-bazel-to-spdx.py
       outputs:
         - source: ${target.dir}/usr/local/bin/
           target: /usr/local/bin/

@@ -6,10 +6,10 @@
 4. Generates SPDX with complete metadata for only the runtime dependencies
 
 Usage:
-    python envoy-bazel-to-spdx.py $name $version
+    python envoy-bazel-to-spdx.py $name $version $envoy_version
 
 Example:
-    python envoy-bazel-to-spdx.py istio-proxyv2-envoy 1.27.5
+    python envoy-bazel-to-spdx.py istio-proxyv2-envoy 1.31.3 1.39.5-dev
 """
 
 import ast
@@ -220,7 +220,17 @@ def create_purl(dep_name, repo_data, version):
     return f"pkg:generic/{dep_name}@{version}"
 
 
-def generate_spdx(linked_deps, all_repositories, name, version):
+def dependency_version(dep_name, repo_data, envoy_version):
+    # Istio Proxy pins Envoy by commit, while Envoy advisories use release
+    # versions. ENVOY_VERSION.txt in the same Istio Proxy source checkout is
+    # authoritative for the semantic version reported by the built binary.
+    if dep_name == "envoy":
+        return envoy_version
+
+    return extract_version_from_metadata(repo_data)
+
+
+def generate_spdx(linked_deps, all_repositories, name, version, envoy_version):
     print("Generating SPDX document...", file=sys.stderr)
 
     spdx_doc = {
@@ -246,10 +256,11 @@ def generate_spdx(linked_deps, all_repositories, name, version):
             print(f"WARNING: No metadata found for {dep}. Skipping.", file=sys.stderr)
             continue
 
+        dep_version = dependency_version(dep, repo_data, envoy_version)
         package = {
             "SPDXID": f"SPDXRef-Package-{i}",
             "name": dep,
-            "versionInfo": extract_version_from_metadata(repo_data),
+            "versionInfo": dep_version,
             "downloadLocation": urls[0] if urls else "NOASSERTION",
             "filesAnalyzed": False,
             "licenseConcluded": "NOASSERTION",
@@ -259,7 +270,7 @@ def generate_spdx(linked_deps, all_repositories, name, version):
                 {
                     "referenceCategory": "PACKAGE-MANAGER",
                     "referenceType": "purl",
-                    "referenceLocator": create_purl(dep, repo_data, version),
+                    "referenceLocator": create_purl(dep, repo_data, dep_version),
                 }
             ],
         }
@@ -273,12 +284,16 @@ def generate_spdx(linked_deps, all_repositories, name, version):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python envoy-bazel-to-spdx.py <name> <version>", file=sys.stderr)
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python envoy-bazel-to-spdx.py <name> <version> <envoy-version>",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     name = sys.argv[1]
     version = sys.argv[2]
+    envoy_version = sys.argv[3]
 
     # Get all dependencies with bazel query
     query_output = run_bazel_query()
@@ -289,7 +304,9 @@ def main():
     linked_deps = parse_aquery_output(aquery_output)
 
     # Generate SPDX with filtered deps
-    spdx_doc = generate_spdx(linked_deps, all_repositories, name, version)
+    spdx_doc = generate_spdx(
+        linked_deps, all_repositories, name, version, envoy_version
+    )
 
     json.dump(spdx_doc, sys.stdout, indent=2)
 
