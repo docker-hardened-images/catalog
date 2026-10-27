@@ -1,0 +1,120 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-azuredisk-csi
+variant: runtime
+tags:
+  - 1.34.9-alpine3.24
+  - 1.34.9-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 3559a96c7815a871ec9b53fcfce63f1392ee0072
+  GOLANG_VERSION: 1.26.10-r0
+  PACKAGE_NAME: azuredisk-csi-1.34
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.34"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.34.9
+  VERSION: 1.34.9
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: azuredisk-csi-1.34
+      work-dir: /go/src/sigs.k8s.io/azuredisk-csi-driver
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - findmnt
+          - golang-1.26=1.26.10-r0
+          - golang-1.26-oci-config=1.26.10-r0
+        files:
+          - url: git+https://github.com/kubernetes-sigs/azuredisk-csi-driver.git#v1.34.9
+            checksum: 3559a96c7815a871ec9b53fcfce63f1392ee0072
+            path: /go/src/sigs.k8s.io/azuredisk-csi-driver
+            spdx:
+              name: azuredisk-csi-driver
+              version: 1.34.9
+              packages:
+                - name: azuredisk-csi-driver
+                  purl: pkg:golang/sigs.k8s.io/azuredisk-csi-driver@1.34.9
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/go-openapi/jsonpointer@v1.0.2
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            skip='^TestNodePublishVolume_AlreadyMounted_EmitsSuccessMetric$'
+            case "1.34" in
+              1.33|1.34) skip='^(TestNodePublishVolume_AlreadyMounted_EmitsSuccessMetric|TestNodePublishVolumeIdempotentMount)$' ;;
+            esac
+
+            CGO_ENABLED=0 go test -count=1 ./pkg/... -skip "$skip"
+        - name: build azurediskplugin
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.driverVersion=v1.34.9
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.gitCommit=3559a96c7815a871ec9b53fcfce63f1392ee0072
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/azurediskplugin
+            packages: ./pkg/azurediskplugin
+        - name: build azurediskplugin dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.driverVersion=v1.34.9
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.gitCommit=3559a96c7815a871ec9b53fcfce63f1392ee0072
+              - -X sigs.k8s.io/azuredisk-csi-driver/pkg/azuredisk.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/azurediskplugin-dev
+            packages: ./pkg/azurediskplugin
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Azure Disk CSI driver for Kubernetes
+            files:
+              - usr/bin/azurediskplugin
+            license: Apache-2.0
+            name: azuredisk-csi-1.34
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/azurediskplugin
+                    source: usr/bin/azurediskplugin-dev
+                name: azuredisk-csi-1.34-dev
+            url: https://github.com/kubernetes-sigs/azuredisk-csi-driver
+            version: 1.34.9
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
