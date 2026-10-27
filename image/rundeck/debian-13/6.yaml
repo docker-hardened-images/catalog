@@ -21,6 +21,7 @@ dates:
 vars:
   COMMIT_SHA: 6ac5d092e6ccde3fd580ac61371487a300a0b6ca
   FLAVORED_SUFFIX: ""
+  REMCO_DEB_VERSION: 0.12.6-10
   SEMVER_MAJOR_MINOR_VERSION: "6.3"
   SEMVER_MAJOR_VERSION: "6"
   SEMVER_VERSION: 6.3.0
@@ -49,7 +50,7 @@ contents:
     - libc6
     - libstdc++6
     - openssh-client
-    - remco
+    - remco=0.12.6-10
     - sed
     - tini
     - tzdata
@@ -73,7 +74,45 @@ contents:
           - eclipse-temurin-21-jdk
           - nodejs-24
           - npm
+          - unzip
+          - zip
         files:
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
+            checksum: sha256:556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+            path: ${source.dir}/patch/deps/jackson-databind-2.22.3.jar
+            spdx:
+              name: jackson-databind
+              version: 2.22.3
+              packages:
+                - name: jackson-databind
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.22.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar
+            checksum: sha256:8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+            path: ${source.dir}/patch/deps/jackson-core-2.22.3.jar
+            spdx:
+              name: jackson-core
+              version: 2.22.3
+              packages:
+                - name: jackson-core
+                  purl: pkg:maven/com.fasterxml.jackson.core/jackson-core@2.22.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/fasterxml/jackson/dataformat/jackson-dataformat-yaml/2.22.3/jackson-dataformat-yaml-2.22.3.jar
+            checksum: sha256:2bcbc3b9abaefbeba11409b9e30ec35ed7071a61a47c8c2a9c688e40e45b90f9
+            path: ${source.dir}/patch/deps/jackson-dataformat-yaml-2.22.3.jar
+            spdx:
+              name: jackson-dataformat-yaml
+              version: 2.22.3
+              packages:
+                - name: jackson-dataformat-yaml
+                  purl: pkg:maven/com.fasterxml.jackson.dataformat/jackson-dataformat-yaml@2.22.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
           - url: git+https://github.com/rundeck/rundeck.git#6ac5d092e6ccde3fd580ac61371487a300a0b6ca
             checksum: 6ac5d092e6ccde3fd580ac61371487a300a0b6ca
             path: ${source.dir}/rundeck
@@ -110,8 +149,76 @@ contents:
               -e "s|mavenCentral()|maven { url '${MIRROR}' }|g" \
               -e "s|gradlePluginPortal()|maven { url '${MIRROR}' }; gradlePluginPortal()|g"
 
+            sed -i \
+              -e 's/^jacksonDatabindVersion=2.22.2/jacksonDatabindVersion=2.22.3/' \
+              -e 's/^jacksonDataformatCBORVersion=2.22.2/jacksonDataformatCBORVersion=2.22.3/' \
+              gradle.properties
+
             ./gradlew --init-script "${source.dir}/dhi-plugin-management.init.gradle" \
               --no-daemon --stacktrace :rundeckapp:bootWar -x test
+        - name: patch jackson in ansible plugin
+          runs: |
+            set -eux -o pipefail
+
+            patch_dir="$(mktemp -d)"
+            trap 'rm -rf "${patch_dir}"' EXIT
+
+            war=$(find rundeckapp/build/libs -name 'rundeck-*.war' | sort -V | tail -1)
+            [ -n "$war" ]
+            war_abs="$(cd "$(dirname "${war}")" && pwd)/$(basename "${war}")"
+
+            jar tf "${war_abs}" | grep -q 'WEB-INF/lib/jackson-databind-2.22.3.jar'
+            jar tf "${war_abs}" | grep -q 'WEB-INF/lib/jackson-core-2.22.3.jar'
+
+            plugin_rel="$(jar tf "${war_abs}" | grep -E '^WEB-INF/rundeck/plugins/ansible-plugin-.*\.jar$' | head -1 || true)"
+            if [ -z "${plugin_rel}" ]; then
+              echo "ansible plugin jar not found in ${war_abs}" >&2
+              exit 1
+            fi
+
+            unzip -q "${war_abs}" "${plugin_rel}" -d "${patch_dir}"
+            plugin_jar="${patch_dir}/${plugin_rel}"
+            for artifact in jackson-core jackson-databind jackson-dataformat-yaml; do
+              old_plugin_jar="lib/${artifact}-2.22.2.jar"
+              new_plugin_jar="lib/${artifact}-2.22.3.jar"
+              if jar tf "${plugin_jar}" | grep -q "${old_plugin_jar}"; then
+                zip -q -d "${plugin_jar}" "${old_plugin_jar}"
+              fi
+              mkdir -p "${patch_dir}/plugin-overlay/lib"
+              cp "${source.dir}/patch/deps/${artifact}-2.22.3.jar" \
+                "${patch_dir}/plugin-overlay/${new_plugin_jar}"
+              (cd "${patch_dir}/plugin-overlay" && jar --update --file "${plugin_jar}" "${new_plugin_jar}")
+              jar tf "${plugin_jar}" | grep -q "${new_plugin_jar}"
+              if jar tf "${plugin_jar}" | grep -q "${old_plugin_jar}"; then
+                echo "${old_plugin_jar} still present in ansible plugin" >&2
+                exit 1
+              fi
+            done
+
+            manifest_dir="${patch_dir}/manifest-overlay"
+            mkdir -p "${manifest_dir}/META-INF"
+            unzip -p "${plugin_jar}" META-INF/MANIFEST.MF > "${manifest_dir}/META-INF/MANIFEST.MF"
+            sed -i \
+              -e 's/jackson-core-2.22\.2\.jar/jackson-core-2.22.3.jar/g' \
+              -e 's/jackson-databind-2.22\.2\.jar/jackson-databind-2.22.3.jar/g' \
+              -e 's/jackson-dataformat-yaml-2.22\.2\.jar/jackson-dataformat-yaml-2.22.3.jar/g' \
+              "${manifest_dir}/META-INF/MANIFEST.MF"
+            for artifact in jackson-core jackson-databind jackson-dataformat-yaml; do
+              grep -q "${artifact}-2.22.3.jar" "${manifest_dir}/META-INF/MANIFEST.MF"
+              if grep -q "${artifact}-2.22.2.jar" "${manifest_dir}/META-INF/MANIFEST.MF"; then
+                echo "Rundeck-Plugin-Libs still names ${artifact}-2.22.2.jar" >&2
+                exit 1
+              fi
+            done
+            (cd "${manifest_dir}" && zip -q -u "${plugin_jar}" META-INF/MANIFEST.MF)
+
+            (cd "${patch_dir}" && jar --update --file "${war_abs}" "${plugin_rel}")
+            unzip -p "${war_abs}" "${plugin_rel}" > "${patch_dir}/verified-plugin.jar"
+            jar tf "${patch_dir}/verified-plugin.jar" | grep -q 'lib/jackson-dataformat-yaml-2.22.3.jar'
+            if jar tf "${patch_dir}/verified-plugin.jar" | grep -q 'lib/jackson-dataformat-yaml-2.22.2.jar'; then
+              echo "jackson-dataformat-yaml 2.22.2 still present in repacked war" >&2
+              exit 1
+            fi
         - name: install rundeck
           runs: |
             set -eux -o pipefail
