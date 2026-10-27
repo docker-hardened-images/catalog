@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-ingestion
 variant: runtime
 tags:
   - 1.7.0.17
-  - 1.7.0.17-r2
+  - 1.7.0.17-r3
   - 1.7.0.17-debian13
-  - 1.7.0.17-r2-debian13
+  - 1.7.0.17-r3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -18,7 +18,7 @@ vars:
   EXTRAS: base,datahub-rest,datahub-kafka,snowflake,bigquery,redshift,mysql,postgres,s3-slim,gcs-slim,abs-slim,clickhouse,glue,dbt,looker,lookml,tableau,powerbi,superset,datahub-business-glossary
   PYTHON_MINOR: "3.11"
   PYTHON_VERSION: 3.11.18-1
-  REL: "2"
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0.17
@@ -106,6 +106,7 @@ contents:
             lxml>=6.1.0
             cryptography>=50.0.0
             filelock>=4.2.1
+            msgpack>=1.2.3
             setuptools>=84.1.0
             sqlparse>=0.6.0
             aiohttp>=3.14.4
@@ -117,6 +118,11 @@ contents:
               --prefix ${target.dir}/usr/lib/datahub-ingestion \
               --override ${source.dir}/overrides.txt \
               "${source.dir}/acryl_datahub.tar.gz[base,datahub-rest,datahub-kafka,snowflake,bigquery,redshift,mysql,postgres,s3-slim,gcs-slim,abs-slim,clickhouse,glue,dbt,looker,lookml,tableau,powerbi,superset,datahub-business-glossary]"
+
+            UV_LINK_MODE=copy uv pip install \
+              --prefix ${target.dir}/usr/lib/datahub-ingestion \
+              --override ${source.dir}/overrides.txt \
+              "msgpack>=1.2.3"
         - name: clean python cache and tests
           runs: |
             set -eux -o pipefail
@@ -252,6 +258,127 @@ contents:
               echo "urllib3 metadata still names a different version" >&2
               exit 1
             fi
+        - name: align pip vendored msgpack with site packages
+          runs: |
+            set -eux -o pipefail
+
+            sp="${target.dir}/usr/lib/datahub-ingestion/lib/python3.11/site-packages"
+            set -- "$sp"/msgpack-*.dist-info/METADATA
+            if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+              echo "expected exactly one msgpack dist-info" >&2
+              exit 1
+            fi
+            msgpack_ver=$(sed -n 's/^Version: //p' "$1" | head -n 1)
+            dist_name=$(basename "$(dirname "$1")")
+            dist_ver=${dist_name#msgpack-}
+            dist_ver=${dist_ver%.dist-info}
+            if [ "$dist_ver" != "$msgpack_ver" ]; then
+              echo "msgpack dist-info ${dist_ver} does not match METADATA ${msgpack_ver}" >&2
+              exit 1
+            fi
+
+            rm -rf "$sp/pip/_vendor/msgpack"
+            cp -a "$sp/msgpack" "$sp/pip/_vendor/msgpack"
+
+            python3.11 - "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json" "$msgpack_ver" << 'PY'
+            import json
+            import sys
+
+            vendor_path, bom_path, ver = sys.argv[1:]
+
+            def version_tuple(value):
+                core = value.split("+", 1)[0].split("-", 1)[0]
+                parts = core.split(".")
+                if len(parts) < 3 or not all(part.isdigit() for part in parts):
+                    raise SystemExit("unexpected msgpack version %s" % value)
+                return tuple(int(part) for part in parts[:3])
+
+            if version_tuple(ver) < (1, 2, 3):
+                raise SystemExit("msgpack %s is below the 1.2.3 override" % ver)
+
+            with open(vendor_path) as handle:
+                lines = handle.read().splitlines()
+            replaced = 0
+            updated_lines = []
+            for line in lines:
+                stripped = line.lstrip(" ")
+                if stripped.startswith("msgpack=="):
+                    indent = line[:len(line) - len(stripped)]
+                    updated_lines.append("%smsgpack==%s" % (indent, ver))
+                    replaced += 1
+                else:
+                    updated_lines.append(line)
+            if replaced != 1:
+                raise SystemExit("expected one msgpack pin in vendor.txt, found %s" % replaced)
+            vendor_text = "\n".join(updated_lines) + "\n"
+            if ("msgpack==%s" % ver) not in vendor_text:
+                raise SystemExit("vendor.txt msgpack pin was not updated")
+            with open(vendor_path, "w") as handle:
+                handle.write(vendor_text)
+
+            with open(bom_path) as handle:
+                original = handle.read()
+            bom = json.loads(original)
+            comps = [comp for comp in bom.get("components", []) if comp.get("name") == "msgpack"]
+            if len(comps) != 1:
+                raise SystemExit("expected one msgpack component, found %s" % len(comps))
+            comp = comps[0]
+            old = comp.get("version")
+            if not isinstance(old, str) or not old:
+                raise SystemExit("msgpack component has no version")
+            others_before = [
+                (item.get("name"), item.get("version"), item.get("purl"))
+                for item in bom.get("components", [])
+                if item.get("name") != "msgpack"
+            ]
+            old_ref = "pkg:pypi/msgpack@%s" % old
+            new_ref = "pkg:pypi/msgpack@%s" % ver
+            old_count = original.count(old_ref)
+            if old_count < 1:
+                raise SystemExit("bom is missing %s" % old_ref)
+            comp["version"] = ver
+            for key in ("purl", "bom-ref"):
+                value = comp.get(key)
+                if not isinstance(value, str) or not value.startswith("pkg:pypi/msgpack@"):
+                    raise SystemExit("msgpack %s is not a pypi purl" % key)
+                comp[key] = new_ref
+
+            def rewrite(node):
+                if isinstance(node, dict):
+                    return {key: rewrite(value) for key, value in node.items()}
+                if isinstance(node, list):
+                    return [new_ref if item == old_ref else rewrite(item) for item in node]
+                if node == old_ref:
+                    return new_ref
+                return node
+
+            rewritten = rewrite(bom)
+            updated = next(item for item in rewritten["components"] if item.get("name") == "msgpack")
+            if updated.get("version") != ver or updated.get("purl") != new_ref or updated.get("bom-ref") != new_ref:
+                raise SystemExit("msgpack component metadata was not updated")
+            others_after = [
+                (item.get("name"), item.get("version"), item.get("purl"))
+                for item in rewritten.get("components", [])
+                if item.get("name") != "msgpack"
+            ]
+            if others_before != others_after:
+                raise SystemExit("non-msgpack component metadata changed")
+            rendered = json.dumps(rewritten)
+            if old != ver and old_ref in rendered:
+                raise SystemExit("stale %s remains in bom" % old_ref)
+            if rendered.count(new_ref) < old_count:
+                raise SystemExit("bom kept fewer msgpack refs than it started with")
+            with open(bom_path, "w") as handle:
+                json.dump(rewritten, handle, indent=2)
+                handle.write("\n")
+            PY
+
+            grep -F "msgpack==${msgpack_ver}" "$sp/pip/_vendor/vendor.txt"
+            grep -F "pkg:pypi/msgpack@${msgpack_ver}" "$sp/pip/_vendor/bom.cdx.json"
+            if grep -E 'msgpack==|pkg:pypi/msgpack@' "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json" | grep -v -F "msgpack==${msgpack_ver}" | grep -v -F "pkg:pypi/msgpack@${msgpack_ver}"; then
+              echo "msgpack metadata still names a different version" >&2
+              exit 1
+            fi
         - name: drop pip vendored pkg_resources
           runs: |
             set -eux -o pipefail
@@ -344,7 +471,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-ingestion
-            rel: 2
+            rel: 3
             url: https://datahubproject.io/
             version: 1.7.0.17
 os-release:
