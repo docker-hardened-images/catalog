@@ -22,6 +22,10 @@ export UV_PYTHON_DOWNLOADS=never
 export UV_PROJECT_ENVIRONMENT="${VENV}"
 export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 
+# DHI leaves run Python 3.13 (debian) / 3.14 (alpine). dnspython 2.9.0 needs
+# >=3.11; uv lock still evaluates upstream's >=3.10 window unless narrowed.
+sed -i 's/requires-python = ">=3.10,<3.15"/requires-python = ">=3.11,<3.15"/' pyproject.toml
+
 # Install strictly from upstream's committed uv.lock plus the targeted CVE
 # bumps below. Do NOT run a full `uv lock --upgrade`: regenerating the whole
 # lock would drift from the dependency set the release was tested against.
@@ -34,7 +38,11 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # CVE-2026-102274: pyjwt <=2.13.0 exceptional-condition handling.
 # GHSA-6Q48-6C7W-9GW2: certifi <2026.10.19 bundles compromised emSign root CAs.
 # CVE-2026-114603: opentelemetry-api <=1.45.0 unbounded tracestate parsing.
-uv lock --upgrade-package "mcp==1.30.0" --upgrade-package "pydantic-settings>=2.14.2" --upgrade-package "cryptography>=50.0.0" --upgrade-package "pyjwt>=2.14.0" --upgrade-package "certifi>=2026.10.19" --upgrade-package "opentelemetry-api>=1.45.1"
+# GHSA-7xgj-8392-5q4r: fastmcp / fastmcp-slim <3.4.10 missing authorization.
+# Exact pins: a lower bound would republish a later release under the same REL.
+# CVE-2026-114605: dnspython <2.9.0 unbounded DNS name decompression.
+# CVE-2026-96760, CVE-2026-114614 through CVE-2026-114620: authlib OAuth/JWS issues; need >=1.9.1 for CVE-2026-114616.
+uv lock --upgrade-package "mcp==1.30.0" --upgrade-package "pydantic-settings>=2.14.2" --upgrade-package "cryptography>=50.0.0" --upgrade-package "pyjwt>=2.14.0" --upgrade-package "certifi>=2026.10.19" --upgrade-package "opentelemetry-api>=1.45.1" --upgrade-package "fastmcp==3.4.11" --upgrade-package "fastmcp-slim==3.4.11" --upgrade-package "dnspython==2.9.0" --upgrade-package "authlib==1.9.1"
 uv sync --locked --no-dev --no-editable
 
 # Drop caches/tests from the shipped venv. Prune the directory branch so -exec
