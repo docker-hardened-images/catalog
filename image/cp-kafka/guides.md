@@ -21,8 +21,8 @@ The broker listens on 9092. Data goes to `/var/lib/kafka/data`, logs to `/var/lo
 can be mounted at `/etc/kafka/secrets`. The default user is `appuser` (uid 1000, gid 1000), the same user the Confluent
 image runs as, and it owns all three directories.
 
-Kafka itself comes from the hardened `kafka-3.9` (7.9 tags) and `kafka-4.3` (8.3 tags) packages, built from the same
-Apache source as `dhi/kafka` and matching the Apache releases Confluent Platform 7.9 and 8.3 build on. The Kafka
+Kafka itself comes from the hardened `kafka-3.9` (7.9 tags) and `kafka-4.3` (8.4 tags) packages, built from the same
+Apache source as `dhi/kafka` and matching the Apache releases Confluent Platform 7.9 and 8.4 build on. The Kafka
 command-line tools are on the `PATH` under their Confluent names (`kafka-topics`, `kafka-storage`, and so on), and the
 Apache scripts they wrap are at `/usr/share/kafka/bin/*.sh`. The jars live at `/usr/share/kafka/libs`, with
 `/usr/share/java/kafka` as a symlink to them.
@@ -68,7 +68,7 @@ $ docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --t
 ```
 
 To print the Kafka version instead of starting the broker, replace the command. The tools report the Apache Kafka
-version the tag bundles (3.9.x on the 7.9 tags, 4.3.x on the 8.3 tags), where Confluent's image reports its own `-ccs`
+version the tag bundles (3.9.x on the 7.9 tags, 4.3.x on the 8.4 tags), where Confluent's image reports its own `-ccs`
 build string.
 
 ```bash
@@ -207,7 +207,7 @@ The `-fips` and `-fips-dev` tags ship a FIPS 140 cryptographic stack on both lin
 - The FIPS Kafka package's log cleaner hashes with SHA-256 instead of MD5, so compaction keeps working in approved-only
   mode. The wider digest means a given `log.cleaner.dedupe.buffer.size` holds about 40% fewer offsets than on the other
   tags.
-- On the 8.3 tags, `ub` comes from the `cp-docker-utils-1-fips` package, compiled with the Go FIPS 140 module.
+- On the 8.4 tags, `ub` comes from the `cp-docker-utils-1-fips` package, compiled with the Go FIPS 140 module.
 
 The JVM starts in BouncyCastle's general mode, not approved-only mode: `JDK_JAVA_OPTIONS` carries
 `-Dorg.bouncycastle.fips.approved_only=false` together with the BCFKS `cacerts` trust store of the FIPS JRE, because
@@ -220,7 +220,7 @@ command line, so the last setting wins while the trust store settings stay in pl
 BouncyCastle FIPS provider up from the image environment, so pass it explicitly:
 
 ```bash
-$ docker run --rm -v "$PWD/secrets:/etc/kafka/secrets" dhi.io/cp-kafka:8.3-fips-dev bash -c '
+$ docker run --rm -v "$PWD/secrets:/etc/kafka/secrets" dhi.io/cp-kafka:8.4-fips-dev bash -c '
     "$JAVA_HOME/bin/keytool" -importkeystore \
     -providerclass org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider \
     -providerpath /usr/lib/bouncycastle/current/bc-fips.jar \
@@ -235,7 +235,7 @@ Reference the converted stores with the usual `KAFKA_SSL_KEYSTORE_FILENAME` and 
 ## Differences from the Confluent image
 
 - **Expect the Apache Kafka version from the command-line tools.** `kafka-topics --version` and the other tools print
-  the version of the bundled Apache Kafka build (3.9.x on the 7.9 tags, 4.3.x on the 8.3 tags), where Confluent's image
+  the version of the bundled Apache Kafka build (3.9.x on the 7.9 tags, 4.3.x on the 8.4 tags), where Confluent's image
   prints `7.9.10-ccs` style build strings. The Confluent Platform version is the image tag. The jars in
   `/usr/share/java/kafka` carry Apache names without the `-ccs` suffix.
 
@@ -253,7 +253,7 @@ Reference the converted stores with the usual `KAFKA_SSL_KEYSTORE_FILENAME` and 
   `KAFKA_ADVERTISED_LISTENERS`, and `dub` is installed.
 
 - **Use `kafka-leader-election` and `connect-mirror-maker` in place of the retired tools.**
-  `kafka-preferred-replica-election` (all tags) and `kafka-mirror-maker` (8.3 tags) have no Apache script to wrap; run
+  `kafka-preferred-replica-election` (all tags) and `kafka-mirror-maker` (8.4 tags) have no Apache script to wrap; run
   `kafka-leader-election --bootstrap-server <host:port> --election-type PREFERRED --all-topic-partitions` and
   MirrorMaker 2's `connect-mirror-maker` instead. `trogdor`, Kafka's fault-injection test framework, has no bare name;
   its script stays at `/usr/share/kafka/bin/trogdor.sh`.
@@ -270,7 +270,7 @@ Reference the converted stores with the usual `KAFKA_SSL_KEYSTORE_FILENAME` and 
 - **This runtime tag has `bash`, unlike most Docker Hardened runtime images.** The Confluent launch scripts and the
   Kafka tools are bash scripts, so it has to. Confluent's image has `bash` too, so nothing changes for you.
 
-- **Java matches upstream per line.** The 7.9 tags run Temurin 17 and the 8.3 tags run Temurin 25, the same releases
+- **Java matches upstream per line.** The 7.9 tags run Temurin 17 and the 8.4 tags run Temurin 25, the same releases
   Confluent ships, so JVM flags carried over from the Confluent image keep working.
 
 - **The environment starts clean.** Confluent's image bakes empty `CLUSTER_ID` and `KAFKA_ADVERTISED_LISTENERS` values
