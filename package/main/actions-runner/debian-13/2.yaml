@@ -3,15 +3,15 @@
 image: dhi.io/pkg-actions-runner
 variant: runtime
 tags:
-  - 2.338.2-0
-  - 2.338.2-0-debian13
+  - 2.338.2-1
+  - 2.338.2-1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   COMMIT_SHA: d1eb12d4b115c301201de27d667284e1a80f2ab5
-  DHI_VERSION: 2.338.2-0
-  REL: "0"
+  DHI_VERSION: 2.338.2-1
+  REL: "1"
   RUNTIME_ID: '#{ target.arch == "amd64" ? "linux-x64" : "linux-arm64" }'
   VERSION: 2.338.2
 contents:
@@ -53,7 +53,47 @@ contents:
                   license: MIT
             uid: 0
             gid: 0
+          - url: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz
+            checksum: sha256:ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4
+            path: ${source.dir}/vendor/brace-expansion-5.0.12.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/undici/-/undici-6.29.1.tgz
+            checksum: sha256:29c4b8e0b2d86cb8795571c1959012ce057a14ecfd34858335f47c31e770a04f
+            path: ${source.dir}/vendor/undici-6.29.1.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz
+            checksum: sha256:f9e1d0dd369c002f43770c6ee35942c8078e76d080a1e18e89113eef865f26ff
+            path: ${source.dir}/vendor/ip-address-10.7.4.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/postcss-selector-parser/-/postcss-selector-parser-7.1.6.tgz
+            checksum: sha256:48c903f98c5591d8d26f16f389d5cb3435459474c645209a79f6241bf4b657b6
+            path: ${source.dir}/vendor/postcss-selector-parser-7.1.6.tgz
+            uid: 0
+            gid: 0
       pipeline:
+        - name: bump dotnet nuget dependencies
+          work-dir: ${source.dir}/actions-runner/src
+          runs: |
+            set -eux -o pipefail
+
+            for pkg in System.Security.Cryptography.Pkcs System.Formats.Asn1 System.Text.Encoding.CodePages; do
+              find . -name '*.csproj' -exec sed -i \
+                "s/Include=\"${pkg}\" Version=\"10.0.12\"/Include=\"${pkg}\" Version=\"10.0.13\"/g" {} +
+              refs="$(grep -R -h "Include=\"${pkg}\"" --include='*.csproj' . || true)"
+              if [ -z "$refs" ]; then
+                echo "bump dotnet: no PackageReference for ${pkg}" >&2
+                exit 1
+              fi
+              other="$(printf '%s\n' "$refs" | grep -v "Version=\"10.0.13\"" || true)"
+              if [ -n "$other" ]; then
+                echo "bump dotnet: ${pkg} is not pinned to 10.0.13" >&2
+                printf '%s\n' "$other" >&2
+                exit 1
+              fi
+            done
         - name: build runner
           work-dir: ${source.dir}/actions-runner/src
           privileged: true
@@ -90,11 +130,61 @@ contents:
               ln -sf ../lib/node_modules/npm/bin/npx-cli.js "$rt/bin/npx"
             done
             cp -a /usr/bin/node ../_layout/externals/node24/bin/node
+        - name: bump bundled npm in layout
+          work-dir: ${source.dir}/actions-runner/src
+          runs: |
+            set -eux -o pipefail
+
+            replace_npm_dep() {
+              local npmdir="$1" pkg="$2" ver="$3" tarball="$4"
+              local dest="${npmdir}/node_modules/${pkg}"
+              local current
+              if [ ! -d "$dest" ]; then
+                echo "replace_npm_dep: ${dest} does not exist" >&2
+                exit 1
+              fi
+              current="$(node -e "console.log(require('${dest}/package.json').version)")"
+              if node -e "
+                const c = '${current}'.split('.').map(Number);
+                const t = '${ver}'.split('.').map(Number);
+                for (let i = 0; i < 3; i++) {
+                  if ((c[i]||0) > (t[i]||0)) process.exit(0);
+                  if ((c[i]||0) < (t[i]||0)) process.exit(1);
+                }
+                process.exit(0);
+              "; then
+                echo "replace_npm_dep: ${pkg} ${current} >= ${ver}, skipping"
+                return 0
+              fi
+              echo "replace_npm_dep: bumping ${pkg} ${current} -> ${ver}"
+              rm -rf "$dest"
+              mkdir -p "$dest"
+              tar -xzf "$tarball" -C "$dest" --strip-components=1
+              current="$(node -e "console.log(require('${dest}/package.json').version)")"
+              if [ "$current" != "$ver" ]; then
+                echo "replace_npm_dep: ${pkg} unpacked ${current}, expected ${ver}" >&2
+                exit 1
+              fi
+            }
+
+            for rt in ../_layout/externals/node20 ../_layout/externals/node24; do
+              npmdir="$rt/lib/node_modules/npm"
+              replace_npm_dep "$npmdir" brace-expansion 5.0.12 "${source.dir}/vendor/brace-expansion-5.0.12.tgz"
+              replace_npm_dep "$npmdir" undici 6.29.1 "${source.dir}/vendor/undici-6.29.1.tgz"
+              replace_npm_dep "$npmdir" ip-address 10.7.4 "${source.dir}/vendor/ip-address-10.7.4.tgz"
+              replace_npm_dep "$npmdir" postcss-selector-parser 7.1.6 "${source.dir}/vendor/postcss-selector-parser-7.1.6.tgz"
+            done
+        - name: externals npm sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: actions-runner-externals
+            source: ${source.dir}/actions-runner/_layout/externals/node24/lib/node_modules
         - uses: dpkg/bump@v1
           with:
             changelog:
-              - DHI Build
-            version: 2.338.2-0
+              - Bump bundled npm and System.Security.Cryptography.Pkcs for CVE remediation
+            version: 2.338.2-1
         - uses: dpkg/build@v1
           with:
             args: -b -uc -us -d
