@@ -20,7 +20,7 @@ export NO_COLOR=1
 export NODE_OPTIONS=--max-old-space-size=8192
 # The pnpm store cache mount is shared by the debian and alpine builds. The
 # content-addressable tarball store is libc-agnostic, but the side-effects
-# cache is not: it handed the alpine run's musl addons to a glibc install.
+# cache is not, so it must not hand one leaf the other leaf's native addons.
 export npm_config_side_effects_cache=false
 
 # node-gyp builds argon2 and isolated-vm against the installed headers when
@@ -36,8 +36,8 @@ export npm_config_build_from_source=true
 
 # pnpm is the version the packageManager field of package.json pins.
 # Debian's node-corepack activates that pin. Alpine installs the same pin
-# with npm: the corepack apk depends on the nodejs virtual, which nodejs-26
-# also provides, so it cannot be installed beside pinned nodejs-22.
+# with npm: the corepack apk depends on the nodejs virtual, so it cannot be
+# installed beside the pinned nodejs-26 package.
 if command -v corepack >/dev/null 2>&1; then
   corepack enable
   corepack prepare --activate
@@ -47,14 +47,15 @@ else
 fi
 pnpm --version
 
-# pnpm installs both libc flavours of every platform binding here, so the leaf
-# names its own libc and the payload check below rejects the other one. Node
-# reports the glibc runtime version only on glibc; the build root has no
+# pnpm deploy retains both libc flavours of platform bindings, so the leaf
+# names its own libc, removes the other one below, and rejects any survivor.
+# Node reports the glibc runtime version only on glibc; the build root has no
 # /etc/alpine-release to test instead.
 DHI_LIBC=$(node -p "process.report.getReport().header.glibcVersionRuntime ? 'glibc' : 'musl'")
 export DHI_LIBC
+PNPM_STORE_DIR="/root/.local/share/pnpm/store/${DHI_LIBC}-$(uname -m)"
 
-# Manifest edits before the install. CVE pins land in the root pnpm.overrides
+# Manifest edits before the install. CVE pins land in the workspace overrides
 # map below, or on the catalog line when the dependents use a catalog:
 # specifier, which an override with a version selector does not match.
 # tsdown and tsx move to the api devDependencies: upstream lists these build
@@ -71,6 +72,7 @@ node -e '
     "axios": "1.20.0", // CVE-2026-101898, CVE-2026-101899, CVE-2026-101900, CVE-2026-101901, CVE-2026-101902, CVE-2026-101903, CVE-2026-101904, CVE-2026-101905, CVE-2026-101906, CVE-2026-101907, CVE-2026-101908, CVE-2026-101909
     "basic-ftp": "6.2.1", // CVE-2026-102990
     "axios-cache-interceptor": "1.12.3", // typed against axios 1.19+, needed to compile update-check with axios 1.20
+    "@types/node": "26.2.0", // pnpm deploy requires one peer graph; match the upstream catalog version
     "brace-expansion@5": "5.0.12", // CVE-2026-102276, CVE-2026-102277, CVE-2026-102278
     "ip-address@10": "10.7.1", // CVE-2026-101911, CVE-2026-101912
     "@simple-git/argv-parser": "2.0.1", // CVE-2026-102829
@@ -79,9 +81,6 @@ node -e '
     "simple-git": "4.0.1", // CVE-2026-102828, CVE-2026-102826, CVE-2026-102827
     "source-map-js": "1.2.2", // CVE-2026-93749
   };
-  if (ws.includes("\n  nodemailer: 10.0.1\n")) overrides.nodemailer = "10.0.9"; // CVE-2026-100699, CVE-2026-100700
-  const rootFile = "package.json";
-  const root = JSON.parse(fs.readFileSync(rootFile, "utf8"));
   const directusVersion = JSON.parse(fs.readFileSync("directus/package.json", "utf8")).version;
   if (typeof directusVersion !== "string" || directusVersion.length === 0) {
     throw new Error("directus/package.json has no version; cannot scope the @modelcontextprotocol/sdk pin");
@@ -91,21 +90,17 @@ node -e '
   if (directusVersion.startsWith("12.4.")) {
     overrides["@modelcontextprotocol/sdk"] = "1.31.0"; // CVE-2026-104850
   }
-  root.pnpm = root.pnpm || {};
-  Object.assign(root.pnpm.overrides = root.pnpm.overrides || {}, overrides);
-  fs.writeFileSync(rootFile, JSON.stringify(root, null, "\t") + "\n");
-  for (const [from, to, current, why] of [
-    ["nodemailer: 10.0.1", "nodemailer: 10.0.2", "nodemailer: 10.0.15", "GHSA-6vj9-mwq6-2f5v"],
-    ["undici: 7.29.0", "undici: 7.29.1", "undici: 7.30.0", "CVE-2026-85024"],
-  ]) {
-    const line = "\n  " + from + "\n";
-    const currentLine = "\n  " + current + "\n";
-    if (ws.includes(line)) ws = ws.replace(line, "\n  " + to + "\n");
-    else if (!ws.includes(currentLine)) throw new Error("catalog entry " + from + " or " + current + " not found, re-check the " + why + " pin");
-  }
+  const overrideLines = Object.entries(overrides)
+    .map(([name, version]) => "  " + JSON.stringify(name) + ": " + JSON.stringify(version))
+    .join("\n");
+  const overrideAnchor = "\noverrides:\n";
+  if (!ws.includes(overrideAnchor)) throw new Error("pnpm-workspace.yaml has no overrides map");
+  ws = ws.replace(overrideAnchor, overrideAnchor + overrideLines + "\n");
+  const shellEmulator = "\nshellEmulator: true\n";
+  if (!ws.includes(shellEmulator)) throw new Error("pnpm-workspace.yaml no longer enables shellEmulator");
+  ws = ws.replace(shellEmulator, "\nshellEmulator: false\n");
   if (ws.includes("supportedArchitectures")) throw new Error("upstream now sets supportedArchitectures, re-check the libc selection");
-  ws += "\nsupportedArchitectures:\n  os:\n    - current\n  cpu:\n    - current\n  libc:\n    - " + process.env.DHI_LIBC + "\n";
-  fs.writeFileSync(wsFile, ws);
+  ws += "\ninjectWorkspacePackages: true\nsupportedArchitectures:\n  os:\n    - current\n  cpu:\n    - current\n  libc:\n    - " + process.env.DHI_LIBC + "\n";
   const apiFile = "api/package.json";
   const api = JSON.parse(fs.readFileSync(apiFile, "utf8"));
   for (const dep of ["tsdown", "tsx"]) {
@@ -114,17 +109,24 @@ node -e '
     delete api.dependencies[dep];
   }
   fs.writeFileSync(apiFile, JSON.stringify(api, null, "\t") + "\n");
-  // isolated-vm 5.0.3 does not compile under GCC 15 without <cstdint>; the
+  // isolated-vm 7.0.1 does not compile under GCC 15 without <cstdint>; the
   // patch rides in through pnpm patchedDependencies (see patch/ for the why).
   fs.mkdirSync("patches", { recursive: true });
-  fs.copyFileSync(process.env.SOURCE_DIR + "/patch/isolated-vm-cstdint.patch", "patches/isolated-vm@5.0.3.patch");
-  root.pnpm.patchedDependencies = Object.assign(root.pnpm.patchedDependencies || {}, { "isolated-vm@5.0.3": "patches/isolated-vm@5.0.3.patch" });
-  fs.writeFileSync(rootFile, JSON.stringify(root, null, "\t") + "\n");
+  const patch = fs.readFileSync(process.env.SOURCE_DIR + "/patch/isolated-vm-cstdint.patch", "utf8");
+  const patchBody = patch.indexOf("--- a/");
+  if (patchBody < 0) throw new Error("isolated-vm patch has no unified diff body");
+  fs.writeFileSync("patches/isolated-vm@7.0.1.patch", "diff --git a/src/lib/timer.h b/src/lib/timer.h\n" + patch.slice(patchBody));
+  const buildsAnchor = "\nallowBuilds:\n";
+  if (!ws.includes(buildsAnchor)) throw new Error("pnpm-workspace.yaml has no allowBuilds map");
+  ws = ws.replace(buildsAnchor, "\npatchedDependencies:\n  \"isolated-vm@7.0.1\": \"patches/isolated-vm@7.0.1.patch\"\n" + buildsAnchor);
+  fs.writeFileSync(wsFile, ws);
 '
-pnpm install --recursive --lockfile-only
-pnpm install --recursive --frozen-lockfile
+pnpm --store-dir="${PNPM_STORE_DIR}" install --recursive --lockfile-only
+pnpm --store-dir="${PNPM_STORE_DIR}" install --recursive --frozen-lockfile
 
-npm_config_workspace_concurrency=2 pnpm run build
+pnpm --recursive --workspace-concurrency=2 run build
+
+pnpm --store-dir="${PNPM_STORE_DIR}" --filter directus deploy --prod dist
 
 # Upstream unit suites (vitest in every workspace package that defines a test
 # script; pnpm skips the rest). The blackbox and e2e suites need a running
@@ -141,9 +143,7 @@ pnpm --recursive --workspace-concurrency=1 --filter '!tests-blackbox' --filter '
 # destroying them, so a prosemirror observer timer fires after happy-dom is
 # torn down and vitest exits 1 on that unhandled error. The flag ignores only
 # that class for the app suite; every assertion in it still gates.
-pnpm --filter @directus/app test --reporter=dot --silent --dangerouslyIgnoreUnhandledErrors
-
-pnpm --filter directus deploy --legacy --prod dist
+pnpm --filter @directus/app test -- --reporter=dot --silent --dangerouslyIgnoreUnhandledErrors
 
 cd dist
 
@@ -170,6 +170,28 @@ rm -rf "${argon2_dir}/build"
 mkdir -p "${argon2_dir}/build/Release"
 mv "${argon2_dir}/argon2.node" "${argon2_dir}/build/Release/argon2.node"
 
+# pnpm deploy retains optional native packages for the other libc even when
+# supportedArchitectures names only this build's libc. They cannot load in the
+# target and inflate both the package and its SBOM, so remove their package
+# directories and links while retaining the native package selected above.
+if [ "${DHI_LIBC}" = musl ]; then
+  foreign='^(@img\+sharp(-libvips)?-linux-(x64|arm64)@|@braintrust\+bt-linux-(x64|arm64)@|.*-(x64|arm64)-gnu@)'
+else
+  foreign='musl'
+fi
+for foreign_path in node_modules/.pnpm/*; do
+  foreign_dir=${foreign_path##*/}
+  if ! printf '%s\n' "${foreign_dir}" | grep -Eq "${foreign}"; then
+    continue
+  fi
+  while IFS= read -r -d '' link; do
+    case "$(readlink "${link}")" in
+      *"${foreign_dir}"*) rm "${link}" ;;
+    esac
+  done < <(find node_modules -type l -print0)
+  rm -rf "${foreign_path}"
+done
+
 # Lock files nested inside dependencies (example projects, benchmarks) are read
 # by the SBOM indexer as installed packages and produced phantom findings on
 # versions nothing ships; pnpm never reads them after the install. pnpm's own
@@ -192,11 +214,11 @@ node -e '
 '
 
 # The native addons must load with the node of this build. argon2 is the
-# rebuilt one; isolated-vm, sqlite3, snappy and sharp keep the binaries their
-# install scripts fetched, and sqlite3 is an optional dependency whose missing
-# binary would not fail the install. Top-level await exits 13 when a promise
-# never settles, and the marker check below fails the build unless every
-# probe ran.
+# rebuilt one; isolated-vm and sqlite3 keep the binaries their install scripts
+# compiled, while snappy and sharp use the selected prebuilt packages. sqlite3
+# is an optional dependency whose missing binary would not fail the install.
+# Top-level await exits 13 when a promise never settles, and the marker check
+# below fails the build unless every probe ran.
 probe=$(node --input-type=module -e '
   import { createRequire } from "node:module";
   import { realpathSync } from "node:fs";
@@ -245,11 +267,6 @@ test -f "${dest}/node_modules/@directus/api/dist/cli/run.js"
 test -f "${dest}/node_modules/@directus/api/dist/index.js"
 test -z "$(find "${dest}" -path '*/node_modules/tsdown' -o -path '*/node_modules/tsx')"
 test -z "$(ls "${dest}/node_modules/.pnpm" | grep -E '^stream-json@1\.')"
-if [ "${DHI_LIBC}" = musl ]; then
-  foreign='^(@img\+sharp(-libvips)?-linux-(x64|arm64)@|@braintrust\+bt-linux-(x64|arm64)@|.*-(x64|arm64)-gnu@)'
-else
-  foreign='musl'
-fi
 test -z "$(ls "${dest}/node_modules/.pnpm" | grep -E "${foreign}")"
 dangling=$(find "${dest}" -type l ! -exec test -e {} ';' -print)
 test -z "${dangling}"
