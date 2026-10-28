@@ -4,9 +4,9 @@ image: dhi.io/pkg-cloud-sdk-emulators
 variant: runtime
 tags:
   - 591.0.0
-  - 591.0.0-r0
+  - 591.0.0-r1
   - 591.0.0-debian13
-  - 591.0.0-r0-debian13
+  - 591.0.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -35,7 +35,7 @@ vars:
   PUBSUB_SHA256: 28f872a91407ff2a41e29fcf79567f9238322451ad4eb18fa541086ee9982fcf
   PUBSUB_TGZ: google-cloud-sdk-pubsub-emulator-20261009074343.tar.gz
   PUBSUB_VERSION: 0.8.37
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "591.0"
   SEMVER_MAJOR_VERSION: "591"
   SEMVER_VERSION: 591.0.0
@@ -195,6 +195,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar
+            checksum: sha256:b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+            path: ${source.dir}/patch/deps/guava-33.7.2-jre.jar
+            spdx:
+              name: guava
+              version: 33.7.2-jre
+              packages:
+                - name: guava
+                  purl: pkg:maven/com.google.guava/guava@33.7.2-jre
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - name: assemble SDK tree offline (core + components, FHS /usr/lib)
           runs: |
@@ -296,6 +308,59 @@ contents:
             unzip -p "${fatjar}" com/fasterxml/jackson/core/json/PackageVersion.class | grep -aq '2\.21\.7'
             unzip -p "${fatjar}" com/fasterxml/jackson/databind/cfg/PackageVersion.class | grep -aq '2\.21\.7'
             test "$(unzip -l "${fatjar}" | grep -c 'com/fasterxml/jackson/annotation/')" -gt 0
+        - name: patch pubsub emulator embedded guava
+          runs: |
+            set -eux -o pipefail
+
+            SDK=${target.dir}/usr/lib/google-cloud-sdk
+            fatjar="${SDK}/platform/pubsub-emulator/lib/cloud-pubsub-emulator-0.8.37-all.jar"
+            test -f "${fatjar}"
+
+            PATCH=${source.dir}/patch/deps
+            echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  ${PATCH}/guava-33.7.2-jre.jar" | sha256sum -c -
+
+            guava_ver="$(unzip -p "${fatjar}" 'META-INF/maven/com.google.guava/guava/pom.properties' 2> /dev/null | grep '^version=' | cut -d= -f2 || true)"
+            floor="33.7.2-jre"
+
+            guava_jre_xyz() {
+              printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-jre$'
+            }
+            guava_ge() {
+              printf '%s\n%s\n' "$2" "$1" | sort -C -V
+            }
+
+            if [ -n "${guava_ver}" ] && guava_jre_xyz "${guava_ver}" && guava_ge "${guava_ver}" "${floor}"; then
+              echo "pubsub emulator guava ${guava_ver} is at or above ${floor}; leaving bundled jar in place"
+              exit 0
+            fi
+
+            if [ -n "${guava_ver}" ] && ! guava_jre_xyz "${guava_ver}"; then
+              echo "pubsub emulator guava version is unfamiliar (${guava_ver}); refusing to replace it" >&2
+              exit 1
+            fi
+
+            tmp=$(mktemp -d)
+            zip -qd "${fatjar}" \
+              'com/google/common/*' \
+              'com/google/thirdparty/*' \
+              'META-INF/maven/com.google.guava/guava/*' \
+              'META-INF/maven/com.google.guava/guava/*/*' 2> /dev/null || true
+
+            unzip -q "${PATCH}/guava-33.7.2-jre.jar" -d "${tmp}/guava" \
+              'com/google/common/*' \
+              'com/google/thirdparty/*' \
+              'META-INF/maven/com.google.guava/guava/*'
+            (
+              cd "${tmp}/guava"
+              zip -r "${fatjar}" com META-INF
+            )
+
+            unzip -p "${fatjar}" 'META-INF/maven/com.google.guava/guava/pom.properties' | grep -q '^version=33.7.2-jre'
+            unzip -Z1 "${fatjar}" 'com/google/thirdparty/publicsuffix/PublicSuffixTrie.class' > /dev/null
+            if unzip -Z1 "${fatjar}" 'com/google/thirdparty/publicsuffix/TrieParser.class' > /dev/null 2>&1; then
+              echo "pubsub emulator still ships pre-33.7.2 publicsuffix TrieParser after guava replace" >&2
+              exit 1
+            fi
         - name: update bigtable emulator go deps
           uses: go/bump@v2
           work-dir: /go/src/google-cloud-go/bigtable
@@ -389,7 +454,7 @@ contents:
               - deb
             license: Apache-2.0
             name: cloud-sdk-emulators
-            rel: 0
+            rel: 1
             url: https://cloud.google.com/sdk
             version: 591.0.0
 os-release:
