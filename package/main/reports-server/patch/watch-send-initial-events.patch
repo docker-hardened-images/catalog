@@ -1,0 +1,488 @@
+Origin: DHI-internal (Kubernetes client compatibility)
+Description: Emit WatchList initial-events-end BOOKMARK events so client-go
+ v0.35+ reflectors (Kyverno reports-controller) can finish cache sync against
+ the aggregated reports-server APIs. Without this, watches hang on
+ "awaiting required bookmark event" and PolicyReports are never written.
+Base-Tree: git https://github.com/kyverno/reports-server.git 7f1511eeb6b5f4a83bab914214b5dcd22d8d3e14
+Verify: cmd `go test ./pkg/api -run '^TestReportWatchSendsInitialEventsAndBookmark$' -count=1` expect "ok"
+Drop-When: never: remove after upstream resolves https://github.com/kyverno/reports-server/issues/360 and publishes the fix
+Forwarded: https://github.com/kyverno/reports-server/issues/360
+Upstream API: https://kubernetes.io/docs/reference/using-api/api-concepts/#streaming-lists
+
+diff --git a/pkg/api/cephr.go b/pkg/api/cephr.go
+index 15df581..0f096ac 100644
+--- a/pkg/api/cephr.go
++++ b/pkg/api/cephr.go
+@@ -257,12 +257,14 @@ func (c *cephrStore) DeleteCollection(ctx context.Context, deleteValidation rest
+ }
+ 
+ func (c *cephrStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching cluster ephemeral reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching cluster ephemeral reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return c.broadcaster.Watch()
++		if !wantInitial {
++			return c.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := c.List(ctx, options)
+ 	if err != nil {
+@@ -272,13 +274,23 @@ func (c *cephrStore) Watch(ctx context.Context, options *metainternalversion.Lis
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into cluster ephemeral report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &reportsv1.ClusterEphemeralReport{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return c.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/clusterreport.go b/pkg/api/clusterreport.go
+index 183477d..d43d960 100644
+--- a/pkg/api/clusterreport.go
++++ b/pkg/api/clusterreport.go
+@@ -256,12 +256,14 @@ func (c *clusterReportStore) DeleteCollection(ctx context.Context, deleteValidat
+ }
+ 
+ func (c *clusterReportStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching cluster reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching cluster reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return c.broadcaster.Watch()
++		if !wantInitial {
++			return c.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := c.List(ctx, options)
+ 	if err != nil {
+@@ -271,13 +273,23 @@ func (c *clusterReportStore) Watch(ctx context.Context, options *metainternalver
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into cluster report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &openreportsv1alpha1.ClusterReport{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return c.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/cpolr.go b/pkg/api/cpolr.go
+index 9e01bdb..c0a2109 100644
+--- a/pkg/api/cpolr.go
++++ b/pkg/api/cpolr.go
+@@ -257,12 +257,14 @@ func (c *cpolrStore) DeleteCollection(ctx context.Context, deleteValidation rest
+ }
+ 
+ func (c *cpolrStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching cluster policy reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching cluster policy reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return c.broadcaster.Watch()
++		if !wantInitial {
++			return c.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := c.List(ctx, options)
+ 	if err != nil {
+@@ -272,13 +274,23 @@ func (c *cpolrStore) Watch(ctx context.Context, options *metainternalversion.Lis
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into cluster policy report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &v1alpha2.ClusterPolicyReport{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return c.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/ephr.go b/pkg/api/ephr.go
+index aa12a40..afdf46d 100644
+--- a/pkg/api/ephr.go
++++ b/pkg/api/ephr.go
+@@ -277,12 +277,14 @@ func (p *ephrStore) DeleteCollection(ctx context.Context, deleteValidation rest.
+ }
+ 
+ func (p *ephrStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching ephemeral reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching ephemeral reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return p.broadcaster.Watch()
++		if !wantInitial {
++			return p.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := p.List(ctx, options)
+ 	if err != nil {
+@@ -292,13 +294,23 @@ func (p *ephrStore) Watch(ctx context.Context, options *metainternalversion.List
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into ephemeral report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &reportsv1.EphemeralReport{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return p.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/polr.go b/pkg/api/polr.go
+index 2690309..02c68b0 100644
+--- a/pkg/api/polr.go
++++ b/pkg/api/polr.go
+@@ -277,12 +277,14 @@ func (p *polrStore) DeleteCollection(ctx context.Context, deleteValidation rest.
+ }
+ 
+ func (p *polrStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching policy reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching policy reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return p.broadcaster.Watch()
++		if !wantInitial {
++			return p.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := p.List(ctx, options)
+ 	if err != nil {
+@@ -292,13 +294,23 @@ func (p *polrStore) Watch(ctx context.Context, options *metainternalversion.List
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into policy report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &v1alpha2.PolicyReport{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return p.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/report.go b/pkg/api/report.go
+index ac79452..ec403e3 100644
+--- a/pkg/api/report.go
++++ b/pkg/api/report.go
+@@ -276,12 +276,14 @@ func (s *reportStore) DeleteCollection(ctx context.Context, deleteValidation res
+ }
+ 
+ func (s *reportStore) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+-	klog.Infof("watching reports rv=%s", options.ResourceVersion)
++	klog.Infof("watching reports rv=%s sendInitialEvents=%v", options.ResourceVersion, sendInitialEvents(options))
++	wantInitial := sendInitialEvents(options)
+ 	switch options.ResourceVersion {
+ 	case "", "0":
+-		return s.broadcaster.Watch()
++		if !wantInitial {
++			return s.broadcaster.Watch()
++		}
+ 	default:
+-		break
+ 	}
+ 	items, err := s.List(ctx, options)
+ 	if err != nil {
+@@ -291,13 +293,23 @@ func (s *reportStore) Watch(ctx context.Context, options *metainternalversion.Li
+ 	if !ok {
+ 		return nil, fmt.Errorf("failed to convert runtime object into report list")
+ 	}
+-	events := make([]watch.Event, len(list.Items))
+-	for i, pol := range list.Items {
++	events := make([]watch.Event, 0, len(list.Items)+1)
++	bookmarkResourceVersion := "1"
++	for _, pol := range list.Items {
++		bookmarkResourceVersion, err = maxResourceVersion(bookmarkResourceVersion, pol.GetResourceVersion())
++		if err != nil {
++			return nil, err
++		}
+ 		report := pol.DeepCopy()
+-		events[i] = watch.Event{
++		events = append(events, watch.Event{
+ 			Type:   watch.Added,
+ 			Object: report,
+-		}
++		})
++	}
++	if wantInitial {
++		bookmark := &openreportsv1alpha1.Report{}
++		bookmark.SetResourceVersion(bookmarkResourceVersion)
++		events = append(events, initialEventsEndBookmark(bookmark))
+ 	}
+ 	return s.broadcaster.WatchWithPrefix(events)
+ }
+diff --git a/pkg/api/watch_initial_events.go b/pkg/api/watch_initial_events.go
+new file mode 100644
+index 0000000..5a91658
+--- /dev/null
++++ b/pkg/api/watch_initial_events.go
+@@ -0,0 +1,50 @@
++package api
++
++import (
++	"strconv"
++
++	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/watch"
++)
++
++func sendInitialEvents(options *metainternalversion.ListOptions) bool {
++	return options != nil && options.SendInitialEvents != nil && *options.SendInitialEvents
++}
++
++func maxResourceVersion(current, candidate string) (string, error) {
++	if candidate == "" {
++		return current, nil
++	}
++	currentValue, err := strconv.ParseUint(current, 10, 64)
++	if err != nil {
++		return "", err
++	}
++	candidateValue, err := strconv.ParseUint(candidate, 10, 64)
++	if err != nil {
++		return "", err
++	}
++	if candidateValue > currentValue {
++		return candidate, nil
++	}
++	return current, nil
++}
++
++// initialEventsEndBookmark returns a BOOKMARK event annotated so client-go
++// WatchList (k8s 1.31+) can finish its initial-events sync.
++func initialEventsEndBookmark(obj metav1.Object) watch.Event {
++	if obj.GetResourceVersion() == "" {
++		obj.SetResourceVersion("1")
++	}
++	ann := obj.GetAnnotations()
++	if ann == nil {
++		ann = map[string]string{}
++	}
++	ann[metav1.InitialEventsAnnotationKey] = "true"
++	obj.SetAnnotations(ann)
++	return watch.Event{
++		Type:   watch.Bookmark,
++		Object: obj.(runtime.Object),
++	}
++}
+diff --git a/pkg/api/watch_initial_events_test.go b/pkg/api/watch_initial_events_test.go
+new file mode 100644
+index 0000000..8149d72
+--- /dev/null
++++ b/pkg/api/watch_initial_events_test.go
+@@ -0,0 +1,115 @@
++package api
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/kyverno/reports-server/pkg/storage/inmemory"
++	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/labels"
++	"k8s.io/apimachinery/pkg/watch"
++	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
++	openreportsv1alpha1 "openreports.io/apis/openreports.io/v1alpha1"
++)
++
++func TestReportWatchSendsInitialEventsAndBookmark(t *testing.T) {
++	ctx := genericapirequest.WithNamespace(context.Background(), "default")
++	storage := inmemory.New()
++	reports := storage.Reports()
++
++	for _, report := range []*openreportsv1alpha1.Report{
++		{
++			ObjectMeta: metav1.ObjectMeta{
++				Name:            "newer",
++				Namespace:       "default",
++				ResourceVersion: "19",
++				Labels:          map[string]string{"include": "true"},
++			},
++		},
++		{
++			ObjectMeta: metav1.ObjectMeta{
++				Name:            "older",
++				Namespace:       "default",
++				ResourceVersion: "5",
++				Labels:          map[string]string{"include": "true"},
++			},
++		},
++		{
++			ObjectMeta: metav1.ObjectMeta{
++				Name:            "filtered",
++				Namespace:       "default",
++				ResourceVersion: "23",
++				Labels:          map[string]string{"include": "false"},
++			},
++		},
++		{
++			ObjectMeta: metav1.ObjectMeta{
++				Name:            "other-namespace",
++				Namespace:       "other",
++				ResourceVersion: "29",
++				Labels:          map[string]string{"include": "true"},
++			},
++		},
++	} {
++		if err := reports.Create(ctx, report); err != nil {
++			t.Fatalf("create report %q: %v", report.Name, err)
++		}
++	}
++
++	store := ReportStore(reports)
++	defer store.Destroy()
++
++	sendInitialEvents := true
++	watcher, err := store.Watch(ctx, &metainternalversion.ListOptions{
++		ResourceVersion:      "0",
++		ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
++		SendInitialEvents:    &sendInitialEvents,
++		LabelSelector:        labels.SelectorFromSet(labels.Set{"include": "true"}),
++	})
++	if err != nil {
++		t.Fatalf("watch reports: %v", err)
++	}
++	defer watcher.Stop()
++
++	events := make([]watch.Event, 0, 3)
++	for len(events) < cap(events) {
++		select {
++		case event := <-watcher.ResultChan():
++			events = append(events, event)
++		case <-time.After(time.Second):
++			t.Fatalf("timed out after receiving %d events", len(events))
++		}
++	}
++
++	names := map[string]bool{}
++	for i, event := range events[:2] {
++		if event.Type != watch.Added {
++			t.Fatalf("event %d type = %q, want %q", i, event.Type, watch.Added)
++		}
++		report, ok := event.Object.(*openreportsv1alpha1.Report)
++		if !ok {
++			t.Fatalf("event %d object type = %T, want *Report", i, event.Object)
++		}
++		names[report.Name] = true
++	}
++	if !names["older"] || !names["newer"] || len(names) != 2 {
++		t.Fatalf("initial event names = %v, want older and newer", names)
++	}
++
++	bookmark := events[2]
++	if bookmark.Type != watch.Bookmark {
++		t.Fatalf("final event type = %q, want %q", bookmark.Type, watch.Bookmark)
++	}
++	report, ok := bookmark.Object.(*openreportsv1alpha1.Report)
++	if !ok {
++		t.Fatalf("bookmark object type = %T, want *Report", bookmark.Object)
++	}
++	if report.ResourceVersion != "19" {
++		t.Fatalf("bookmark resourceVersion = %q, want maximum initial resourceVersion 19", report.ResourceVersion)
++	}
++	if report.Annotations[metav1.InitialEventsAnnotationKey] != "true" {
++		t.Fatalf("bookmark annotations = %v, want %s=true", report.Annotations, metav1.InitialEventsAnnotationKey)
++	}
++}
