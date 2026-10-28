@@ -1,0 +1,46 @@
+Subject: Migrate pkg/token to go-jose v4 for CVE-2026-116587
+
+Description: The newest go-jose v3 release does not include the upstream fix for
+CVE-2026-116587, which is addressed in go-jose v4.1.6. CDI apiserver validates
+upload and clone JWTs through pkg/token, so this image applies a minimal import
+and API migration while go/bump pins github.com/go-jose/go-jose/v4.
+
+Origin: DHI-internal (cdi-apiserver JWT token helper)
+CVE: CVE-2026-116587
+Base-Tree: git https://github.com/kubevirt/containerized-data-importer.git c8129be0728afa1a2c49b69b1c0847a42730a732
+Verify: cmd `CGO_ENABLED=0 go test ./cmd/cdi-apiserver/... -count=1` expect "ok"
+Forwarded: not-needed (no upstream v3 release contains the fix)
+Drop-When: never: drop when upstream pkg/token imports go-jose v4 without this patch
+
+---
+diff --git a/pkg/token/token.go b/pkg/token/token.go
+index e3b0ed7..4bbe0f2 100644
+--- a/pkg/token/token.go
++++ b/pkg/token/token.go
+@@ -23,8 +23,8 @@ import (
+ 	"crypto/rsa"
+ 	"time"
+ 
+-	jose "github.com/go-jose/go-jose/v3"
+-	"github.com/go-jose/go-jose/v3/jwt"
++	jose "github.com/go-jose/go-jose/v4"
++	"github.com/go-jose/go-jose/v4/jwt"
+ 	"github.com/pkg/errors"
+ 
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+@@ -68,7 +68,7 @@ func NewValidator(issuer string, key *rsa.PublicKey, leeway time.Duration) Valid
+ 
+ // Validate checks the token signature and returns the contents
+ func (v *validator) Validate(token string) (*Payload, error) {
+-	tok, err := jwt.ParseSigned(token)
++	tok, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{jose.PS256})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -125,5 +125,5 @@ func (g *generator) Generate(payload *Payload) (string, error) {
+ 			NotBefore: jwt.NewNumericDate(t),
+ 			Expiry:    jwt.NewNumericDate(t.Add(g.lifetime)),
+ 		}).
+-		CompactSerialize()
++		Serialize()
+ }
