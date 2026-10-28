@@ -108,6 +108,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar
+            checksum: sha256:35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+            path: ${source.dir}/patch/deps/snappy-java-1.1.10.9.jar
+            spdx:
+              name: snappy-java
+              version: 1.1.10.9
+              packages:
+                - name: snappy-java
+                  purl: pkg:maven/org.xerial.snappy/snappy-java@1.1.10.9
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
           - url: git+https://github.com/rundeck/rundeck.git#6ac5d092e6ccde3fd580ac61371487a300a0b6ca
             checksum: 6ac5d092e6ccde3fd580ac61371487a300a0b6ca
             path: ${source.dir}/rundeck
@@ -147,10 +159,14 @@ contents:
             sed -i \
               -e 's/^jacksonDatabindVersion=2.22.2/jacksonDatabindVersion=2.22.3/' \
               -e 's/^jacksonDataformatCBORVersion=2.22.2/jacksonDataformatCBORVersion=2.22.3/' \
+              -e 's/^guavaVersion=33.6.0-jre/guavaVersion=33.7.2-jre/' \
               gradle.properties
 
             ./gradlew --init-script "${source.dir}/dhi-plugin-management.init.gradle" \
               --no-daemon --stacktrace :rundeckapp:bootWar -x test
+
+            war=$(find rundeckapp/build/libs -name 'rundeck-*.war' | sort -V | tail -1)
+            jar tf "${war}" | grep -q 'WEB-INF/lib/guava-33.7.2-jre.jar'
         - name: patch jackson in ansible plugin
           runs: |
             set -eux -o pipefail
@@ -214,6 +230,54 @@ contents:
               echo "jackson-dataformat-yaml 2.22.2 still present in repacked war" >&2
               exit 1
             fi
+        - name: patch snappy in object-store plugin
+          runs: |
+            set -eux -o pipefail
+
+            patch_dir="$(mktemp -d)"
+            trap 'rm -rf "${patch_dir}"' EXIT
+
+            war=$(find rundeckapp/build/libs -name 'rundeck-*.war' | sort -V | tail -1)
+            [ -n "$war" ]
+            war_abs="$(cd "$(dirname "${war}")" && pwd)/$(basename "${war}")"
+
+            plugin_rel="$(jar tf "${war_abs}" | grep -E '^WEB-INF/rundeck/plugins/rundeck-object-store-plugin-.*\.jar$' | head -1 || true)"
+            if [ -z "${plugin_rel}" ]; then
+              echo "object-store plugin jar not found in ${war_abs}" >&2
+              exit 1
+            fi
+
+            unzip -q "${war_abs}" "${plugin_rel}" -d "${patch_dir}"
+            plugin_jar="${patch_dir}/${plugin_rel}"
+            old_plugin_jar="lib/snappy-java-1.1.10.7.jar"
+            new_plugin_jar="lib/snappy-java-1.1.10.9.jar"
+            if jar tf "${plugin_jar}" | grep -q "${old_plugin_jar}"; then
+              zip -q -d "${plugin_jar}" "${old_plugin_jar}"
+            fi
+            mkdir -p "${patch_dir}/plugin-overlay/lib"
+            cp "${source.dir}/patch/deps/snappy-java-1.1.10.9.jar" \
+              "${patch_dir}/plugin-overlay/${new_plugin_jar}"
+            (cd "${patch_dir}/plugin-overlay" && jar --update --file "${plugin_jar}" "${new_plugin_jar}")
+            jar tf "${plugin_jar}" | grep -q "${new_plugin_jar}"
+            if jar tf "${plugin_jar}" | grep -q "${old_plugin_jar}"; then
+              echo "${old_plugin_jar} still present in object-store plugin" >&2
+              exit 1
+            fi
+
+            manifest_dir="${patch_dir}/manifest-overlay"
+            mkdir -p "${manifest_dir}/META-INF"
+            unzip -p "${plugin_jar}" META-INF/MANIFEST.MF > "${manifest_dir}/META-INF/MANIFEST.MF"
+            sed -i \
+              -e 's/snappy-java-1.1\.10\.7\.jar/snappy-java-1.1.10.9.jar/g' \
+              "${manifest_dir}/META-INF/MANIFEST.MF"
+            grep -q 'snappy-java-1.1.10.9.jar' "${manifest_dir}/META-INF/MANIFEST.MF"
+            if grep -q 'snappy-java-1.1.10.7.jar' "${manifest_dir}/META-INF/MANIFEST.MF"; then
+              echo "Rundeck-Plugin-Libs still names snappy-java-1.1.10.7.jar" >&2
+              exit 1
+            fi
+            (cd "${manifest_dir}" && zip -q -u "${plugin_jar}" META-INF/MANIFEST.MF)
+
+            (cd "${patch_dir}" && jar --update --file "${war_abs}" "${plugin_rel}")
         - name: install rundeck
           runs: |
             set -eux -o pipefail
