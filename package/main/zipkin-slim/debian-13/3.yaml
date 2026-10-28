@@ -1,0 +1,443 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-zipkin-slim
+variant: runtime
+tags:
+  - 3.6.1
+  - 3.6.1-r0
+  - 3.6.1-debian13
+  - 3.6.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-01-11"
+vars:
+  ARMERIA_BROTLI4J_VERSION: 1.23.0
+  ARMERIA_JACKSON_VERSION: 2.22.3
+  ARMERIA_MICROMETER_VERSION: 1.17.1
+  ARMERIA_NETTY_VERSION: 4.2.18.Final
+  ARMERIA_SHADED_BOUNCYCASTLE_VERSION: "1.86"
+  ARMERIA_SHADED_GUAVA_VERSION: 33.7.1-jre
+  ARMERIA_SPRING_BOOT_VERSION: 3.5.16
+  ARMERIA_SPRING_VERSION: 6.2.19
+  ARMERIA_VERSION: 1.42.0
+  BROTLI_VERSION: 1.2.1
+  BROTLI4J_VERSION: 1.24.0
+  COMMIT_SHA: b2b0c98acf20944766bb1365de04b3316da83078
+  JACKSON_VERSION: 2.22.4
+  JDK_MAJOR_VERSION: "25"
+  JDK_VERSION: 1:25.0.5+8-0
+  MAVEN_VERSION: 3.10.0-1
+  MICROMETER_VERSION: 1.17.2
+  NODEJS_VERSION: 24.22.1-1
+  NPM_VERSION: 11.21.1-1
+  PACKAGE_HOME: /usr/share/zipkin-slim
+  PACKAGE_NAME: zipkin-slim-3
+  PROMETHEUS_METRICS_VERSION: 1.7.0
+  PROMETHEUS_SHADED_PROTOBUF_VERSION: 4.35.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.6"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.6.1
+  VERSION: 3.6.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: zipkin-slim-3
+      work-dir: ${source.dir}/zipkin
+      shell: /bin/bash
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-25
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - grep
+          - libasound2t64
+          - libc6
+          - libgcc-s1
+          - libstdc++6
+          - sed
+          - tzdata
+          - unzip
+          - eclipse-temurin-25-jdk=1:25.0.5+8-0
+          - maven=3.10.0-1
+          - nodejs-24=24.22.1-1
+          - npm=11.21.1-1
+        files:
+          - url: git+https://github.com/openzipkin/zipkin.git#3.6.1
+            checksum: b2b0c98acf20944766bb1365de04b3316da83078
+            path: ${source.dir}/zipkin
+            spdx:
+              name: zipkin
+              version: 3.6.1
+              packages:
+                - name: zipkin
+                  purl: pkg:maven/io.zipkin/zipkin-server@3.6.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: bump dependency versions
+          uses: mvn/patch@v1
+          with:
+            mvn-root: ${source.dir}/zipkin
+            properties: ${source.dir}/patch/mvn-properties.json
+        - name: exclude the pulsar collector and lz4-java from the slim jar
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/slim-exclude-pulsar-lz4.patch
+        - name: bump zipkin-server managed dependency versions
+          uses: mvn/patch@v1
+          with:
+            dependencies: ${source.dir}/patch/mvn-deps.json
+            dependencies-key: dependencyManagement.dependencies
+            mvn-root: ${source.dir}/zipkin/zipkin-server
+        - name: run start-zipkin from any working directory
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/start-zipkin-absolute-classpath.patch
+        - name: bump lens dependencies
+          uses: npm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: ${source.dir}/zipkin/zipkin-lens
+        - name: build and test zipkin
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            lock="$(sha256sum zipkin-lens/package-lock.json)"
+
+            mvn -T1C -Pexec-maven-plugin \
+              -DexcludedGroups=docker \
+              -Dlicense.skip=true \
+              -Dmaven.javadoc.skip=true \
+              --also-make -pl zipkin-server \
+              verify
+
+            test "$(sha256sum zipkin-lens/package-lock.json)" = "${lock}"
+            test -f "zipkin-server/target/zipkin-server-3.6.1-slim.jar"
+        - name: run lens unit tests
+          work-dir: ${source.dir}/zipkin/zipkin-lens
+          runs: |
+            set -eux -o pipefail
+
+            CI=true npm run test -- --run
+        - name: stage slim distribution
+          runs: |
+            set -eux -o pipefail
+
+            shopt -s nullglob
+
+            dest="${target.dir}/usr/share/zipkin-slim"
+            lib="${dest}/BOOT-INF/lib"
+            install -d "${dest}"
+            unzip -q "zipkin-server/target/zipkin-server-3.6.1-slim.jar" -d "${dest}"
+            test -f "${dest}/BOOT-INF/classpath.idx"
+
+            case "${target.arch}" in
+              amd64) other=aarch_64 ;;
+              arm64) other=x86_64 ;;
+            esac
+            for pattern in '*-osx-*.jar' "*-linux-${other}.jar"; do
+              jars=("${lib}"/${pattern})
+              test "${#jars[@]}" -gt 0
+              rm "${jars[@]}"
+            done
+
+            install -D -m 0755 docker/start-zipkin "${target.dir}/usr/bin/start-zipkin"
+            grep -qF -e "-cp '/usr/share/zipkin-slim:/usr/share/zipkin-slim/BOOT-INF/lib/*:/usr/share/zipkin-slim/BOOT-INF/classes'" "${target.dir}/usr/bin/start-zipkin"
+            grep -qF -e "-cp /usr/share/zipkin-slim " "${target.dir}/usr/bin/start-zipkin"
+            install -D -m 0644 LICENSE "${target.dir}/usr/share/licenses/zipkin-slim-3/LICENSE"
+        - name: verify dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            shopt -s nullglob
+
+            lib="${target.dir}/usr/share/zipkin-slim/BOOT-INF/lib"
+            want() {
+              local version="$1" jar
+              shift
+              test "$#" -gt 0
+              for jar in "$@"; do
+                [[ "${jar##*/}" == *"-${version}"[.-]* ]]
+              done
+            }
+
+            want "1.42.0" "${lib}"/armeria-*.jar
+            want "4.2.18.Final" "${lib}"/netty-{buffer,codec,common,handler,resolver,transport}*.jar
+            want "2.22.4" "${lib}"/jackson-{core,databind,datatype-jdk8}-*.jar
+            want "1.17.2" "${lib}"/micrometer-*.jar
+            want "6.2.19" "${lib}"/spring-{aop,beans,context,core,expression,jcl}-*.jar
+            want "3.5.16" "${lib}"/spring-boot-*.jar
+            want "1.7.0" "${lib}"/prometheus-metrics-*.jar
+            want "1.24.0" "${lib}"/brotli4j-*.jar "${lib}"/service-*.jar
+
+            case "${target.arch}" in
+              amd64) brotli=x86_64 ;;
+              arm64) brotli=aarch64 ;;
+            esac
+            natives=("${lib}"/native-linux-*.jar)
+            test "${natives[*]}" = "${lib}/native-linux-${brotli}-1.24.0.jar"
+            want "3.6.1" "${lib}"/zipkin-lens-*.jar
+
+            gone=("${lib}"/{pulsar,bcprov,bcpkix,bcutil,bouncy-castle-bc,lz4-java,opentelemetry,validation-api,zipkin-collector-pulsar,netty-tcnative-boringssl-static}-*.jar "${lib}"/*-osx-*.jar)
+            test "${#gone[@]}" -eq 0
+
+            grep -Fx "{\"zipkin\":{\"version\":\"3.6.1\",\"commit\":\"$(printf '%.7s' "b2b0c98acf20944766bb1365de04b3316da83078")\"}}" \
+              "${target.dir}/usr/share/zipkin-slim/BOOT-INF/classes/info.json"
+        - name: verify bundled library versions
+          runs: |
+            set -eux -o pipefail
+
+            lib="${target.dir}/usr/share/zipkin-slim/BOOT-INF/lib"
+            armeria="${lib}/armeria-1.42.0.jar"
+            unzip -p "${armeria}" META-INF/com.linecorp.armeria.versions.properties \
+              | grep -Fx "armeria.version=1.42.0"
+            unzip -p "${armeria}" com/linecorp/armeria/internal/shaded/bouncycastle/jce/provider/BouncyCastleProvider.class \
+              | grep -qaF "BouncyCastle Security Provider v1.86"
+            unzip -l "${armeria}" 'com/linecorp/armeria/internal/shaded/guava/collect/ImmutableList.class'
+
+            formats=("${lib}"/prometheus-metrics-exposition-formats-*.jar)
+            test "${#formats[@]}" -eq 1
+            protobuf="$(printf '%s' "4.35.0" | tr . _)"
+            test "$("${JAVA_HOME}/bin/javap" -constants -cp "${formats[0]}" \
+              "io.prometheus.metrics.shaded.com_google_protobuf_${protobuf}.RuntimeVersion" \
+              | sed -n -E 's/^  public static final int (MAJOR|MINOR|PATCH) = ([0-9]+);$/\2/p' | paste -sd.)" \
+              = "4.35.0"
+        - name: collect bundled lens packages
+          work-dir: ${source.dir}/zipkin/zipkin-lens
+          runs: |
+            set -eux -o pipefail
+
+            ./node_modules/.bin/vite build --sourcemap --outDir /tmp/lens-sourcemap --emptyOutDir --logLevel warn
+
+            node -e '
+            const fs = require("fs"), path = require("path");
+            const maps = "/tmp/lens-sourcemap/static/js";
+            const dst = "/tmp/lens-bundled";
+            const seen = new Set();
+            for (const f of fs.readdirSync(maps).filter((n) => n.endsWith(".js.map"))) {
+              for (const src of JSON.parse(fs.readFileSync(path.join(maps, f), "utf8")).sources || []) {
+                const s = String(src);
+                const first = s.indexOf("node_modules/");
+                if (first < 0) continue;
+                const rel = s.slice(first);
+                const last = rel.lastIndexOf("node_modules/") + "node_modules/".length;
+                const parts = rel.slice(last).split("/");
+                seen.add(rel.slice(0, last) + (parts[0].startsWith("@") ? parts[0] + "/" + parts[1] : parts[0]));
+              }
+            }
+            if (seen.size < 40) {
+              throw new Error("only " + seen.size + " bundled packages resolved; the bundle layout changed");
+            }
+            for (const dir of seen) {
+              const to = path.join(dst, dir);
+              fs.mkdirSync(to, { recursive: true });
+              fs.copyFileSync(path.join(dir, "package.json"), path.join(to, "package.json"));
+            }
+            console.log("bundled lens packages:", seen.size);
+            '
+
+            test "$(find /tmp/lens-bundled -name package.json | wc -l)" -ge 40
+        - name: lens bundle sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: zipkin-slim-3-lens
+            source: /tmp/lens-bundled
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: zipkin-slim-3-armeria-bcprov
+            purl: pkg:maven/org.bouncycastle/bcprov-jdk18on@1.86
+            version: 1.86
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: zipkin-slim-3-armeria-bcpkix
+            purl: pkg:maven/org.bouncycastle/bcpkix-jdk18on@1.86
+            version: 1.86
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: zipkin-slim-3-armeria-guava
+            purl: pkg:maven/com.google.guava/guava@33.7.1-jre
+            version: 33.7.1-jre
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: zipkin-slim-3-prometheus-protobuf-java
+            purl: pkg:maven/com.google.protobuf/protobuf-java@4.35.0
+            version: 4.35.0
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: zipkin-slim-3-brotli4j-brotli
+            purl: pkg:pypi/brotli@1.2.1
+            version: 1.2.1
+        - name: stage bundled library sbom
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/zipkin /opt/docker/sbom/zipkin-slim-3-* "${target.dir}/opt/docker/sbom/"
+            test -f "${target.dir}/opt/docker/sbom/zipkin/.spdx.zipkin.json"
+            test "$(find "${target.dir}/opt/docker/sbom" -name ".spdx.zipkin-slim-3-*.json" | wc -l)" -eq 6
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: zipkin-slim
+            source: ${target.dir}/usr/share/zipkin-slim
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - /bin/sh
+                - libgcc
+                - libstdc++
+            conflicts: zipkin-3
+            deb:
+              depends:
+                - dash
+                - libc6
+                - libgcc-s1
+                - libstdc++6
+            depends:
+              - eclipse-temurin-25-jre
+            description: Zipkin distributed tracing server, slim distribution
+            files:
+              - opt/docker/sbom
+              - usr/bin/start-zipkin
+              - usr/share/licenses/zipkin-slim-3
+              - usr/share/zipkin-slim
+            license: Apache-2.0
+            name: zipkin-slim-3
+            rel: 0
+            url: https://zipkin.io/
+            version: 3.6.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/mvn-properties.json
+          content: |
+            [
+              {
+                "property": "armeria.version",
+                "value": "1.42.0",
+                "comment": "zipkin's armeria 1.38.0 relocates Bouncy Castle 1.83. CVE-2025-14813 CVE-2026-8763 CVE-2026-13506 CVE-2026-5598 CVE-2026-0636 CVE-2026-5588"
+              },
+              {
+                "property": "netty.version",
+                "value": "4.2.18.Final",
+                "comment": "The netty armeria is built against. CVE-2026-41417 CVE-2026-42577 CVE-2026-42578 CVE-2026-42579 CVE-2026-42580 CVE-2026-42581 CVE-2026-42583 CVE-2026-42584 CVE-2026-42585 CVE-2026-42587 CVE-2026-44249 CVE-2026-45416 CVE-2026-45536 CVE-2026-45673 CVE-2026-45674 CVE-2026-47244 CVE-2026-47691 CVE-2026-48043 CVE-2026-50010 CVE-2026-50020 CVE-2026-50560 CVE-2026-55831 CVE-2026-55833 CVE-2026-56745 CVE-2026-56746 CVE-2026-56819 CVE-2026-59898 CVE-2026-59899 CVE-2026-59900 CVE-2026-59901 CVE-2026-59903 CVE-2026-59921 CVE-2026-73508 CVE-2026-75595 CVE-2026-75596 CVE-2026-89044 CVE-2026-93492 CVE-2026-93565 CVE-2026-93566 CVE-2026-93567 CVE-2026-93568 CVE-2026-93569 CVE-2026-93573 CVE-2026-93579 GHSA-2g37-3h88-55hc GHSA-2g6j-r8q9-5hr8 GHSA-cc6x-ffm5-83wf GHSA-p85m-gvr3-788c GHSA-pvjx-v7vp-62vq GHSA-rmcw-9fcq-wjq7"
+              },
+              {
+                "property": "jackson.version",
+                "value": "2.22.4",
+                "comment": "The newest patch on the jackson minor armeria is built against. CVE-2026-19032 CVE-2026-54512 CVE-2026-54513 CVE-2026-54514 CVE-2026-54515 CVE-2026-54516 CVE-2026-54517 CVE-2026-54518 CVE-2026-59888 CVE-2026-59889 CVE-2026-68494 CVE-2026-68497 CVE-2026-68498 CVE-2026-77310 CVE-2026-83557 CVE-2026-89407 CVE-2026-89425 CVE-2026-91776 CVE-2026-91777 CVE-2026-110879 GHSA-mhm7-754m-9p8w GHSA-r7wm-3cxj-wff9"
+              },
+              {
+                "property": "micrometer.version",
+                "value": "1.17.2",
+                "comment": "The newest patch on the micrometer minor armeria is built against. CVE-2026-40983 CVE-2026-40984"
+              },
+              {
+                "property": "spring-boot.version",
+                "value": "3.5.16",
+                "comment": "The spring-boot armeria is built against. CVE-2026-40973 CVE-2026-41001"
+              },
+              {
+                "property": "spring.version",
+                "value": "6.2.19",
+                "comment": "The spring armeria is built against. CVE-2026-41848 CVE-2026-41850 CVE-2026-41851 CVE-2026-41852"
+              }
+            ]
+          uid: 0
+          gid: 0
+          mode: "0444"
+        - type: file
+          path: ${source.dir}/patch/mvn-deps.json
+          content: |
+            [
+              {
+                "groupId": "com.aayushatharva.brotli4j",
+                "artifactId": "brotli4j",
+                "version": "1.24.0",
+                "comment": "The newest brotli4j on the major armeria is built against. CVE-2026-111497"
+              },
+              {
+                "groupId": "com.aayushatharva.brotli4j",
+                "artifactId": "service",
+                "version": "1.24.0",
+                "comment": "The newest brotli4j on the major armeria is built against. CVE-2026-111497"
+              },
+              {
+                "groupId": "com.aayushatharva.brotli4j",
+                "artifactId": "native-linux-x86_64",
+                "version": "1.24.0",
+                "comment": "The newest brotli4j on the major armeria is built against. CVE-2026-111497"
+              },
+              {
+                "groupId": "com.aayushatharva.brotli4j",
+                "artifactId": "native-linux-aarch64",
+                "version": "1.24.0",
+                "comment": "The newest brotli4j on the major armeria is built against. CVE-2026-111497"
+              }
+            ]
+          uid: 0
+          gid: 0
+          mode: "0444"
+        - type: file
+          path: ${source.dir}/patch/slim-exclude-pulsar-lz4.patch
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/zipkin-slim/patch/slim-exclude-pulsar-lz4.patch
+        - type: file
+          path: ${source.dir}/patch/start-zipkin-absolute-classpath.patch
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/zipkin-slim/patch/start-zipkin-absolute-classpath.patch
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/zipkin-slim/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
