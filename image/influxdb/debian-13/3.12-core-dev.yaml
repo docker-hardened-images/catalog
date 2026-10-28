@@ -1,0 +1,254 @@
+# syntax=dhi.io/build:2-debian13
+
+name: InfluxDB 3.12.x Core (core, dev)
+image: dhi.io/influxdb
+variant: dev
+flavor: core
+tags:
+  - 3-core-dev
+  - 3.12-core-dev
+  - 3.12.1-core-dev
+  - 3-debian-core-dev
+  - 3-debian13-core-dev
+  - 3.12-debian-core-dev
+  - 3.12-debian13-core-dev
+  - 3.12.1-debian-core-dev
+  - 3.12.1-debian13-core-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-10-15"
+vars:
+  COMMIT_SHA: 692ea4a9943fc343c5fdf830d7dff82eef1f7fca
+  PYTHON_MAJOR_MINOR_VERSION: "3.13"
+  SEMVER_MAJOR_MINOR_VERSION: "3.12"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.12.1
+  VERSION: 3.12.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libgcc-s1
+    - libstdc++6
+    - mawk
+    - openssl
+    - perl-base
+    - python-3.13
+    - python-3.13-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - sed
+    - tar
+    - tzdata
+    - util-linux
+  builds:
+    - name: influxdb3
+      shell: /bin/bash
+      caches:
+        - path: /root/.cargo
+      contents:
+        packages:
+          - build-essential
+          - cargo-1.97
+          - rustc-1.97
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - gawk
+          - binutils
+          - git
+          - grep
+          - libprotobuf-dev
+          - lld
+          - protobuf-compiler
+          - sed
+          - python-3.13
+          - python-3.13-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+        files:
+          - url: git+https://github.com/influxdata/influxdb.git#v3.12.1
+            checksum: 692ea4a9943fc343c5fdf830d7dff82eef1f7fca
+            path: ${source.dir}/influxdb3
+            spdx:
+              name: influxdb3
+              version: 3.12.1
+              packages:
+                - name: influxdb3
+                  purl: pkg:cargo/influxdb3@3.12.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump quinn-proto cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            # GHSA-4w2j-m93h-cj5j, GHSA-qfwj-vfxf-92j2, GHSA-3g6h-r5qx-f6hq:
+            # quinn-proto 0.11.16 -> 0.11.18. Patch Cargo.lock directly so
+            # cargo update does not drag wasmtime 48.x (breaks datafusion-udf-wasm).
+            python3 - << 'EOF'
+            import pathlib
+            lock = pathlib.Path('Cargo.lock')
+            c = lock.read_text()
+            targets = [
+                (
+                    'name = "quinn-proto"\nversion = "0.11.16"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "2f4bfc015262b9df63c8845072ce59068853ff5872180c2ce2f13038b970e560"',
+                    'name = "quinn-proto"\nversion = "0.11.18"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"',
+                ),
+            ]
+            for old, new in targets:
+                if old in c:
+                    c = c.replace(old, new, 1)
+                    lock.write_text(c)
+                    print('patched: quinn-proto -> 0.11.18')
+                    break
+            else:
+                raise SystemExit('quinn-proto lock block not found')
+            EOF
+        - name: bump event-listener cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3 - << 'EOF'
+            import pathlib
+            lock = pathlib.Path('Cargo.lock')
+            c = lock.read_text()
+            old = (
+                'name = "event-listener"\nversion = "5.4.1"\n'
+                'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                'checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"'
+            )
+            new = (
+                'name = "event-listener"\nversion = "5.4.2"\n'
+                'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                'checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"'
+            )
+            if old not in c:
+                raise SystemExit('event-listener lock block not found')
+            lock.write_text(c.replace(old, new, 1))
+            print('patched: event-listener -> 5.4.2')
+            EOF
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: influxdb3-cargo
+            source: ${source.dir}/influxdb3
+        - name: configure PYO3
+          runs: |
+            set -eux -o pipefail
+
+            cat > "${source.dir}/pyo3_config_file.txt" << EOF
+            implementation=CPython
+            version=3.13
+            shared=true
+            abi3=false
+            lib_name=python3.13
+            lib_dir=/usr/lib
+            executable=/usr/bin/python3.13
+            pointer_width=64
+            build_flags=
+            suppress_build_script_link_lines=false
+            EOF
+        - name: build
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export PYO3_CONFIG_FILE="${source.dir}/pyo3_config_file.txt"
+            export CARGO_PROFILE_RELEASE_LTO=thin
+            export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+            cargo build --release
+        - name: install
+          work-dir: ${source.dir}/influxdb3
+          runs: |
+            set -eux -o pipefail
+
+            install -D target/release/influxdb3 \
+              '${target.dir}/usr/local/bin/influxdb3'
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influxdb3
+          target: /opt/docker/sbom/influxdb3
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/influxdb3-cargo
+          target: /opt/docker/sbom/influxdb3-cargo
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  INFLUX_CONFIGS_PATH: /var/lib/influx-cli/configs
+  INFLUXD_CONFIG_PATH: /etc/influxdb/
+  INFLUXDB3_DB_DIR: /var/lib/influxdb3
+  INFLUXDB3_PLUGIN_DIR: /plugins
+paths:
+  - type: directory
+    path: /var/lib/influxdb3
+    uid: 65532
+    gid: 65532
+  - type: directory
+    path: /plugins
+    uid: 65532
+    gid: 65532
+annotations:
+  org.opencontainers.image.description: A minimal InfluxDB image
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - influxdb3
+ports:
+  - 8181/tcp
