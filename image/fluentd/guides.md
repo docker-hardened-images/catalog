@@ -215,12 +215,13 @@ multi-stage Dockerfile. These images typically:
 
 ### Available Fluentd variants
 
-- **Runtime variants** (e.g., `1.19`, `1.19.0`, `1.19-debian13`): Minimal images for production use running as nonroot
+- **Runtime variants** (e.g., `1.20`, `1.20.1`, `1.20-debian13`): Minimal images for production use running as nonroot
   user (65532)
-- **Development variants** (e.g., `1.19-dev`, `1.19.0-dev`, `1.19-debian13-dev`): Development images with shell and
+- **Development variants** (e.g., `1.20-dev`, `1.20.1-dev`, `1.20-debian13-dev`): Development images with shell and
   package manager for plugin installation
 
-All variants are based on hardened Debian 13 and include Fluentd version 1.19.x.
+All variants are based on hardened Debian 13. Supported Fluentd release lines include 1.19.x and 1.20.x; the newest
+minor line publishes the floating `1` tag.
 
 ## Migrate to a Docker Hardened Image
 
@@ -245,7 +246,7 @@ The following steps outline the general migration process.
 1. **Find hardened images for your app.**
 
    A hardened image may have several variants. Inspect the image tags and find the image variant that meets your needs.
-   Fluentd images are available in version 1.19.x.
+   Fluentd images are available in version 1.19.x and 1.20.x.
 
 1. **Update the base image in your Dockerfile.**
 
