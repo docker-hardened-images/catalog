@@ -4,9 +4,9 @@ image: dhi.io/pkg-superset
 variant: runtime
 tags:
   - 6.1.0
-  - 6.1.0-r26
+  - 6.1.0-r27
   - 6.1.0-debian13
-  - 6.1.0-r26-debian13
+  - 6.1.0-r27-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,7 @@ vars:
   PYTHON_MAJOR_MINOR_VERSION: "3.11"
   PYTHON_MINOR: "3.11"
   PYTHON_VERSION: 3.11.18-1
-  REL: "26"
+  REL: "27"
   SEMVER_MAJOR_MINOR_VERSION: "6.1"
   SEMVER_MAJOR_VERSION: "6"
   SEMVER_VERSION: 6.1.0
@@ -224,7 +224,8 @@ contents:
               exit 1
             fi
 
-            uv pip install --upgrade 'msgpack>=1.2.1'
+            uv pip install --upgrade 'msgpack>=1.2.3'
+            uv pip install --upgrade 'dnspython>=2.9.0'
             uv pip install --upgrade 'pyarrow>=17.0.0,<26' # PyArrow 26 requires NumPy 2; Superset 6.1 pins NumPy 1.26.
             uv pip install --upgrade 'geopy>=2.5.0,<3'     # CVE-2026-77387
             uv pip install --upgrade 'pillow>=12.2.0'
@@ -269,6 +270,120 @@ contents:
             rm -f "${source.dir}/superset/superset/translations"/*/*/*.json
 
             sed -i '1s|.*|#!/bin/sh|' "${source.dir}/superset/docker/entrypoints/run-server.sh"
+        - name: align pip vendored msgpack with site packages
+          runs: |
+            set -eux -o pipefail
+
+            sp="${target.dir}/usr/lib/superset/.venv/lib/python3.11/site-packages"
+            set -- "$sp"/msgpack-*.dist-info/METADATA
+            if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+              echo "expected exactly one msgpack dist-info" >&2
+              exit 1
+            fi
+            msgpack_ver=$(sed -n 's/^Version: //p' "$1" | head -n 1)
+            dist_name=$(basename "$(dirname "$1")")
+            dist_ver=${dist_name#msgpack-}
+            dist_ver=${dist_ver%.dist-info}
+            if [ "$dist_ver" != "$msgpack_ver" ]; then
+              echo "msgpack dist-info ${dist_ver} does not match METADATA ${msgpack_ver}" >&2
+              exit 1
+            fi
+
+            rm -rf "$sp/pip/_vendor/msgpack"
+            cp -a "$sp/msgpack" "$sp/pip/_vendor/msgpack"
+
+            python3 - "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json" "$msgpack_ver" << 'PY'
+            import json
+            import sys
+
+            vendor_path, bom_path, ver = sys.argv[1:]
+
+            def version_tuple(value):
+                core = value.split("+", 1)[0].split("-", 1)[0]
+                parts = core.split(".")
+                if len(parts) < 3 or not all(part.isdigit() for part in parts):
+                    raise SystemExit("unexpected msgpack version %s" % value)
+                return tuple(int(part) for part in parts[:3])
+
+            if version_tuple(ver) < (1, 2, 3):
+                raise SystemExit("msgpack %s is below the 1.2.3 override" % ver)
+
+            with open(vendor_path) as handle:
+                lines = handle.read().splitlines()
+            replaced = 0
+            updated_lines = []
+            for line in lines:
+                stripped = line.lstrip(" ")
+                if stripped.startswith("msgpack=="):
+                    indent = line[:len(line) - len(stripped)]
+                    updated_lines.append("%smsgpack==%s" % (indent, ver))
+                    replaced += 1
+                else:
+                    updated_lines.append(line)
+            if replaced != 1:
+                raise SystemExit("expected one msgpack pin in vendor.txt, found %s" % replaced)
+            vendor_text = "\n".join(updated_lines) + "\n"
+            if ("msgpack==%s" % ver) not in vendor_text:
+                raise SystemExit("vendor.txt msgpack pin was not updated")
+            with open(vendor_path, "w") as handle:
+                handle.write(vendor_text)
+
+            with open(bom_path) as handle:
+                original = handle.read()
+            bom = json.loads(original)
+            comps = [comp for comp in bom.get("components", []) if comp.get("name") == "msgpack"]
+            if len(comps) != 1:
+                raise SystemExit("expected one msgpack component, found %s" % len(comps))
+            comp = comps[0]
+            old = comp.get("version")
+            if not isinstance(old, str) or not old:
+                raise SystemExit("msgpack component has no version")
+            others_before = [
+                (item.get("name"), item.get("version"), item.get("purl"))
+                for item in bom.get("components", [])
+                if item.get("name") != "msgpack"
+            ]
+            old_ref = "pkg:pypi/msgpack@%s" % old
+            new_ref = "pkg:pypi/msgpack@%s" % ver
+            old_count = original.count(old_ref)
+            if old_count < 1:
+                raise SystemExit("bom is missing %s" % old_ref)
+            comp["version"] = ver
+            for key in ("purl", "bom-ref"):
+                value = comp.get(key)
+                if not isinstance(value, str) or not value.startswith("pkg:pypi/msgpack@"):
+                    raise SystemExit("msgpack %s is not a pypi purl" % key)
+                comp[key] = new_ref
+
+            def rewrite(node):
+                if isinstance(node, dict):
+                    return {key: rewrite(value) for key, value in node.items()}
+                if isinstance(node, list):
+                    return [new_ref if item == old_ref else rewrite(item) for item in node]
+                if node == old_ref:
+                    return new_ref
+                return node
+
+            rewritten = rewrite(bom)
+            updated = next(item for item in rewritten["components"] if item.get("name") == "msgpack")
+            if updated.get("version") != ver or updated.get("purl") != new_ref or updated.get("bom-ref") != new_ref:
+                raise SystemExit("msgpack component metadata was not updated")
+            others_after = [
+                (item.get("name"), item.get("version"), item.get("purl"))
+                for item in rewritten.get("components", [])
+                if item.get("name") != "msgpack"
+            ]
+            if others_before != others_after:
+                raise SystemExit("non-msgpack component metadata changed")
+            rendered = json.dumps(rewritten)
+            if old != ver and old_ref in rendered:
+                raise SystemExit("stale %s remains in bom" % old_ref)
+            if rendered.count(new_ref) < old_count:
+                raise SystemExit("bom kept fewer msgpack refs than it started with")
+            with open(bom_path, "w") as handle:
+                json.dump(rewritten, handle, indent=2)
+                handle.write("\n")
+            PY
         - name: apply pip urllib3 vendoring patches
           uses: patch@v1
           work-dir: ${target.dir}/usr/lib/superset/.venv/lib/python3.11/site-packages/pip/_vendor
@@ -338,7 +453,7 @@ contents:
               - deb
             license: Apache-2.0
             name: superset
-            rel: 26
+            rel: 27
             url: https://superset.apache.org/
             version: 6.1.0
       paths:
