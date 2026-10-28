@@ -29,6 +29,21 @@ source "${VENV}/bin/activate"
 # from source links the system libpq, keeping -fips variants on the
 # FIPS OpenSSL for the patroni-to-postgres hop.
 pip install --no-cache-dir ".[etcd3,kubernetes]" "psycopg[c]>=3.0"
+# Pin the urllib3 Patroni imports. Do not install msgpack: the published
+# package's only copy is pip/_vendor/msgpack, and uninstalling pip removes
+# it. A standalone wheel has no consumer in this payload.
+pip install --no-cache-dir "urllib3==2.8.0"
+
+# Runtime image does not need pip; removing it drops pip's vendored msgpack,
+# urllib3, and setuptools rows Scout would otherwise index separately from
+# site-packages.
+pip uninstall -y pip setuptools wheel
+sp="$(echo "${VENV}"/lib/python*/site-packages)"
+rm -rf "${sp}"/pip "${sp}"/pip-*.dist-info \
+  "${sp}"/setuptools "${sp}"/setuptools-*.dist-info "${sp}"/pkg_resources \
+  "${sp}"/_distutils_hack "${sp}"/distutils-precedence.pth \
+  "${sp}"/wheel "${sp}"/wheel-*.dist-info
+
 deactivate
 
 find "${VENV}" \( -type d \( -name test -o -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \) || true
