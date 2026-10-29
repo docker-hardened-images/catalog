@@ -4,9 +4,9 @@ image: dhi.io/pkg-datascience-notebook
 variant: runtime
 tags:
   - 2026.07.28
-  - 2026.07.28-r13
+  - 2026.07.28-r14
   - 2026.07.28-debian13
-  - 2026.07.28-r13-debian13
+  - 2026.07.28-r14-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -28,7 +28,7 @@ vars:
   MICROMAMBA_VERSION: 2.10.0-0
   PYTHON_MINOR: "3.13"
   PYTHON_VERSION: 3.13.18-1
-  REL: "13"
+  REL: "14"
   VERSION: 2026.07.28
 contents:
   repositories:
@@ -269,6 +269,24 @@ contents:
 
             /opt/conda/bin/pip install --no-deps --upgrade 'setuptools==84.2.1' # GHSA-XMJ3-9GF7-H52W
             rm -f /opt/conda/conda-meta/setuptools-7*.json /opt/conda/conda-meta/setuptools-8[0-3]*.json
+            sp=$(echo /opt/conda/lib/python*/site-packages)
+            for meta in /opt/conda/conda-meta/setuptools-*.json; do
+              [ -e "$meta" ] || continue
+              case "$meta" in
+                *84.2.1*) ;;
+                *) rm -f "$meta" ;;
+              esac
+            done
+            for dist in "$sp"/setuptools-*.dist-info; do
+              [ -e "$dist" ] || continue
+              case "$dist" in
+                *84.2.1*) ;;
+                *) rm -rf "$dist" ;;
+              esac
+            done
+
+            /opt/conda/bin/pip install --no-deps --upgrade 'tornado==6.6' # CVE-2026-115927 CVE-2026-116577 CVE-2026-116578
+            rm -f /opt/conda/conda-meta/tornado-6.5.*.json
         - name: align pip vendored urllib3 and msgpack with site packages
           runs: |
             set -eux -o pipefail
@@ -334,6 +352,50 @@ contents:
               echo "pip vendor bom still names msgpack 1.1.2" >&2
               exit 1
             fi
+        - name: drop pip vendored pkg_resources
+          runs: |
+            set -eux -o pipefail
+
+            sp=$(echo /opt/conda/lib/python*/site-packages)
+            rm -rf "$sp/pip/_vendor/pkg_resources" "$sp/pip/_vendor/setuptools"
+            sed -i '/^setuptools==/d' "$sp/pip/_vendor/vendor.txt"
+            python3 - "$sp/pip/_vendor/bom.cdx.json" << 'PY'
+            import json
+            import sys
+
+            path = sys.argv[1]
+            with open(path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+
+            def is_setuptools_ref(value):
+                return isinstance(value, str) and value.startswith("pkg:pypi/setuptools@")
+
+            doc["components"] = [
+                comp for comp in (doc.get("components") or [])
+                if comp.get("name") != "setuptools"
+            ]
+            kept = []
+            for dep in doc.get("dependencies") or []:
+                if is_setuptools_ref(dep.get("ref")):
+                    continue
+                depends = dep.get("dependsOn")
+                if isinstance(depends, list):
+                    dep["dependsOn"] = [item for item in depends if not is_setuptools_ref(item)]
+                kept.append(dep)
+            doc["dependencies"] = kept
+            rendered = json.dumps(doc)
+            if "setuptools" in rendered:
+                raise SystemExit("setuptools remains in pip vendor bom")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(doc, handle, indent=2)
+                handle.write("\n")
+            PY
+            if grep -E 'setuptools==|pkg:pypi/setuptools@' "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json"; then
+              echo "pip vendor metadata still names setuptools" >&2
+              exit 1
+            fi
+            test ! -e "$sp/pip/_vendor/pkg_resources"
+            PYTHONPATH="$sp" python3 -m pip --version
         - name: install julia
           runs: |
             set -eux -o pipefail
@@ -526,7 +588,7 @@ contents:
               - deb
             license: BSD-3-Clause
             name: datascience-notebook
-            rel: 13
+            rel: 14
             url: https://jupyter-docker-stacks.readthedocs.io/
             version: 2026.07.28
 os-release:
