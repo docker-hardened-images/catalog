@@ -113,7 +113,12 @@ SITE_PACKAGES="$("${VENV}/bin/python" -c 'import site; print(site.getsitepackage
 "${VENV}/bin/python" -m pip install --upgrade 'pygments>=2.20.0'     # CVE-2026-4539
 "${VENV}/bin/python" -m pip uninstall -y pip
 rm -rf "${SITE_PACKAGES}/pip"
-rm -rf "${SITE_PACKAGES}/botocore/vendored"
+# NOTE: do NOT delete botocore/vendored. Modern botocore ships a thin
+# compatibility shim there (not a full urllib3 copy); botocore.exceptions
+# still does `from botocore.vendored import requests`. Removing the tree
+# makes `import boto3` fail with ModuleNotFoundError and CrashLoops the
+# k8ssandra medusa sidecar (see definitions#121873). CVE pins for urllib3
+# / requests above already force the patched site-packages copies.
 find "${VENV}" -path '*/virtualenv/seed/wheels/embed/pip-26.0*.whl' -delete 2>/dev/null || true
 find "${VENV}" -path '*/virtualenv/seed/wheels/embed/pip-26.1*.whl' -delete 2>/dev/null || true
 find "${SITE_PACKAGES}" -type d -path '*/dist-info/sboms' -prune -exec rm -rf {} +
