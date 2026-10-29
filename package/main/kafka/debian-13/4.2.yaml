@@ -4,9 +4,9 @@ image: dhi.io/pkg-kafka
 variant: runtime
 tags:
   - 4.2.2
-  - 4.2.2-r7
+  - 4.2.2-r8
   - 4.2.2-debian13
-  - 4.2.2-r7-debian13
+  - 4.2.2-r8-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,7 @@ vars:
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.13+9-0
   PACKAGE_NAME: kafka-4.2
-  REL: "7"
+  REL: "8"
   SCALA_VERSION: "2.13"
   SEMVER_MAJOR_MINOR_VERSION: "4.2"
   SEMVER_MAJOR_VERSION: "4"
@@ -79,25 +79,69 @@ contents:
             set -eux -o pipefail
 
             mkdir -p /root/.gradle
-            cat > /root/.gradle/init.gradle << 'EOF'
+            {
+              echo "def kafkaMinor = \"4.2\""
+              cat << 'EOF'
             def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
 
-            def mirrorMavenCentral = { repo ->
-                if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
-                    repo.url.toString() == "https://repo.maven.apache.org/maven2/") {
+            def isMaven = { repo ->
+                repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            }
+            def urlOf = { repo -> repo.url.toString() }
+
+            // Apache Central only — safe for pluginManagement (keeps gradlePluginPortal).
+            def mirrorApacheCentral = { repo ->
+                if (!isMaven(repo)) {
+                    return
+                }
+                def url = urlOf(repo)
+                if (url == "https://repo.maven.apache.org/maven2/" ||
+                        url.startsWith("https://repo1.maven.org/maven2")) {
                     repo.setUrl(mavenCentralMirror)
                 }
             }
 
+            // Apache Central + the portal's Maven proxy. Use on project/dependency
+            // repos so api-checker asm/slf4j do not 429 via plugins.gradle.org/m2 →
+            // repo.maven.apache.org. Never apply this to pluginManagement or the
+            // portal stops resolving real Gradle plugins (ben-manes.versions).
+            def mirrorApacheAndPortalM2 = { repo ->
+                if (!isMaven(repo)) {
+                    return
+                }
+                def url = urlOf(repo)
+                if (url == "https://repo.maven.apache.org/maven2/" ||
+                        url.startsWith("https://repo1.maven.org/maven2") ||
+                        url.startsWith("https://plugins.gradle.org/m2")) {
+                    repo.setUrl(mavenCentralMirror)
+                }
+            }
+
+            def ensurePluginRepos = { settings ->
+                // Kafka settings.gradle replaces pluginManagement repos after
+                // beforeSettings; re-assert GCS then portal so plugin markers
+                // still hit the portal while Maven artifacts prefer GCS.
+                settings.pluginManagement.repositories.clear()
+                settings.pluginManagement.repositories.maven {
+                    url = mavenCentralMirror
+                }
+                settings.pluginManagement.repositories.gradlePluginPortal()
+            }
+
             settingsEvaluated { settings ->
-                settings.pluginManagement.repositories.configureEach(mirrorMavenCentral)
-                settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+                ensurePluginRepos(settings)
+                settings.pluginManagement.repositories.configureEach(mirrorApacheCentral)
+                settings.dependencyResolutionManagement.repositories.configureEach(mirrorApacheAndPortalM2)
+                settings.dependencyResolutionManagement.repositories.whenObjectAdded(mirrorApacheAndPortalM2)
             }
 
             allprojects {
-                buildscript.repositories.configureEach(mirrorMavenCentral)
-                repositories.configureEach(mirrorMavenCentral)
+                buildscript.repositories.configureEach(mirrorApacheAndPortalM2)
+                buildscript.repositories.whenObjectAdded(mirrorApacheAndPortalM2)
+                repositories.configureEach(mirrorApacheAndPortalM2)
+                repositories.whenObjectAdded(mirrorApacheAndPortalM2)
             }
+
 
             allprojects {
                 configurations.all {
@@ -140,12 +184,40 @@ contents:
                             details.because("CVE remediation: CVE-2026-59949, CVE-2026-106449, CVE-2026-106450, CVE-2026-106451, CVE-2026-106452, CVE-2026-106453")
                         }
                         if (grp == "com.github.luben" && name == "zstd-jni" &&
-                                (ver == "1.5.6-4" || ver == "1.5.6-10" || ver == "1.5.7-20")) {
+                                (ver == "1.5.6-4" || ver == "1.5.6-10" || ver == "1.5.7-17" || ver == "1.5.7-20")) {
                             details.useVersion("1.5.7-20")
                             details.because("CVE remediation: CVE-2026-87795, CVE-2026-87823, CVE-2026-87824, CVE-2026-87825, CVE-2026-87877, CVE-2026-89045, CVE-2026-89046, CVE-2026-90560, GHSA-8w96-r9r5-4j3r")
                         }
+                        if (grp == "org.xerial.snappy" && name == "snappy-java" &&
+                                (ver == "1.1.10.7" || ver == "1.1.10.9")) {
+                            details.useVersion("1.1.10.9")
+                            details.because("CVE remediation: CVE-2026-93451, CVE-2026-108106, CVE-2026-116590")
+                        }
+                        // Kafka 4.4 only: force the jline-reader stack to 3.30.17. 4.1-4.3 get
+                        // jline 4.4.3 from their remote-telnet patches instead.
+                        if (kafkaMinor == "4.4" &&
+                                grp == "org.jline" && (name == "jline" || name.startsWith("jline-")) &&
+                                (ver == "3.30.4" || ver == "3.30.16" || ver == "3.30.17")) {
+                            details.useVersion("3.30.17")
+                            details.because("CVE remediation: jline remote-telnet / reader stack (CVE-2026-56740, CVE-2026-56741, CVE-2026-77420, CVE-2026-77421, CVE-2026-77422, CVE-2026-77423); Kafka 4.4 moved off the full jline bundle to jline-reader")
+                        }
                     }
                 }
+            }
+            EOF
+            } > /root/.gradle/init.gradle
+        - name: configure settings plugin mirror
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /root/.gradle/init.d
+            cat > /root/.gradle/init.d/settings-plugins.gradle << 'EOF'
+            beforeSettings { settings ->
+                settings.pluginManagement.repositories.clear()
+                settings.pluginManagement.repositories.maven {
+                    url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+                }
+                settings.pluginManagement.repositories.gradlePluginPortal()
             }
             EOF
         - name: build kafka distribution
@@ -193,6 +265,7 @@ contents:
             expect plexus-utils 3.6.1 'plexus-utils-*.jar'
             expect lz4-java 1.11.4 'lz4-java-*.jar'
             expect zstd-jni 1.5.7-20 'zstd-jni-*.jar'
+            expect snappy-java 1.1.10.9 'snappy-java-*.jar'
             expect slf4j-api 1.7.36 'slf4j-*.jar'
             expect jaxb-api 2.3.1 'jaxb-api-*.jar'
             expect jackson-databind 2.21.7 'jackson-databind-*.jar'
@@ -203,10 +276,16 @@ contents:
             expect snakeyaml 2.5 'snakeyaml-*.jar'
             expect jetty-security 12.0.38 'jetty-*.jar'
             expect log4j-core 2.25.5 'log4j-*.jar'
+            # 4.1-4.3 are moved to jline 4.4.3 by their remote-telnet patches (never
+            # accept the vulnerable 3.30.4). 4.4 ships jline-reader, forced to 3.30.17.
             jline="$(find "${libs}" -maxdepth 1 -name 'jline-*.jar' -printf '%f\n' | sed -E 's/^jline(-[a-z]+)*-//; s/\.jar$//' | sort -u)"
             test -n "${jline}"
             test "$(printf '%s\n' "${jline}" | wc -l)" -eq 1
-            test "$(printf '%s\n%s\n' 4.4.3 "${jline}" | sort -V | head -n 1)" = 4.4.3
+            if [ "4.2" = "4.4" ]; then
+              test "${jline}" = 3.30.17
+            else
+              test "$(printf '%s\n%s\n' 4.4.3 "${jline}" | sort -V | head -n 1)" = 4.4.3
+            fi
             forbid 'netty-*.jar'
             forbid 'zookeeper*.jar'
         - name: install docker server properties
@@ -224,7 +303,7 @@ contents:
               - usr/share/kafka
             license: Apache-2.0
             name: kafka-4.2
-            rel: 7
+            rel: 8
             url: https://kafka.apache.org/
             version: 4.2.2
       paths:
