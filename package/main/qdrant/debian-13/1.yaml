@@ -3,8 +3,8 @@
 image: dhi.io/pkg-qdrant
 variant: runtime
 tags:
-  - 1.20.0-0
-  - 1.20.0-0-debian13
+  - 1.20.0-1
+  - 1.20.0-1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,8 +13,8 @@ dates:
 vars:
   CARGO_VERSION: 1.98.1-0
   COMMIT_SHA: 222b2e44ab1c3f17e8246396ead6558e45041df7
-  DHI_REL: "0"
-  DHI_VERSION: 1.20.0-0
+  DHI_REL: "1"
+  DHI_VERSION: 1.20.0-1
   GCC_VERSION: 14.2.0-19+dhi5
   NODEJS_VERSION: 24.22.1-1
   RUSTC_VERSION: 1.98.1-0
@@ -129,6 +129,10 @@ contents:
             cargo update --package quinn-proto@0.11.16 --precise 0.11.18
             cargo update --package tokio@1.53.1 --precise 1.53.3
 
+            cargo update --package jsonwebtoken@11.0.0 --precise 11.1.0
+            sed -i 's|features = \["rust_crypto"\]|features = ["aws_lc_rs"]|' Cargo.toml
+            cargo update --package jsonwebtoken
+
             cargo fetch
             pyroscope_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name pyroscope-2.1.1 | head -1)"
             cp -a "${pyroscope_src}" "${source.dir}/pyroscope-patched"
@@ -139,6 +143,24 @@ contents:
             cargo update --package pyroscope
             cargo update --package object@0.40.0 --precise 0.40.0
             cargo update --package ruzstd --precise 0.9.1
+
+            sed -i 's/zstd = "0.13"/zstd = "0.14"/' Cargo.toml
+            cargo fetch
+            foyer_storage_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name 'foyer-storage-0.22.6' | head -1)"
+            cp -a "${foyer_storage_src}" "${source.dir}/foyer-storage-patched"
+            perl -i -0pe 's/(\[dependencies\.zstd\]\nversion = )"0.13"/${1}"0.14"/s' \
+              "${source.dir}/foyer-storage-patched/Cargo.toml"
+
+            sed -i "/^tonic = { git/a foyer-storage = { path = \"${source.dir}/foyer-storage-patched\" }" Cargo.toml
+            cargo update --package actix-http --precise 3.20.0
+            cargo update --package foyer-storage
+            cargo fetch
+            include_flate_compress_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name 'include-flate-compress-0.3.4' | head -1)"
+            cp -a "${include_flate_compress_src}" "${source.dir}/include-flate-compress-patched"
+            perl -i -0pe 's/(\[dependencies\.zstd\]\nversion = )"0.13.3"/${1}"0.14.3"/s' \
+              "${source.dir}/include-flate-compress-patched/Cargo.toml"
+            sed -i "/foyer-storage = { path/a include-flate-compress = { path = \"${source.dir}/include-flate-compress-patched\" }" Cargo.toml
+            cargo update --package include-flate-compress
         - name: build
           work-dir: ${source.dir}/qdrant-src
           privileged: true
@@ -168,9 +190,11 @@ contents:
         - uses: dpkg/bump@v1
           with:
             changelog:
+              - Bump Cargo zstd, zstd-safe, and zstd-sys for RUSTSEC-2026-0391, RUSTSEC-2026-0395 through RUSTSEC-2026-0406, and RUSTSEC-2026-0410.
+              - Use jsonwebtoken aws_lc_rs to drop vulnerable crypto-bigint 0.5.5 for RUSTSEC-2026-0387.
               - Bump Cargo tokio to 1.53.3 for RUSTSEC-2026-0386.
               - Bump npm undici override to 7.30.1 for CVE-2026-109841, CVE-2026-109869, and CVE-2026-109924.
-            version: 1.20.0-0
+            version: 1.20.0-1
         - uses: dpkg/build@v1
           privileged: true
           with:
