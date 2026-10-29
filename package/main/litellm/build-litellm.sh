@@ -65,8 +65,14 @@ pip install --no-cache-dir --upgrade 'python-multipart>=0.0.22'
 pip install --no-cache-dir --upgrade 'orjson>=3.11.5'
 pip install --no-cache-dir --upgrade 'pillow>=12.1.1'
 pip install --no-cache-dir --upgrade 'python-dotenv>=1.2.2'
-pip install --no-cache-dir --upgrade 'pypdf>=6.13.3'
+pip install --no-cache-dir --upgrade 'pypdf>=6.21.2'
 pip install --no-cache-dir --upgrade 'pydantic-settings>=2.14.2'
+pip install --no-cache-dir --upgrade \
+  'opentelemetry-api==1.45.1' \
+  'opentelemetry-sdk==1.45.1' \
+  'opentelemetry-exporter-otlp==1.45.1' \
+  'opentelemetry-instrumentation-fastapi==0.66b1'
+pip install --no-cache-dir --upgrade 'setuptools==84.1.0'
 
 apply_npm_patch() {
   local search_path="$1"
@@ -105,10 +111,10 @@ apply_npm_patch "tar" "tar-7.5.21.tgz"
 apply_npm_patch "minimatch" "minimatch-10.2.3.tgz"
 apply_npm_patch "@isaacs/brace-expansion" "isaacs-brace-expansion-5.0.1.tgz" 1
 apply_npm_patch "brace-expansion" "brace-expansion-5.0.12.tgz"
-apply_npm_patch "ip-address" "ip-address-10.7.1.tgz"
+apply_npm_patch "ip-address" "ip-address-10.7.4.tgz"
 apply_npm_patch "postcss-selector-parser" "postcss-selector-parser-7.1.6.tgz"
 apply_npm_patch "tinyglobby/node_modules/picomatch" "picomatch-4.0.4.tgz"
-apply_npm_patch "undici" "undici-6.28.1.tgz"
+apply_npm_patch "undici" "undici-6.29.1.tgz"
 apply_npm_patch "@sigstore/core" "sigstore-core-3.2.1.tgz"
 apply_npm_patch "@sigstore/verify" "sigstore-verify-3.1.1.tgz"
 apply_npm_patch "sigstore" "sigstore-4.1.1.tgz"
@@ -127,6 +133,13 @@ CERTIFI_VER=$("${VENV}/bin/python" -c 'import certifi; print(certifi.__version__
 rm -rf "$sp/pip/_vendor/certifi"
 cp -a "$sp/certifi" "$sp/pip/_vendor/certifi"
 sed -i "s/^certifi==.*/certifi==${CERTIFI_VER}/" "$sp/pip/_vendor/vendor.txt"
+SETUPTOOLS_VER=$("${VENV}/bin/python" -c 'import setuptools; print(setuptools.__version__)')
+rm -rf "$sp/pip/_vendor/setuptools" "$sp/pip/_vendor/pkg_resources"
+cp -a "$sp/setuptools" "$sp/pip/_vendor/setuptools"
+if [ -d "$sp/pkg_resources" ]; then
+  cp -a "$sp/pkg_resources" "$sp/pip/_vendor/pkg_resources"
+fi
+sed -i "s/^setuptools==.*/setuptools==${SETUPTOOLS_VER}/" "$sp/pip/_vendor/vendor.txt"
 if [ -f "$sp/pip/_vendor/bom.cdx.json" ]; then
   sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "$sp/pip/_vendor/bom.cdx.json"
   sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "$sp/pip/_vendor/bom.cdx.json"
@@ -134,6 +147,8 @@ if [ -f "$sp/pip/_vendor/bom.cdx.json" ]; then
   # Pip 26.2.1 records certifi's component version separately from its PURL.
   # Rewrite both so an SBOM reader cannot keep the vendored 2026.6.17.
   sed -i 's/"version": "2026.6.17"/"version": "'"${CERTIFI_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
+  sed -i -E 's/pkg:pypi\/setuptools@[0-9.]+/pkg:pypi\/setuptools@'"${SETUPTOOLS_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
+  sed -i 's/"version": "70.3.0"/"version": "'"${SETUPTOOLS_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
   "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${CERTIFI_VER}" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]
@@ -151,6 +166,24 @@ for comp in bom.get("components", []):
         )
 if not found:
     raise SystemExit("certifi component missing from pip vendor bom")
+PY
+  "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${SETUPTOOLS_VER}" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    bom = json.load(f)
+found = False
+for comp in bom.get("components", []):
+    if comp.get("name") != "setuptools":
+        continue
+    found = True
+    want = f"pkg:pypi/setuptools@{ver}"
+    if comp.get("version") != ver or comp.get("purl") != want or comp.get("bom-ref") != want:
+        raise SystemExit(
+            f"setuptools component is version={comp.get('version')!r} purl={comp.get('purl')!r} bom-ref={comp.get('bom-ref')!r}, want {ver}"
+        )
+if not found:
+    raise SystemExit("setuptools component missing from pip vendor bom")
 PY
 fi
 "${VENV}/bin/pip" --version
