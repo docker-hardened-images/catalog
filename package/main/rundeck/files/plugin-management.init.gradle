@@ -29,6 +29,52 @@ beforeSettings { settings ->
 }
 
 allprojects {
+    plugins.withId('io.spring.dependency-management') {
+        dependencyManagement {
+            dependencies {
+                // grails-bom strict constraints ignore resolutionStrategy.force for bootWar.
+                dependency "com.google.guava:guava:33.7.2-jre"
+                dependency "com.google.guava:failureaccess:1.0.3"
+            }
+        }
+    }
+}
+
+allprojects {
     buildscript.repositories.configureEach(mirrorMavenCentral)
     repositories.configureEach(mirrorMavenCentral)
+}
+
+def cvePins = [
+    [group: "com.google.guava", names: ["guava"], from: "33.6.0-jre", to: "33.7.2-jre",
+     because: "CVE-2026-102554"],
+    [group: "org.xerial.snappy", names: ["snappy-java"], from: "1.1.10.7", to: "1.1.10.9",
+     because: "CVE-2026-108106, CVE-2026-93451, CVE-2026-116590"],
+]
+
+allprojects {
+    configurations.configureEach {
+        resolutionStrategy {
+            force "com.google.guava:guava:33.7.2-jre"
+            force "org.xerial.snappy:snappy-java:1.1.10.9"
+        }
+        resolutionStrategy.eachDependency { details ->
+            def requested = details.requested
+            if (requested.group == "com.google.guava" && requested.name == "guava") {
+                details.useVersion("33.7.2-jre")
+                details.because("CVE-2026-102554")
+            }
+            if (requested.group == "org.xerial.snappy" && requested.name == "snappy-java") {
+                details.useVersion("1.1.10.9")
+                details.because("CVE-2026-108106, CVE-2026-93451, CVE-2026-116590")
+            }
+            cvePins.each { pin ->
+                if (requested.group == pin.group && (pin.names == null || pin.names.contains(requested.name)) &&
+                    requested.version == pin.from) {
+                    details.useVersion(pin.to)
+                    details.because(pin.because)
+                }
+            }
+        }
+    }
 }
