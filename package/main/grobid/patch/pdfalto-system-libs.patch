@@ -1,0 +1,128 @@
+Subject: Link pdfalto against shared system libraries instead of bundled static archives
+
+Origin: DHI-internal (build pdfalto against the distro libraries so they appear in the package SBOM)
+Base-Tree: git https://github.com/kermitt2/pdfalto.git c830572fc1e9e8c55e796307ff441e56db895827
+Verify: cmd `ldd /usr/lib/grobid/grobid-home/pdfalto/lin-64/pdfalto` expect "libxml2.so"
+Forwarded: not-needed (upstream deliberately ships a self-contained static binary for its prebuilt releases)
+Drop-When: never: the package must link the distro zlib, libpng, libxml2, freetype, and ICU so CVE scanning sees them; upstream's static build hides them from the SBOM
+
+Upstream CMakeLists.txt links pdfalto against prebuilt static archives checked
+into libs/ for zlib, libpng, libxml2, freetype, and ICU, forces static libgcc
+and libstdc++, and sets a macOS SDK path unconditionally. Those archives are
+glibc objects that no package manager tracks and that cannot link into a musl
+binary. This patch guards the SDK path behind APPLE, drops the static runtime
+flags, and replaces each archive with a find_package lookup and imported
+target so the binary links the shared libraries installed from the Debian or
+Alpine HSP catalog, which the package declares in Depends and the SBOM reports.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -8,8 +8,10 @@
+ set(CMAKE_EXE_LINKER_FLAGS "-no-pie")
+ set(CMAKE_BUILD_TYPE "Release")
+
+-# Set the SDK path
+-set(CMAKE_OSX_SYSROOT /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
++# The macOS SDK path is a host path. It is unused when building on Linux.
++if (APPLE)
++    set(CMAKE_OSX_SYSROOT /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
++endif ()
+
+ #--- look for fontconfig
+ if (NOT NO_FONTCONFIG)
+@@ -44,13 +46,14 @@
+
+ set(FREETYPE_SUBDIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/freetype)
+
+-set(FREETYPE_INCLUDE_DIR_ft2build ${FREETYPE_SUBDIR}/include)
+-set(FREETYPE_INCLUDE_DIR_freetype_freetype ${FREETYPE_SUBDIR}/include)
+-set(FREETYPE_INCLUDE_DIR ${FREETYPE_SUBDIR}/include)
+-
+-set(ZLIB_INCLUDE_DIRS ${ZLIB_SUBDIR}/include)
+-set(PNG_INCLUDE_DIRS ${PNG_SUBDIR}/include)
+-set(PNG_FOUND TRUE)
++# Shared system libraries. The archives under libs/ are glibc objects and
++# cannot be linked into a musl binary. find_package runs before xpdf so its
++# cmake-config sees the same libraries instead of the bundled headers.
++find_package(Freetype REQUIRED)
++find_package(PNG REQUIRED)
++find_package(ZLIB REQUIRED)
++find_package(LibXml2 REQUIRED)
++find_package(ICU REQUIRED COMPONENTS uc data)
+
+ if (APPLE)
+     message("Using macos settings.")
+@@ -79,7 +82,6 @@
+     set(OSSUFFIX "windows")
+ elseif (UNIX)
+     message("Using linux settings.")
+-    set(CMAKE_CXX_STANDARD_LIBRARIES "-static-libgcc -static-libstdc++")
+     set(OSSUFFIX "linux")
+ endif ()
+
+@@ -108,14 +110,6 @@
+
+ MESSAGE("Final os/arch: " ${OSSUFFIX}/${ARCHSUFFIX})
+
+-set(XML_LIBRARY ${LIBXML_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libxml2.a)
+-set(PNG_LIBRARY ${PNG_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libpng.a)
+-set(ZLIB_LIBRARY ${ZLIB_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libz.a)
+-set(FREETYPE_LIBRARY ${FREETYPE_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libfreetype.a)
+-set(ICUUC_LIBRARY ${ICU_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libicuuc.a)
+-set(ICUDATA_LIBRARY ${ICU_SUBDIR}/${OSSUFFIX}/${ARCHSUFFIX}/libicudata.a)
+-
+-
+ set(XPDF_BUILD_DIR ${XPDF_SUBDIR}/build)
+
+ add_subdirectory(${XPDF_SUBDIR})
+@@ -142,24 +136,31 @@
+
+ target_compile_definitions(pdfalto PRIVATE PDFALTO_VERSION_STR=\"${PDFALTO_VERSION_STR}\")
+
++target_link_libraries(pdfalto
++        PNG::PNG
++        ZLIB::ZLIB
++        LibXml2::LibXml2
++        splash
++        xpdf
++        goo
++        fofi
++        ICU::uc
++        ICU::data
++        Freetype::Freetype
++        dl
++        pthread
++)
++if (HAVE_FONTCONFIG)
++    target_link_libraries(pdfalto ${FONTCONFIG_LIBRARY})
++endif ()
+ if (HAVE_PAPER_H)
+-    if (HAVE_FONTCONFIG)
+-        target_link_libraries(pdfalto ${PNG_LIBRARY} ${ZLIB_LIBRARY} ${XML_LIBRARY} splash xpdf goo fofi ${ICUUC_LIBRARY} ${ICUDATA_LIBRARY} ${FREETYPE_LIBRARY} dl ${PAPER_LIBRARY} ${FONTCONFIG_LIBRARY} pthread)
+-    else ()
+-        target_link_libraries(pdfalto ${PNG_LIBRARY} ${ZLIB_LIBRARY} ${XML_LIBRARY} splash xpdf goo fofi ${ICUUC_LIBRARY} ${ICUDATA_LIBRARY} ${FREETYPE_LIBRARY} dl ${PAPER_LIBRARY} pthread)
+-    endif ()
+-else ()
+-    if (HAVE_FONTCONFIG)
+-        target_link_libraries(pdfalto ${PNG_LIBRARY} ${ZLIB_LIBRARY} ${XML_LIBRARY} splash xpdf goo fofi ${ICUUC_LIBRARY} ${ICUDATA_LIBRARY} ${FREETYPE_LIBRARY} dl ${FONTCONFIG_LIBRARY} pthread)
+-    else ()
+-        target_link_libraries(pdfalto ${PNG_LIBRARY} ${ZLIB_LIBRARY} ${XML_LIBRARY} splash xpdf goo fofi ${ICUUC_LIBRARY} ${ICUDATA_LIBRARY} ${FREETYPE_LIBRARY} dl pthread)
+-    endif ()
++    target_link_libraries(pdfalto ${PAPER_LIBRARY})
+ endif ()
+
+ target_include_directories(
+         pdfalto
+-        PUBLIC ${LIBXML_SUBDIR}/include
+-        PUBLIC ${FREETYPE_INCLUDE_DIR}
++        PUBLIC ${LIBXML2_INCLUDE_DIR}
++        PUBLIC ${FREETYPE_INCLUDE_DIRS}
+         PUBLIC ${PNG_INCLUDE_DIRS}
+         PUBLIC ${ZLIB_INCLUDE_DIRS}
+         PUBLIC ${XPDF_SUBDIR}
+@@ -167,5 +168,4 @@
+         PUBLIC ${XPDF_SUBDIR}/fofi
+         PUBLIC ${XPDF_SUBDIR}/xpdf
+         PUBLIC ${XPDF_BUILD_DIR}
+-        PUBLIC ${ICU_SUBDIR}/include
+ )

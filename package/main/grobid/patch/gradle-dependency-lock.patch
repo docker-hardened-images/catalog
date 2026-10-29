@@ -1,0 +1,870 @@
+Subject: Lock Gradle dependency resolution and raise bundled Java libraries
+
+Origin: DHI-internal (reproducible resolution and library raises for the DHI package build)
+CVE: CVE-2026-5598
+CVE: CVE-2026-102554
+Base-Tree: git https://github.com/grobidOrg/grobid.git 523bb8e97f357e93682dc4eaa6d22faa8b5b93de
+Regenerate: `gradle dependencies --write-locks --no-daemon` on the GROBID 0.9.1 checkout after editing build.gradle
+Verify: cmd `ls /usr/lib/grobid/grobid-service/lib` expect "jackson-databind-2.21.7.jar"
+Forwarded: not-needed (upstream resolves dynamic versions at build time; the lockfiles and raises are specific to this package build)
+Drop-When: never: dependency locking is how this package keeps Gradle resolution reproducible; the lockfiles and raises are refreshed on each GROBID release rather than removed
+
+Upstream build.gradle resolves several libraries dynamically and pins others at
+releases that have since been superseded. This patch enables Gradle dependency
+locking for every configuration, adds the generated gradle.lockfile per project
+so each build resolves the same artifact set, and raises the Java libraries
+GROBID bundles to their current patch releases: Jackson 2.21.7, Jetty 12.1.10,
+logback 1.5.35, httpcomponents core 5.4.3 and client 5.6.3, jruby-complete
+10.1.2.0 (bundles BouncyCastle 1.85, which closes CVE-2026-5598 in the 9.4
+line's 1.83), moshi 1.15.2 (okio-jvm 3.7.0), and guava 33.7.2-jre (closes
+CVE-2026-102554 in 33.6.0; error_prone_annotations 2.50.0 and jspecify 1.0.1
+follow it).
+
+diff --git a/build.gradle b/build.gradle
+index fe54e43..230d362 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -85,6 +85,10 @@ tasks.register('collectGitRevision') {
+ allprojects {
+     apply plugin: 'net.researchgate.release'
+ 
++    dependencyLocking {
++        lockAllConfigurations()
++    }
++
+     group = "org.grobid"
+ 
+     tasks.withType(JavaCompile) {
+@@ -221,14 +225,20 @@ subprojects {
+         implementation "org.apache.commons:commons-lang3:3.20.0"
+         implementation "org.apache.commons:commons-collections4:4.5.0"
+         implementation 'org.apache.commons:commons-text:1.15.0'
+-        implementation "com.google.guava:guava:33.6.0-jre"
++        implementation "com.google.guava:guava:33.7.2-jre"
+         implementation "org.apache.httpcomponents:httpclient:4.5.14"
+         implementation "black.ninia:jep:4.3.1"
+         implementation 'com.github.pemistahl:lingua:1.2.2'
+ 
+-        implementation "com.fasterxml.jackson.core:jackson-core:2.21.4"
+-        implementation "com.fasterxml.jackson.core:jackson-databind:2.21.4"
+-        implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.4"
++        implementation "com.fasterxml.jackson.core:jackson-core:2.21.7"
++        implementation "com.fasterxml.jackson.core:jackson-databind:2.21.7"
++        implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.7"
++
++        // moshi 1.15.2 depends on okio-jvm 3.7.0. moshi 1.13.0 pulled okio 2.10.0.
++        constraints {
++            implementation 'com.squareup.moshi:moshi:1.15.2'
++            implementation 'com.squareup.moshi:moshi-kotlin:1.15.2'
++        }
+     }
+ 
+     tasks.register('sourceJar', Jar) {
+@@ -290,7 +300,7 @@ project("grobid-core") {
+         // slf4j-api 2.0.x, whose ServiceLoader binding (SLF4JServiceProvider) only exists in logback 1.5.x.
+         // logback 1.2.x would leave slf4j with no provider (NOP logging) in batch/standalone mode.
+         implementation 'org.slf4j:slf4j-api:2.0.17'
+-        implementation 'ch.qos.logback:logback-classic:1.5.26'
++        implementation 'ch.qos.logback:logback-classic:1.5.35'
+ 
+         implementation "org.apache.pdfbox:pdfbox:2.0.36"
+ 
+@@ -311,9 +321,8 @@ project("grobid-core") {
+         // NOTE: jruby-complete bundles a vulnerable BouncyCastle (CVE-2026-5598) under its gem stdlib,
+         // but GROBID only uses jruby for the optional, non-default Pragmatic sentence segmenter, which
+         // never invokes Ruby's openssl — so the BC code is never loaded and the CVE is not triggerable.
+-        // No released jruby ships a fixed BouncyCastle yet (latest bundles 1.83; the fix needs 1.84), so
+-        // we leave it as-is and wait for an upstream jruby release with BouncyCastle >= 1.84.
+-        implementation "org.jruby:jruby-complete:9.4.12.1"
++        // jruby-complete 10.1.2.0 bundles BouncyCastle 1.85. The 9.4 line stops at 1.84.
++        implementation "org.jruby:jruby-complete:10.1.2.0"
+ 
+         shadedLib "org.apache.lucene:lucene-analyzers-common:4.5.1"
+     }
+@@ -434,10 +443,10 @@ project(":grobid-service") {
+         implementation 'ru.vyarus:dropwizard-guicey:8.0.2'
+ 
+         // Dropwizard 5.0.1 ships Jetty 12.1.5, but CVE-2026-2332 (HTTP request smuggling) is only fixed
+-        // on the 12.1.x line at 12.1.7+. Import the Jetty BOMs at 12.1.9 so every Jetty artifact is
++        // on the 12.1.x line at 12.1.7+. Import the Jetty BOMs at 12.1.10 so every Jetty artifact is
+         // forced past the vulnerable version (Gradle picks the higher of the two BOM-managed versions).
+-        implementation platform('org.eclipse.jetty:jetty-bom:12.1.9')
+-        implementation platform('org.eclipse.jetty.ee10:jetty-ee10-bom:12.1.9')
++        implementation platform('org.eclipse.jetty:jetty-bom:12.1.10')
++        implementation platform('org.eclipse.jetty.ee10:jetty-ee10-bom:12.1.10')
+ 
+         implementation 'io.dropwizard:dropwizard-bom:5.0.1'
+         implementation 'io.dropwizard:dropwizard-core:5.0.1'
+@@ -462,6 +471,17 @@ project(":grobid-service") {
+         // JVM/process exports) is pushed — no second instrumentation with the OpenTelemetry SDK.
+         implementation "io.prometheus:prometheus-metrics-exporter-opentelemetry:1.8.0"
+         implementation "io.prometheus:prometheus-metrics-simpleclient-bridge:1.8.0"
++
++        // Raise transitive libraries past versions with published fixes.
++        // Jackson, Jetty, and logback are pinned above. httpcomponents 5 and
++        // the Jackson BOM are only requested transitively.
++        constraints {
++            implementation 'com.fasterxml.jackson:jackson-bom:2.21.7'
++            implementation 'org.apache.httpcomponents.client5:httpclient5:5.6.3'
++            implementation 'org.apache.httpcomponents.core5:httpcore5:5.4.3'
++            implementation 'org.apache.httpcomponents.core5:httpcore5-h2:5.4.3'
++            implementation 'ch.qos.logback:logback-core:1.5.35'
++        }
+     }
+ 
+     shadowJar {
+@@ -523,7 +543,7 @@ project(":grobid-trainer") {
+ 
+         // logs — see grobid-core: slf4j 2.0.x needs logback 1.5.x for its ServiceLoader binding.
+         implementation 'org.slf4j:slf4j-api:2.0.17'
+-        implementation 'ch.qos.logback:logback-classic:1.5.26'
++        implementation 'ch.qos.logback:logback-classic:1.5.35'
+     }
+ 
+     configurations {
+diff --git a/gradle.lockfile b/gradle.lockfile
+new file mode 100644
+index 0000000..a00cf17
+--- /dev/null
++++ b/gradle.lockfile
+@@ -0,0 +1,12 @@
++# This is a Gradle generated file for dependency locking.
++# Manual edits can break the build and are not advised.
++# This file is expected to be part of source control.
++# To regenerate this file, run: ./gradlew :dependencies --write-locks
++org.jacoco:org.jacoco.agent:0.8.14=jacocoAgent,jacocoAnt
++org.jacoco:org.jacoco.ant:0.8.14=jacocoAnt
++org.jacoco:org.jacoco.core:0.8.14=jacocoAnt
++org.jacoco:org.jacoco.report:0.8.14=jacocoAnt
++org.ow2.asm:asm-commons:9.9=jacocoAnt
++org.ow2.asm:asm-tree:9.9=jacocoAnt
++org.ow2.asm:asm:9.9=jacocoAnt
++empty=
+diff --git a/grobid-core/gradle.lockfile b/grobid-core/gradle.lockfile
+new file mode 100644
+index 0000000..f59ba4e
+--- /dev/null
++++ b/grobid-core/gradle.lockfile
+@@ -0,0 +1,156 @@
++# This is a Gradle generated file for dependency locking.
++# Manual edits can break the build and are not advised.
++# This file is expected to be part of source control.
++# To regenerate this file, run: ./gradlew :grobid-core:dependencies --write-locks
++black.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback:logback-classic:1.5.35=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback:logback-core:1.5.35=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.randelshofer:fastdoubleparser:2.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.cybozu.labs:langdetect:1.1-20120112=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:log:1.7.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:runtime:1.7.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:wasi:1.7.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:wasm:1.7.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-annotations:2.21=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-core:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-databind:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson:jackson-bom:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.ben-manes.caffeine:caffeine:2.9.3=swiftExportClasspathResolvable
++com.github.jnr:jffi:1.4.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-a64asm:1.0.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-constants:0.11.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-enxio:0.33.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-ffi:2.3.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-netdb:1.2.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-posix:3.2.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-unixsocket:0.39.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jnr-x86asm:1.0.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.pemistahl:lingua:1.2.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.errorprone:error_prone_annotations:2.28.0=swiftExportClasspathResolvable
++com.google.errorprone:error_prone_annotations:2.50.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:failureaccess:1.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:guava:33.7.2-jre=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.j2objc:j2objc-annotations:3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.headius:backport9:1.13=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.headius:invokebinder:1.16=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.headius:options:1.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.rockymadden.stringmetric:stringmetric-core_2.11:0.27.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.squareup.moshi:moshi-kotlin:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.moshi:moshi:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio-jvm:3.7.0=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio:3.7.0=runtimeClasspath,testRuntimeClasspath
++commons-codec:commons-codec:1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-io:commons-io:2.21.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-logging:commons-logging:1.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-pool:commons-pool:1.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.github.java-diff-utils:java-diff-utils:4.12=kotlinInternalAbiValidation
++io.opentelemetry:opentelemetry-api:1.41.0=swiftExportClasspathResolvable
++io.opentelemetry:opentelemetry-context:1.41.0=swiftExportClasspathResolvable
++io.roastedroot:redline-api:0.0.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.roastedroot:redline-bridge:0.0.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.roastedroot:redline-runner-jffi:0.0.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.roastedroot:redline:0.0.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++it.unimi.dsi:fastutil:8.5.8=runtimeClasspath,testRuntimeClasspath
++javax.xml.bind:jaxb-api:2.3.0=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++joda-time:joda-time:2.14.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++junit:junit:4.13.2=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++me.qmx.jitescript:jitescript:0.4.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.arnx:jsonic:1.2.7=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++net.arnx:jsonic:1.3.10=runtimeClasspath,testRuntimeClasspath
++net.bytebuddy:byte-buddy-agent:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.bytebuddy:byte-buddy:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.sf.saxon:Saxon-HE:9.6.0-9=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-collections4:4.5.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-lang3:3.20.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-text:1.15.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpclient:4.5.14=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpcore:4.4.16=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.lucene:lucene-analyzers-common:4.5.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,shadedLib,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.lucene:lucene-core:4.5.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,shadedLib,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.opennlp:opennlp-tools:2.5.9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.pdfbox:fontbox:2.0.36=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.pdfbox:pdfbox:2.0.36=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
++org.bouncycastle:bcpg-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcpkix-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcprov-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcutil-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.checkerframework:checker-qual:3.43.0=swiftExportClasspathResolvable
++org.crac:crac:1.5.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.easymock:easymock:5.6.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-all:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-core:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jacoco:org.jacoco.agent:0.8.15=jacocoAgent,jacocoAnt
++org.jacoco:org.jacoco.ant:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.core:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.report:0.8.15=jacocoAnt
++org.jetbrains.kotlin:abi-tools-api:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:abi-tools:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-build-tools-api:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-build-tools-impl:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-compiler-runner:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-client:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.2.20=kotlinKlibCommonizerClasspath
++org.jetbrains.kotlin:kotlin-metadata-jvm:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-reflect:1.6.10=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-reflect:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-script-runtime:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-scripting-common:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib:2.2.20=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test-junit5:2.2.20=testCompileClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test:2.2.20=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:swift-export-embeddable:2.2.20=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3=swiftExportClasspathResolvable
++org.jetbrains:annotations:13.0=compileClasspath,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testRuntimeClasspath
++org.jruby.jcodings:jcodings:1.0.64=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby.joni:joni:2.2.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:dirgra:0.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jruby-base:10.1.2.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jruby-complete:10.1.2.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jruby-prism:2.0.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jruby-stdlib:10.1.2.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jruby:10.1.2.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby:jzlib:1.1.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jspecify:jspecify:1.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-api:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-engine:5.14.1=testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-params:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-commons:1.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-engine:1.14.1=testRuntimeClasspath
++org.junit.platform:junit-platform-launcher:1.14.1=testRuntimeClasspath
++org.junit.vintage:junit-vintage-engine:5.14.1=testRuntimeClasspath
++org.junit:junit-bom:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.mockito:mockito-core:5.20.0=mockitoAgent,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.objenesis:objenesis:3.4=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.opentest4j:opentest4j:1.3.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-analysis:9.10.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-commons:9.10.1=compileClasspath,implementationDependenciesMetadata,jacocoAnt,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-tree:9.10.1=compileClasspath,implementationDependenciesMetadata,jacocoAnt,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-util:9.10.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm:9.10.1=compileClasspath,implementationDependenciesMetadata,jacocoAnt,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ruby-lang:prism-parser-api:0.0.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ruby-lang:prism-parser-wasm:0.0.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.scala-lang:scala-library:2.11.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.slf4j:slf4j-api:2.0.17=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-core:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-legacy:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-matchers:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.yaml:snakeyaml:2.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xerces:xercesImpl:2.12.2=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xml-apis:xml-apis:1.4.01=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xom:xom:1.3.9=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++empty=all,annotationProcessor,compileOnlyDependenciesMetadata,intransitiveDependenciesMetadata,kotlinCompilerPluginClasspath,kotlinNativeCompilerPluginClasspath,kotlinScriptDefExtensions,shadow,testAnnotationProcessor,testApiDependenciesMetadata,testCompileOnlyDependenciesMetadata,testIntransitiveDependenciesMetadata,testKotlinScriptDefExtensions
+diff --git a/grobid-home/gradle.lockfile b/grobid-home/gradle.lockfile
+new file mode 100644
+index 0000000..59f803b
+--- /dev/null
++++ b/grobid-home/gradle.lockfile
+@@ -0,0 +1,99 @@
++# This is a Gradle generated file for dependency locking.
++# Manual edits can break the build and are not advised.
++# This file is expected to be part of source control.
++# To regenerate this file, run: ./gradlew :grobid-home:dependencies --write-locks
++black.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.cybozu.labs:langdetect:1.1-20120112=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-annotations:2.21=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-core:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-databind:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson:jackson-bom:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.ben-manes.caffeine:caffeine:2.9.3=swiftExportClasspathResolvable
++com.github.pemistahl:lingua:1.2.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.errorprone:error_prone_annotations:2.28.0=swiftExportClasspathResolvable
++com.google.errorprone:error_prone_annotations:2.50.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:failureaccess:1.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:guava:33.7.2-jre=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.j2objc:j2objc-annotations:3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.rockymadden.stringmetric:stringmetric-core_2.11:0.27.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.squareup.moshi:moshi-kotlin:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.moshi:moshi:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio-jvm:3.7.0=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio:3.7.0=runtimeClasspath,testRuntimeClasspath
++commons-codec:commons-codec:1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-io:commons-io:2.21.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-logging:commons-logging:1.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-pool:commons-pool:1.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.github.java-diff-utils:java-diff-utils:4.12=kotlinInternalAbiValidation
++io.opentelemetry:opentelemetry-api:1.41.0=swiftExportClasspathResolvable
++io.opentelemetry:opentelemetry-context:1.41.0=swiftExportClasspathResolvable
++it.unimi.dsi:fastutil:8.5.8=runtimeClasspath,testRuntimeClasspath
++junit:junit:4.13.2=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.arnx:jsonic:1.2.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.bytebuddy:byte-buddy-agent:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.bytebuddy:byte-buddy:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-collections4:4.5.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-lang3:3.20.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-text:1.15.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpclient:4.5.14=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpcore:4.4.16=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
++org.bouncycastle:bcpg-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcpkix-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcprov-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcutil-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.checkerframework:checker-qual:3.43.0=swiftExportClasspathResolvable
++org.easymock:easymock:5.6.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-all:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-core:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:abi-tools-api:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:abi-tools:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-build-tools-api:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-build-tools-impl:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-compiler-runner:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-client:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.2.20=kotlinKlibCommonizerClasspath
++org.jetbrains.kotlin:kotlin-metadata-jvm:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-reflect:1.6.10=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-reflect:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-script-runtime:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-scripting-common:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib:2.2.20=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test-junit5:2.2.20=testCompileClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test:2.2.20=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:swift-export-embeddable:2.2.20=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3=swiftExportClasspathResolvable
++org.jetbrains:annotations:13.0=compileClasspath,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testRuntimeClasspath
++org.jspecify:jspecify:1.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-api:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-engine:5.14.1=testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-params:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-commons:1.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-engine:1.14.1=testRuntimeClasspath
++org.junit.platform:junit-platform-launcher:1.14.1=testRuntimeClasspath
++org.junit.vintage:junit-vintage-engine:5.14.1=testRuntimeClasspath
++org.junit:junit-bom:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.mockito:mockito-core:5.20.0=mockitoAgent,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.objenesis:objenesis:3.4=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.opentest4j:opentest4j:1.3.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm:9.8=testRuntimeClasspath
++org.scala-lang:scala-library:2.11.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-core:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-legacy:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-matchers:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.yaml:snakeyaml:2.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++empty=all,annotationProcessor,compileOnlyDependenciesMetadata,intransitiveDependenciesMetadata,kotlinCompilerPluginClasspath,kotlinNativeCompilerPluginClasspath,kotlinScriptDefExtensions,testAnnotationProcessor,testApiDependenciesMetadata,testCompileOnlyDependenciesMetadata,testIntransitiveDependenciesMetadata,testKotlinScriptDefExtensions
+diff --git a/grobid-service/gradle.lockfile b/grobid-service/gradle.lockfile
+new file mode 100644
+index 0000000..e1d96ad
+--- /dev/null
++++ b/grobid-service/gradle.lockfile
+@@ -0,0 +1,291 @@
++# This is a Gradle generated file for dependency locking.
++# Manual edits can break the build and are not advised.
++# This file is expected to be part of source control.
++# To regenerate this file, run: ./gradlew :grobid-service:dependencies --write-locks
++aopalliance:aopalliance:1.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++black.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback.access:logback-access-common:2.0.9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback.access:logback-access-jetty12:2.0.9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback:logback-classic:1.5.26=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++ch.qos.logback:logback-classic:1.5.35=runtimeClasspath,testRuntimeClasspath
++ch.qos.logback:logback-core:1.5.35=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.randelshofer:fastdoubleparser:2.0.1=runtimeClasspath,testRuntimeClasspath
++com.cybozu.labs:langdetect:1.1-20120112=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:log:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:runtime:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:wasi:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:wasm:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-annotations:2.21=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-core:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-databind:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.datatype:jackson-datatype-guava:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.jakarta.rs:jackson-jakarta-rs-base:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.jakarta.rs:jackson-jakarta-rs-json-provider:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.module:jackson-module-blackbird:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.module:jackson-module-jakarta-xmlbind-annotations:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.module:jackson-module-parameter-names:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson:jackson-bom:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml:classmate:1.7.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.ben-manes.caffeine:caffeine:2.9.3=swiftExportClasspathResolvable
++com.github.ben-manes.caffeine:caffeine:3.2.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.jnr:jffi:1.4.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-a64asm:1.0.0=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-constants:0.11.2=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-enxio:0.33.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-ffi:2.3.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-netdb:1.2.0=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-posix:3.2.4=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-unixsocket:0.39.5=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-x86asm:1.0.2=runtimeClasspath,testRuntimeClasspath
++com.github.pemistahl:lingua:1.2.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.errorprone:error_prone_annotations:2.28.0=swiftExportClasspathResolvable
++com.google.errorprone:error_prone_annotations:2.50.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:failureaccess:1.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:guava:33.7.2-jre=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.inject.extensions:guice-servlet:7.0.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.inject:guice:7.0.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.j2objc:j2objc-annotations:3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.headius:backport9:1.13=runtimeClasspath,testRuntimeClasspath
++com.headius:invokebinder:1.16=runtimeClasspath,testRuntimeClasspath
++com.headius:options:1.6=runtimeClasspath,testRuntimeClasspath
++com.helger:profiler:1.1.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.rockymadden.stringmetric:stringmetric-core_2.11:0.27.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.squareup.moshi:moshi-kotlin:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.moshi:moshi:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio-jvm:3.7.0=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio:3.7.0=runtimeClasspath,testRuntimeClasspath
++commons-codec:commons-codec:1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-io:commons-io:2.21.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-logging:commons-logging:1.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-pool:commons-pool:1.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.logback:logback-throttling-appender:1.5.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-annotation:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-caffeine:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-core:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-healthchecks:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-httpclient5:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jakarta-servlets:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jersey3:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jetty12-ee10:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jetty12:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jmx:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-json:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-jvm:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-logback:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.metrics:metrics-servlets:4.2.38=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard.modules:dropwizard-testing-junit4:5.0.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-assets:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-auth:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-bom:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-client:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-configuration:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-core:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-forms:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-health:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-jackson:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-jersey:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-jetty:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-json-logging:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-lifecycle:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-logging:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-metrics:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-request-logging:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-servlets:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-testing:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-util:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.dropwizard:dropwizard-validation:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.github.java-diff-utils:java-diff-utils:4.12=kotlinInternalAbiValidation
++io.opentelemetry:opentelemetry-api:1.41.0=swiftExportClasspathResolvable
++io.opentelemetry:opentelemetry-context:1.41.0=swiftExportClasspathResolvable
++io.prometheus:prometheus-metrics-config:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-core:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-exporter-opentelemetry-otel-agent-resources:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-exporter-opentelemetry:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-model:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-simpleclient-bridge:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-tracer-common:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-tracer-initializer:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-tracer-otel-agent:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:prometheus-metrics-tracer-otel:1.8.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_common:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_dropwizard:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_hotspot:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_servlet_common:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_servlet_jakarta:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_tracer_common:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_tracer_otel:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.prometheus:simpleclient_tracer_otel_agent:0.16.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.roastedroot:redline-api:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline-bridge:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline-runner-jffi:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline:0.0.5=runtimeClasspath,testRuntimeClasspath
++it.unimi.dsi:fastutil:8.5.8=runtimeClasspath,testRuntimeClasspath
++jakarta.activation:jakarta.activation-api:2.1.3=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++jakarta.activation:jakarta.activation-api:2.1.4=runtimeClasspath,testRuntimeClasspath
++jakarta.annotation:jakarta.annotation-api:2.1.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.el:jakarta.el-api:5.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.inject:jakarta.inject-api:2.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.servlet:jakarta.servlet-api:6.1.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.validation:jakarta.validation-api:3.0.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.ws.rs:jakarta.ws.rs-api:3.1.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++jakarta.xml.bind:jakarta.xml.bind-api:4.0.2=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++jakarta.xml.bind:jakarta.xml.bind-api:4.0.4=runtimeClasspath,testRuntimeClasspath
++javax.xml.bind:jaxb-api:2.3.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++joda-time:joda-time:2.14.0=runtimeClasspath,testRuntimeClasspath
++junit:junit:4.13.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++me.qmx.jitescript:jitescript:0.4.1=runtimeClasspath,testRuntimeClasspath
++me.tongfei:progressbar:0.9.5=runtimeClasspath,testRuntimeClasspath
++net.arnx:jsonic:1.2.7=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++net.arnx:jsonic:1.3.10=runtimeClasspath,testRuntimeClasspath
++net.bytebuddy:byte-buddy-agent:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.bytebuddy:byte-buddy:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.java.dev.jna:jna-jpms:5.14.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.sf.saxon:Saxon-HE:9.6.0-9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.sourceforge.argparse4j:argparse4j:0.9.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-collections4:4.5.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-lang3:3.20.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-text:1.15.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents.client5:httpclient5:5.6.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents.core5:httpcore5-h2:5.4.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents.core5:httpcore5:5.4.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpclient:4.5.14=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpcore:4.4.16=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.lucene:lucene-analyzers-common:4.5.1=runtimeClasspath,testRuntimeClasspath
++org.apache.lucene:lucene-core:4.5.1=runtimeClasspath,testRuntimeClasspath
++org.apache.opennlp:opennlp-tools:2.5.9=runtimeClasspath,testRuntimeClasspath
++org.apache.pdfbox:fontbox:2.0.36=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.pdfbox:pdfbox:2.0.36=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apiguardian:apiguardian-api:1.1.2=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++org.bouncycastle:bcpg-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcpkix-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcprov-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcutil-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.checkerframework:checker-qual:3.43.0=swiftExportClasspathResolvable
++org.crac:crac:1.5.0=runtimeClasspath,testRuntimeClasspath
++org.easymock:easymock:5.6.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty.ee10:jetty-ee10-bom:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty.ee10:jetty-ee10-servlet:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty.toolchain.setuid:jetty-setuid-jna:2.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-bom:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-http:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-io:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-security:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-server:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-session:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.eclipse.jetty:jetty-util:12.1.10=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.expressly:expressly:5.0.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.hk2.external:aopalliance-repackaged:3.0.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.hk2:hk2-api:3.0.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.hk2:hk2-locator:3.0.6=runtimeClasspath,testRuntimeClasspath
++org.glassfish.hk2:hk2-utils:3.0.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.hk2:osgi-resource-locator:1.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.connectors:jersey-apache5-connector:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.containers:jersey-container-servlet-core:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.containers:jersey-container-servlet:3.1.11=runtimeClasspath,testRuntimeClasspath
++org.glassfish.jersey.core:jersey-client:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.core:jersey-common:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.core:jersey-server:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.ext:jersey-bean-validation:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.ext:jersey-metainf-services:3.1.11=runtimeClasspath,testRuntimeClasspath
++org.glassfish.jersey.inject:jersey-hk2:3.1.11=runtimeClasspath,testRuntimeClasspath
++org.glassfish.jersey.media:jersey-media-jaxb:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.media:jersey-media-multipart:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.test-framework.providers:jersey-test-framework-provider-inmemory:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.glassfish.jersey.test-framework:jersey-test-framework-core:3.1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-all:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-core:1.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest:3.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hibernate.validator:hibernate-validator:8.0.3.Final=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jacoco:org.jacoco.agent:0.8.15=jacocoAgent,jacocoAnt
++org.jacoco:org.jacoco.ant:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.core:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.report:0.8.15=jacocoAnt
++org.javassist:javassist:3.30.2-GA=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jboss.logging:jboss-logging:3.6.1.Final=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:abi-tools-api:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:abi-tools:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-build-tools-api:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-build-tools-impl:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-compiler-runner:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-client:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.2.20=kotlinKlibCommonizerClasspath
++org.jetbrains.kotlin:kotlin-metadata-jvm:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-reflect:1.6.10=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-reflect:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-script-runtime:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-scripting-common:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib:2.2.20=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test-junit5:2.2.20=testCompileClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test:2.2.20=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:swift-export-embeddable:2.2.20=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3=swiftExportClasspathResolvable
++org.jetbrains:annotations:13.0=compileClasspath,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testRuntimeClasspath
++org.jline:jline-terminal:3.21.0=runtimeClasspath,testRuntimeClasspath
++org.jruby.jcodings:jcodings:1.0.64=runtimeClasspath,testRuntimeClasspath
++org.jruby.joni:joni:2.2.7=runtimeClasspath,testRuntimeClasspath
++org.jruby:dirgra:0.5=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-base:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-complete:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-prism:2.0.4=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-stdlib:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jzlib:1.1.5=runtimeClasspath,testRuntimeClasspath
++org.jspecify:jspecify:1.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-api:5.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath
++org.junit.jupiter:junit-jupiter-api:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-engine:5.12.2=runtimeClasspath
++org.junit.jupiter:junit-jupiter-engine:5.14.1=testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-params:5.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath
++org.junit.jupiter:junit-jupiter-params:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter:5.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath
++org.junit.jupiter:junit-jupiter:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-commons:1.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath
++org.junit.platform:junit-platform-commons:1.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-engine:1.14.1=testRuntimeClasspath
++org.junit.platform:junit-platform-launcher:1.14.1=testRuntimeClasspath
++org.junit.vintage:junit-vintage-engine:5.14.1=testRuntimeClasspath
++org.junit:junit-bom:5.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath
++org.junit:junit-bom:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jvnet.mimepull:mimepull:1.9.15=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.mockito:mockito-core:5.20.0=mockitoAgent,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.objenesis:objenesis:3.4=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.opentest4j:opentest4j:1.3.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-analysis:9.10.1=runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-commons:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-tree:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-util:9.10.1=runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm:9.9.1=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++org.ruby-lang:prism-parser-api:0.0.4=runtimeClasspath,testRuntimeClasspath
++org.ruby-lang:prism-parser-wasm:0.0.4=runtimeClasspath,testRuntimeClasspath
++org.scala-lang:scala-library:2.11.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.slf4j:jcl-over-slf4j:2.0.17=runtimeClasspath,testRuntimeClasspath
++org.slf4j:jul-to-slf4j:2.0.17=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.slf4j:log4j-over-slf4j:2.0.17=runtimeClasspath,testRuntimeClasspath
++org.slf4j:slf4j-api:2.0.17=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-core:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-legacy:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-matchers:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.yaml:snakeyaml:2.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ru.vyarus:dropwizard-guicey:8.0.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ru.vyarus:generics-resolver:3.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xerces:xercesImpl:2.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xml-apis:xml-apis:1.4.01=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xom:xom:1.3.9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++empty=all,annotationProcessor,compileOnlyDependenciesMetadata,intransitiveDependenciesMetadata,kotlinCompilerPluginClasspath,kotlinNativeCompilerPluginClasspath,kotlinScriptDefExtensions,shadow,testAnnotationProcessor,testApiDependenciesMetadata,testCompileOnlyDependenciesMetadata,testIntransitiveDependenciesMetadata,testKotlinScriptDefExtensions
+diff --git a/grobid-trainer/gradle.lockfile b/grobid-trainer/gradle.lockfile
+new file mode 100644
+index 0000000..5fb2fb3
+--- /dev/null
++++ b/grobid-trainer/gradle.lockfile
+@@ -0,0 +1,158 @@
++# This is a Gradle generated file for dependency locking.
++# Manual edits can break the build and are not advised.
++# This file is expected to be part of source control.
++# To regenerate this file, run: ./gradlew :grobid-trainer:dependencies --write-locks
++black.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback:logback-classic:1.5.35=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.qos.logback:logback-core:1.5.35=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++ch.randelshofer:fastdoubleparser:2.0.1=runtimeClasspath,testRuntimeClasspath
++com.cybozu.labs:langdetect:1.1-20120112=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.dylibso.chicory:log:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:runtime:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:wasi:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.dylibso.chicory:wasm:1.7.5=runtimeClasspath,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-annotations:2.21=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-core:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.core:jackson-databind:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.fasterxml.jackson:jackson-bom:2.21.7=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.github.ben-manes.caffeine:caffeine:2.9.3=swiftExportClasspathResolvable
++com.github.jnr:jffi:1.4.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-a64asm:1.0.0=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-constants:0.11.2=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-enxio:0.33.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-ffi:2.3.3=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-netdb:1.2.0=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-posix:3.2.4=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-unixsocket:0.39.5=runtimeClasspath,testRuntimeClasspath
++com.github.jnr:jnr-x86asm:1.0.2=runtimeClasspath,testRuntimeClasspath
++com.github.pemistahl:lingua:1.2.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.errorprone:error_prone_annotations:2.28.0=swiftExportClasspathResolvable
++com.google.errorprone:error_prone_annotations:2.50.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:failureaccess:1.0.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:guava:33.7.2-jre=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.google.j2objc:j2objc-annotations:3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.headius:backport9:1.13=runtimeClasspath,testRuntimeClasspath
++com.headius:invokebinder:1.16=runtimeClasspath,testRuntimeClasspath
++com.headius:options:1.6=runtimeClasspath,testRuntimeClasspath
++com.rockymadden.stringmetric:stringmetric-core_2.11:0.27.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++com.squareup.moshi:moshi-kotlin:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.moshi:moshi:1.15.2=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio-jvm:3.7.0=runtimeClasspath,testRuntimeClasspath
++com.squareup.okio:okio:3.7.0=runtimeClasspath,testRuntimeClasspath
++commons-codec:commons-codec:1.11=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-io:commons-io:2.21.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-logging:commons-logging:1.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++commons-pool:commons-pool:1.6=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++io.github.java-diff-utils:java-diff-utils:4.12=kotlinInternalAbiValidation
++io.opentelemetry:opentelemetry-api:1.41.0=swiftExportClasspathResolvable
++io.opentelemetry:opentelemetry-context:1.41.0=swiftExportClasspathResolvable
++io.roastedroot:redline-api:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline-bridge:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline-runner-jffi:0.0.5=runtimeClasspath,testRuntimeClasspath
++io.roastedroot:redline:0.0.5=runtimeClasspath,testRuntimeClasspath
++it.unimi.dsi:fastutil:8.5.8=runtimeClasspath,testRuntimeClasspath
++javax.xml.bind:jaxb-api:2.3.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++joda-time:joda-time:2.14.0=runtimeClasspath,testRuntimeClasspath
++junit:junit:4.13.2=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++me.qmx.jitescript:jitescript:0.4.1=runtimeClasspath,testRuntimeClasspath
++me.tongfei:progressbar:0.9.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.arnx:jsonic:1.2.7=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
++net.arnx:jsonic:1.3.10=runtimeClasspath,testRuntimeClasspath
++net.bytebuddy:byte-buddy-agent:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.bytebuddy:byte-buddy:1.17.7=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++net.sf.saxon:Saxon-HE:9.6.0-9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-collections4:4.5.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-lang3:3.20.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.commons:commons-text:1.15.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpclient:4.5.14=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.httpcomponents:httpcore:4.4.16=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.apache.lucene:lucene-analyzers-common:4.5.1=runtimeClasspath,testRuntimeClasspath
++org.apache.lucene:lucene-core:4.5.1=runtimeClasspath,testRuntimeClasspath
++org.apache.opennlp:opennlp-tools:2.5.9=runtimeClasspath,testRuntimeClasspath
++org.apache.pdfbox:fontbox:2.0.36=runtimeClasspath,testRuntimeClasspath
++org.apache.pdfbox:pdfbox:2.0.36=runtimeClasspath,testRuntimeClasspath
++org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
++org.bouncycastle:bcpg-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcpkix-jdk18on:1.80=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcprov-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.bouncycastle:bcutil-jdk18on:1.80.2=kotlinBouncyCastleConfiguration
++org.checkerframework:checker-qual:3.43.0=swiftExportClasspathResolvable
++org.crac:crac:1.5.0=runtimeClasspath,testRuntimeClasspath
++org.easymock:easymock:5.6.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-all:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.hamcrest:hamcrest-core:1.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jacoco:org.jacoco.agent:0.8.15=jacocoAgent,jacocoAnt
++org.jacoco:org.jacoco.ant:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.core:0.8.15=jacocoAnt
++org.jacoco:org.jacoco.report:0.8.15=jacocoAnt
++org.jetbrains.kotlin:abi-tools-api:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:abi-tools:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-build-tools-api:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-build-tools-impl:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-compiler-runner:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-client:2.2.20=kotlinBuildToolsApiClasspath
++org.jetbrains.kotlin:kotlin-daemon-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.2.20=kotlinKlibCommonizerClasspath
++org.jetbrains.kotlin:kotlin-metadata-jvm:2.2.20=kotlinInternalAbiValidation
++org.jetbrains.kotlin:kotlin-reflect:1.6.10=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-reflect:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-script-runtime:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlin:kotlin-scripting-common:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.20=kotlinBuildToolsApiClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest
++org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.21=runtimeClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-stdlib:2.2.20=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test-junit5:2.2.20=testCompileClasspath,testRuntimeClasspath
++org.jetbrains.kotlin:kotlin-test:2.2.20=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jetbrains.kotlin:swift-export-embeddable:2.2.20=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3=swiftExportClasspathResolvable
++org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3=swiftExportClasspathResolvable
++org.jetbrains:annotations:13.0=compileClasspath,kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinCompilerPluginClasspathMain,kotlinCompilerPluginClasspathTest,kotlinInternalAbiValidation,kotlinKlibCommonizerClasspath,runtimeClasspath,swiftExportClasspathResolvable,testCompileClasspath,testRuntimeClasspath
++org.jline:jline-terminal:3.21.0=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.jruby.jcodings:jcodings:1.0.64=runtimeClasspath,testRuntimeClasspath
++org.jruby.joni:joni:2.2.7=runtimeClasspath,testRuntimeClasspath
++org.jruby:dirgra:0.5=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-base:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-complete:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-prism:2.0.4=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby-stdlib:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jruby:10.1.2.0=runtimeClasspath,testRuntimeClasspath
++org.jruby:jzlib:1.1.5=runtimeClasspath,testRuntimeClasspath
++org.jspecify:jspecify:1.0.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-api:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-engine:5.14.1=testRuntimeClasspath
++org.junit.jupiter:junit-jupiter-params:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.jupiter:junit-jupiter:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-commons:1.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.junit.platform:junit-platform-engine:1.14.1=testRuntimeClasspath
++org.junit.platform:junit-platform-launcher:1.14.1=testRuntimeClasspath
++org.junit.vintage:junit-vintage-engine:5.14.1=testRuntimeClasspath
++org.junit:junit-bom:5.14.1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.mockito:mockito-core:5.20.0=mockitoAgent,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ninia:jep:4.3.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.objenesis:objenesis:3.4=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.opentest4j:opentest4j:1.3.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.ow2.asm:asm-analysis:9.10.1=runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-commons:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-tree:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm-util:9.10.1=runtimeClasspath,testRuntimeClasspath
++org.ow2.asm:asm:9.10.1=jacocoAnt,runtimeClasspath,testRuntimeClasspath
++org.ruby-lang:prism-parser-api:0.0.4=runtimeClasspath,testRuntimeClasspath
++org.ruby-lang:prism-parser-wasm:0.0.4=runtimeClasspath,testRuntimeClasspath
++org.scala-lang:scala-library:2.11.1=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.slf4j:slf4j-api:2.0.17=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-core:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-legacy:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.xmlunit:xmlunit-matchers:2.10.3=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++org.yaml:snakeyaml:2.5=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xerces:xercesImpl:2.12.2=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xml-apis:xml-apis:1.4.01=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++xom:xom:1.3.9=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
++empty=all,annotationProcessor,compileOnlyDependenciesMetadata,intransitiveDependenciesMetadata,kotlinCompilerPluginClasspath,kotlinNativeCompilerPluginClasspath,kotlinScriptDefExtensions,shadow,testAnnotationProcessor,testApiDependenciesMetadata,testCompileOnlyDependenciesMetadata,testIntransitiveDependenciesMetadata,testKotlinScriptDefExtensions
