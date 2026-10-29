@@ -1,0 +1,303 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Prowler API 5.x
+image: dhi.io/prowler-api
+variant: runtime
+tags:
+  - "5"
+  - "5.36"
+  - 5.36.0
+  - 5-debian
+  - 5-debian13
+  - 5.36-debian
+  - 5.36-debian13
+  - 5.36.0-debian
+  - 5.36.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-24"
+vars:
+  COMMIT_SHA: 685d24dfee4616981e017b1745e3b8f2633d499d
+  POWERSHELL_ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  POWERSHELL_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:7ebb0048a38009de5a59d620a10f33d7ba4920ace2379b104a67fafb79e2841b" : "sha256:a3b6a1d14897974aea732d82970c86dd17ffc57a5fc4f4bfabfe2dd272ff6c40" }'
+  POWERSHELL_VERSION: 7.5.0
+  PYTHON_MAJOR_MINOR_VERSION: "3.12"
+  SEMVER_MAJOR_MINOR_VERSION: "5.36"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.36.0
+  ZIZMOR_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-gnu" : "aarch64-unknown-linux-gnu" }'
+  ZIZMOR_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:a8000f3c683319a523d3b20df0e75457ba591f049cfcbfa98966631b56733c03" : "sha256:d66e37ef8a375fb07939c630ebf9709a6e0f20242bdc3faf672a7ed97e0b768d" }'
+  ZIZMOR_VERSION: 1.24.1
+  VERSION: 5.36.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - ca-certificates-bundle
+    - dash
+    - hostname
+    - libgcc-s1
+    - libgssapi-krb5-2
+    - libicu76
+    - liblttng-ust1t64
+    - libpq5
+    - libssl3t64
+    - libstdc++6
+    - libunwind8
+    - libxml2
+    - libxmlsec1t64-openssl
+    - libxslt1.1
+    - python-3.12
+    - tini
+    - trivy=0.71.2-2
+    - tzdata
+    - wget
+  builds:
+    - name: prowler-api
+      work-dir: ${source.dir}/prowler/api
+      environment:
+        POWERSHELL_TELEMETRY_OPTOUT: "1"
+        UV_NO_MANAGED_PYTHON: "true"
+        UV_PROJECT_ENVIRONMENT: /opt/prowler/venv
+        UV_PYTHON_DOWNLOADS: never
+      caches:
+        - path: /root/.cache/uv
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - dash
+          - findutils
+          - git
+          - gzip
+          - libicu76
+          - liblttng-ust1t64
+          - libpq-dev
+          - libtool
+          - libssl-dev
+          - libunwind8
+          - libxml2-dev
+          - libxmlsec1-dev
+          - libxslt1-dev
+          - pkg-config
+          - python-3.12
+          - python-3.12-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - sed
+          - tar
+          - uv
+        files:
+          - url: git+https://github.com/prowler-cloud/prowler.git#5.36.0
+            checksum: 685d24dfee4616981e017b1745e3b8f2633d499d
+            path: ${source.dir}/prowler
+            spdx:
+              name: prowler-api
+              version: 5.36.0
+              packages:
+                - name: prowler-api
+                  purl: pkg:github/prowler-cloud/prowler@5.36.0#api
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/powershell-7.5.0-linux-${POWERSHELL_ARCH}.tar.gz
+            checksum: ${POWERSHELL_CHECKSUM}
+            path: ${source.dir}/powershell.tar.gz
+            spdx:
+              name: powershell
+              version: 7.5.0
+              packages:
+                - name: powershell
+                  purl: pkg:github/PowerShell/PowerShell@v7.5.0
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: https://github.com/zizmorcore/zizmor/releases/download/v1.24.1/zizmor-${ZIZMOR_ARCH}.tar.gz
+            checksum: ${ZIZMOR_CHECKSUM}
+            path: ${source.dir}/zizmor.tar.gz
+            spdx:
+              name: zizmor
+              version: 1.24.1
+              packages:
+                - name: zizmor
+                  purl: pkg:github/zizmorcore/zizmor@v1.24.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install auxiliary scanners
+          runs: |
+            set -eux -o pipefail
+
+            install -d -m 0755 /opt/microsoft/powershell/7 /usr/local/bin
+            tar -xzf "${source.dir}/powershell.tar.gz" -C /opt/microsoft/powershell/7
+            chmod 0755 /opt/microsoft/powershell/7/pwsh
+            ln -sf /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh
+
+            tar -xzf "${source.dir}/zizmor.tar.gz" -C /usr/local/bin zizmor
+            chmod 0755 /usr/local/bin/zizmor
+        - name: install locked Python dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            uv venv /opt/prowler/venv --python /usr/bin/python3.12
+            uv sync --locked --no-dev --no-install-project
+        - name: install pinned Microsoft 365 PowerShell modules
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pwsh -NoLogo -NoProfile -NonInteractive -Command \
+              "Set-PSRepository PSGallery -InstallationPolicy Trusted; \
+               Install-Module ExchangeOnlineManagement -RequiredVersion 3.10.1 -Scope AllUsers -Force -AllowClobber; \
+               Install-Module MicrosoftTeams -RequiredVersion 7.9.0 -Scope AllUsers -Force -AllowClobber; \
+               Install-Module MSAL.PS -RequiredVersion 4.37.0.0 -Scope AllUsers -Force -AllowClobber"
+        - name: stage application
+          runs: |
+            set -eux -o pipefail
+
+            install -d -m 0755 /opt/prowler/backend
+            cp -a src/backend/. /opt/prowler/backend/
+            install -m 0755 docker-entrypoint.sh /opt/prowler/docker-entrypoint.sh
+            install -m 0644 pyproject.toml uv.lock /opt/prowler/
+
+            # The locked environment is already materialized, so avoid shipping uv
+            # solely as a process launcher while preserving upstream role behavior.
+            sed -i 's/exec uv run /exec /' /opt/prowler/docker-entrypoint.sh
+            sed -i 's/  uv run /  /' /opt/prowler/docker-entrypoint.sh
+        - name: build checks
+          runs: |
+            set -eux -o pipefail
+
+            /opt/prowler/venv/bin/python -c 'import celery, django, prowler; print(django.get_version())'
+            /opt/prowler/venv/bin/gunicorn --version
+            pwsh -NoLogo -NoProfile -NonInteractive -Command \
+              "Get-Module -ListAvailable ExchangeOnlineManagement,MicrosoftTeams,MSAL.PS | Select-Object -ExpandProperty Name | Sort-Object -Unique"
+            zizmor --version
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: prowler-api-venv
+            source: /opt/prowler/venv
+        - name: remove build-only caches and tests
+          runs: |
+            set -eux -o pipefail
+
+            find /opt/prowler/venv /opt/prowler/backend \
+              \( -type d -a \( -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+      outputs:
+        - source: /opt/prowler
+          target: /opt/prowler
+          uid: 0
+          gid: 0
+        - source: /opt/microsoft/powershell/7
+          target: /opt/microsoft/powershell/7
+          uid: 0
+          gid: 0
+        - source: /usr/local/share/powershell/Modules
+          target: /usr/local/share/powershell/Modules
+          uid: 0
+          gid: 0
+        - source: /usr/local/bin/pwsh
+          target: /usr/local/bin/pwsh
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /usr/local/bin/zizmor
+          target: /usr/local/bin/zizmor
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/prowler-api
+          target: /opt/docker/sbom/prowler-api
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/prowler-api-venv
+          target: /opt/docker/sbom/prowler-api-venv
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/powershell
+          target: /opt/docker/sbom/powershell
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/zizmor
+          target: /opt/docker/sbom/zizmor
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/prowler/backend
+environment:
+  DJANGO_BIND_ADDRESS: 0.0.0.0
+  DJANGO_DEBUG: "False"
+  DJANGO_PORT: "8080"
+  DJANGO_SETTINGS_MODULE: config.django.production
+  DJANGO_TMP_OUTPUT_DIRECTORY: /tmp/prowler_api_output
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  HOME: /home/nonroot
+  PATH: /opt/prowler/venv/bin:/opt/microsoft/powershell/7:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  POWERSHELL_TELEMETRY_OPTOUT: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  TRIVY_CACHE_DIR: /home/nonroot/.cache/trivy
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /home/nonroot/.cache/trivy
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /tmp/prowler_api_output
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: symlink
+    path: /usr/bin/pwsh
+    uid: 0
+    gid: 0
+    source: /opt/microsoft/powershell/7/pwsh
+annotations:
+  org.opencontainers.image.description: A minimal Prowler API, worker, and scheduler image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /opt/prowler/docker-entrypoint.sh
+cmd:
+  - prod
+ports:
+  - 8080/tcp
