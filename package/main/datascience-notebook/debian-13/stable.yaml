@@ -4,9 +4,9 @@ image: dhi.io/pkg-datascience-notebook
 variant: runtime
 tags:
   - 2026.07.28
-  - 2026.07.28-r12
+  - 2026.07.28-r13
   - 2026.07.28-debian13
-  - 2026.07.28-r12-debian13
+  - 2026.07.28-r13-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -28,7 +28,7 @@ vars:
   MICROMAMBA_VERSION: 2.10.0-0
   PYTHON_MINOR: "3.13"
   PYTHON_VERSION: 3.13.18-1
-  REL: "12"
+  REL: "13"
   VERSION: 2026.07.28
 contents:
   repositories:
@@ -237,7 +237,10 @@ contents:
             /opt/conda/bin/pip install --no-deps --upgrade 'aiohttp>=3.14.0'
             rm -f /opt/conda/conda-meta/aiohttp-3.13.*.json
 
-            /opt/conda/bin/pip install --no-deps --upgrade 'msgpack>=1.2.1,<2.0.0'
+            /opt/conda/bin/pip install --no-deps --upgrade 'msgpack>=1.2.3,<2.0.0' # CVE-2026-114613
+            for _meta in /opt/conda/conda-meta/msgpack-1.1.*.json; do
+              [ -e "$_meta" ] && rm -f "$_meta"
+            done
             rm -f /opt/conda/conda-meta/msgpack-1.2.0.json
 
             /opt/conda/bin/pip install --no-deps --upgrade 'gitpython>=3.1.58,<4.0.0'
@@ -266,17 +269,70 @@ contents:
 
             /opt/conda/bin/pip install --no-deps --upgrade 'setuptools==84.2.1' # GHSA-XMJ3-9GF7-H52W
             rm -f /opt/conda/conda-meta/setuptools-7*.json /opt/conda/conda-meta/setuptools-8[0-3]*.json
-        - name: align pip vendored urllib3 with site packages
+        - name: align pip vendored urllib3 and msgpack with site packages
           runs: |
             set -eux -o pipefail
 
             sp=$(echo /opt/conda/lib/python*/site-packages)
+            urllib3_ver=$(python3 -c 'import importlib.metadata as m; print(m.version("urllib3"))')
+            msgpack_ver=$(python3 -c 'import importlib.metadata as m; print(m.version("msgpack"))')
+
             rm -rf "$sp/pip/_vendor/urllib3"
             cp -a "$sp/urllib3" "$sp/pip/_vendor/urllib3"
-            sed -i 's/urllib3==2\.7\.0/urllib3==2.8.0/' "$sp/pip/_vendor/vendor.txt"
+            sed -i "s/urllib3==.*/urllib3==${urllib3_ver}/" "$sp/pip/_vendor/vendor.txt"
+
+            rm -rf "$sp/pip/_vendor/msgpack"
+            cp -a "$sp/msgpack" "$sp/pip/_vendor/msgpack"
+            sed -i "s/^msgpack==.*/msgpack==${msgpack_ver}/" "$sp/pip/_vendor/vendor.txt"
+
             if [ -f "$sp/pip/_vendor/bom.cdx.json" ]; then
-              sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "$sp/pip/_vendor/bom.cdx.json"
-              sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "$sp/pip/_vendor/bom.cdx.json"
+              python3 - "$sp/pip/_vendor/bom.cdx.json" "$urllib3_ver" "$msgpack_ver" << 'PY'
+            import json
+            import sys
+
+            path, urllib3_ver, msgpack_ver = sys.argv[1:4]
+            with open(path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+
+            def bump(component, new_ver):
+                old_ref = None
+                new_ref = f"pkg:pypi/{component}@{new_ver}"
+                for comp in doc.get("components") or []:
+                    if comp.get("name") != component:
+                        continue
+                    old_purl = comp.get("purl") or ""
+                    if old_purl.startswith(f"pkg:pypi/{component}@") and old_purl != new_ref:
+                        old_ref = old_purl
+                    comp["version"] = new_ver
+                    comp["purl"] = new_ref
+                    comp["bom-ref"] = new_ref
+                if old_ref is None:
+                    return
+                for dep in doc.get("dependencies") or []:
+                    if dep.get("ref") == old_ref:
+                        dep["ref"] = new_ref
+                    depends = dep.get("dependsOn")
+                    if isinstance(depends, list):
+                        dep["dependsOn"] = [
+                            new_ref if item == old_ref else item for item in depends
+                        ]
+                rendered = json.dumps(doc)
+                if old_ref in rendered:
+                    raise SystemExit(f"stale {old_ref} remains in pip vendor bom")
+
+            bump("urllib3", urllib3_ver)
+            bump("msgpack", msgpack_ver)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(doc, handle, indent=2)
+                handle.write("\n")
+            PY
+            fi
+            grep -F "urllib3==${urllib3_ver}" "$sp/pip/_vendor/vendor.txt"
+            grep -F "msgpack==${msgpack_ver}" "$sp/pip/_vendor/vendor.txt"
+            grep -F "pkg:pypi/msgpack@${msgpack_ver}" "$sp/pip/_vendor/bom.cdx.json"
+            if grep -E 'msgpack@1\.1\.2|pkg:pypi/msgpack@1\.1\.2' "$sp/pip/_vendor/bom.cdx.json"; then
+              echo "pip vendor bom still names msgpack 1.1.2" >&2
+              exit 1
             fi
         - name: install julia
           runs: |
@@ -470,7 +526,7 @@ contents:
               - deb
             license: BSD-3-Clause
             name: datascience-notebook
-            rel: 12
+            rel: 13
             url: https://jupyter-docker-stacks.readthedocs.io/
             version: 2026.07.28
 os-release:
