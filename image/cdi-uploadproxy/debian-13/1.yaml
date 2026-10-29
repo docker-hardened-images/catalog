@@ -61,6 +61,22 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: patch pkg/token for go-jose v4
+          uses: patch@v1
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/go-jose-v4-token-imports.patch
+        - name: migrate go-jose module require to v4
+          work-dir: /go/src/kubevirt.io/containerized-data-importer
+          privileged: true
+          environment:
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            go mod edit -droprequire=github.com/go-jose/go-jose/v3
+            go get github.com/go-jose/go-jose/v4@v4.1.6
         - name: patch vulnerable Go dependencies
           uses: go/bump@v1
           work-dir: /go/src/kubevirt.io/containerized-data-importer
@@ -70,7 +86,7 @@ contents:
             deps:
               - golang.org/x/crypto@v0.56.0
               - golang.org/x/net@v0.62.0
-              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.6
             download: true
         - name: sync vendor directory
           work-dir: /go/src/kubevirt.io/containerized-data-importer
@@ -93,7 +109,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            CGO_ENABLED=0 go test ./pkg/uploadproxy/...
+            CGO_ENABLED=0 go test ./pkg/uploadproxy/... ./pkg/token/...
         - name: build
           uses: go/build@v1
           environment:
@@ -104,6 +120,12 @@ contents:
               - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=c8129be0728afa1a2c49b69b1c0847a42730a732
             output: ${target.dir}/usr/local/bin/cdi-uploadproxy
             packages: ./cmd/cdi-uploadproxy
+      paths:
+        - type: file
+          path: ${source.dir}/patch/go-jose-v4-token-imports.patch
+          uid: 0
+          gid: 0
+          source: image/cdi-uploadproxy/patch/go-jose-v4-token-imports.patch
       outputs:
         - source: ${target.dir}/usr/local/bin/cdi-uploadproxy
           target: /usr/local/bin/cdi-uploadproxy

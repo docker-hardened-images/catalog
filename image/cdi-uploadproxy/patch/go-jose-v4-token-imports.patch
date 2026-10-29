@@ -1,0 +1,43 @@
+Subject: Use go-jose v4 in pkg/token for CVE-2026-116587
+Description: CVE-2026-116587 is fixed only in go-jose v4.1.6+; the v3 module has no patched release. CDI v1.66.1 imports go-jose/v3 only from pkg/token/token.go, which cdi-uploadproxy links through pkg/uploadproxy.
+Origin: DHI-internal
+CVE: CVE-2026-116587
+Base-Tree: git https://github.com/kubevirt/containerized-data-importer c8129be0728afa1a2c49b69b1c0847a42730a732
+Adaptation: Switch import paths to go-jose/v4, adjust jwt.ParseSigned and Serialize for the v4 API, and pin v4.1.6 via go/bump.
+Verify: cmd `bash -c 'u=$(mktemp -d) && git clone -q --depth 1 --branch v1.66.1 https://github.com/kubevirt/containerized-data-importer.git "$u" && patch -p1 --dry-run -d "$u" < image/cdi-uploadproxy/patch/go-jose-v4-token-imports.patch'` expect "checking file pkg/token/token.go"
+Forwarded: not-needed
+Drop-When: never: upstream v1.66.x still ships go-jose/v3 in pkg/token without equivalent v4.1.6+ migration
+
+diff --git a/pkg/token/token.go b/pkg/token/token.go
+--- a/pkg/token/token.go
++++ b/pkg/token/token.go
+@@ -22,8 +22,8 @@ import (
+ 	"crypto/rsa"
+ 	"time"
+ 
+-	jose "github.com/go-jose/go-jose/v3"
+-	"github.com/go-jose/go-jose/v3/jwt"
++	jose "github.com/go-jose/go-jose/v4"
++	"github.com/go-jose/go-jose/v4/jwt"
+ 	"github.com/pkg/errors"
+ 
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+@@ -68,7 +68,10 @@ func NewValidator(issuer string, key *rsa.PublicKey, leeway time.Duration) Val
+ 
+ // Validate checks the token signature and returns the contents
+ func (v *validator) Validate(token string) (*Payload, error) {
+-	tok, err := jwt.ParseSigned(token)
++	tok, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{
++		jose.PS256,
++		jose.RS256,
++	})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -125,5 +128,5 @@ func (g *generator) Generate(payload *Payload) (string, error) {
+ 			NotBefore: jwt.NewNumericDate(t),
+ 			Expiry:    jwt.NewNumericDate(t.Add(g.lifetime)),
+ 		}).
+-		CompactSerialize()
++		Serialize()
+ }
