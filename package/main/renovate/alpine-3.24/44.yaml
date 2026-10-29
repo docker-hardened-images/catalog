@@ -1,0 +1,234 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-renovate
+variant: runtime
+tags:
+  - 44.190.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  ABSEIL_VERSION: lts_20260817
+  COMMIT_SHA: ec10d676db3337626244323caed7835ef72fcdc1
+  NODEJS_VERSION: 24.22.1-r1
+  NPM_VERSION: 12.2.1-r1
+  PNPM_CHECKSUM: sha256:5b047856d727fe3f4e0cbcc216122bddbff3c6d79a3b766d69e5d3b0b92097dc
+  PNPM_VERSION: 11.28.6
+  RE2_NPM_VERSION: 1.27.0
+  RE2_SPDX_VERSION: '"2025-11-05"'
+  RE2_VERSION: "2025-11-05"
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "44.190"
+  SEMVER_MAJOR_VERSION: "44"
+  SEMVER_VERSION: 44.190.0
+  VERSION: 44.190.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: renovate
+      work-dir: ${source.dir}/renovate
+      shell: /bin/bash
+      environment:
+        CI: "true"
+        pnpm_config_store_dir: /pnpm/store
+      caches:
+        - path: /pnpm/store
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - build-base
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - grep
+          - jq
+          - linux-headers
+          - nodejs-24=24.22.1-r1
+          - npm-12=12.2.1-r1
+          - pkgconf
+          - python3
+        files:
+          - url: git+https://github.com/renovatebot/renovate.git#44.190.0
+            checksum: ec10d676db3337626244323caed7835ef72fcdc1
+            path: ${source.dir}/renovate
+            spdx:
+              name: renovate
+              version: 44.190.0
+              packages:
+                - name: renovate
+                  purl: pkg:github/renovatebot/renovate@44.190.0
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/pnpm/-/pnpm-11.28.6.tgz
+            checksum: sha256:5b047856d727fe3f4e0cbcc216122bddbff3c6d79a3b766d69e5d3b0b92097dc
+            path: ${source.dir}/pnpm.tgz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch pnpm workspace linker
+          uses: patch@v1
+          work-dir: ${source.dir}/renovate
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/pnpm-workspace-linker.patch
+        - name: install dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm install --global --prefix /opt/pnpm "${source.dir}/pnpm.tgz"
+            export PATH="/opt/pnpm/bin:${PATH}"
+            command -v pnpm
+            test "$(pnpm --version)" = "11.28.6"
+            grep -qx 'nodeLinker: hoisted' pnpm-workspace.yaml
+            grep -qx 'packageImportMethod: copy' pnpm-workspace.yaml
+            pnpm install --lockfile-only --ignore-scripts
+            pnpm install --frozen-lockfile --ignore-scripts
+            pnpm rebuild re2
+            re2node="$(find node_modules -path '*/re2/build/Release/re2.node' | head -n 1)"
+            test -n "$re2node"
+            test -f "$re2node"
+            grep -aqF "lts_20260817" "$re2node"
+            bazel="$(find node_modules -path '*/re2/vendor/re2/MODULE.bazel' | head -n 1)"
+            test -n "$bazel"
+            got="$(awk -F'"' '/^    version = / { print $2; exit }' "$bazel")"
+            test "$got" = "2025-11-05"
+        - name: compile dist
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/opt/pnpm/bin:${PATH}"
+            npm version "44.190.0" --no-git-tag-version --allow-same-version
+            test "$(jq -r .version package.json)" = "44.190.0"
+            pnpm run build
+            test -f dist/renovate.js
+            test -f dist/config-validator.js
+            for entry in dist/renovate.js dist/config-validator.js; do
+              first="$(head -n 1 "$entry")"
+              case "$first" in
+                '#!/usr/bin/env node'*)
+                  sed -i '1s|#!/usr/bin/env node|#!/usr/bin/node|' "$entry"
+                  head -n 1 "$entry" | grep -q '#!/usr/bin/node'
+                  ;;
+              esac
+            done
+        - name: stage production payload
+          runs: |
+            set -eux -o pipefail
+
+            export PATH="/opt/pnpm/bin:${PATH}"
+            pnpm prune --prod
+            re2node="$(find node_modules -path '*/re2/build/Release/re2.node' | head -n 1)"
+            test -n "$re2node"
+            test -f "$re2node"
+            umask 022
+            mkdir -p "${target.dir}/usr/lib/renovate" "${target.dir}/usr/bin"
+            cp -a dist node_modules package.json license "${target.dir}/usr/lib/renovate/"
+            test -f renovate-schema.json
+            cp -a renovate-schema.json "${target.dir}/usr/lib/renovate/"
+            for schema in renovate-global-schema.json renovate-inherited-schema.json; do
+              if grep -aqFr "$schema" dist; then
+                test -f "$schema"
+                cp -a "$schema" "${target.dir}/usr/lib/renovate/"
+              fi
+            done
+            test ! -e "${target.dir}/usr/lib/renovate/pnpm-lock.yaml"
+            test ! -e "${target.dir}/usr/lib/renovate/pnpm-workspace.yaml"
+            test ! -e "${target.dir}/usr/lib/renovate/patches"
+            test ! -e "${target.dir}/usr/lib/renovate/tools"
+            ln -s /usr/bin/node "${target.dir}/usr/lib/renovate/node"
+            cat > /tmp/renovate-wrapper << 'EOF'
+            #!/bin/bash
+            export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+            exec /usr/bin/node --use-openssl-ca "${RENOVATE_NODE_ARGS[@]}" /usr/lib/renovate/dist/renovate.js "$@"
+            EOF
+            cat > /tmp/renovate-config-validator-wrapper << 'EOF'
+            #!/bin/bash
+            export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+            exec /usr/bin/node --use-openssl-ca "${RENOVATE_NODE_ARGS[@]}" /usr/lib/renovate/dist/config-validator.js "$@"
+            EOF
+            install -m 0755 /tmp/renovate-wrapper "${target.dir}/usr/bin/renovate"
+            install -m 0755 /tmp/renovate-config-validator-wrapper "${target.dir}/usr/bin/renovate-config-validator"
+            head -n 1 "${target.dir}/usr/bin/renovate" | grep -qx '#!/bin/bash'
+            head -n 1 "${target.dir}/usr/bin/renovate-config-validator" | grep -qx '#!/bin/bash'
+            broken="$(find "${target.dir}/usr/lib/renovate" -xtype l -print -quit)"
+            test -z "$broken"
+            cd /tmp
+            NODE_PATH="${target.dir}/usr/lib/renovate/node_modules" node -e "const RE2=require('re2'); if (!new RE2('.*').exec('test')) process.exit(1);"
+        - name: npm dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: renovate
+            source: ${target.dir}/usr/lib/renovate/node_modules
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: re2
+            purl: pkg:github/google/re2@2025-11-05
+            version: "2025-11-05"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: abseil-cpp
+            purl: pkg:github/abseil/abseil-cpp@lts_20260817
+            version: lts_20260817
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -d /opt/docker/sbom/renovate
+            test -d /opt/docker/sbom/re2
+            test -d /opt/docker/sbom/abseil-cpp
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/renovate /opt/docker/sbom/re2 /opt/docker/sbom/abseil-cpp "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+              - git
+              - bash
+              - ca-certificates-bundle
+              - libstdc++
+            description: Automated dependency update tool
+            files:
+              - usr/bin/renovate
+              - usr/bin/renovate-config-validator
+              - usr/lib/renovate
+              - opt/docker/sbom/renovate
+              - opt/docker/sbom/re2
+              - opt/docker/sbom/abseil-cpp
+            formats:
+              - apk
+            license: AGPL-3.0-only
+            name: renovate-44
+            rel: 0
+            url: https://github.com/renovatebot/renovate
+            version: 44.190.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/pnpm-workspace-linker.patch
+          uid: 0
+          gid: 0
+          source: package/main/renovate/patch/pnpm-workspace-linker.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
