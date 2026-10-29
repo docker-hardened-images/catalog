@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-actions
 variant: runtime
 tags:
   - 1.7.0.1
-  - 1.7.0.1-r14
+  - 1.7.0.1-r15
   - 1.7.0.1-debian13
-  - 1.7.0.1-r14-debian13
+  - 1.7.0.1-r15-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,7 @@ vars:
   PYTHON_MAJOR_MINOR_VERSION: "3.10"
   PYTHON_MINOR: "3.10"
   PYTHON_VERSION: 3.10.22-1
-  REL: "14"
+  REL: "15"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0.1
@@ -27,6 +27,10 @@ vars:
   VERSION: 1.7.0.1
   VERSION_MAJOR_MINOR_PATCH: 1.7.0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
   builds:
@@ -38,10 +42,6 @@ contents:
       caches:
         - path: /root/.cache/uv
       contents:
-        repositories:
-          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
-        keyring:
-          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
           - build-essential
@@ -125,6 +125,71 @@ contents:
               config/slack_action.yaml \
               config/teams_action.yaml \
               ${target.dir}/etc/datahub/actions/system/conf/
+        - name: use importlib metadata backend for pip
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            sp="${target.dir}/usr/lib/datahub-actions/lib/python3.10/site-packages"
+            rm -rf "$sp/pip/_vendor/pkg_resources"
+            sed -i '/^setuptools==/d' "$sp/pip/_vendor/vendor.txt"
+            python3.10 - "$sp/pip/_vendor/bom.cdx.json" "$sp/pip/_internal/metadata/__init__.py" << 'PY'
+            import json
+            import pathlib
+            import sys
+
+            bom_path, meta_path = sys.argv[1:]
+            with open(bom_path, encoding="utf-8") as handle:
+                doc = json.load(handle)
+
+            def is_setuptools_ref(value):
+                return isinstance(value, str) and value.startswith("pkg:pypi/setuptools@")
+
+            doc["components"] = [
+                comp for comp in (doc.get("components") or [])
+                if comp.get("name") != "setuptools"
+            ]
+            kept = []
+            for dep in doc.get("dependencies") or []:
+                if is_setuptools_ref(dep.get("ref")):
+                    continue
+                depends = dep.get("dependsOn")
+                if isinstance(depends, list):
+                    dep["dependsOn"] = [item for item in depends if not is_setuptools_ref(item)]
+                kept.append(dep)
+            doc["dependencies"] = kept
+            rendered = json.dumps(doc)
+            if "setuptools" in rendered:
+                raise SystemExit("setuptools remains in pip vendor bom")
+            with open(bom_path, "w", encoding="utf-8") as handle:
+                json.dump(doc, handle, indent=2)
+                handle.write("\n")
+
+            meta = pathlib.Path(meta_path)
+            text = meta.read_text(encoding="utf-8")
+            needle = "if sys.version_info < (3, 11):"
+            start = text.find(needle)
+            if start < 0:
+                raise SystemExit("pip metadata backend selector not found")
+            window = text[start:start + 500]
+            old = "return False"
+            idx = window.find(old)
+            if idx < 0:
+                raise SystemExit("pip metadata backend return not found")
+            abs_idx = start + idx
+            text = text[:abs_idx] + "return True" + text[abs_idx + len(old):]
+            meta.write_text(text, encoding="utf-8")
+            PY
+            if grep -E 'setuptools==|pkg:pypi/setuptools@' "$sp/pip/_vendor/vendor.txt" "$sp/pip/_vendor/bom.cdx.json"; then
+              echo "pip vendor metadata still names setuptools" >&2
+              exit 1
+            fi
+            test ! -e "$sp/pip/_vendor/pkg_resources"
+            venv_py="${target.dir}/usr/lib/datahub-actions/bin/python"
+            "$venv_py" -c 'from pip._internal.metadata import select_backend; backend = select_backend(); assert backend.NAME == "importlib", backend.NAME'
+            rm -rf /tmp/dhi-pip-download
+            "$venv_py" -m pip download --only-binary=:all: --dest /tmp/dhi-pip-download 'setuptools==84.1.0'
+            test -n "$(find /tmp/dhi-pip-download -name 'setuptools-84.1.0*.whl' -print -quit)"
         - name: python dependencies sbom
           uses: sbom@v1
           with:
@@ -155,7 +220,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-actions
-            rel: 14
+            rel: 15
             url: https://github.com/datahub-project/datahub
             version: 1.7.0.1
       paths:

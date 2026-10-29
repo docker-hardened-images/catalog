@@ -21,8 +21,11 @@ mkdir -p "${TARGET_DIR}/usr/lib" "${TARGET_DIR}/usr/bin"
 # CVE-2026-44431, CVE-2026-21441, CVE-2025-66471, CVE-2025-66418),
 # lxml >= 6.1.0 (CVE-2026-41066),
 # cryptography >= 50.0.0 (CVE-2026-69247, CVE-2026-69249, CVE-2026-69248),
-# setuptools >= 83.0.0 (CVE-2026-59890),
+# msgpack >= 1.2.3 (CVE-2026-114613),
+# setuptools >= 84.1.0 (CVE-2026-59890, GHSA-xmj3-9gf7-h52w),
 # certifi >= 2026.10.19 (GHSA-6q48-6c7w-9gw2).
+# filelock 4.2.1 (CVE-2026-112940, CVE-2026-112907, CVE-2026-112913) requires
+# Python>=3.11; this leaf stays on 3.10 until the image line can move with it.
 # cryptography from sdist (--no-binary-package): the PyPI wheels bundle a
 # vulnerable OpenSSL (GHSA-537c-gmf6-5ccf, fixed only in 48.0.1 which is
 # outside datahub's <47 pin); building from source links the patched
@@ -31,7 +34,8 @@ cat > "${SOURCE_DIR}/overrides.txt" << 'EOF'
 urllib3>=2.8.0
 lxml>=6.1.0
 cryptography>=50.0.0
-setuptools>=83.0.0
+msgpack>=1.2.3
+setuptools>=84.1.0
 certifi>=2026.10.19
 EOF
 
@@ -61,6 +65,17 @@ sed -i 's/urllib3==2\.7\.0/urllib3==2.8.0/' "${sp}/pip/_vendor/vendor.txt"
 if [ -f "${sp}/pip/_vendor/bom.cdx.json" ]; then
   sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "${sp}/pip/_vendor/bom.cdx.json"
   sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "${sp}/pip/_vendor/bom.cdx.json"
+fi
+
+# Pip vendors msgpack 1.1.2 (CVE-2026-114613); install a fixed wheel and sync vendor.
+uv pip install --python "${VENV}/bin/python" 'msgpack>=1.2.3'
+msgpack_ver=$("${VENV}/bin/python" -c 'import importlib.metadata as m; print(m.version("msgpack"))')
+rm -rf "${sp}/pip/_vendor/msgpack"
+cp -a "${sp}/msgpack" "${sp}/pip/_vendor/msgpack"
+sed -i "s/msgpack==1\\.1\\.2/msgpack==${msgpack_ver}/" "${sp}/pip/_vendor/vendor.txt"
+if [ -f "${sp}/pip/_vendor/bom.cdx.json" ]; then
+  sed -i "s/pkg:pypi\\/msgpack@1\\.1\\.2/pkg:pypi\\/msgpack@${msgpack_ver}/g" "${sp}/pip/_vendor/bom.cdx.json"
+  sed -i "s/\"version\": \"1.1.2\"/\"version\": \"${msgpack_ver}\"/" "${sp}/pip/_vendor/bom.cdx.json"
 fi
 
 # Relative link so deb --root installs (buildpkg TestDEB) resolve under the
