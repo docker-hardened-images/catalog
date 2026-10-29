@@ -35,8 +35,9 @@ export UV_NO_BINARY_PACKAGE=cryptography
 # Pins are exact, not floors: `--upgrade-package "fastmcp>=3.2.0"` would resolve
 # to whatever is newest at build time, so the closure behind a given tag would
 # still move between rebuilds. Bump these deliberately when the next CVE lands.
-# fastmcp 3.4.7 clears CVE-2025-64340, CVE-2026-27124, CVE-2026-32871 (all fixed
-#   in 3.2.0; no 2.x backport exists, so this crosses the 3.x major boundary).
+# fastmcp 3.4.10 clears GHSA-7xgj-8392-5q4r and CVE-2025-64340, CVE-2026-27124,
+#   CVE-2026-32871 (3.2.0+; no 2.x backport exists, so this crosses the 3.x
+#   major boundary).
 # starlette 1.6.0 clears CVE-2026-48710, CVE-2026-48817, CVE-2026-48818,
 #   CVE-2026-54282, CVE-2026-54283 (highest floor is 1.3.1).
 # cryptography 50.0.0 clears CVE-2026-69247, CVE-2026-69249.
@@ -55,8 +56,14 @@ export UV_NO_BINARY_PACKAGE=cryptography
 # anyio 4.14.2 clears CVE-2026-63374, CVE-2026-64847.
 # certifi 2026.10.19 clears GHSA-6q48-6c7w-9gw2.
 # opentelemetry-api 1.45.1 clears CVE-2026-114603.
+# dnspython 2.9.0 clears CVE-2026-114605 (upstream lock pins 2.8.0).
+# 2.9.0 requires Python>=3.11. Upstream still declares requires-python >=3.10, and
+# a universal lock then refuses an exact 2.9.0 pin on the 3.10 fork. This
+# package ships only the 3.14 interpreter, so drop 3.10 from the solved range.
+"${PYTHON_BIN}" -c 'import pathlib; p=pathlib.Path("pyproject.toml"); t=p.read_text(); old="requires-python = \">=3.10\""; new="requires-python = \">=3.11\"";
+assert old in t, "requires-python >=3.10 not found"; p.write_text(t.replace(old, new, 1))'
 uv lock \
-  --upgrade-package "fastmcp==3.4.7" \
+  --upgrade-package "fastmcp==3.4.10" \
   --upgrade-package "starlette==1.6.0" \
   --upgrade-package "cryptography==50.0.0" \
   --upgrade-package "urllib3==2.8.0" \
@@ -67,7 +74,8 @@ uv lock \
   --upgrade-package "pygments==2.20.0" \
   --upgrade-package "anyio==4.14.2" \
   --upgrade-package "certifi==2026.10.19" \
-  --upgrade-package "opentelemetry-api==1.45.1"
+  --upgrade-package "opentelemetry-api==1.45.1" \
+  --upgrade-package "dnspython==2.9.0"
 uv sync --locked --no-dev --no-editable
 
 find "${VENV}" \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
