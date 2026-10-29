@@ -1,0 +1,359 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache Kafka 4.4.x (dev)
+image: dhi.io/kafka
+variant: dev
+tags:
+  - 4-dev
+  - 4.4-dev
+  - 4.4.0-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.4-debian-dev
+  - 4.4-debian13-dev
+  - 4.4.0-debian-dev
+  - 4.4.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-10-06"
+vars:
+  COMMIT_SHA: 1156b2752aaa28eafc0b4c4d387e63356793268d
+  GRADLE_PACKAGE: gradle-9
+  JAVA_FIPS_SUFFIX: ""
+  JDK_MAJOR_VERSION: "21"
+  KAFKA_MAJOR_MINOR_VERSION: ${KAFKA_VERSION:([0-9]+.[0-9]+).*$}
+  KAFKA_MAJOR_VERSION: ${KAFKA_VERSION:([0-9]+).*$}
+  SCALA_VERSION: "2.13"
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.0
+  VERSION: 4.4.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - grep
+    - libc-bin
+    - mawk
+    - netbase
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: kafka
+      caches:
+        - path: /root/.gradle/caches
+        - path: /root/.gradle/wrapper
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - gzip
+          - patch
+          - sed
+          - tar
+          - eclipse-temurin-21-jdk
+          - gradle-9
+        files:
+          - url: git+https://github.com/apache/kafka.git#4.4.0
+            checksum: 1156b2752aaa28eafc0b4c4d387e63356793268d
+            path: ${source.dir}/kafka
+            spdx:
+              name: kafka
+              version: 4.4.0
+              packages:
+                - name: kafka
+                  purl: pkg:github/apache/kafka@4.4.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: gradle/mirror@v1
+        - name: apply ben-manes versions plugin mirror compatibility patch
+          uses: git/patch@v1
+          work-dir: ${source.dir}/kafka
+          with:
+            patch: ${source.dir}/patch/ben-manes-versions-plugin-4.4.patch
+        - name: configure dependency overrides
+          runs: |
+            set -eux -o pipefail
+
+            cat >> /root/.gradle/init.gradle << 'EOF'
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        def grp = details.requested.group
+                        def name = details.requested.name
+                        def ver = details.requested.version
+                        if (grp == "org.apache.logging.log4j" &&
+                                (name == "log4j-api" || name == "log4j-core" ||
+                                 name == "log4j-1.2-api" || name == "log4j-slf4j-impl") &&
+                                (ver == "2.25.3" || ver == "2.25.4" || ver == "2.25.5")) {
+                            details.useVersion("2.25.5")
+                            details.because("CVE remediation: CVE-2026-49844")
+                        }
+                        if (grp == "com.fasterxml.jackson.core" &&
+                                (name == "jackson-databind" || name == "jackson-core") &&
+                                (ver == "2.19.4" || ver == "2.21.2" || ver == "2.21.6")) {
+                            details.useVersion("2.21.7")
+                            details.because("CVE remediation: GHSA-72hv-8253-57qq, GHSA-r7wm-3cxj-wff9, GHSA-mhm7-754m-9p8w, CVE-2026-19032, CVE-2026-54512, CVE-2026-54513, CVE-2026-54514, CVE-2026-54515, CVE-2026-54516, CVE-2026-54517, CVE-2026-54518, CVE-2026-59888, CVE-2026-59889, CVE-2026-68497, CVE-2026-68498 (GHSA-649p-m576-vr99), CVE-2026-77310, CVE-2026-83557, CVE-2026-89407, CVE-2026-89425, CVE-2026-91776, CVE-2026-91777")
+                        }
+                        if (grp == "com.fasterxml.jackson.core" && name == "jackson-annotations" &&
+                                (ver == "2.19.4" || ver == "2.21")) {
+                            details.useVersion("2.21")
+                            details.because("align jackson-annotations with jackson-databind 2.21.7 for MessageGenerator")
+                        }
+                        if (grp.startsWith("org.eclipse.jetty") && name.startsWith("jetty-") &&
+                                (ver == "12.0.25" || ver == "12.0.34" || ver == "12.0.37" || ver == "12.0.38")) {
+                            details.useVersion("12.0.38")
+                            details.because("CVE remediation: CVE-2026-19203, CVE-2026-10050, CVE-2026-10051, CVE-2026-6790, CVE-2026-8384")
+                        }
+                        if (grp == "org.codehaus.plexus" && name == "plexus-utils" &&
+                                (ver == "3.5.1" || ver == "3.6.1")) {
+                            details.useVersion("3.6.1")
+                            details.because("CVE remediation: CVE-2025-67030")
+                        }
+                        if (grp == "at.yawk.lz4" && name == "lz4-java" &&
+                                (ver == "1.10.1" || ver == "1.10.2" || ver == "1.11.1" || ver == "1.11.2" ||
+                                 ver == "1.11.3")) {
+                            details.useVersion("1.11.4")
+                            details.because("CVE remediation: CVE-2026-59949, CVE-2026-106449, CVE-2026-106450, CVE-2026-106451, CVE-2026-106452, CVE-2026-106453")
+                        }
+                        if (grp == "com.github.luben" && name == "zstd-jni" &&
+                                (ver == "1.5.6-4" || ver == "1.5.6-10" || ver == "1.5.7-17" ||
+                                 ver == "1.5.7-20")) {
+                            details.useVersion("1.5.7-20")
+                            details.because("CVE remediation: CVE-2026-87795, CVE-2026-87823, CVE-2026-87824, CVE-2026-87825, CVE-2026-87877, CVE-2026-89045, CVE-2026-89046, CVE-2026-90560, GHSA-8w96-r9r5-4j3r")
+                        }
+                        if (grp == "org.xerial.snappy" && name == "snappy-java" &&
+                                (ver == "1.1.10.5" || ver == "1.1.10.7" || ver == "1.1.10.8")) {
+                            details.useVersion("1.1.10.9")
+                            details.because("CVE remediation: CVE-2026-108106, CVE-2026-93451, CVE-2026-116590")
+                        }
+                    }
+                }
+            }
+            EOF
+        - name: configure split jline override
+          runs: |
+            set -eux -o pipefail
+
+            cat >> /root/.gradle/init.gradle << 'EOF'
+            allprojects {
+                configurations.all {
+                    resolutionStrategy.eachDependency { details ->
+                        if (details.requested.group == "org.jline") {
+                            details.useVersion("3.30.17")
+                            details.because("CVE remediation: CVE-2026-77420, CVE-2026-77421, CVE-2026-77422")
+                        }
+                    }
+                }
+            }
+            EOF
+        - name: build kafka distribution
+          work-dir: ${source.dir}/kafka
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            export GRADLE_HOME="/usr/share/java/gradle"
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
+            export PATH="${GRADLE_HOME}/bin:${JAVA_HOME}/bin:${PATH}"
+
+            gradle clean releaseTarGz \
+              -PscalaVersion=2.13 \
+              --no-daemon \
+              --console=plain \
+              --warning-mode=summary
+        - name: extract distribution
+          work-dir: ${source.dir}/kafka
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/kafka
+
+            tar -xzf "core/build/distributions/kafka_2.13-4.4.0.tgz" \
+              --strip-components=1 \
+              -C ${target.dir}/opt/kafka
+        - name: verify forced dependency versions
+          runs: |
+            set -eux -o pipefail
+
+            libs="${target.dir}/opt/kafka/libs"
+            expect() {
+              found="$(find "${libs}" -maxdepth 1 -name "$1-[0-9]*.jar" -printf '%f\n')"
+              test -n "${found}"
+              test "$(printf '%s\n' "${found}" | wc -l)" -eq 1
+              version="${found#"$1-"}"
+              version="${version%.jar}"
+              test "$(printf '%s\n%s\n' "$2" "${version}" | sort -V | head -n 1)" = "$2"
+              test -z "$(find "${libs}" -name "$3" ! -name "*-${version}.jar" ! -name "*-${version}-*.jar")"
+            }
+            forbid() {
+              test -z "$(find "${libs}" -name "$1")"
+            }
+            dups="$(find "${libs}" -name '*.jar' -printf '%f\n' | sed -E 's/-[0-9][0-9A-Za-z.]*(-[A-Za-z0-9_]+)*\.jar$//' | sort | uniq -d | sed '/^metrics-core$/d')"
+            test -z "${dups}"
+
+            expect plexus-utils 3.6.1 'plexus-utils-*.jar'
+            expect lz4-java 1.11.4 'lz4-java-*.jar'
+            expect snappy-java 1.1.10.9 'snappy-java-*.jar'
+            expect zstd-jni 1.5.7-20 'zstd-jni-*.jar'
+            expect slf4j-api 1.7.36 'slf4j-*.jar'
+            expect jaxb-api 2.3.1 'jaxb-api-*.jar'
+            expect jackson-databind 2.21.7 'jackson-databind-*.jar'
+            expect jackson-core 2.21.7 'jackson-core-*.jar'
+            expect jackson-annotations 2.21 'jackson-annotations-*.jar'
+            jackson="$(find "${libs}" -maxdepth 1 -name 'jackson-databind-[0-9]*.jar' -printf '%f\n' | sed -E 's/^jackson-databind-//; s/\.jar$//')"
+            test -z "$(find "${libs}" -name 'jackson-*.jar' ! -name 'jackson-annotations-*' ! -name "*-${jackson}.jar")"
+            expect snakeyaml 2.5 'snakeyaml-*.jar'
+            expect jetty-security 12.0.38 'jetty-*.jar'
+            expect log4j-core 2.25.5 'log4j-*.jar'
+            expect jline-reader 3.30.17 'jline-*.jar'
+            forbid 'netty-*.jar'
+            forbid 'zookeeper*.jar'
+        - name: configure
+          work-dir: ${source.dir}/kafka
+          runs: |
+            set -eux -o pipefail
+
+            cp docker/server.properties \
+              ${target.dir}/opt/kafka/config/server.properties
+
+            sed -i \
+              -e 's|^advertised\.listeners=PLAINTEXT://localhost:9092|advertised.listeners=PLAINTEXT://:9092|' \
+              ${target.dir}/opt/kafka/config/server.properties
+
+            chown -Rh 65532:65532 ${target.dir}/opt/kafka/config
+            chmod -R 755 ${target.dir}/opt/kafka/config
+      paths:
+        - type: file
+          path: ${source.dir}/patch/fips-sha256-log-cleaner.patch
+          uid: 0
+          gid: 0
+          source: image/kafka/patch/fips-sha256-log-cleaner.patch
+        - type: file
+          path: ${source.dir}/patch/ben-manes-versions-plugin-4.4.patch
+          uid: 0
+          gid: 0
+          source: image/kafka/patch/ben-manes-versions-plugin-4.4.patch
+      outputs:
+        - source: ${target.dir}/opt/kafka
+          target: /opt/kafka
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/kafka
+          target: /opt/docker/sbom/kafka
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: kafka
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: kafka
+      gid: 65532
+      members:
+        - kafka
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/kafka
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  KAFKA_LOG4J_OPTS: -Dkafka.logs.dir=/opt/kafka/logs/ -Dlog4j2.configurationFile=file:/opt/kafka/config/log4j2.yaml
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+paths:
+  - type: directory
+    path: /opt/kafka/logs
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /tmp/kraft-combined-logs
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/kafka/bin/docker-entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Kafka image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+ports:
+  - 9092/tcp
