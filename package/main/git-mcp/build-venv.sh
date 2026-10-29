@@ -26,8 +26,9 @@ sed -i '/^dependencies = \[/a"pydantic-settings>=2.14.2",' "${SRC}/pyproject.tom
 
 # pyjwt is a transitive dep from mcp — CVE-2026-101918
 # certifi is a transitive dep from httpx/requests — GHSA-6q48-6c7w-9gw2
+# gitpython is a transitive dep from git — CVE-2026-114145
 # Pin mcp to <2.0.0 until upstream git-mcp supports the MCP SDK 2.x API
-printf '\n[tool.uv]\nconstraint-dependencies = ["mcp<2.0.0", "pyjwt>=2.15.0", "certifi>=2026.10.19"]\n' >> "${SRC}/pyproject.toml"
+printf '\n[tool.uv]\nconstraint-dependencies = ["mcp<2.0.0", "pyjwt>=2.15.0", "certifi>=2026.10.19", "gitpython>=3.2.1"]\n' >> "${SRC}/pyproject.toml"
 
 cd "${SRC}"
 rm -f .python-version
