@@ -60,6 +60,28 @@ contents:
             ZULU_JDK_DIR=$(find "${target.dir}/opt/zulu" -type d -name "zulu*" -print)
             ZULU_JDK_DIR_BASENAME=$(basename "${ZULU_JDK_DIR}")
             ln -s "/opt/zulu/${ZULU_JDK_DIR_BASENAME}" "${target.dir}/opt/zulu/zulu-jdk11"
+        - name: remove compromised CA roots
+          runs: |
+            set -eux -o pipefail
+
+            JAVA_HOME="$(find "${target.dir}/opt/zulu" -mindepth 1 -maxdepth 1 -type d -name "zulu*" -print -quit)"
+            KEYTOOL="$JAVA_HOME/bin/keytool"
+            CACERTS="$JAVA_HOME/lib/security/cacerts"
+
+            "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit > /dev/null
+            for alias in \
+              "comodoaaaca [jdk]" \
+              "emsigneccrootcag3 [jdk]" \
+              "emsignrootcag1 [jdk]" \
+              "emsignrootcag2 [jdk]" \
+              "cn_aaa_certificate_services,o_comodo_ca_limited,l_salford,st_greater_manchester,c_gb [jdk]" \
+              "cn_emsign_ecc_root_ca__g3,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g1,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g2,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]"; do
+              if "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit -alias "$alias" > /dev/null 2>&1; then
+                "$KEYTOOL" -delete -keystore "$CACERTS" -storepass changeit -alias "$alias"
+              fi
+            done
       outputs:
         - source: ${target.dir}/opt/zulu
           target: /opt/zulu
