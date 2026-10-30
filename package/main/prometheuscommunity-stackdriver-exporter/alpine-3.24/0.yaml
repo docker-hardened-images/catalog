@@ -1,0 +1,222 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-prometheuscommunity-stackdriver-exporter
+variant: runtime
+tags:
+  - 0.19.0-alpine3.24
+  - 0.19.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 5630148d9320421ebc6cff1f99150c84c475967b
+  GOLANG_VERSION: 1.26.10-r0
+  PACKAGE_NAME: stackdriver-exporter-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.19"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.19.0
+  VERSION: 0.19.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: stackdriver-exporter-0
+      work-dir: /go/src/github.com/prometheus-community/stackdriver_exporter
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.10-r0
+          - golang-1.26-oci-config=1.26.10-r0
+        files:
+          - url: git+https://github.com/prometheus-community/stackdriver_exporter.git#v0.19.0
+            checksum: 5630148d9320421ebc6cff1f99150c84c475967b
+            path: /go/src/github.com/prometheus-community/stackdriver_exporter
+            spdx:
+              name: stackdriver_exporter
+              version: 0.19.0
+              packages:
+                - name: stackdriver_exporter
+                  purl: pkg:golang/github.com/prometheus-community/stackdriver_exporter@0.19.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - go.opentelemetry.io/otel@v1.44.0
+              - google.golang.org/grpc@v1.83.2
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.58.0
+              - golang.org/x/text@v0.43.0
+            download: true
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            go test -count=1 -timeout 15m ./...
+        - uses: go/hermetic@v1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/prometheus/common/version.Version=0.19.0
+              - -X github.com/prometheus/common/version.Revision=5630148d9320421ebc6cff1f99150c84c475967b
+              - -X github.com/prometheus/common/version.Branch=HEAD
+              - -X github.com/prometheus/common/version.BuildUser=dhi@docker
+              - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
+              - -extldflags=-static
+            output: ${target.dir}/usr/bin/stackdriver_exporter
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/prometheus/common/version.Version=0.19.0
+              - -X github.com/prometheus/common/version.Revision=5630148d9320421ebc6cff1f99150c84c475967b
+              - -X github.com/prometheus/common/version.Branch=HEAD
+              - -X github.com/prometheus/common/version.BuildUser=dhi@docker
+              - -X github.com/prometheus/common/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y%m%d-%H:%M:%S')
+              - -extldflags=-static
+            output: ${target.dir}/usr/bin/stackdriver_exporter-dev
+            packages: .
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            runtime="${target.dir}/usr/bin/stackdriver_exporter"
+            dev="${target.dir}/usr/bin/stackdriver_exporter-dev"
+            test -x "${runtime}"
+            test -x "${dev}"
+
+            go version -m "${runtime}" > /tmp/runtime-buildinfo.txt
+            go version -m "${dev}" > /tmp/dev-buildinfo.txt
+            grep -q 'CGO_ENABLED=0' /tmp/runtime-buildinfo.txt
+            grep -q 'CGO_ENABLED=0' /tmp/dev-buildinfo.txt
+            grep -F -q -- '-trimpath=true' /tmp/runtime-buildinfo.txt
+            if grep -F -q -- '-trimpath=true' /tmp/dev-buildinfo.txt; then
+              echo "dev binary must not be built with -trimpath" >&2
+              exit 1
+            fi
+
+            runtime_ldflags=$(grep -F -- '-ldflags=' /tmp/runtime-buildinfo.txt)
+            printf '%s\n' "${runtime_ldflags}" | grep -Eq '(^|[[:space:]="])-w([[:space:]"]|$)'
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- "version.Version=0.19.0"
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- "version.Revision=5630148d9320421ebc6cff1f99150c84c475967b"
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- 'version.Branch=HEAD'
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- 'version.BuildUser=dhi@docker'
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- 'version.BuildDate='
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- '-extldflags=-static'
+            if printf '%s\n' "${runtime_ldflags}" | grep -Eq '(^|[[:space:]"])-s([[:space:]"]|$)'; then
+              echo "runtime binary ldflags must not include -s" >&2
+              exit 1
+            fi
+
+            dev_ldflags=$(grep -F -- '-ldflags=' /tmp/dev-buildinfo.txt)
+            printf '%s\n' "${dev_ldflags}" | grep -F -- "version.Version=0.19.0"
+            printf '%s\n' "${dev_ldflags}" | grep -F -- 'version.BuildUser=dhi@docker'
+            if printf '%s\n' "${dev_ldflags}" | grep -Eq '(^|[[:space:]"])-w([[:space:]"]|$)'; then
+              echo "dev binary ldflags must not include -w" >&2
+              exit 1
+            fi
+            if printf '%s\n' "${dev_ldflags}" | grep -Eq '(^|[[:space:]"])-s([[:space:]"]|$)'; then
+              echo "dev binary ldflags must not include -s" >&2
+              exit 1
+            fi
+
+            if grep -aq 'OpenSSL ' "${runtime}"; then
+              echo "runtime binary must not carry an OpenSSL banner" >&2
+              exit 1
+            fi
+
+            if [ "false" = "true" ]; then
+              grep -aqF 'crypto/internal/fips140/v' "${runtime}"
+              grep -aqF 'crypto/internal/fips140/v' "${dev}"
+            else
+              if grep -aqF 'crypto/internal/fips140/v' "${runtime}"; then
+                echo "runtime binary must not link the Go FIPS module" >&2
+                exit 1
+              fi
+            fi
+        - name: binary sbom
+          uses: sbom@v1
+          with:
+            prefix: stackdriver-exporter
+            source: ${target.dir}/usr/bin/stackdriver_exporter
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/prometheus-community/stackdriver_exporter
+            test -s "$src/LICENSE"
+            test -s "$src/NOTICE"
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+            grep -q 'Ferran Rodenas' "$src/NOTICE"
+            test -s /opt/docker/sbom/stackdriver-exporter/.spdx.stackdriver-exporter.json
+
+            for root in "${target.dir}" "${target.dir}/dev"; do
+              install -D -m 0644 "$src/LICENSE" "$root/usr/share/stackdriver-exporter/LICENSE"
+              install -D -m 0644 "$src/NOTICE" "$root/usr/share/stackdriver-exporter/NOTICE"
+              install -d "$root/opt/docker/sbom"
+              cp -a /opt/docker/sbom/stackdriver-exporter "$root/opt/docker/sbom/"
+              test -s "$root/usr/share/stackdriver-exporter/LICENSE"
+              test -s "$root/usr/share/stackdriver-exporter/NOTICE"
+              test -s "$root/opt/docker/sbom/stackdriver-exporter/.spdx.stackdriver-exporter.json"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: Prometheus exporter for Google Cloud Monitoring metrics
+            files:
+              - usr/bin/stackdriver_exporter
+              - usr/share/stackdriver-exporter/LICENSE
+              - usr/share/stackdriver-exporter/NOTICE
+              - opt/docker/sbom/stackdriver-exporter
+            license: Apache-2.0
+            name: stackdriver-exporter-0
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/stackdriver_exporter
+                    source: usr/bin/stackdriver_exporter-dev
+                  - path: usr/share/stackdriver-exporter/LICENSE
+                    source: dev/usr/share/stackdriver-exporter/LICENSE
+                  - path: usr/share/stackdriver-exporter/NOTICE
+                    source: dev/usr/share/stackdriver-exporter/NOTICE
+                  - path: opt/docker/sbom/stackdriver-exporter
+                    source: dev/opt/docker/sbom/stackdriver-exporter
+                name: stackdriver-exporter-0-dev
+            url: https://github.com/prometheus-community/stackdriver_exporter
+            version: 0.19.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
