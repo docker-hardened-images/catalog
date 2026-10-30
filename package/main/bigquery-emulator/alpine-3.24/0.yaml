@@ -1,0 +1,141 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-bigquery-emulator
+variant: runtime
+tags:
+  - 0.8.1-alpine3.24
+  - 0.8.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-07-09"
+vars:
+  COMMIT_SHA: a531d3deb716eaba4972f9afa88e03e2c0f1a1af
+  GOLANG_VERSION: 1.26.10-r0
+  PACKAGE_NAME: bigquery-emulator-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.8"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.8.1
+  VERSION: 0.8.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: bigquery-emulator-0
+      work-dir: /go/src/github.com/goccy/bigquery-emulator
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - tzdata
+          - golang-1.26=1.26.10-r0
+          - golang-1.26-oci-config=1.26.10-r0
+        files:
+          - url: git+https://github.com/goccy/bigquery-emulator.git#v0.8.1
+            checksum: a531d3deb716eaba4972f9afa88e03e2c0f1a1af
+            path: /go/src/github.com/goccy/bigquery-emulator
+            spdx:
+              name: bigquery-emulator
+              version: 0.8.1
+              packages:
+                - name: bigquery-emulator
+                  purl: pkg:golang/github.com/goccy/bigquery-emulator@0.8.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - google.golang.org/grpc@v1.83.2
+              - github.com/klauspost/compress@v1.18.7
+              - go.opentelemetry.io/otel@v1.45.0
+              - go.opentelemetry.io/otel/sdk@v1.45.0
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -count=1 $(go list ./... | grep -v '/test/e2e$')
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X main.version=v0.8.1
+              - -X main.revision=a531d3deb716eaba4972f9afa88e03e2c0f1a1af
+            output: ${target.dir}/usr/bin/bigquery-emulator
+            packages: ./cmd/bigquery-emulator
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=v0.8.1
+              - -X main.revision=a531d3deb716eaba4972f9afa88e03e2c0f1a1af
+            output: ${target.dir}/usr/bin/bigquery-emulator-dev
+            packages: ./cmd/bigquery-emulator
+            strip: false
+        - name: check bundled sqlite
+          runs: |
+            set -eux -o pipefail
+
+            grep -q 'github.com/ncruces/go-sqlite3-wasm/v2 v2.2.35301' go.mod
+        - uses: spdx@v1
+          with:
+            license: blessing
+            name: sqlite3
+            purl: pkg:generic/sqlite@3.53.1
+            version: 3.53.1
+        - name: stage bundled sqlite sbom
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/sqlite3 "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/sqlite3 "${target.dir}/opt/docker/sbom/sqlite3-dev"
+            grep -q 'pkg:generic/sqlite@3.53.1' "${target.dir}/opt/docker/sbom/sqlite3/.spdx.sqlite3.json"
+            grep -q 'pkg:generic/sqlite@3.53.1' "${target.dir}/opt/docker/sbom/sqlite3-dev/.spdx.sqlite3.json"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - tzdata
+            description: Open-source emulator for the BigQuery API
+            files:
+              - usr/bin/bigquery-emulator
+              - opt/docker/sbom/sqlite3
+            license: MIT
+            name: bigquery-emulator-0
+            rel: 0
+            subpackages:
+              - depends:
+                  - tzdata
+                files:
+                  - path: usr/bin/bigquery-emulator
+                    source: usr/bin/bigquery-emulator-dev
+                  - path: opt/docker/sbom/sqlite3
+                    source: opt/docker/sbom/sqlite3-dev
+                name: bigquery-emulator-0-dev
+            url: https://github.com/goccy/bigquery-emulator
+            version: 0.8.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
