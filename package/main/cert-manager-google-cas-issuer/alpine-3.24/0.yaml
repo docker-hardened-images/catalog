@@ -1,0 +1,197 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-cert-manager-google-cas-issuer
+variant: runtime
+tags:
+  - 0.13.0-alpine3.24
+  - 0.13.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 29bda20f067b14828382ebb65ef47a1bf65395e8
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: cert-manager-google-cas-issuer-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.13"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.13.0
+  VERSION: 0.13.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cert-manager-google-cas-issuer-0
+      work-dir: /go/src/github.com/cert-manager/google-cas-issuer
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/cert-manager/google-cas-issuer.git#v0.13.0
+            checksum: 29bda20f067b14828382ebb65ef47a1bf65395e8
+            path: /go/src/github.com/cert-manager/google-cas-issuer
+            spdx:
+              name: google-cas-issuer
+              version: 0.13.0
+              packages:
+                - name: google-cas-issuer
+                  purl: pkg:golang/github.com/cert-manager/google-cas-issuer@0.13.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - github.com/go-openapi/jsonpointer@v1.0.2
+              - github.com/pelletier/go-toml/v2@v2.4.3
+              - go.opentelemetry.io/otel@v1.47.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            go test -count=1 ./api/... ./cmd/... ./pkg/...
+        - name: stamp module version
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/cert-manager/google-cas-issuer
+            if grep -qE '^[[:space:]]*(replace|exclude|godebug)([[:space:]]|\()' "$src/go.mod"; then
+              echo "$src/go.mod has replace, exclude or godebug directives, which the wrapper module drops" >&2
+              exit 1
+            fi
+            go_line=$(awk '$1=="go"{print $2; exit}' "$src/go.mod")
+            test -n "$go_line"
+            mkdir -p /go/src/dhi-google-cas-issuer-build
+            cd /go/src/dhi-google-cas-issuer-build
+            go mod init dhi.build.google-cas-issuer
+            go mod edit -go="$go_line"
+            go mod edit -require=github.com/cert-manager/google-cas-issuer@v0.13.0
+            go mod edit -replace=github.com/cert-manager/google-cas-issuer="$src"
+            cp "$src/go.sum" go.sum
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/dhi-google-cas-issuer-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/google-cas-issuer
+            packages: github.com/cert-manager/google-cas-issuer
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/dhi-google-cas-issuer-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/bin/google-cas-issuer-dev
+            packages: github.com/cert-manager/google-cas-issuer
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/cert-manager/google-cas-issuer
+            runtime=${target.dir}/usr/bin/google-cas-issuer
+            devbin=${target.dir}/usr/bin/google-cas-issuer-dev
+            mod=$(printf 'mod\tgithub.com/cert-manager/google-cas-issuer\tv%s' '0.13.0')
+
+            awk '/^require \($/{r=1; next} r && /^\)$/{r=0; next} r && NF >= 2 {print $1, $2} /^require [^(]/{print $2, $3}' "$src/go.mod" | LC_ALL=C sort -u > /tmp/requires.txt
+            test -s /tmp/requires.txt
+
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -F "$mod" /tmp/buildinfo.txt
+              grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo.txt
+              awk '$1 == "dep" {print $2, $3}' /tmp/buildinfo.txt | LC_ALL=C sort -u > /tmp/deps.txt
+              test -s /tmp/deps.txt
+              if LC_ALL=C comm -13 /tmp/requires.txt /tmp/deps.txt | grep .; then
+                echo "$bin: module versions differ from $src/go.mod" >&2
+                exit 1
+              fi
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0(-[0-9a-f]+)?$' /tmp/buildinfo.txt
+                grep -qE '^[[:space:]]+build[[:space:]]+DefaultGODEBUG=(.*,)?fips140=on(,|$)' /tmp/buildinfo.txt
+              elif grep -q fips140 /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
+
+            go version -m "$runtime" | grep -qF -- '-ldflags="-s -w"'
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if go version -m "$devbin" | grep -E -- '-ldflags=.*-(s|w)( |"|$)|-trimpath=true'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            license=/go/src/github.com/cert-manager/google-cas-issuer/LICENSE
+            test -s /opt/docker/sbom/google-cas-issuer/.spdx.google-cas-issuer.json
+            grep -q 'Apache License' "$license"
+            grep -q 'Version 2.0' "$license"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/google-cas-issuer "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/google-cas-issuer "${target.dir}/opt/docker/sbom-dev/"
+            install -D -m 0644 "$license" "${target.dir}/usr/share/licenses/cert-manager-google-cas-issuer/LICENSE"
+            install -D -m 0644 "$license" "${target.dir}/usr/share/licenses/cert-manager-google-cas-issuer-dev/LICENSE"
+        - uses: dhi/build-pkg:0
+          with:
+            description: cert-manager external issuer for Google Cloud Certificate Authority Service
+            files:
+              - usr/bin/google-cas-issuer
+              - opt/docker/sbom/google-cas-issuer
+              - usr/share/licenses/cert-manager-google-cas-issuer/LICENSE
+            license: Apache-2.0
+            name: cert-manager-google-cas-issuer-0
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/google-cas-issuer
+                    source: usr/bin/google-cas-issuer-dev
+                  - path: opt/docker/sbom/google-cas-issuer
+                    source: opt/docker/sbom-dev/google-cas-issuer
+                  - path: usr/share/licenses/cert-manager-google-cas-issuer/LICENSE
+                    source: usr/share/licenses/cert-manager-google-cas-issuer-dev/LICENSE
+                name: cert-manager-google-cas-issuer-0-dev
+            url: https://github.com/cert-manager/google-cas-issuer
+            version: 0.13.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
