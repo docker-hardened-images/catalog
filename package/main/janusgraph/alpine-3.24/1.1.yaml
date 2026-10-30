@@ -4,7 +4,7 @@ image: dhi.io/pkg-janusgraph
 variant: runtime
 tags:
   - 1.1.0-alpine3.24
-  - 1.1.0-r8-alpine3.24
+  - 1.1.0-r9-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,9 +12,10 @@ dates:
   release: "2024-11-09"
 vars:
   COMMIT_SHA: 3b8843ffc6c81cf0076bf00119f1ffe80b9cf234
+  LIBTINFO6_VERSION: 6.5+20250216-2+deb13u0+dhi4
   MAVEN_REFERENCE: dhi/maven:3.10.0-jdk17-debian13-dev@sha256:e131fe4cace2514e9e344a1589710c7071f85940c87bb6e2fe13e929b7c64bd4
   PACKAGE_NAME: janusgraph-1.1
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "1.1"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.1.0
@@ -68,7 +69,7 @@ contents:
             set -eux -o pipefail
 
             apt-get update -qq
-            apt-get install -y -qq yq
+            apt-get install -y -qq --allow-downgrades yq "libtinfo6=6.5+20250216-2+deb13u0+dhi4"
             command -v xq-python
         - uses: mvn/mirror@v1
         - name: use maven central when mirror credentials are absent
@@ -92,11 +93,26 @@ contents:
             patches:
               - ${source.dir}/patch/yq-entrypoint.patch
         - name: remove duplicate netty epoll dependency
-          uses: patch@v1
-          with:
-            options: -p1
-            patches:
-              - ${source.dir}/patch/maven-3.10-duplicate-netty-epoll.patch
+          runs: |
+            set -eux -o pipefail
+
+            patchfile="${source.dir}/patch/maven-3.10-duplicate-netty-epoll.patch"
+            if patch -p1 --dry-run < "${patchfile}" > /dev/null 2>&1; then
+              patch -p1 < "${patchfile}"
+            elif patch -p1 -R --dry-run < "${patchfile}" > /dev/null 2>&1; then
+              echo "duplicate netty-epoll dependencyManagement entry already absent"
+            else
+              echo "pom.xml does not match netty-epoll patch expectations"
+              exit 1
+            fi
+        - name: remove central publishing maven extension
+          runs: |
+            set -eux -o pipefail
+
+            if ! grep -q central-publishing-maven-plugin pom.xml; then
+              exit 0
+            fi
+            patch -p1 < "${source.dir}/patch/remove-central-publishing-maven-plugin.patch"
         - name: patch maven dependencies
           uses: mvn/patch@v1
           secrets:
@@ -107,10 +123,18 @@ contents:
               env: MAVEN_PASSWORD
               optional: true
           with:
-            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies: ${source.dir}/patch/mvn-dependencies-1.1.json
             dependencies-key: dependencyManagement.dependencies
             mvn-root: ${source.dir}/janusgraph
-            properties: ${source.dir}/patch/mvn-properties.json
+            properties: ${source.dir}/patch/mvn-properties-1.1.json
+        - name: skip dist javadoc unpack on 1.2.x
+          runs: |
+            set -eux -o pipefail
+
+            if [ "1.1" != "1.2" ]; then
+              exit 0
+            fi
+            patch -p1 < "${source.dir}/patch/skip-dist-javadoc-1.2.patch"
         - name: short out upstream docker image build
           runs: |
             set -eux -o pipefail
@@ -195,7 +219,7 @@ contents:
               - apk
             license: Apache-2.0
             name: janusgraph-1.1
-            rel: 8
+            rel: 9
             url: https://janusgraph.org/
             version: 1.1.0
       paths:
@@ -210,15 +234,25 @@ contents:
           gid: 0
           source: package/main/janusgraph/patch/maven-3.10-duplicate-netty-epoll.patch
         - type: file
-          path: ${source.dir}/patch/mvn-dependencies.json
+          path: ${source.dir}/patch/remove-central-publishing-maven-plugin.patch
           uid: 0
           gid: 0
-          source: package/main/janusgraph/patch/mvn-dependencies.json
+          source: package/main/janusgraph/patch/remove-central-publishing-maven-plugin.patch
         - type: file
-          path: ${source.dir}/patch/mvn-properties.json
+          path: ${source.dir}/patch/skip-dist-javadoc-1.2.patch
           uid: 0
           gid: 0
-          source: package/main/janusgraph/patch/mvn-properties.json
+          source: package/main/janusgraph/patch/skip-dist-javadoc-1.2.patch
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies-1.1.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-dependencies-1.1.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-1.1.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-properties-1.1.json
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine

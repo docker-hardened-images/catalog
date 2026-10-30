@@ -4,9 +4,9 @@ image: dhi.io/pkg-janusgraph
 variant: runtime
 tags:
   - 1.1.0
-  - 1.1.0-r7
+  - 1.1.0-r8
   - 1.1.0-debian13
-  - 1.1.0-r7-debian13
+  - 1.1.0-r8-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -18,7 +18,7 @@ vars:
   JDK_VERSION: 1:17.0.21+9-0
   MAVEN_VERSION: 3.10.0-1
   PACKAGE_NAME: janusgraph-1.1
-  REL: "7"
+  REL: "8"
   SEMVER_MAJOR_MINOR_VERSION: "1.1"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.1.0
@@ -90,11 +90,26 @@ contents:
             patches:
               - ${source.dir}/patch/yq-entrypoint.patch
         - name: remove duplicate netty epoll dependency
-          uses: patch@v1
-          with:
-            options: -p1
-            patches:
-              - ${source.dir}/patch/maven-3.10-duplicate-netty-epoll.patch
+          runs: |
+            set -eux -o pipefail
+
+            patchfile="${source.dir}/patch/maven-3.10-duplicate-netty-epoll.patch"
+            if patch -p1 --dry-run < "${patchfile}" > /dev/null 2>&1; then
+              patch -p1 < "${patchfile}"
+            elif patch -p1 -R --dry-run < "${patchfile}" > /dev/null 2>&1; then
+              echo "duplicate netty-epoll dependencyManagement entry already absent"
+            else
+              echo "pom.xml does not match netty-epoll patch expectations"
+              exit 1
+            fi
+        - name: remove central publishing maven extension
+          runs: |
+            set -eux -o pipefail
+
+            if ! grep -q central-publishing-maven-plugin pom.xml; then
+              exit 0
+            fi
+            patch -p1 < "${source.dir}/patch/remove-central-publishing-maven-plugin.patch"
         - name: patch maven dependencies
           uses: mvn/patch@v1
           secrets:
@@ -105,10 +120,18 @@ contents:
               env: MAVEN_PASSWORD
               optional: true
           with:
-            dependencies: ${source.dir}/patch/mvn-dependencies.json
+            dependencies: ${source.dir}/patch/mvn-dependencies-1.1.json
             dependencies-key: dependencyManagement.dependencies
             mvn-root: ${source.dir}/janusgraph
-            properties: ${source.dir}/patch/mvn-properties.json
+            properties: ${source.dir}/patch/mvn-properties-1.1.json
+        - name: skip dist javadoc unpack on 1.2.x
+          runs: |
+            set -eux -o pipefail
+
+            if [ "1.1" != "1.2" ]; then
+              exit 0
+            fi
+            patch -p1 < "${source.dir}/patch/skip-dist-javadoc-1.2.patch"
         - name: short out upstream docker image build
           runs: |
             set -eux -o pipefail
@@ -193,7 +216,7 @@ contents:
               - deb
             license: Apache-2.0
             name: janusgraph-1.1
-            rel: 7
+            rel: 8
             url: https://janusgraph.org/
             version: 1.1.0
       paths:
@@ -208,15 +231,25 @@ contents:
           gid: 0
           source: package/main/janusgraph/patch/maven-3.10-duplicate-netty-epoll.patch
         - type: file
-          path: ${source.dir}/patch/mvn-dependencies.json
+          path: ${source.dir}/patch/remove-central-publishing-maven-plugin.patch
           uid: 0
           gid: 0
-          source: package/main/janusgraph/patch/mvn-dependencies.json
+          source: package/main/janusgraph/patch/remove-central-publishing-maven-plugin.patch
         - type: file
-          path: ${source.dir}/patch/mvn-properties.json
+          path: ${source.dir}/patch/skip-dist-javadoc-1.2.patch
           uid: 0
           gid: 0
-          source: package/main/janusgraph/patch/mvn-properties.json
+          source: package/main/janusgraph/patch/skip-dist-javadoc-1.2.patch
+        - type: file
+          path: ${source.dir}/patch/mvn-dependencies-1.1.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-dependencies-1.1.json
+        - type: file
+          path: ${source.dir}/patch/mvn-properties-1.1.json
+          uid: 0
+          gid: 0
+          source: package/main/janusgraph/patch/mvn-properties-1.1.json
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
