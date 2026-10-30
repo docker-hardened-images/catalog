@@ -270,13 +270,35 @@ contents:
                 -e 's|&> /dev/null|>/dev/null 2>\&1|g' \
                 -e 's|" == "|" = "|g' \
                 -e 's|^SCRIPT_DIR=.*dirname.*$|SCRIPT_DIR=${0%/*}; [ "$SCRIPT_DIR" = "$0" ] \&\& SCRIPT_DIR=.; SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR" \&\& pwd)|' \
+                -e 's|rm -rf -- "\$MIGRATIONS_DIRECTORY"|node "$SCRIPT_DIR/cleanup-migrations.cjs" "$MIGRATIONS_DIRECTORY"|' \
                 ./packages/shared/clickhouse/scripts/up.sh
-              grep -q 'dirname' ./packages/shared/clickhouse/scripts/up.sh && exit 1
+              node -e '
+                const s = require("node:fs").readFileSync(
+                  "./packages/shared/clickhouse/scripts/up.sh",
+                  "utf8",
+                );
+                if (s.includes("dirname") || s.includes("rm -rf")) process.exit(1);
+              '
+              cat > ./packages/shared/clickhouse/scripts/cleanup-migrations.cjs << 'EOF'
+            require("node:fs").rmSync(process.argv[2], {
+              recursive: true,
+              force: true,
+            });
+            EOF
             fi
+            node ./packages/shared/clickhouse/scripts/prepare-migrations.mjs materialize \
+              ./packages/shared/clickhouse/migrations
+            chmod 755 ./packages/shared/clickhouse/migrations/clustered \
+              ./packages/shared/clickhouse/migrations/unclustered
             cp -a ./packages/shared/clickhouse "${target.dir}/app/packages/shared/clickhouse"
 
             cp ./web/next.config.mjs "${target.dir}/app/next.config.mjs"
             cp ./web/package.json "${target.dir}/app/package.json"
+
+            dd=$(cd "${target.dir}/app" && ls -d node_modules/.pnpm/dd-trace@*/node_modules/dd-trace)
+            [ "$(printf '%s\n' "$dd" | wc -l)" -eq 1 ]
+            printf 'require("./%s").init({ runtimeMetrics: true, plugins: false });\n' "$dd" \
+              > "${target.dir}/app/dd-trace-init.cjs"
 
             cp ./web/entrypoint.sh "${target.dir}/app/web/entrypoint.sh"
             chmod +x "${target.dir}/app/web/entrypoint.sh"
@@ -363,6 +385,8 @@ entrypoint:
   - /usr/local/bin/entrypoint.sh
 cmd:
   - node
+  - --require
+  - ./dd-trace-init.cjs
   - ./web/server.js
   - --keepAliveTimeout
   - "110000"
