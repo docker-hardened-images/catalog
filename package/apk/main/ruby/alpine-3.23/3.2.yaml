@@ -4,7 +4,7 @@ image: dhi.io/pkg-ruby
 variant: runtime
 tags:
   - 3.2.11-apk-alpine3.23
-  - 3.2.11-r1-apk-alpine3.23
+  - 3.2.11-r2-apk-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -13,11 +13,13 @@ vars:
   CHECKSUM: b3eeabd6636f334531db3ffdc3229eb05e524740e6c84fdc043720573cf2f8b2
   DEBUG_VERSION: 1.7.1
   DHI_TEST_APK_PACKAGE: ruby-3.2
-  DHI_TEST_APK_PACKAGES: ruby-3.2-3.2.11-r1 ruby-3.2-libs-3.2.11-r1
+  DHI_TEST_APK_PACKAGES: ruby-3.2-3.2.11-r2 ruby-3.2-libs-3.2.11-r2
+  ERB_COMMIT_SHA: 6a2e4a76d352127135359e3420d5f42b767a0600
   GEMDIR: usr/lib/ruby/gems/3.2.0
   MATRIX_VERSION: 0.4.2
   MINITEST_VERSION: 5.25.1
   NET_FTP_VERSION: 0.2.1
+  NET_IMAP_PKG_VERSION: 0.3.10
   NET_IMAP_VERSION: 0.3.9
   NET_POP_VERSION: 0.1.2
   NET_SMTP_VERSION: 0.3.4
@@ -28,7 +30,7 @@ vars:
   RAKE_VERSION: 13.0.6
   RBS_VERSION: 2.8.2
   RDOC_VERSION: 6.5.1
-  REL: "1"
+  REL: "2"
   REXML_VERSION: 3.4.4
   RSS_VERSION: 0.3.1
   RUBY_COMMIT_SHA: 5483bfc1ae5725e871cbbddf313626fbb0f2dbb8
@@ -67,10 +69,22 @@ contents:
           - dpkg
           - dpkg-dev
           - jemalloc-dev
+          - ruby
+          - patch
         files:
           - url: https://cache.ruby-lang.org/pub/ruby/3.2/ruby-3.2.11.tar.gz
             checksum: sha256:b3eeabd6636f334531db3ffdc3229eb05e524740e6c84fdc043720573cf2f8b2
             path: ${source.dir}/ruby.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ruby/erb.git#v4.0.4.1
+            checksum: 6a2e4a76d352127135359e3420d5f42b767a0600
+            path: ${source.dir}/erb
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/ruby/net-imap.git#v0.3.10
+            checksum: ec89812d3c986d6394d3bc0b93048e704aec6af9
+            path: ${source.dir}/net-imap
             uid: 0
             gid: 0
       pipeline:
@@ -83,6 +97,28 @@ contents:
         - uses: git/patch@v1
           with:
             patch: ${source.dir}/patch/test_insns-lower-recursion-depth.patch
+        - name: backport ruby/erb 4.0.4.1 for CVE-2026-41316
+          runs: |
+            set -eux -o pipefail
+
+            target=4.0.4.1
+            current=$(sed -nE "s/^[[:space:]]*VERSION = '([^']+)'.*/\1/p" lib/erb/version.rb | head -1)
+            if [ -z "$current" ] || ruby -e "exit Gem::Version.new('$current') >= Gem::Version.new('$target') ? 0 : 1"; then
+              echo "erb ${current:-(missing)} already >= ${target}, skipping"
+              exit 0
+            fi
+            echo "Patching erb ${current} -> ${target}"
+
+            rm -rf lib/erb lib/erb.rb lib/erb.gemspec libexec/erb ext/erb/escape
+
+            cp -a "${source.dir}/erb/lib/erb.rb" lib/erb.rb
+            cp -a "${source.dir}/erb/lib/erb" lib/erb
+            cp -a "${source.dir}/erb/erb.gemspec" lib/erb.gemspec
+            cp -a "${source.dir}/erb/libexec/erb" libexec/erb
+            cp -a "${source.dir}/erb/ext/erb/escape" ext/erb/escape
+            chmod +x libexec/erb
+
+            grep -q "VERSION = '${target}'" lib/erb/version.rb
         - name: autoconf
           runs: |
             set -eux -o pipefail
@@ -144,6 +180,36 @@ contents:
 
             rm -Rf "${target.dir}/usr/lib/ruby/gems/3.2.0"/cache/*
             rm -rf "${target.dir}/usr/local"
+        - name: Install net-imap 0.3.10 with command checks
+          work-dir: ${source.dir}/net-imap
+          runs: |
+            set -eux -o pipefail
+
+            if ruby -e "exit Gem::Version.new('0.3.9') >= Gem::Version.new('0.4.24') ? 0 : 1"; then
+              echo "upstream net-imap 0.3.9 >= 0.4.24, delete this step"
+              exit 0
+            fi
+
+            patch -p1 --forward --input "${source.dir}/patch/dhi-net-imap-0.3.10-command-validation.patch"
+
+            rm -rf "${target.dir}/usr/lib/ruby/gems/3.2.0/gems/net-imap-"*
+            rm -f "${target.dir}/usr/lib/ruby/gems/3.2.0/specifications/net-imap-"*.gemspec
+
+            gem build net-imap.gemspec
+            gem install \
+              --local --no-document --ignore-dependencies \
+              --install-dir "${target.dir}/usr/lib/ruby/gems/3.2.0" \
+              net-imap-0.3.10.gem
+
+            grep -q 'cannot end with literal continuation' \
+              "${target.dir}/usr/lib/ruby/gems/3.2.0/gems/net-imap-0.3.10/lib/net/imap/command_data.rb"
+        - name: remove rbs development lockfiles
+          runs: |
+            set -eux -o pipefail
+
+            rm \
+              "${target.dir}/usr/lib/ruby/gems/3.2.0/gems/rbs-2.8.2/Gemfile.lock" \
+              "${target.dir}/usr/lib/ruby/gems/3.2.0/gems/rbs-2.8.2/steep/Gemfile.lock"
         - uses: sbom@v1
           with:
             prefix: ruby-gems
@@ -162,7 +228,7 @@ contents:
                 pkgver=2.4.19
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-bundler=2.4.19-r1"
+                provides="ruby-bundler=2.4.19-r2"
                 provider_priority=320
                 replaces="ruby-bundler"
                 replaces_priority=320
@@ -176,7 +242,7 @@ contents:
                 pkgver=1.7.1
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-debug=1.7.1-r1"
+                provides="ruby-debug=1.7.1-r2"
                 provider_priority=320
                 replaces="ruby-debug"
                 replaces_priority=320
@@ -207,7 +273,7 @@ contents:
                   ruby3.2-typeprof
                   ruby3.2-debug
                 "
-                provides="ruby-full=3.2.11-r1"
+                provides="ruby-full=3.2.11-r2"
                 provider_priority=320
                 replaces="ruby-full"
                 replaces_priority=320
@@ -218,7 +284,7 @@ contents:
                 depends=""
                 replaces="ruby-libs"
                 replaces_priority=320
-                provides="ruby-libs=3.2.11-r1"
+                provides="ruby-libs=3.2.11-r2"
                 provider_priority=320
 
                 amove usr/lib
@@ -227,7 +293,7 @@ contents:
                 pkgver=0.4.2
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-matrix=0.4.2-r1"
+                provides="ruby-matrix=0.4.2-r2"
                 provider_priority=320
                 replaces="ruby-matrix"
                 replaces_priority=320
@@ -239,7 +305,7 @@ contents:
                 pkgver=5.25.1
                 license="MIT"
                 depends="$pkgname"
-                provides="ruby-minitest=5.25.1-r1"
+                provides="ruby-minitest=5.25.1-r2"
                 provider_priority=320
                 replaces="ruby-minitest"
                 replaces_priority=320
@@ -251,7 +317,7 @@ contents:
                 pkgver=0.2.1
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-net-ftp=0.2.1-r1"
+                provides="ruby-net-ftp=0.2.1-r2"
                 provider_priority=320
                 replaces="ruby-net-ftp"
                 replaces_priority=320
@@ -260,10 +326,10 @@ contents:
                 amove usr/lib/ruby/gems/3.2.0/specifications/net-ftp-*
               net_imap: |
                 pkgdesc="Ruby IMAP protocol library"
-                pkgver=0.3.9
+                pkgver=0.3.10
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-net-imap=0.3.9-r1"
+                provides="ruby-net-imap=0.3.10-r2"
                 provider_priority=320
                 replaces="ruby-net-imap"
                 replaces_priority=320
@@ -275,7 +341,7 @@ contents:
                 pkgver=0.1.2
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-net-pop=0.1.2-r1"
+                provides="ruby-net-pop=0.1.2-r2"
                 provider_priority=320
                 replaces="ruby-net-pop"
                 replaces_priority=320
@@ -287,7 +353,7 @@ contents:
                 pkgver=0.3.4
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-net-smtp=0.3.4-r1"
+                provides="ruby-net-smtp=0.3.4-r2"
                 provider_priority=320
                 replaces="ruby-net-smtp"
                 replaces_priority=320
@@ -299,7 +365,7 @@ contents:
                 pkgver=2.0.3
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-power_assert=2.0.3-r1"
+                provides="ruby-power_assert=2.0.3-r2"
                 provider_priority=320
                 replaces="ruby-power_assert"
                 replaces_priority=320
@@ -311,7 +377,7 @@ contents:
                 pkgver=0.1.2
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-prime=0.1.2-r1"
+                provides="ruby-prime=0.1.2-r2"
                 provider_priority=320
                 replaces="ruby-prime"
                 replaces_priority=320
@@ -323,7 +389,7 @@ contents:
                 pkgver=13.0.6
                 license="MIT"
                 depends="$pkgname"
-                provides="ruby-rake=13.0.6-r1"
+                provides="ruby-rake=13.0.6-r2"
                 provider_priority=320
                 replaces="ruby-rake"
                 replaces_priority=320
@@ -336,7 +402,7 @@ contents:
                 pkgver=2.8.2
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-rbs=2.8.2-r1"
+                provides="ruby-rbs=2.8.2-r2"
                 provider_priority=320
                 replaces="ruby-rbs"
                 replaces_priority=320
@@ -349,7 +415,7 @@ contents:
                 pkgver=6.5.1
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-rdoc=6.5.1-r1"
+                provides="ruby-rdoc=6.5.1-r2"
                 provider_priority=320
                 replaces="ruby-rdoc"
                 replaces_priority=320
@@ -363,7 +429,7 @@ contents:
                 pkgver=3.4.4
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-rexml=3.4.4-r1"
+                provides="ruby-rexml=3.4.4-r2"
                 provider_priority=320
                 replaces="ruby-rexml"
                 replaces_priority=320
@@ -375,7 +441,7 @@ contents:
                 pkgver=0.3.1
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-rss=0.3.1-r1"
+                provides="ruby-rss=0.3.1-r2"
                 provider_priority=320
                 replaces="ruby-rss"
                 replaces_priority=320
@@ -387,7 +453,7 @@ contents:
                 pkgver=3.5.7
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-test-unit=3.5.7-r1"
+                provides="ruby-test-unit=3.5.7-r2"
                 provider_priority=320
                 replaces="ruby-test-unit"
                 replaces_priority=320
@@ -399,7 +465,7 @@ contents:
                 pkgver=0.21.3
                 license="Ruby"
                 depends="$pkgname"
-                provides="ruby-typeprof=0.21.3-r1"
+                provides="ruby-typeprof=0.21.3-r2"
                 provider_priority=320
                 replaces="ruby-typeprof"
                 replaces_priority=320
@@ -410,8 +476,8 @@ contents:
             license: Ruby AND BSD-2-Clause AND MIT
             name: ruby-3.2
             provider_priority: 320
-            provides: ruby=3.2.11-r1
-            rel: 1
+            provides: ruby=3.2.11-r2
+            rel: 2
             replaces: ruby
             replaces_priority: 320
             subpackages: $pkgname-dbg $pkgname-dev $pkgname-doc $pkgname-full ruby3.2-bundler::noarch ruby3.2-rdoc::noarch ruby3.2-minitest::noarch ruby3.2-power_assert::noarch ruby3.2-rake::noarch ruby3.2-test-unit:test_unit:noarch ruby3.2-rexml::noarch ruby3.2-rss::noarch ruby3.2-net-ftp:net_ftp:noarch ruby3.2-net-pop:net_pop:noarch ruby3.2-net-imap:net_imap:noarch ruby3.2-net-smtp:net_smtp:noarch ruby3.2-matrix::noarch ruby3.2-prime::noarch ruby3.2-rbs::noarch ruby3.2-typeprof::noarch ruby3.2-debug::noarch $pkgname-libs
@@ -424,6 +490,12 @@ contents:
           uid: 0
           gid: 0
           source: package/apk/main/ruby/alpine-3.23/patch/test_insns-lower-recursion-depth.patch
+        - type: file
+          path: ${source.dir}/patch/dhi-net-imap-0.3.10-command-validation.patch
+          uid: 0
+          gid: 0
+          mode: "644"
+          source: package/apk/main/ruby/alpine-3.23/patch/dhi-net-imap-0.3.10-command-validation.patch
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
