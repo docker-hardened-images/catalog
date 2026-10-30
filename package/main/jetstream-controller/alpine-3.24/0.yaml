@@ -1,0 +1,223 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-jetstream-controller
+variant: runtime
+tags:
+  - 0.25.0-alpine3.24
+  - 0.25.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-10-05"
+vars:
+  COMMIT_SHA: 4f08e6d39ae244c0236e791dc533f22bfe08003e
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: jetstream-controller-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.25"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.25.0
+  SHORT_COMMIT_SHA: 4f08e6d
+  VERSION: 0.25.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: jetstream-controller-0
+      work-dir: /go/src/github.com/nats-io/nack
+      contents:
+        packages:
+          - bash
+          - binutils
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/nats-io/nack.git#v0.25.0
+            checksum: 4f08e6d39ae244c0236e791dc533f22bfe08003e
+            path: /go/src/github.com/nats-io/nack
+            spdx:
+              name: jetstream-controller
+              version: 0.25.0
+              packages:
+                - name: jetstream-controller
+                  purl: pkg:golang/github.com/nats-io/nack@0.25.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.58.0
+              - golang.org/x/text@v0.43.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test -count=1 ./controllers/jetstream/...
+        - name: stamp module version
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/nats-io/nack
+            test -f "$src/go.mod"
+            test -f "$src/go.sum"
+            go_line=$(awk '$1=="go"{print $2; exit}' "$src/go.mod")
+            test -n "$go_line"
+
+            mkdir -p /go/src/dhi-jetstream-controller-build
+            cd /go/src/dhi-jetstream-controller-build
+            go mod init dhi.build.jetstream-controller
+            go mod edit -go="$go_line"
+            go mod edit -require=github.com/nats-io/nack@v0.25.0
+            go mod edit -replace=github.com/nats-io/nack="$src"
+            cp "$src/go.sum" go.sum
+            grep -q 'github.com/nats-io/nack v0.25.0' go.mod
+        - name: build
+          uses: go/build@v1
+          work-dir: /go/src/dhi-jetstream-controller-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X main.Version=0.25.0
+              - -X main.GitInfo=4f08e6d
+              - -X main.BuildTime=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/jetstream-controller
+            packages: github.com/nats-io/nack/cmd/jetstream-controller
+            tags: timetzdata
+        - name: build dev
+          uses: go/build@v1
+          work-dir: /go/src/dhi-jetstream-controller-build
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off GOFLAGS=-mod=mod
+            fips: false
+            ldflags:
+              - -X main.Version=0.25.0
+              - -X main.GitInfo=4f08e6d
+              - -X main.BuildTime=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/jetstream-controller-dev
+            packages: github.com/nats-io/nack/cmd/jetstream-controller
+            strip: false
+            tags: timetzdata
+        - name: verify module version ldflags and static link
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/bin/jetstream-controller
+            devbin=${target.dir}/usr/bin/jetstream-controller-dev
+            test -x "$runtime"
+            test -x "$devbin"
+
+            go version -m "$runtime" | grep -F "$(printf 'mod\tgithub.com/nats-io/nack\tv%s' '0.25.0')"
+            go version -m "$runtime" | grep -F -- '-s'
+            go version -m "$runtime" | grep -F -- '-w'
+            go version -m "$runtime" | grep -F -- '-trimpath'
+            go version -m "$runtime" | grep -F -- "-X main.Version=0.25.0"
+            go version -m "$runtime" | grep -E -- "-X main.GitInfo=4f08e6d([[:space:]]|\")"
+            go version -m "$runtime" | grep -E -- '-X main.BuildTime=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'
+
+            go version -m "$devbin" | grep -F "$(printf 'mod\tgithub.com/nats-io/nack\tv%s' '0.25.0')"
+            go version -m "$devbin" | grep -F -- "-X main.Version=0.25.0"
+            go version -m "$devbin" | grep -E -- "-X main.GitInfo=4f08e6d([[:space:]]|\")"
+            go version -m "$devbin" | grep -E -- '-X main.BuildTime=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'
+            if go version -m "$devbin" | grep -E -- '-ldflags=.*-s|-ldflags=.*-w'; then
+              echo "dev binary must not be built with -s or -w" >&2
+              exit 1
+            fi
+
+            readelf -d "$runtime" > /tmp/jetstream-controller.dyn
+            if grep -q NEEDED /tmp/jetstream-controller.dyn; then
+              echo "runtime binary is dynamically linked" >&2
+              cat /tmp/jetstream-controller.dyn >&2
+              exit 1
+            fi
+            readelf -d "$devbin" > /tmp/jetstream-controller-dev.dyn
+            if grep -q NEEDED /tmp/jetstream-controller-dev.dyn; then
+              echo "dev binary is dynamically linked" >&2
+              cat /tmp/jetstream-controller-dev.dyn >&2
+              exit 1
+            fi
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/jetstream-controller/.spdx.jetstream-controller.json
+            grep -q 'pkg:golang/github.com/nats-io/nack@' /opt/docker/sbom/jetstream-controller/.spdx.jetstream-controller.json
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/jetstream-controller "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/jetstream-controller "${target.dir}/opt/docker/sbom-dev/"
+            test -s "${target.dir}/opt/docker/sbom/jetstream-controller/.spdx.jetstream-controller.json"
+            test -s "${target.dir}/opt/docker/sbom-dev/jetstream-controller/.spdx.jetstream-controller.json"
+            grep -q 'pkg:golang/github.com/nats-io/nack@' "${target.dir}/opt/docker/sbom/jetstream-controller/.spdx.jetstream-controller.json"
+            grep -q 'pkg:golang/github.com/nats-io/nack@' "${target.dir}/opt/docker/sbom-dev/jetstream-controller/.spdx.jetstream-controller.json"
+        - name: stage license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/nats-io/nack/LICENSE
+            dest="${target.dir}/usr/share/licenses/jetstream-controller/LICENSE"
+            devdest="${target.dir}/usr/share/licenses/jetstream-controller-dev/LICENSE"
+            test -s "$src"
+            grep -q 'Apache License' "$src"
+            grep -q 'Version 2.0' "$src"
+            install -d "$(dirname "$dest")" "$(dirname "$devdest")"
+            install -m644 "$src" "$dest"
+            install -m644 "$src" "$devdest"
+            test -s "$dest"
+            test -s "$devdest"
+            grep -q 'Apache License' "$dest"
+            grep -q 'Version 2.0' "$dest"
+            grep -q 'Apache License' "$devdest"
+            grep -q 'Version 2.0' "$devdest"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes controller for NATS JetStream
+            files:
+              - usr/bin/jetstream-controller
+              - opt/docker/sbom/jetstream-controller
+              - usr/share/licenses/jetstream-controller/LICENSE
+            license: Apache-2.0
+            name: jetstream-controller-0
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/jetstream-controller
+                    source: usr/bin/jetstream-controller-dev
+                  - path: opt/docker/sbom/jetstream-controller
+                    source: opt/docker/sbom-dev/jetstream-controller
+                  - path: usr/share/licenses/jetstream-controller/LICENSE
+                    source: usr/share/licenses/jetstream-controller-dev/LICENSE
+                name: jetstream-controller-0-dev
+            url: https://github.com/nats-io/nack
+            version: 0.25.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
