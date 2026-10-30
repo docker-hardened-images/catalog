@@ -17,6 +17,7 @@ This Docker Hardened PHP image includes PHP runtime and essential tools in a sin
 - `php`: PHP command-line interpreter and runtime environment (non-FPM variants only)
 - `php-fpm`: FastCGI Process Manager for serving PHP applications (FPM variant only)
 - `phpdbg`: a lightweight, powerful, easy to use debugging platform for PHP (dev variant only)
+- `phar`: PHP Archive, used to package an entire PHP application as a single file
 - Essential PHP extensions built-in/statically compiled
 - Full phpize environment (`phpize`, `php-config`, compiler, PHP source code) for building extensions (dev variant only)
 
@@ -146,8 +147,14 @@ Build-time variants typically include `dev` in the variant name and are intended
 multi-stage Dockerfile. These images typically:
 
 - Run as the root user
+
 - Include a shell and package manager
+
 - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
+  variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
+  cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
 ### PHP-specific variants
 

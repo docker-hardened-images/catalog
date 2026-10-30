@@ -7,7 +7,7 @@ web-server or as a common gateway interface (CGI).
 
 For more details, visit [wikipedia.org/wiki/PHP⁠](https://en.wikipedia.org/wiki/PHP).
 
-### About Docker Hardened Images
+## About Docker Hardened Images
 
 Docker Hardened Images are built to meet the highest security and compliance standards. They provide a trusted
 foundation for containerized workloads by incorporating security best practices from the start.
