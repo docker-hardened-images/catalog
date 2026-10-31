@@ -4,7 +4,7 @@ image: dhi.io/pkg-eclipse-temurin
 variant: runtime
 tags:
   - 11.0.32.9.1.1-alpine3.24
-  - 11.0.32.9.1.1-r2-alpine3.24
+  - 11.0.32.9.1.1-r4-alpine3.24
 platforms:
   - linux/amd64
 vars:
@@ -15,7 +15,7 @@ vars:
   BCTLSFIPS_VERSION: 2.1.25
   BCUTILFIPS_VERSION: 2.1.8
   DHI_TEST_APK_PACKAGE: eclipse-temurin-11-jdk
-  DHI_TEST_APK_PACKAGES: eclipse-temurin-11-jdk-11.0.32.9.1.1-r2.apk
+  DHI_TEST_APK_PACKAGES: eclipse-temurin-11-jdk-11.0.32.9.1.1-r4.apk
   JAVA_DIR: /usr/lib/jvm/temurin-11
   JAVA_JDK_CHECKSUM: https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.32.1+1/OpenJDK11U-jdk_${ARCH}_alpine-linux_hotspot_11.0.32.1_1.tar.gz.sha256.txt
   JAVA_JDK_DOWNLOAD: https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.32.1+1/OpenJDK11U-jdk_${ARCH}_alpine-linux_hotspot_11.0.32.1_1.tar.gz
@@ -32,7 +32,7 @@ vars:
   PACKAGE_VERSION_ORDERING_FROM: 11.0.32.
   PACKAGE_VERSION_ORDERING_TO: 11.0.32.9.
   PACKAGE_VERSION_SUFFIX: "1"
-  REL: "2"
+  REL: "4"
   VERSION: jdk-11.0.32.1+1
 contents:
   repositories:
@@ -148,6 +148,54 @@ contents:
             ln -s "../bcutil-fips-2.1.8.jar" "$BC_DIR/current/bcutil-fips.jar"
             ln -s "../bc-rng-jent-1.3.6.jar" "$BC_DIR/current/bc-rng-jent.jar"
             ln -s "../bcpkix-fips-2.1.13.jar" "$BC_DIR/current/bcpkix-fips.jar"
+        - name: remove compromised CA roots
+          runs: |
+            set -eux -o pipefail
+
+            JAVA_HOME="${target.dir}/usr/lib/jvm/temurin-11"
+            KEYTOOL="$JAVA_HOME/bin/keytool"
+            CACERTS_PATH="/usr/lib/jvm/temurin-11/lib/security"
+            if [ "11" == "8" ]; then
+              if [ "JDK" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-11/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-11/lib/security"
+              fi
+            fi
+            CACERTS="${target.dir}${CACERTS_PATH}/cacerts"
+
+            "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit > /dev/null
+            # Newer Temurin releases use "... [jdk]" aliases; 8/11 ship JKS aliases like "cn=...".
+            for alias in \
+              "comodoaaaca [jdk]" \
+              "emsigneccrootcag3 [jdk]" \
+              "emsignrootcag1 [jdk]" \
+              "emsignrootcag2 [jdk]" \
+              "cn_aaa_certificate_services,o_comodo_ca_limited,l_salford,st_greater_manchester,c_gb [jdk]" \
+              "cn_emsign_ecc_root_ca__g3,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g1,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g2,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn=aaa_certificate_services,o=comodo_ca_limited,l=salford,st=greater_manchester,c=gb" \
+              "cn=emsign_ecc_root_ca_-_g3,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g1,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g2,o=emudhra_technologies_limited,ou=emsign_pki,c=in"; do
+              if "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit -alias "$alias" > /dev/null 2>&1; then
+                "$KEYTOOL" -delete -keystore "$CACERTS" -storepass changeit -alias "$alias"
+              fi
+            done
+
+            # Fail if any OpenJDK-removed subject remains (catches wrong alias schemes).
+            LISTING="$("$KEYTOOL" -list -v -keystore "$CACERTS" -storepass changeit)"
+            for subject in \
+              "CN=AAA Certificate Services" \
+              "CN=emSign Root CA - G1" \
+              "CN=emSign Root CA - G2" \
+              "CN=emSign ECC Root CA - G3"; do
+              if echo "$LISTING" | grep -F "Owner: ${subject}," > /dev/null; then
+                echo "compromised CA root still present: ${subject}" >&2
+                exit 1
+              fi
+            done
         - name: create BCFKS FIPS store
           runs: |
             set -eux -o pipefail
@@ -351,7 +399,7 @@ contents:
             options: '!check !strip !tracedeps !fhs'
             provider_priority: 200
             provides: java-jdk
-            rel: 2
+            rel: 4
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 11.0.32.9.1.1
@@ -461,6 +509,54 @@ contents:
             ln -s "../bcutil-fips-2.1.8.jar" "$BC_DIR/current/bcutil-fips.jar"
             ln -s "../bc-rng-jent-1.3.6.jar" "$BC_DIR/current/bc-rng-jent.jar"
             ln -s "../bcpkix-fips-2.1.13.jar" "$BC_DIR/current/bcpkix-fips.jar"
+        - name: remove compromised CA roots
+          runs: |
+            set -eux -o pipefail
+
+            JAVA_HOME="${target.dir}/usr/lib/jvm/temurin-11"
+            KEYTOOL="$JAVA_HOME/bin/keytool"
+            CACERTS_PATH="/usr/lib/jvm/temurin-11/lib/security"
+            if [ "11" == "8" ]; then
+              if [ "JRE" == "JDK" ]; then
+                CACERTS_PATH="/usr/lib/jvm/temurin-11/jre/lib/security"
+              else
+                CACERTS_PATH="/usr/lib/jvm/temurin-11/lib/security"
+              fi
+            fi
+            CACERTS="${target.dir}${CACERTS_PATH}/cacerts"
+
+            "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit > /dev/null
+            # Newer Temurin releases use "... [jdk]" aliases; 8/11 ship JKS aliases like "cn=...".
+            for alias in \
+              "comodoaaaca [jdk]" \
+              "emsigneccrootcag3 [jdk]" \
+              "emsignrootcag1 [jdk]" \
+              "emsignrootcag2 [jdk]" \
+              "cn_aaa_certificate_services,o_comodo_ca_limited,l_salford,st_greater_manchester,c_gb [jdk]" \
+              "cn_emsign_ecc_root_ca__g3,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g1,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g2,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn=aaa_certificate_services,o=comodo_ca_limited,l=salford,st=greater_manchester,c=gb" \
+              "cn=emsign_ecc_root_ca_-_g3,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g1,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g2,o=emudhra_technologies_limited,ou=emsign_pki,c=in"; do
+              if "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit -alias "$alias" > /dev/null 2>&1; then
+                "$KEYTOOL" -delete -keystore "$CACERTS" -storepass changeit -alias "$alias"
+              fi
+            done
+
+            # Fail if any OpenJDK-removed subject remains (catches wrong alias schemes).
+            LISTING="$("$KEYTOOL" -list -v -keystore "$CACERTS" -storepass changeit)"
+            for subject in \
+              "CN=AAA Certificate Services" \
+              "CN=emSign Root CA - G1" \
+              "CN=emSign Root CA - G2" \
+              "CN=emSign ECC Root CA - G3"; do
+              if echo "$LISTING" | grep -F "Owner: ${subject}," > /dev/null; then
+                echo "compromised CA root still present: ${subject}" >&2
+                exit 1
+              fi
+            done
         - name: create BCFKS FIPS store
           runs: |
             set -eux -o pipefail
@@ -664,7 +760,7 @@ contents:
             options: '!check !strip !tracedeps !fhs'
             provider_priority: 200
             provides: java-jdk
-            rel: 2
+            rel: 4
             subpackages: $pkgname-fips::noarch $pkgname-fips-oci-config:fips_oci_config:noarch
             url: https://adoptium.net/
             version: 11.0.32.9.1.1
