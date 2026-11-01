@@ -73,6 +73,47 @@ contents:
               filename=$(basename "$file")
               ln -s /opt/java/openjdk/26/bin/$filename ${target.dir}/usr/local/bin/$filename
             done
+        - name: remove compromised CA roots
+          runs: |
+            set -eux -o pipefail
+
+            JAVA_HOME="${target.dir}/opt/java/openjdk/26"
+            KEYTOOL="$JAVA_HOME/bin/keytool"
+            CACERTS="$JAVA_HOME/lib/security/cacerts"
+            if [ "26" = "8" ]; then
+              CACERTS="$JAVA_HOME/jre/lib/security/cacerts"
+            fi
+
+            "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit > /dev/null
+            for alias in \
+              "comodoaaaca [jdk]" \
+              "emsigneccrootcag3 [jdk]" \
+              "emsignrootcag1 [jdk]" \
+              "emsignrootcag2 [jdk]" \
+              "cn_aaa_certificate_services,o_comodo_ca_limited,l_salford,st_greater_manchester,c_gb [jdk]" \
+              "cn_emsign_ecc_root_ca__g3,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g1,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn_emsign_root_ca__g2,o_emudhra_technologies_limited,ou_emsign_pki,c_in [jdk]" \
+              "cn=aaa_certificate_services,o=comodo_ca_limited,l=salford,st=greater_manchester,c=gb" \
+              "cn=emsign_ecc_root_ca_-_g3,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g1,o=emudhra_technologies_limited,ou=emsign_pki,c=in" \
+              "cn=emsign_root_ca_-_g2,o=emudhra_technologies_limited,ou=emsign_pki,c=in"; do
+              if "$KEYTOOL" -list -keystore "$CACERTS" -storepass changeit -alias "$alias" > /dev/null 2>&1; then
+                "$KEYTOOL" -delete -keystore "$CACERTS" -storepass changeit -alias "$alias"
+              fi
+            done
+
+            LISTING="$("$KEYTOOL" -list -v -keystore "$CACERTS" -storepass changeit)"
+            for subject in \
+              "CN=AAA Certificate Services" \
+              "CN=emSign Root CA - G1" \
+              "CN=emSign Root CA - G2" \
+              "CN=emSign ECC Root CA - G3"; do
+              if echo "$LISTING" | grep -F "Owner: ${subject}," > /dev/null; then
+                echo "compromised CA root still present: ${subject}" >&2
+                exit 1
+              fi
+            done
       outputs:
         - source: ${target.dir}/opt/java
           target: /opt/java
