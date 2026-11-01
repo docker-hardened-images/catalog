@@ -10,10 +10,11 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-These images are the agent templates used by Docker Sandboxes to run AI coding agents inside isolated containers. Each
-agent is published as a separate **tag** of the single `sbx-templates` repository (for example `claude-code`, `codex`,
-or `shell`). They are meant to be launched by the `sbx` CLI (`docker sandbox`), which pulls the right tag, mounts your
-workspace, and runs the agent for you—you normally do not start them with a bare `docker run`.
+These images are the agent templates used by Docker Sandboxes to run AI coding agents inside isolated containers. Most
+agents are published as separate **tags** of the `sbx-templates` repository (for example `cursor-agent` or `shell`).
+Claude and Codex ship as their own images (`dhi/claude`, `dhi/codex`). They are meant to be launched by the `sbx` CLI
+(`docker sandbox`), which pulls the right image/tag, mounts your workspace, and runs the agent for you—you normally do
+not start them with a bare `docker run`.
 
 ### What's included in this image
 
@@ -73,22 +74,22 @@ docker sandbox run shell /path/to/workspace
 Each `sbx` agent resolves to a tag of this repository. The CLI selects the Docker-in-Docker (`-docker`) variant by
 default so the agent can build and run containers inside its sandbox:
 
-| `sbx` agent    | `sbx-templates` tag   | Agent                  |
-| -------------- | --------------------- | ---------------------- |
-| `claude`       | `claude-code-docker`  | Anthropic Claude Code  |
-| `codex`        | `codex-docker`        | OpenAI Codex CLI       |
-| `cursor`       | `cursor-agent-docker` | Cursor Agent           |
-| `gemini`       | `gemini-docker`       | Google Gemini CLI      |
-| `copilot`      | `copilot-docker`      | GitHub Copilot CLI     |
-| `droid`        | `droid-docker`        | Factory Droid          |
-| `kiro`         | `kiro-docker`         | Kiro                   |
-| `opencode`     | `opencode-docker`     | OpenCode               |
-| `docker-agent` | `docker-agent-docker` | Docker Agent           |
-| `shell`        | `shell-docker`        | Plain shell (no agent) |
+| `sbx` agent    | Image / tag                         | Agent                  |
+| -------------- | ----------------------------------- | ---------------------- |
+| `claude`       | `dhi/claude:latest-docker`          | Anthropic Claude Code  |
+| `codex`        | `dhi/codex:latest-docker`           | OpenAI Codex CLI       |
+| `cursor`       | `sbx-templates:cursor-agent-docker` | Cursor Agent           |
+| `gemini`       | `sbx-templates:gemini-docker`       | Google Gemini CLI      |
+| `copilot`      | `sbx-templates:copilot-docker`      | GitHub Copilot CLI     |
+| `droid`        | `sbx-templates:droid-docker`        | Factory Droid          |
+| `kiro`         | `sbx-templates:kiro-docker`         | Kiro                   |
+| `opencode`     | `sbx-templates:opencode-docker`     | OpenCode               |
+| `docker-agent` | `sbx-templates:docker-agent-docker` | Docker Agent           |
+| `shell`        | `sbx-templates:shell-docker`        | Plain shell (no agent) |
 
-Non-`-docker` tags (for example `claude-code` or `shell`) provide the same environment without the bundled Docker
-Engine, and a `-minimal` tag (for example `claude-code-minimal`) omits the bundled language toolchains for a smaller
-image.
+Claude and Codex ship as their own catalog images (`dhi/claude`, `dhi/codex`) with `latest` / `<VERSION>` and `-docker`
+/ `-minimal` (Claude) flavored tags. Other agents remain tags of `dhi/sbx-templates`. Non-`-docker` tags provide the
+same environment without the bundled Docker Engine.
 
 ### Extend an agent with kits
 
