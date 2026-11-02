@@ -22,8 +22,8 @@ grep -c '^ansible-core==' "${REQ}"
 "${VENV}/bin/python3" -m pip install --no-cache-dir --require-hashes --no-deps -r "${REQ}"
 # GHSA-g6cj-pr64-35w5: the lock pins cryptography 49.0.0
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-binary cryptography "cryptography==50.0.1"
-# CVE-2026-59884, CVE-2026-59885, CVE-2026-59886: the lock pins pyasn1 0.6.3
-"${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "pyasn1==0.6.4"
+# CVE-2026-59884, CVE-2026-59885, CVE-2026-59886, CVE-2026-119194, CVE-2026-119195, CVE-2026-119196, CVE-2026-119197: the lock pins pyasn1 0.6.3
+"${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "pyasn1==0.6.5"
 # CVE-2026-97687, CVE-2026-97688, CVE-2026-97689: the lock pins urllib3 2.7.0
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "urllib3==2.8.0"
 # CVE-2026-49264, CVE-2026-49265: the lock pins oauthlib 3.3.1
