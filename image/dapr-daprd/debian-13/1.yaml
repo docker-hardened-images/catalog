@@ -19,12 +19,13 @@ platforms:
 dates:
   release: "2025-09-16"
 vars:
-  COMMIT_SHA: cfb5ee090dda7cfc26145c7703605d831350aa2a
   FIPS_SUFFIX: ""
+  FLAVORED_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "1.19"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.19.1
-  VERSION: 1.19.1
+  SUFFIX: ""
+  VERSION: 1.19.1-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -33,109 +34,10 @@ contents:
   packages:
     - base-files
     - ca-certificates-bundle
+    - dapr-daprd=1.19.1-0
     - tzdata
-  builds:
-    - name: dapr-daprd
-      work-dir: /go/src/github.com/dapr/dapr
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/dapr/dapr#v1.19.1
-            checksum: cfb5ee090dda7cfc26145c7703605d831350aa2a
-            path: /go/src/github.com/dapr/dapr
-            spdx:
-              name: dapr
-              version: 1.19.1
-              packages:
-                - name: dapr
-                  purl: pkg:golang/github.com/dapr/dapr@1.19.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          with:
-            deps:
-              - filippo.io/edwards25519@v1.1.1
-              - github.com/go-chi/chi/v5@v5.4.0
-              - github.com/go-jose/go-jose/v4@v4.1.6
-              - github.com/jackc/pgx/v5@v5.9.2
-              - go.mongodb.org/mongo-driver@v1.17.7
-              - go.opentelemetry.io/otel/sdk@v1.45.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0
-              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
-              - go.opentelemetry.io/otel/exporters/zipkin@v1.45.0
-            download: true
-            replaces:
-              - go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.60.0
-              - google.golang.org/grpc=google.golang.org/grpc@v1.83.2
-        - name: test go dependencies
-          runs: |
-            set -eux -o pipefail
-
-            # Build system injects OTEL_EXPORTER_OTLP_* endpoint defaults (for example
-            # unix:///dev/otel-grpc.sock) that take priority over test-local values
-            # and break unit tests; see opentelemetry-cpp debian/rules patch.
-            unset OTEL_EXPORTER_OTLP_ENDPOINT || true
-            unset OTEL_EXPORTER_OTLP_PROTOCOL || true
-            unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || true
-            unset OTEL_EXPORTER_OTLP_TRACES_PROTOCOL || true
-            unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT || true
-            unset OTEL_EXPORTER_OTLP_METRICS_PROTOCOL || true
-            unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || true
-            unset OTEL_EXPORTER_OTLP_LOGS_PROTOCOL || true
-            unset OTEL_EXPORTER_OTLP_INSECURE || true
-            unset OTEL_EXPORTER_OTLP_TRACES_INSECURE || true
-            unset OTEL_EXPORTER_OTLP_METRICS_INSECURE || true
-            unset OTEL_EXPORTER_OTLP_LOGS_INSECURE || true
-
-            # Build containers have no outbound network or non-loopback interfaces;
-            # provide a fallback so GetHostAddress() doesn't fail
-            export DAPR_HOST_IP="${DAPR_HOST_IP:-127.0.0.1}"
-
-            # CGO_ENABLED=0: build container has no linker (binutils not installed)
-            # -tags unit: required to compile unit test helpers (WithAppChannel, mock, diag utils etc.)
-            # Exclude tests/: those are integration/e2e tests, not unit tests.
-            # Also exclude the dnslookup package because upstream added an
-            # integration-style reconnect test there that depends on mixed
-            # IPv4/IPv6 loopback behavior and is flaky in the DHI build sandbox.
-            CGO_ENABLED=0 go test -tags unit \
-              $(go list -tags unit ./... \
-                | grep -v 'github.com/dapr/dapr/tests/' \
-                | grep -v 'github.com/dapr/dapr/pkg/actors/internal/placement/connector/dnslookup$' \
-                | grep -v 'github.com/dapr/dapr/pkg/api/grpc/proxy$')
-        - name: build
-          uses: go/build@v1
-          work-dir: /go/src/github.com/dapr/dapr/cmd/daprd
-          with:
-            ldflags:
-              - -X github.com/dapr/dapr/pkg/buildinfo.gitcommit=cfb5ee090dda7cfc26145c7703605d831350aa2a
-              - -X github.com/dapr/dapr/pkg/buildinfo.gitversion=1.19.1
-              - -X github.com/dapr/dapr/pkg/buildinfo.version=1.19.1
-            output: ${target.dir}/usr/local/bin/daprd
-            tags: allcomponents
-      outputs:
-        - source: ${target.dir}/usr/local/bin/daprd
-          target: /usr/local/bin/daprd
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/dapr
-          target: /opt/docker/sbom/dapr
-          uid: 0
-          gid: 0
 accounts:
-  run-as: nonroot
+  run-as: "65532"
   users:
     - name: nonroot
       uid: 65532
@@ -154,6 +56,15 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/daprd
+    uid: 0
+    gid: 0
+    source: /usr/bin/daprd
   - type: symlink
     path: /daprd
     uid: 0
