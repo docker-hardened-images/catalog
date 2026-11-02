@@ -84,6 +84,15 @@ node -e '
     "follow-redirects": "1.16.2", // CVE-2026-116689
     "joi": "18.3.1", // CVE-2026-118772
     "minimatch": "11.0.1", // CVE-2026-118764
+    "zod@4": "4.6.6", // CVE-2023-54404
+    "undici@6": "6.29.1", // CVE-2026-109383, CVE-2026-109869, CVE-2026-109924, CVE-2026-109932, CVE-2026-87018
+    "undici@7": "7.30.1", // CVE-2026-109383, CVE-2026-109829, CVE-2026-109869, CVE-2026-109841, CVE-2026-109924, CVE-2026-109932, CVE-2026-87018, CVE-2026-87029
+    "@azure/msal-node": "7.1.0", // CVE-2026-109461
+    "body-parser@1": "1.20.9", // CVE-2026-111181
+    "body-parser@2": "2.4.0", // CVE-2026-111181
+    // nodemailer stays at the catalog pin 10.1.7. GHSA-85x2-q946-cp5h,
+    // GHSA-8c8m-p3m8-cjg8, and GHSA-m943-m63m-w62w are fixed in 10.1.4, so
+    // pinning 10.1.4 would downgrade the published package.
   };
   const directusVersion = JSON.parse(fs.readFileSync("directus/package.json", "utf8")).version;
   if (typeof directusVersion !== "string" || directusVersion.length === 0) {
