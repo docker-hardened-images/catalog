@@ -17,11 +17,12 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  COMMIT_SHA: 70cfad6071196cf403a89dc86c19850eaf870187
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "2.12"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.12.1
-  VERSION: 2.12.1
+  SUFFIX: -dev
+  VERSION: 2.12.1-0
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,88 +41,15 @@ contents:
     - diffutils
     - dpkg
     - findutils
+    - gencert-dev=2.12.1-0
     - grep
     - libc-bin
     - mawk
     - perl-base
+    - piraeus-operator-dev=2.12.1-0
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: piraeus-operator
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/piraeusdatastore/piraeus-operator.git#v2.12.1
-            checksum: 70cfad6071196cf403a89dc86c19850eaf870187
-            path: /go/src/github.com/piraeusdatastore/piraeus-operator
-            spdx:
-              name: piraeus-operator
-              version: 2.12.1
-              packages:
-                - name: piraeus-operator
-                  purl: pkg:golang/github.com/piraeusdatastore/piraeus-operator/v2@2.12.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: update go dependencies
-          uses: go/bump@v1
-          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
-          with:
-            deps:
-              - golang.org/x/net@v0.62.0
-            download: true
-        - name: test
-          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Skip test packages that require kubebuilder tools (etcd, kube-apiserver)
-            # which are not available in the build environment. These tests require
-            # a full Kubernetes test environment and are typically run in CI/CD pipelines.
-            CGO_ENABLED=0 go test $(go list ./... | grep -v '/internal/controller' | grep -v '/internal/webhook' | grep -v '/pkg/k8sgc')
-        - name: build-manager
-          uses: go/build@v1
-          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
-          with:
-            ldflags:
-              - -X github.com/piraeusdatastore/piraeus-operator/v2/pkg/vars.Version=2.12.1
-            output: ${target.dir}/usr/local/bin/manager
-            packages: ./cmd
-        - name: build-gencert
-          uses: go/build@v1
-          work-dir: /go/src/github.com/piraeusdatastore/piraeus-operator
-          with:
-            ldflags:
-              - -X github.com/piraeusdatastore/piraeus-operator/v2/pkg/vars.Version=2.12.1
-            output: ${target.dir}/usr/local/bin/gencert
-            packages: ./cmd/gencert
-      outputs:
-        - source: ${target.dir}/usr/local/bin/manager
-          target: /usr/local/bin/manager
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: ${target.dir}/usr/local/bin/gencert
-          target: /usr/local/bin/gencert
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/piraeus-operator
-          target: /opt/docker/sbom/piraeus-operator
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -148,11 +76,26 @@ os-release:
 environment:
   DEBIAN_FRONTEND: noninteractive
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/manager
+    uid: 0
+    gid: 0
+    source: /usr/bin/manager
+  - type: symlink
+    path: /usr/local/bin/gencert
+    uid: 0
+    gid: 0
+    source: /usr/bin/gencert
   - type: symlink
     path: /manager
     uid: 0
     gid: 0
-    source: /usr/local/bin/manager
+    source: /usr/bin/manager
 annotations:
   org.opencontainers.image.description: Kubernetes operator that manages LINSTOR clusters
   org.opencontainers.image.licenses: Apache-2.0
