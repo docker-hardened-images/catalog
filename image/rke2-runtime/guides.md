@@ -38,7 +38,7 @@ Pin the image by digest (`dhi.io/rke2-runtime@sha256:<digest>`). RKE2 names the 
 after the image reference and skips extraction once that directory exists, so a node bootstrapped on a tag keeps the
 binaries it first extracted and never picks up a rebuild published under the same tag. An existing node only sees a
 rebuild when its `runtime-image` reference changes. RKE2 also accepts a tag that starts with `v`, so this repository's
-`v<version>` tags (`v1.36.4`, `v1.36.4-rke2r1`) work where a digest is impractical; the `1.36.4-alpine` style tags are
+`v<version>` tags (`v1.37.1`, `v1.37.1-rke2r1`) work where a digest is impractical; the `1.37.1-alpine` style tags are
 rejected by RKE2.
 
 The same option is available as the `--runtime-image` flag and the `RKE2_RUNTIME_IMAGE` environment variable:
@@ -111,7 +111,7 @@ tarball.
 
 - The binaries are Docker Hardened Images builds of the upstream containerd, runc, cri-tools and Kubernetes projects
   instead of Rancher's `hardened-*` builds. `kubelet --version` reports the upstream Kubernetes version (for example
-  `v1.36.4`) without the `+rke2rN` suffix, and the FIPS variant uses the Go FIPS 140-3 module instead of BoringCrypto.
+  `v1.37.1`) without the `+rke2rN` suffix, and the FIPS variant uses the Go FIPS 140-3 module instead of BoringCrypto.
 - containerd is built from the upstream repository rather than the k3s-io fork, so it lacks the fork's additions:
   `rewrite` rules under `mirrors` in `registries.yaml`, which RKE2 writes into `hosts.toml`, are ignored by upstream
   containerd.
@@ -127,8 +127,8 @@ tarball.
   what is installed on the node.
 - The image ships `linux/amd64` and `linux/arm64` only. The upstream tag also serves `windows/amd64` for RKE2 Windows
   agents, which keep using the upstream image.
-- Tags follow the Docker Hardened Images scheme (`1.36.4-alpine`) plus `v<version>` (`v1.36.4`) and
-  `v<version>-<rke2 revision>` (`v1.36.4-rke2r1`, the upstream image tag; the upstream release tag is `v1.36.4+rke2r1`).
+- Tags follow the Docker Hardened Images scheme (`1.37.1-alpine`) plus `v<version>` (`v1.37.1`) and
+  `v<version>-<rke2 revision>` (`v1.37.1-rke2r1`, the upstream image tag; the upstream release tag is `v1.37.1+rke2r1`).
   Always set `runtime-image` explicitly, preferably by digest; RKE2 does not derive this image's reference from its own
   version.
 
