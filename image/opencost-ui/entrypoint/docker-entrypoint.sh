@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# Package ships static assets under /usr/share/opencost-ui; populate nginx-owned
+# /var/www on first start so sed can mutate JS at runtime.
+if [ ! -f /var/www/index.html ]; then
+    cp -a /usr/share/opencost-ui/. /var/www/
+fi
+
 # Escape replacement text for sed ("&" has special meaning)
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/&/\\&/g'
