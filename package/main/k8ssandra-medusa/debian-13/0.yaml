@@ -4,9 +4,9 @@ image: dhi.io/pkg-k8ssandra-medusa
 variant: runtime
 tags:
   - 0.31.1
-  - 0.31.1-r0
+  - 0.31.1-r1
   - 0.31.1-debian13
-  - 0.31.1-r0-debian13
+  - 0.31.1-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,10 +14,13 @@ dates:
   release: "2026-04-17"
 vars:
   COMMIT_SHA: ccd9e63015b25437aa9353ca9b5a7ba6f8c7c25b
+  GOLANG_VERSION: 1.26.10-0
+  GRPC_HEALTH_PROBE_COMMIT_SHA: 5d0402b1a167a1a610e51b458287c4bf12331bc6
+  GRPC_HEALTH_PROBE_VERSION: 0.4.61
   POETRY_VERSION: 1.8.5
   PYTHON_MINOR: "3.12"
   PYTHON_VERSION: 3.12.16-2
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "0.31"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.31.1
@@ -35,6 +38,7 @@ contents:
       caches:
         - path: /root/.cache/pip
         - path: /root/.cache/pypoetry
+        - path: /go/pkg/mod
       contents:
         repositories:
           - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -66,6 +70,8 @@ contents:
           - python3-pip
           - python3-setuptools
           - python3-wheel
+          - golang-1.26=1.26.10-0
+          - golang-1.26-oci-config=1.26.10-0
         files:
           - url: git+https://github.com/thelastpickle/cassandra-medusa.git#v0.31.1
             checksum: ccd9e63015b25437aa9353ca9b5a7ba6f8c7c25b
@@ -79,6 +85,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: git+https://github.com/grpc-ecosystem/grpc-health-probe.git#v0.4.61
+            checksum: 5d0402b1a167a1a610e51b458287c4bf12331bc6
+            path: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+            spdx:
+              name: grpc-health-probe
+              version: 0.4.61
+              packages:
+                - name: grpc-health-probe
+                  purl: pkg:golang/github.com/grpc-ecosystem/grpc-health-probe@0.4.61
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
         - name: build poetry venv at final path and stage it
           privileged: true
@@ -87,6 +105,27 @@ contents:
 
             export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.12 POETRY_VERSION=1.8.5
             bash "${source.dir}/build-poetry.sh"
+        - name: update grpc-health-probe go dependencies
+          uses: go/bump@v1
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            deps: []
+            download: true
+        - name: test grpc-health-probe
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          runs: |
+            set -eux -o pipefail
+
+            go test ./...
+        - name: build grpc-health-probe
+          uses: go/build@v1
+          work-dir: /go/src/github.com/grpc-ecosystem/grpc-health-probe
+          with:
+            fips: false
+            ldflags:
+              - -X main.versionTag=0.4.61
+            output: ${target.dir}/usr/bin/grpc_health_probe
+            packages: ./main.go
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -95,11 +134,12 @@ contents:
             files:
               - usr/lib/k8ssandra-medusa
               - usr/bin/medusa
+              - usr/bin/grpc_health_probe
             formats:
               - deb
             license: Apache-2.0
             name: k8ssandra-medusa
-            rel: 0
+            rel: 1
             url: https://github.com/thelastpickle/cassandra-medusa
             version: 0.31.1
       paths:
