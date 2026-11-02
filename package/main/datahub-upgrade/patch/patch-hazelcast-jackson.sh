@@ -20,6 +20,8 @@ JACKSON_ANNOTATIONS_22="${PATCH_DIR}/jackson-annotations-2.22.jar"
 JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.7.jar"
 JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.7.jar"
 BCPROV_185="${PATCH_DIR}/bcprov-jdk18on-1.85.jar"
+GUAVA_3372="${PATCH_DIR}/guava-33.7.2-jre.jar"
+FAILUREACCESS_103="${PATCH_DIR}/failureaccess-1.0.3.jar"
 
 JARJAR_VERSION=1.7.2
 JARJAR_CP="${PATCH_DIR}/jarjar-${JARJAR_VERSION}.jar:${PATCH_DIR}/asm-7.0.jar:${PATCH_DIR}/asm-commons-7.0.jar"
@@ -27,6 +29,7 @@ JARJAR_CP="${PATCH_DIR}/jarjar-${JARJAR_VERSION}.jar:${PATCH_DIR}/asm-7.0.jar:${
 for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" \
     "$JACKSON_CORE_22" "$JACKSON_DATABIND_22" "$JACKSON_ANNOTATIONS_22" \
     "$JACKSON_CORE_3" "$JACKSON_DATABIND_3" "$BCPROV_185" \
+    "$GUAVA_3372" "$FAILUREACCESS_103" \
     "${PATCH_DIR}/jarjar-${JARJAR_VERSION}.jar" \
     "${PATCH_DIR}/asm-7.0.jar" "${PATCH_DIR}/asm-commons-7.0.jar"; do
     if [ ! -f "$jar" ]; then
@@ -89,6 +92,11 @@ version=${version}
 EOF
 }
 
+strip_module_descriptors() {
+    find . -path 'META-INF/versions/*/module-info.class' -delete 2>/dev/null || true
+    find . -name module-info.class -delete 2>/dev/null || true
+}
+
 repack_jar() {
     local jarpath="$1"
     local patch_fn="$2"
@@ -101,19 +109,42 @@ repack_jar() {
         "$patch_fn"
     )
     rm -f "$jarpath"
-    # cM keeps the extracted META-INF/MANIFEST.MF. Plain cf replaces it.
+    # cM keeps the extracted META-INF/MANIFEST.MF.
     (cd "$work" && jar cMf "$jarpath" .)
+    rm -rf "$work"
+}
+
+# Repack a BOOT-INF/lib/*.jar entry inside the fat jar. zip avoids jar(1) module
+# descriptor validation after shaded dependency surgery.
+repack_nested_lib() {
+    local lib_rel="$1"
+    local patch_fn="$2"
+    local work
+    work="$(mktemp -d)"
+
+    (cd "$work" && jar xf "$WAR_WORK/$lib_rel")
+    (
+        cd "$work"
+        "$patch_fn"
+    )
+    local patched="patched-nested.jar"
+    rm -f "$work/$patched"
+    (cd "$work" && zip -q -r -X "$patched" .)
+    zip -d "$WAR_PATH" "$lib_rel" >/dev/null
+    install -D -m 0644 "$work/$patched" "$WAR_WORK/$lib_rel"
+    (cd "$WAR_WORK" && zip -q "$WAR_PATH" "$lib_rel")
     rm -rf "$work"
 }
 
 merge_jarjar_shaded_tree() {
     local srcjar="$1"
     local shaded_prefix="$2"
+    local jarjar_rule="$3"
     local rules
     local out
     rules="$(mktemp)"
     out="$(mktemp -d)"
-    echo 'rule com.fasterxml.jackson.** shaded.parquet.com.fasterxml.jackson.@1' >"$rules"
+    echo "$jarjar_rule" >"$rules"
     java -cp "$JARJAR_CP" org.pantsbuild.jarjar.Main process "$rules" "$srcjar" "$out/relocated.jar"
     rm -f "$rules"
 
@@ -152,10 +183,39 @@ patch_hazelcast_jar() {
     write_pom_properties "$PWD" tools.jackson.core jackson-databind 3.1.7
 }
 
+patch_hadoop_shaded_guava_jar() {
+    strip_module_descriptors
+    merge_jarjar_shaded_tree "$GUAVA_3372" org/apache/hadoop/thirdparty/com/google/common \
+        'rule com.google.common.** org.apache.hadoop.thirdparty.com.google.common.@1'
+    merge_jarjar_shaded_tree "$FAILUREACCESS_103" \
+        org/apache/hadoop/thirdparty/com/google/common/util/concurrent/internal \
+        'rule com.google.common.util.concurrent.internal.** org.apache.hadoop.thirdparty.com.google.common.util.concurrent.internal.@1'
+    write_pom_properties "$PWD" com.google.guava guava 33.7.2-jre
+    write_pom_properties "$PWD" com.google.guava failureaccess 1.0.3
+    strip_module_descriptors
+
+    javap -verbose org/apache/hadoop/thirdparty/com/google/common/base/Preconditions.class \
+        | grep -q 'this_class:.*org/apache/hadoop/thirdparty/com/google/common/base/Preconditions'
+}
+
+patch_graphql_java_jar() {
+    strip_module_descriptors
+    merge_jarjar_shaded_tree "$GUAVA_3372" graphql/com/google/common \
+        'rule com.google.common.** graphql.com.google.common.@1'
+    write_pom_properties "$PWD" com.google.guava guava 33.7.2-jre
+    strip_module_descriptors
+
+    javap -verbose graphql/com/google/common/base/Preconditions.class \
+        | grep -q 'this_class:.*graphql/com/google/common/base/Preconditions'
+}
+
 patch_parquet_jar() {
-    merge_jarjar_shaded_tree "$JACKSON_CORE_22" shaded/parquet/com/fasterxml/jackson/core
-    merge_jarjar_shaded_tree "$JACKSON_DATABIND_22" shaded/parquet/com/fasterxml/jackson/databind
-    merge_jarjar_shaded_tree "$JACKSON_ANNOTATIONS_22" shaded/parquet/com/fasterxml/jackson/annotation
+    merge_jarjar_shaded_tree "$JACKSON_CORE_22" shaded/parquet/com/fasterxml/jackson/core \
+        'rule com.fasterxml.jackson.** shaded.parquet.com.fasterxml.jackson.@1'
+    merge_jarjar_shaded_tree "$JACKSON_DATABIND_22" shaded/parquet/com/fasterxml/jackson/databind \
+        'rule com.fasterxml.jackson.** shaded.parquet.com.fasterxml.jackson.@1'
+    merge_jarjar_shaded_tree "$JACKSON_ANNOTATIONS_22" shaded/parquet/com/fasterxml/jackson/annotation \
+        'rule com.fasterxml.jackson.** shaded.parquet.com.fasterxml.jackson.@1'
     write_pom_properties "$PWD" com.fasterxml.jackson.core jackson-core 2.22.3
     write_pom_properties "$PWD" com.fasterxml.jackson.core jackson-databind 2.22.3
 
@@ -196,6 +256,34 @@ if [ -n "$PARQUET_JAR" ]; then
     rm -rf "$VERIFY_PARQUET"
     (cd "$WAR_WORK" && jar uf "$WAR_PATH" "$PARQUET_REL")
     jar tf "$WAR_PATH" | grep -q 'BOOT-INF/lib/parquet-jackson-'
+fi
+
+GQL_JAR="$(find "$WAR_WORK/BOOT-INF/lib" -maxdepth 1 -type f -name 'graphql-java-*.jar' | sort | head -1 || true)"
+if [ -n "$GQL_JAR" ]; then
+    GQL_REL="${GQL_JAR#"$WAR_WORK/"}"
+    repack_nested_lib "$GQL_REL" patch_graphql_java_jar
+    VERIFY_GQL="$(mktemp -d)"
+    (
+        cd "$VERIFY_GQL"
+        jar xf "$WAR_WORK/$GQL_REL" META-INF/maven/com.google.guava/guava/pom.properties
+        grep -q 'version=33.7.2-jre' META-INF/maven/com.google.guava/guava/pom.properties
+    )
+    rm -rf "$VERIFY_GQL"
+    jar tf "$WAR_PATH" | grep -q 'BOOT-INF/lib/graphql-java-'
+fi
+
+HSG_JAR="$(find "$WAR_WORK/BOOT-INF/lib" -maxdepth 1 -type f -name 'hadoop-shaded-guava-*.jar' | sort | head -1 || true)"
+if [ -n "$HSG_JAR" ]; then
+    HSG_REL="${HSG_JAR#"$WAR_WORK/"}"
+    repack_nested_lib "$HSG_REL" patch_hadoop_shaded_guava_jar
+    VERIFY_HSG="$(mktemp -d)"
+    (
+        cd "$VERIFY_HSG"
+        jar xf "$WAR_WORK/$HSG_REL" META-INF/maven/com.google.guava/guava/pom.properties
+        grep -q 'version=33.7.2-jre' META-INF/maven/com.google.guava/guava/pom.properties
+    )
+    rm -rf "$VERIFY_HSG"
+    jar tf "$WAR_PATH" | grep -q 'BOOT-INF/lib/hadoop-shaded-guava-'
 fi
 
 OLD_BCPROV="$(find "$WAR_WORK/BOOT-INF/lib" -maxdepth 1 -type f -name 'bcprov-jdk18on-*.jar' 2>/dev/null | head -1 || true)"
