@@ -68,18 +68,22 @@ node -e '
   const wsFile = "pnpm-workspace.yaml";
   let ws = fs.readFileSync(wsFile, "utf8");
   const overrides = {
-    "fast-uri@3": "3.1.8", // CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172, GHSA-qw65-cvwx-89v3, GHSA-58mr-gqgx-xq4g, GHSA-hrr3-gc8f-f4qj
+    "fast-uri@3": "3.1.9", // CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172, GHSA-qw65-cvwx-89v3, GHSA-58mr-gqgx-xq4g, GHSA-hrr3-gc8f-f4qj, CVE-2026-110095, CVE-2026-110180, CVE-2026-110306, CVE-2026-110725
     "axios": "1.20.0", // CVE-2026-101898, CVE-2026-101899, CVE-2026-101900, CVE-2026-101901, CVE-2026-101902, CVE-2026-101903, CVE-2026-101904, CVE-2026-101905, CVE-2026-101906, CVE-2026-101907, CVE-2026-101908, CVE-2026-101909
     "basic-ftp": "6.2.1", // CVE-2026-102990
     "axios-cache-interceptor": "1.12.3", // typed against axios 1.19+, needed to compile update-check with axios 1.20
     "@types/node": "26.2.0", // pnpm deploy requires one peer graph; match the upstream catalog version
     "brace-expansion@5": "5.0.12", // CVE-2026-102276, CVE-2026-102277, CVE-2026-102278
-    "ip-address@10": "10.7.1", // CVE-2026-101911, CVE-2026-101912
+    "ip-address@10": "10.7.4", // CVE-2026-101911, CVE-2026-101912, CVE-2026-111997
     "@simple-git/argv-parser": "2.0.1", // CVE-2026-102829
     "proxy-addr": "2.0.8", // CVE-2026-90711
     "sharp": "0.35.5", // GHSA-wq5f-xc86-pv6w
     "simple-git": "4.0.1", // CVE-2026-102828, CVE-2026-102826, CVE-2026-102827
     "source-map-js": "1.2.2", // CVE-2026-93749
+    "@hono/node-server@1": "2.1.5", // CVE-2026-118663
+    "follow-redirects": "1.16.2", // CVE-2026-116689
+    "joi": "18.3.1", // CVE-2026-118772
+    "minimatch": "11.0.1", // CVE-2026-118764
   };
   const directusVersion = JSON.parse(fs.readFileSync("directus/package.json", "utf8")).version;
   if (typeof directusVersion !== "string" || directusVersion.length === 0) {
@@ -96,6 +100,14 @@ node -e '
   const overrideAnchor = "\noverrides:\n";
   if (!ws.includes(overrideAnchor)) throw new Error("pnpm-workspace.yaml has no overrides map");
   ws = ws.replace(overrideAnchor, overrideAnchor + overrideLines + "\n");
+  for (const [from, to, current, why] of [
+    ["qs: 6.16.0", "qs: 6.16.1", "qs: 6.16.0", "CVE-2026-110816"],
+  ]) {
+    const line = "\n  " + from + "\n";
+    const currentLine = "\n  " + current + "\n";
+    if (ws.includes(line)) ws = ws.replace(line, "\n  " + to + "\n");
+    else if (!ws.includes(currentLine)) throw new Error("catalog entry " + from + " or " + current + " not found, re-check the " + why + " pin");
+  }
   const shellEmulator = "\nshellEmulator: true\n";
   if (!ws.includes(shellEmulator)) throw new Error("pnpm-workspace.yaml no longer enables shellEmulator");
   ws = ws.replace(shellEmulator, "\nshellEmulator: false\n");
