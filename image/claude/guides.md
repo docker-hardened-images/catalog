@@ -17,7 +17,8 @@ sandbox CLI rather than with a bare `docker run`.
 ### What's included in this image
 
 - Claude Code CLI at the configured version
-- Shared sandbox tooling (git, gh, uv, language toolchains) and Docker-in-Docker
+- Shared sandbox tooling (git, gh, Python with pip and uv) and Docker-in-Docker; install other toolchains with
+  `sudo apt-get install`
 - Nonroot `agent` user; Entrypoint `tini -s -- claude`, Cmd `--dangerously-skip-permissions` (kit tails replace Cmd)
 
 ### Run with Docker Sandboxes

@@ -13,6 +13,8 @@ platforms:
   - linux/arm64
 vars:
   CENTERED_KIT_NAME: '          claude docker 2.1.317'
+  CLIPBOARD_BRIDGE_ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  CLIPBOARD_BRIDGE_VERSION: v0.3.1
   DHI_TAGS_OVERWRITE: "true"
   KIT_NAME: claude
   SANDBOXES_COMMIT_SHA: 54a695035350bab5f126a88c892a9bc3b5ae162a
@@ -34,7 +36,6 @@ contents:
     - apt
     - base-files
     - bash
-    - bc
     - bind9-dnsutils
     - bubblewrap
     - ca-certificates
@@ -42,7 +43,6 @@ contents:
     - coreutils
     - curl
     - dash
-    - default-jdk-headless
     - diffutils
     - docker-buildx-plugin
     - docker-ce
@@ -54,8 +54,6 @@ contents:
     - git
     - gnu-which
     - gnupg
-    - golang-1.26
-    - golang-1.26-oci-config
     - grep
     - gzip
     - htop
@@ -71,16 +69,12 @@ contents:
     - locales
     - lsof
     - make
-    - man-db
     - mawk
     - nano
     - ncurses-base
     - ncurses-bin
     - net-tools
     - netcat-openbsd
-    - node-corepack
-    - nodejs-24
-    - npm
     - openssh-client
     - perl-base
     - procps
@@ -102,7 +96,13 @@ contents:
     - vim-common
     - vim-runtime
     - wget
-    - yarn-classic
+  files:
+    - url: https://github.com/docker/clipboardbridge/releases/download/v0.3.1/clipboard-bridge-linux-${CLIPBOARD_BRIDGE_ARCH}
+      checksum: https://github.com/docker/clipboardbridge/releases/download/v0.3.1/SHA256SUMS
+      path: /usr/local/bin/clipboard-bridge
+      uid: 0
+      gid: 0
+      mode: "0755"
   builds:
     - name: install-claude-code
       contents:
@@ -137,65 +137,6 @@ contents:
           uid: 0
           gid: 0
           diff: true
-    - name: install-claude-sessions
-      contents:
-        packages:
-          - bash
-          - ca-certificates
-          - coreutils
-          - nodejs-24
-          - npm
-      pipeline:
-        - name: install
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            claude_version="2.1.317"
-            npm install --omit=optional --no-fund --no-audit --cache /tmp/npm-cache \
-              --prefix /opt/claude-sessions \
-              "@anthropic-ai/claude-agent-sdk@0.3.${claude_version##*.}"
-      paths:
-        - type: file
-          path: /opt/claude-sessions/interactive-sessions.mjs
-          content: |
-            #!/usr/bin/env node
-            // Enumerate interactive Claude Code sessions for agent-sessions@1 list.
-            // Background agents (claude agents --json --all) are excluded; those are
-            // a different control surface. Optional argv[2] is an absolute cwd filter
-            // (exact match), matching ACP's cwd filter.
-            import { execFileSync } from "node:child_process";
-            import { listSessions } from "@anthropic-ai/claude-agent-sdk";
-
-            const cwdFilter = process.argv[2];
-
-            const rows = JSON.parse(
-              execFileSync("claude", ["agents", "--json", "--all"], {
-                encoding: "utf8",
-                maxBuffer: 64 * 1024 * 1024,
-              })
-            );
-            const background = new Set(
-              rows.filter((r) => r.kind === "background" && r.sessionId).map((r) => r.sessionId)
-            );
-
-            // Sort explicitly: the v1 contract orders IDs by most recent session,
-            // regardless of the SDK's traversal order. A missing cwd still has a
-            // resumable ID; it matters only when the caller requests a cwd filter.
-            const sessions = (await listSessions())
-              .filter((s) => s.sessionId && !background.has(s.sessionId))
-              .filter((s) => !cwdFilter || s.cwd === cwdFilter)
-              .sort((a, b) => b.lastModified - a.lastModified);
-
-            for (const s of sessions) process.stdout.write(`${s.sessionId}\n`);
-          uid: 0
-          gid: 0
-          mode: "0755"
-      outputs:
-        - source: /opt/claude-sessions
-          target: /opt/claude-sessions
-          uid: 0
-          gid: 0
     - name: filesystem
       contents:
         packages:
@@ -469,50 +410,6 @@ contents:
           gid: 0
         - source: /etc/bash.bashrc
           target: /etc/bash.bashrc
-          uid: 0
-          gid: 0
-    - name: build-clipboard-bridge
-      work-dir: /go/src/github.com/docker/sandboxes
-      environment:
-        GOPATH: /go
-        GOTOOLCHAIN: local
-      contents:
-        packages:
-          - golang-1.26
-          - ca-certificates
-          - git
-          - bash
-          - coreutils
-        files:
-          - url: git+https://github.com/docker/sandboxes.git#54a695035350bab5f126a88c892a9bc3b5ae162a
-            checksum: 54a695035350bab5f126a88c892a9bc3b5ae162a
-            path: /go/src/github.com/docker/sandboxes
-            spdx:
-              name: clipboard-bridge
-              version: 54a695035350bab5f126a88c892a9bc3b5ae162a
-              packages:
-                - name: clipboard-bridge
-                  purl: pkg:golang/github.com/docker/sandboxes@54a695035350bab5f126a88c892a9bc3b5ae162a
-                  license: LicenseRef-Proprietary
-                - name: golang.org/x/sys
-                  purl: pkg:golang/golang.org/x/sys@v0.46.0
-                  license: BSD-3-Clause
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: build
-          uses: go/build@v1
-          with:
-            output: ${target.dir}/usr/local/bin/clipboard-bridge
-            packages: ./sandboxlib/agent/clipboardbridge/cmd/clipboard-bridge
-      outputs:
-        - source: ${target.dir}/usr/local/bin/clipboard-bridge
-          target: /usr/local/bin/clipboard-bridge
-          uid: 0
-          gid: 0
-          mode: "0755"
-        - source: /opt/docker/sbom/clipboard-bridge
-          target: /opt/docker/sbom/clipboard-bridge
           uid: 0
           gid: 0
     - name: filesystem
@@ -879,6 +776,308 @@ paths:
       echo ""
       mkdir -p "$(dirname "$_dhi_marker")" 2>/dev/null || true
       : > "$_dhi_marker" 2>/dev/null || true
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /opt/claude-sessions
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: file
+    path: /opt/claude-sessions/interactive-sessions.py
+    content: |
+      #!/usr/bin/env python3
+      # Enumerate interactive Claude Code sessions for agent-sessions@1 list.
+      # Background agents (claude agents --json --all) are excluded; those are
+      # a different control surface. Optional argv[1] is an absolute cwd filter
+      # (exact match), matching ACP's cwd filter.
+      #
+      # Mirrors the Agent SDK's listSessions() over every project: same files,
+      # same head/tail reads, same skip rules, same order.
+      import json
+      import math
+      import os
+      import re
+      import stat
+      import subprocess
+      import sys
+      import unicodedata
+
+      BUF = 65536
+      UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+      COMMAND = re.compile(r"<command-name>(.*?)</command-name>")
+      BASH_INPUT = re.compile(r"<bash-input>[\s\S]*?</bash-input>")
+      SKIP = re.compile(r"^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])")
+      CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+      PARENT = b'"parentUuid":'
+
+
+      def lines(text):
+          return text.split("\n")
+
+
+      def parse(line):
+          try:
+              return json.loads(line)
+          except ValueError:
+              return None
+
+
+      def string_value(text, start):
+          j = start
+          while j < len(text):
+              if text[j] == "\\":
+                  j += 2
+              elif text[j] == '"':
+                  raw = text[start:j]
+                  return ((parse(f'"{raw}"') if "\\" in raw else raw) or raw), j
+              else:
+                  j += 1
+          return None, j
+
+
+      # First (or last) "key":"value" in a possibly truncated JSONL chunk,
+      # without parsing whole lines.
+      def string_field(text, key, last=False):
+          found, at = None, -1
+          for pattern in (f'"{key}":"', f'"{key}": "'):
+              i = text.find(pattern)
+              while i >= 0:
+                  value, end = string_value(text, i + len(pattern))
+                  if value is not None and not last:
+                      return value
+                  if value is not None and i > at:
+                      found, at = value, i
+                  i = text.find(pattern, end + 1) if last else -1
+          return found
+
+
+      def typed_field(tail, kind, key):
+          for line in reversed(lines(tail)):
+              if f'"{key}":' in line and f'"type":"{kind}"' in line:
+                  entry = parse(line)
+                  if isinstance(entry, dict) and entry.get("type") == kind and isinstance(entry.get(key), str):
+                      return entry[key]
+          return None
+
+
+      def first_prompt(entry, state):
+          if not isinstance(entry, dict) or entry.get("type") != "user":
+              return None
+          if entry.get("isMeta") is True or entry.get("isCompactSummary") is True:
+              return None
+          message = entry.get("message")
+          if not message:
+              return None
+          content = message.get("content") if isinstance(message, dict) else None
+          texts = []
+          if isinstance(content, str):
+              texts.append(content)
+          elif isinstance(content, list):
+              for block in content:
+                  if not isinstance(block, dict):
+                      continue
+                  if block.get("type") == "tool_result":
+                      return None
+                  if block.get("type") == "text" and isinstance(block.get("text"), str):
+                      texts.append(block["text"])
+          for text in texts:
+              text = text.replace("\n", " ").strip()
+              if not text:
+                  continue
+              command = COMMAND.search(text)
+              if command:
+                  if not state.get("command"):
+                      state["command"] = command.group(1)
+                  continue
+              if BASH_INPUT.search(text) or not SKIP.match(text):
+                  return text
+          return None
+
+
+      def head_prompt(head):
+          state = {}
+          for line in lines(head):
+              if '"type":"user"' not in line and '"type": "user"' not in line:
+                  continue
+              if '"tool_result"' in line or re.search(r'"(isMeta|isCompactSummary)": ?true', line):
+                  continue
+              prompt = first_prompt(parse(line), state)
+              if prompt:
+                  return prompt
+          return state.get("command", "")
+
+
+      def head_attachment(head):
+          for line in lines(head):
+              if '"type":"user"' not in line and '"type": "user"' not in line:
+                  continue
+              if '"tool_result"' in line or re.search(r'"isMeta": ?true', line):
+                  continue
+              if re.search(r'"type": ?"image"', line):
+                  return "Image"
+              if re.search(r'"type": ?"document"', line):
+                  return "Document"
+          return ""
+
+
+      def read_lite(path):
+          try:
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+          except OSError:
+              return None
+          with os.fdopen(fd, "rb") as f:
+              st = os.fstat(f.fileno())
+              if not stat.S_ISREG(st.st_mode):
+                  return None
+              head = f.read(BUF)
+              if not head:
+                  return None
+              tail = head
+              if st.st_size > BUF:
+                  f.seek(st.st_size - BUF)
+                  tail = f.read(BUF)
+              return st, head, tail
+
+
+      def has_messages(path):
+          lite = read_lite(path)
+          if lite is None:
+              return False
+          st, head, tail = lite
+          if PARENT in head or PARENT in tail:
+              return True
+          if st.st_size <= BUF:
+              return False
+          with open(path, "rb") as f:
+              carry = b""
+              for _ in range(16):
+                  chunk = f.read(1 << 20)
+                  if not chunk:
+                      return False
+                  if PARENT in carry + chunk:
+                      return True
+                  carry = chunk[-len(PARENT):]
+          return True
+
+
+      def continued_in(tail):
+          if '"type":"continued-in"' not in tail:
+              return None
+          for line in reversed(lines(tail)):
+              marker = '"type":"continued-in"' in line
+              if not marker and '"type":"user"' not in line and '"type":"assistant"' not in line:
+                  continue
+              entry = parse(line)
+              if not isinstance(entry, dict):
+                  continue
+              if marker and entry.get("type") == "continued-in" and isinstance(entry.get("continuedInSessionId"), str):
+                  target = entry["continuedInSessionId"]
+                  return target if UUID.match(target) else None
+              if entry.get("type") == "assistant":
+                  message = entry.get("message")
+                  stop = message.get("stop_reason") if isinstance(message, dict) else None
+                  if entry.get("isApiErrorMessage") in (None, False) and isinstance(stop, str):
+                      return None
+              elif first_prompt(entry, {}) is not None:
+                  return None
+          return None
+
+
+      def sidecar_title(project, session_id):
+          try:
+              with open(os.path.join(project, session_id, "custom-title.json"), encoding="utf-8") as f:
+                  title = json.load(f).get("customTitle")
+          except (OSError, ValueError, AttributeError):
+              return None
+          if not isinstance(title, str):
+              return None
+          title = "".join(" " if unicodedata.category(c) in ("Cc", "Cf") or c in "\u2028\u2029" else c for c in title.strip())
+          return CONTROL.sub("", title).strip() or None
+
+
+      def session(project, name):
+          session_id = name[: -len(".jsonl")]
+          path = os.path.join(project, name)
+          lite = read_lite(path)
+          if lite is None:
+              return None
+          st, head_bytes, tail_bytes = lite
+          head = head_bytes.decode("utf-8", "replace")
+          tail = tail_bytes.decode("utf-8", "replace")
+
+          target = continued_in(tail)
+          if target and has_messages(os.path.join(project, f"{target}.jsonl")):
+              return None
+          if re.search(r'"isSidechain": ?true', lines(head)[0]):
+              return None
+
+          title = string_field(tail, "customTitle", last=True)
+          if title is None:
+              title = sidecar_title(project, session_id)
+          summary = (
+              title
+              or string_field(head, "customTitle", last=True)
+              or string_field(tail, "aiTitle", last=True)
+              or string_field(head, "aiTitle", last=True)
+              or string_field(tail, "lastPrompt", last=True)
+              or string_field(tail, "summary", last=True)
+              or head_prompt(head)
+              or head_attachment(head)
+          )
+          if not summary:
+              return None
+          cwd = typed_field(tail, "relocated", "relocatedCwd") or string_field(head, "cwd")
+          return session_id, mtime_ms(st), cwd
+
+
+      # The SDK's lastModified is Node's Stats.mtime: the double
+      # sec * 1e3 + nsec / 1e6, rounded. Truncating reorders near-ties.
+      def mtime_ms(st):
+          sec, nsec = divmod(st.st_mtime_ns, 1_000_000_000)
+          return math.floor(sec * 1e3 + nsec / 1e6 + 0.5)
+
+
+      def projects_dir():
+          config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+          return os.path.join(unicodedata.normalize("NFC", config), "projects")
+
+
+      def list_sessions():
+          try:
+              projects = [e.path for e in os.scandir(projects_dir()) if e.is_dir(follow_symlinks=False)]
+          except OSError:
+              return []
+
+          newest = {}
+          for project in projects:
+              try:
+                  names = [n for n in os.listdir(project) if n.endswith(".jsonl") and UUID.match(n[: -len(".jsonl")])]
+              except OSError:
+                  continue
+              for name in names:
+                  found = session(project, name)
+                  if found and (found[0] not in newest or found[1] > newest[found[0]][1]):
+                      newest[found[0]] = found
+          return sorted(newest.values(), key=lambda s: (s[1], s[0]), reverse=True)
+
+
+      def main():
+          cwd_filter = sys.argv[1] if len(sys.argv) > 1 else None
+          agents = subprocess.run(["claude", "agents", "--json", "--all"], check=True, stdout=subprocess.PIPE, text=True)
+          rows = json.loads(agents.stdout)
+          background = {r["sessionId"] for r in rows if r.get("kind") == "background" and r.get("sessionId")}
+
+          # A missing cwd still has a resumable ID; it matters only when the
+          # caller requests a cwd filter.
+          for session_id, _, cwd in list_sessions():
+              if session_id not in background and (not cwd_filter or cwd == cwd_filter):
+                  sys.stdout.write(f"{session_id}\n")
+
+
+      if __name__ == "__main__":
+          main()
     uid: 0
     gid: 0
     mode: "0755"
