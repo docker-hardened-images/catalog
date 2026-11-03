@@ -74,8 +74,8 @@ node -e '
     "elliptic": "6.6.1",
     // CVE-2023-46234
     "browserify-sign": "4.2.6",
-    // CVE-2023-26159, CVE-2024-28849
-    "follow-redirects": "1.16.0",
+    // CVE-2023-26159, CVE-2024-28849, CVE-2026-111755, CVE-2026-111756
+    "follow-redirects": "1.16.1",
     // CVE-2022-23539, CVE-2022-23540, CVE-2022-23541 (jsonwebtoken 9 via universal-github-app-jwt)
     "universal-github-app-jwt": "1.2.0",
     "jsonwebtoken": "9.0.3",
@@ -125,7 +125,7 @@ for bad in bn.js@4.12.0 debug@4.2.0; do
   test -z "$(find . -path "*/node_modules/${n}/package.json" -exec node -p "require(process.argv[1]).version" {} \; | grep -x "${v}")"
 done
 
-for pin in axios@0.34.0 express@4.22.2 body-parser@1.20.8 path-to-regexp@0.1.13 qs@6.16.0 form-data@4.0.6 node-forge@1.4.0 lodash@4.18.1 fast-xml-parser@4.5.7 async@3.2.6 cipher-base@1.0.7 sha.js@2.4.12 pbkdf2@3.1.7 proxy-addr@2.0.8 elliptic@6.6.1 browserify-sign@4.2.6 follow-redirects@1.16.0 universal-github-app-jwt@1.2.0 jsonwebtoken@9.0.3 jws@4.0.1 @octokit/rest@20.1.2 @octokit/auth-app@6.1.4 @octokit/request@8.4.1 @octokit/plugin-paginate-rest@11.4.4-cjs.2 @tootallnate/once@2.0.1 decode-uri-component@0.5.0; do
+for pin in axios@0.34.0 express@4.22.2 body-parser@1.20.8 path-to-regexp@0.1.13 qs@6.16.0 form-data@4.0.6 node-forge@1.4.0 lodash@4.18.1 fast-xml-parser@4.5.7 async@3.2.6 cipher-base@1.0.7 sha.js@2.4.12 pbkdf2@3.1.7 proxy-addr@2.0.8 elliptic@6.6.1 browserify-sign@4.2.6 follow-redirects@1.16.1 universal-github-app-jwt@1.2.0 jsonwebtoken@9.0.3 jws@4.0.1 @octokit/rest@20.1.2 @octokit/auth-app@6.1.4 @octokit/request@8.4.1 @octokit/plugin-paginate-rest@11.4.4-cjs.2 @tootallnate/once@2.0.1 decode-uri-component@0.5.0; do
   name="${pin%@*}"
   want="${pin##*@}"
   found="$(find . -path "*/node_modules/${name}/package.json" -exec node -p "require(process.argv[1]).version" {} \; | sort -u | tr '\n' ' ')"
