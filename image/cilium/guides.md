@@ -51,7 +51,7 @@ Docker Hardened Images come in different variants depending on their intended us
 - Runtime variants are designed to run your application in production. These images are intended to be used either
   directly or as the `FROM` image in the final stage of a multi-stage build. These images typically:
 
-  - Run as the nonroot user
+  - Run as the root user
   - Do not include a shell or a package manager
   - Contain only the minimal set of libraries needed to run the app
 
