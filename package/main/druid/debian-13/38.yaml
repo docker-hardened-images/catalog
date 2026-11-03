@@ -4,9 +4,9 @@ image: dhi.io/pkg-druid
 variant: runtime
 tags:
   - 38.0.0
-  - 38.0.0-r8
+  - 38.0.0-r9
   - 38.0.0-debian13
-  - 38.0.0-r8-debian13
+  - 38.0.0-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -25,7 +25,7 @@ vars:
   NODEJS_VERSION: 24.22.2-0
   PACKAGE_HOME: /usr/share/druid
   PACKAGE_NAME: druid-38
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "38.0"
   SEMVER_MAJOR_VERSION: "38"
   SEMVER_VERSION: 38.0.0
@@ -242,6 +242,70 @@ contents:
               -o -name 'derbytools-*.jar' \
               -o -name 'log4j-1.2.17.jar' \
               \) -delete
+
+            home="${target.dir}/usr/share/druid"
+            fixed_jar=snappy-java-1.1.10.9.jar
+            snappy=$(find "$home" -name 'snappy-java-*.jar' -print | sort)
+            printf '%s\n' "snappy-java jars before cleanup:" "$snappy"
+            fixed_src=$(find "$home" -name "$fixed_jar" -print -quit)
+            if [ -z "$fixed_src" ]; then
+              echo "snappy-java 1.1.10.9 was not packaged" >&2
+              exit 1
+            fi
+            if [ -d "$home/hadoop-dependencies" ]; then
+              find "$home/hadoop-dependencies" -name 'snappy-java-*.jar' -print > /tmp/snappy-hadoop.list
+              while IFS= read -r jar; do
+                [ -n "$jar" ] || continue
+                dir=$(dirname "$jar")
+                if [ ! -f "$dir/$fixed_jar" ]; then
+                  install -m 0644 "$fixed_src" "$dir/$fixed_jar"
+                fi
+              done < /tmp/snappy-hadoop.list
+              rm -f /tmp/snappy-hadoop.list
+            fi
+            find "$home" -name 'snappy-java-*.jar' ! -name "$fixed_jar" -delete
+            fixed=$(find "$home" -name "$fixed_jar" -print)
+            if [ -z "$fixed" ]; then
+              echo "snappy-java 1.1.10.9 was not packaged" >&2
+              exit 1
+            fi
+            stale=$(find "$home" -name 'snappy-java-*.jar' ! -name "$fixed_jar" -print)
+            if [ -n "$stale" ]; then
+              echo "superseded snappy-java jars remain:" >&2
+              printf '%s\n' "$stale" >&2
+              exit 1
+            fi
+            if [ -d "$home/hadoop-dependencies/hadoop-client-api" ] || [ -d "$home/hadoop-dependencies/hadoop-client-runtime" ]; then
+              missing=0
+              for coord in hadoop-client-api hadoop-client-runtime; do
+                coord_dir="$home/hadoop-dependencies/$coord"
+                if [ ! -d "$coord_dir" ]; then
+                  echo "missing isolated classpath $coord_dir" >&2
+                  missing=1
+                  continue
+                fi
+                found=0
+                for dir in "$coord_dir"/*; do
+                  if [ ! -d "$dir" ]; then
+                    continue
+                  fi
+                  found=1
+                  if [ ! -f "$dir/$fixed_jar" ]; then
+                    echo "isolated classpath $dir is missing $fixed_jar" >&2
+                    missing=1
+                  fi
+                done
+                if [ "$found" -eq 0 ]; then
+                  echo "isolated classpath $coord_dir has no version directory" >&2
+                  missing=1
+                fi
+              done
+              if [ "$missing" -ne 0 ]; then
+                exit 1
+              fi
+            fi
+            printf '%s\n' "snappy-java jars after cleanup:"
+            find "$home" -name 'snappy-java-*.jar' -print | sort
         - name: replace calcite-core for CVE-2026-46718
           privileged: true
           runs: |
@@ -277,7 +341,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-38
-            rel: 8
+            rel: 9
             url: https://druid.apache.org/
             version: 38.0.0
         - name: fipsify
@@ -311,7 +375,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-38-fips
-            rel: 8
+            rel: 9
             url: https://druid.apache.org/
             version: 38.0.0
       paths:
