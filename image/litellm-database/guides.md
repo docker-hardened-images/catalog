@@ -5,7 +5,7 @@ your Docker Hub namespace), update your commands to reference the mirrored image
 
 For example:
 
-- Public image: `dhi.io/litellm-database:1.96.2`
+- Public image: `dhi.io/litellm-database:1.105.7-debian13`
 - Mirrored image: `<your-namespace>/dhi-<repository>:<tag>`
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
@@ -37,7 +37,7 @@ docker run --rm -p 4000:4000 \
   -e DATABASE_URL="postgresql://litellm:password@postgres.example.com:5432/litellm" \
   -e LITELLM_MASTER_KEY="sk-master-key" \
   -e OPENAI_API_KEY="sk-openai-key" \
-  dhi.io/litellm-database:1.96.2-debian13 --config /app/config.yaml
+  dhi.io/litellm-database:1.105.7-debian13 --config /app/config.yaml
 ```
 
 Send an OpenAI-compatible request through the gateway:
@@ -68,11 +68,6 @@ Important environment variables for the examples above:
 
 Refer to the upstream LiteLLM documentation for advanced provider configuration, database migrations, virtual keys, and
 enterprise settings.
-
-## Alpine variant
-
-The Alpine variant omits the optional `pyroscope-io` proxy telemetry dependency because upstream does not publish a
-compatible musl wheel. Use the Debian variant if you require Pyroscope proxy telemetry.
 
 ## Non-hardened images vs. Docker Hardened Images
 
