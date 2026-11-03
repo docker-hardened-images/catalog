@@ -27,7 +27,7 @@ This Docker Hardened wbitt-network-multitool image includes:
 - **ip** - iproute2 utilities for interface and route management
 - **jq** - JSON processor for API responses
 
-The `-extra` variant includes additional tools for advanced networking, database connectivity, and security testing:
+The `-compat` flavor includes additional tools for advanced networking, database connectivity, and security testing:
 
 - **apache2-utils** - Apache HTTP server benchmarking tools (ab, htpasswd)
 - **ethtool** - Ethernet device configuration and diagnostics
@@ -65,7 +65,16 @@ To get an interactive shell and use the networking tools:
 $ docker run --rm -it dhi.io/wbitt-network-multitool:<tag>-dev /bin/sh
 ```
 
-Note: Use the `-dev` variant for interactive shell access, as runtime variants don't include a shell.
+This image includes a shell in runtime variants because its entrypoint and networking tools require one. Dev variants
+also include a package manager and run as root.
+
+### Debian 13 variants
+
+Use `3-debian13`, `3-debian13-dev`, `3-debian13-compat`, or `3-debian13-compat-dev` for Debian 13. For example:
+
+```bash
+docker run --rm dhi.io/wbitt-network-multitool:3-debian13-compat-dev mysql --version
+```
 
 ### With Docker Compose
 
@@ -179,12 +188,12 @@ $ docker run -d --name wbitt-network-multitool \
   dhi.io/wbitt-network-multitool:<tag>
 ```
 
-### Using the extra variant for advanced testing
+### Using the compatibility flavor for advanced testing
 
 For database connectivity testing, security scanning, or advanced networking:
 
 ```bash
-$ docker run --rm -it dhi.io/wbitt-network-multitool:<tag>-extra-dev /bin/sh
+$ docker run --rm -it dhi.io/wbitt-network-multitool:<tag>-compat-dev /bin/sh
 ```
 
 Inside the container, you can use tools like:

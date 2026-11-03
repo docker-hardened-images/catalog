@@ -1,12 +1,19 @@
-## About Network Multitool
+## About WBITT Network Multitool
 
 Network Multitool is a multi-architecture utility image for container and network testing and troubleshooting. This
-Docker Hardened Image is based on Alpine Linux and packages a broad set of networking tools together with a minimal
-nginx web server to make it easy to run tests, capture packets, and serve test content.
+Docker Hardened Image is available on Alpine Linux and Debian 13 and packages a broad set of networking tools together
+with a minimal nginx web server to make it easy to run tests, capture packets, and serve test content.
 
 The container includes tools for DNS inspection, HTTP testing, packet capture, route tracing, and basic system
 utilities. nginx runs by default on ports 80 and 443, allowing you to quickly validate HTTP/HTTPS behavior from other
 containers or hosts.
+
+## About Docker Hardened Images
+
+### Why use Docker Hardened Images?
+
+Docker Hardened Images provide a reduced attack surface, regular security updates, and secure defaults for production
+container workloads.
 
 ## Key Features
 
@@ -18,7 +25,7 @@ containers or hosts.
 
 ## Tools Included
 
-- **Package manager**: apk (dev variants only)
+- **Package manager**: apk or apt (dev variants only)
 - **Web server**: nginx (ports 80, 443)
 - **Text processing**: awk, cut, diff, find, grep, sed, vi, wc
 - **HTTP clients**: curl, wget
