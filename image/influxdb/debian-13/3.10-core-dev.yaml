@@ -196,6 +196,54 @@ contents:
             lock.write_text(c.replace(old, new, 1))
             print('patched: event-listener -> 5.4.2')
             EOF
+        - name: bump pulldown-cmark cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package pulldown-cmark --precise 0.13.6
+        - name: bump tokio cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package tokio --precise 1.53.3
+        - name: bump rustls and webpki cargo deps
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3 - << 'EOF'
+            import subprocess
+            import tomllib
+
+            def versions(name):
+                with open("Cargo.lock", "rb") as lock:
+                    packages = tomllib.load(lock)["package"]
+                return {package["version"] for package in packages if package["name"] == name}
+
+            def bump(name, old, new):
+                found = versions(name)
+                if old in found:
+                    subprocess.run(
+                        ["cargo", "update", "--package", f"{name}@{old}", "--precise", new],
+                        check=True,
+                    )
+                elif new in found:
+                    print(f"{name} already at {new}")
+                else:
+                    raise SystemExit(
+                        f"{name} expected {old} or {new}, found {sorted(found)}"
+                    )
+
+            bump("rustls", "0.23.45", "0.23.46")
+            bump("rustls-webpki", "0.103.15", "0.103.16")
+            bump("webpki-roots", "1.0.7", "1.0.10")
+            bump("webpki-root-certs", "1.0.7", "1.0.10")
+            EOF
         - name: cargo sbom
           uses: sbom@v1
           with:

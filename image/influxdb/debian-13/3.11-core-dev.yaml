@@ -6,23 +6,23 @@ variant: dev
 flavor: core
 tags:
   - 3.11-core-dev
-  - 3.11.7-core-dev
+  - 3.11.8-core-dev
   - 3.11-debian-core-dev
   - 3.11-debian13-core-dev
-  - 3.11.7-debian-core-dev
-  - 3.11.7-debian13-core-dev
+  - 3.11.8-debian-core-dev
+  - 3.11.8-debian13-core-dev
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-07-30"
 vars:
-  COMMIT_SHA: 64f96326881de4f662be7a11deb9c43d28801f30
+  COMMIT_SHA: 181fcd1451060db3b0b4d7162713ae41652e153e
   PYTHON_MAJOR_MINOR_VERSION: "3.13"
   SEMVER_MAJOR_MINOR_VERSION: "3.11"
   SEMVER_MAJOR_VERSION: "3"
-  SEMVER_VERSION: 3.11.7
-  VERSION: 3.11.7
+  SEMVER_VERSION: 3.11.8
+  VERSION: 3.11.8
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -86,15 +86,15 @@ contents:
           - python3-setuptools
           - python3-wheel
         files:
-          - url: git+https://github.com/influxdata/influxdb.git#v3.11.7
-            checksum: 64f96326881de4f662be7a11deb9c43d28801f30
+          - url: git+https://github.com/influxdata/influxdb.git#v3.11.8
+            checksum: 181fcd1451060db3b0b4d7162713ae41652e153e
             path: ${source.dir}/influxdb3
             spdx:
               name: influxdb3
-              version: 3.11.7
+              version: 3.11.8
               packages:
                 - name: influxdb3
-                  purl: pkg:cargo/influxdb3@3.11.7
+                  purl: pkg:cargo/influxdb3@3.11.8
                   license: MIT
             uid: 0
             gid: 0
@@ -151,10 +151,61 @@ contents:
                 'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
                 'checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"'
             )
-            if old not in c:
+            if old in c:
+                lock.write_text(c.replace(old, new, 1))
+                print('patched: event-listener -> 5.4.2')
+            elif new in c:
+                print('event-listener already at 5.4.2')
+            else:
                 raise SystemExit('event-listener lock block not found')
-            lock.write_text(c.replace(old, new, 1))
-            print('patched: event-listener -> 5.4.2')
+            EOF
+        - name: bump pulldown-cmark cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package pulldown-cmark --precise 0.13.6
+        - name: bump tokio cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package tokio --precise 1.53.3
+        - name: bump rustls and webpki cargo deps
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3 - << 'EOF'
+            import subprocess
+            import tomllib
+
+            def versions(name):
+                with open("Cargo.lock", "rb") as lock:
+                    packages = tomllib.load(lock)["package"]
+                return {package["version"] for package in packages if package["name"] == name}
+
+            def bump(name, old, new):
+                found = versions(name)
+                if old in found:
+                    subprocess.run(
+                        ["cargo", "update", "--package", f"{name}@{old}", "--precise", new],
+                        check=True,
+                    )
+                elif new in found:
+                    print(f"{name} already at {new}")
+                else:
+                    raise SystemExit(
+                        f"{name} expected {old} or {new}, found {sorted(found)}"
+                    )
+
+            bump("rustls", "0.23.45", "0.23.46")
+            bump("rustls-webpki", "0.103.15", "0.103.16")
+            bump("webpki-roots", "1.0.7", "1.0.10")
+            bump("webpki-root-certs", "1.0.7", "1.0.10")
             EOF
         - name: cargo sbom
           uses: sbom@v1

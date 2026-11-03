@@ -7,25 +7,25 @@ flavor: core
 tags:
   - 3-core
   - 3.12-core
-  - 3.12.1-core
+  - 3.12.2-core
   - 3-debian-core
   - 3-debian13-core
   - 3.12-debian-core
   - 3.12-debian13-core
-  - 3.12.1-debian-core
-  - 3.12.1-debian13-core
+  - 3.12.2-debian-core
+  - 3.12.2-debian13-core
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-10-15"
 vars:
-  COMMIT_SHA: 692ea4a9943fc343c5fdf830d7dff82eef1f7fca
+  COMMIT_SHA: cc9769917ab399ed5b48567a92b5d34ed4d918ea
   PYTHON_MAJOR_MINOR_VERSION: "3.13"
   SEMVER_MAJOR_MINOR_VERSION: "3.12"
   SEMVER_MAJOR_VERSION: "3"
-  SEMVER_VERSION: 3.12.1
-  VERSION: 3.12.1
+  SEMVER_VERSION: 3.12.2
+  VERSION: 3.12.2
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -73,15 +73,15 @@ contents:
           - python3-setuptools
           - python3-wheel
         files:
-          - url: git+https://github.com/influxdata/influxdb.git#v3.12.1
-            checksum: 692ea4a9943fc343c5fdf830d7dff82eef1f7fca
+          - url: git+https://github.com/influxdata/influxdb.git#v3.12.2
+            checksum: cc9769917ab399ed5b48567a92b5d34ed4d918ea
             path: ${source.dir}/influxdb3
             spdx:
               name: influxdb3
-              version: 3.12.1
+              version: 3.12.2
               packages:
                 - name: influxdb3
-                  purl: pkg:cargo/influxdb3@3.12.1
+                  purl: pkg:cargo/influxdb3@3.12.2
                   license: MIT
             uid: 0
             gid: 0
@@ -114,6 +114,15 @@ contents:
             else:
                 raise SystemExit('quinn-proto lock block not found')
             EOF
+        - name: bump wasmtime cargo deps
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package wasmtime --precise 48.0.8
+            cargo update --package wasmtime-wasi --precise 48.0.8
+            cargo update --package wasmtime-wasi-http --precise 48.0.8
         - name: bump event-listener cargo dep
           work-dir: ${source.dir}/influxdb3
           privileged: true
@@ -134,10 +143,61 @@ contents:
                 'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
                 'checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"'
             )
-            if old not in c:
+            if old in c:
+                lock.write_text(c.replace(old, new, 1))
+                print('patched: event-listener -> 5.4.2')
+            elif new in c:
+                print('event-listener already at 5.4.2')
+            else:
                 raise SystemExit('event-listener lock block not found')
-            lock.write_text(c.replace(old, new, 1))
-            print('patched: event-listener -> 5.4.2')
+            EOF
+        - name: bump pulldown-cmark cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package pulldown-cmark --precise 0.13.6
+        - name: bump tokio cargo dep
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo update --package tokio --precise 1.53.3
+        - name: bump rustls and webpki cargo deps
+          work-dir: ${source.dir}/influxdb3
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            python3 - << 'EOF'
+            import subprocess
+            import tomllib
+
+            def versions(name):
+                with open("Cargo.lock", "rb") as lock:
+                    packages = tomllib.load(lock)["package"]
+                return {package["version"] for package in packages if package["name"] == name}
+
+            def bump(name, old, new):
+                found = versions(name)
+                if old in found:
+                    subprocess.run(
+                        ["cargo", "update", "--package", f"{name}@{old}", "--precise", new],
+                        check=True,
+                    )
+                elif new in found:
+                    print(f"{name} already at {new}")
+                else:
+                    raise SystemExit(
+                        f"{name} expected {old} or {new}, found {sorted(found)}"
+                    )
+
+            bump("rustls", "0.23.45", "0.23.46")
+            bump("rustls-webpki", "0.103.15", "0.103.16")
+            bump("webpki-roots", "1.0.7", "1.0.10")
+            bump("webpki-root-certs", "1.0.7", "1.0.10")
             EOF
         - name: cargo sbom
           uses: sbom@v1
