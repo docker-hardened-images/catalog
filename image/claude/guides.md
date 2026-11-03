@@ -18,7 +18,7 @@ sandbox CLI rather than with a bare `docker run`.
 
 - Claude Code CLI at the configured version
 - Shared sandbox tooling (git, gh, uv, language toolchains) and Docker-in-Docker
-- Nonroot `agent` user and `tini` entrypoint
+- Nonroot `agent` user; Entrypoint `tini -s -- claude`, Cmd `--dangerously-skip-permissions` (kit tails replace Cmd)
 
 ### Run with Docker Sandboxes
 
