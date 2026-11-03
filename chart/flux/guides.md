@@ -2,7 +2,7 @@
 
 ### Prerequisites
 
-- Kubernetes 1.26+ (recommended 1.30+)
+- Kubernetes 1.35+
 - Helm 3.10+
 
 ### Installation steps
