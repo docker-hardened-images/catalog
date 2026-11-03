@@ -4,7 +4,7 @@
 # expanded inside this file):
 #   SOURCE_DIR  - work dir containing datahub-src/ monorepo checkout
 #   TARGET_DIR  - package root
-#   PYTHON_BIN  - interpreter path (e.g. /usr/bin/python3.10)
+#   PYTHON_BIN  - interpreter path (e.g. /usr/bin/python3.11)
 #   EXTRAS      - pip extras for acryl-datahub-actions (e.g. all)
 set -eux -o pipefail
 
@@ -23,9 +23,10 @@ mkdir -p "${TARGET_DIR}/usr/lib" "${TARGET_DIR}/usr/bin"
 # cryptography >= 50.0.0 (CVE-2026-69247, CVE-2026-69249, CVE-2026-69248),
 # msgpack >= 1.2.3 (CVE-2026-114613),
 # setuptools >= 84.1.0 (CVE-2026-59890, GHSA-xmj3-9gf7-h52w),
-# certifi >= 2026.10.19 (GHSA-6q48-6c7w-9gw2).
-# filelock 4.2.1 (CVE-2026-112940, CVE-2026-112907, CVE-2026-112913) requires
-# Python>=3.11; this leaf stays on 3.10 until the image line can move with it.
+# certifi >= 2026.10.19 (GHSA-6q48-6c7w-9gw2),
+# filelock >= 4.2.1 (CVE-2026-112940, CVE-2026-112907, CVE-2026-112913, CVE-2026-112908,
+# CVE-2026-112909, CVE-2026-112910, CVE-2026-112911, CVE-2026-112915, CVE-2026-112935,
+# CVE-2026-112938, CVE-2026-112939, CVE-2026-112912).
 # cryptography from sdist (--no-binary-package): the PyPI wheels bundle a
 # vulnerable OpenSSL (GHSA-537c-gmf6-5ccf, fixed only in 48.0.1 which is
 # outside datahub's <47 pin); building from source links the patched
@@ -37,6 +38,7 @@ cryptography>=50.0.0
 msgpack>=1.2.3
 setuptools>=84.1.0
 certifi>=2026.10.19
+filelock>=4.2.1
 EOF
 
 export UV_PYTHON_DOWNLOADS=never
