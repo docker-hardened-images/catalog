@@ -19,8 +19,7 @@ sandbox CLI rather than with a bare `docker run`.
 - Codex CLI and its release package layout under `/opt/codex`
 - Shared sandbox tooling (git, gh, Python with pip and uv) and Docker-in-Docker; install other toolchains with
   `sudo apt-get install`
-- Nonroot `agent` user; Entrypoint `tini -s -- codex`, Cmd `--dangerously-bypass-approvals-and-sandbox` (kit tails
-  replace Cmd)
+- Nonroot `agent` user; Entrypoint `codex`, Cmd `--dangerously-bypass-approvals-and-sandbox` (kit tails replace Cmd)
 
 ### Run with Docker Sandboxes
 
