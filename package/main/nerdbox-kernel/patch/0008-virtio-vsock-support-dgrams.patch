@@ -1,12 +1,13 @@
-DHI provenance header (not part of the upstream commit below).
+Subject: virtio/vsock: support datagrams for nerdbox guest kernels
 
-Purpose: guest-kernel vsock multi-transport datagram support needed by the
-  containerd nerdbox microVM guest kernel. Implements datagram send/receive in
-  the virtio-vsock transport. Rebased for 6.12.103 (virtio_transport_alloc_skb
-  ubuf_info param; see nerdbox-internal PR 324).
-Upstream series: https://lore.kernel.org/netdev/?q=vsock+dgram+multi-transport
-Vendored-from: https://github.com/docker/nerdbox-internal/blob/main/kernel/patches/6.12.103/0008-virtio-vsock-support-dgrams.patch
-Applied to Linux v6.12.103 with `patch -p1`.
+This unmerged series adds the datagram transport needed for Transparent Socket
+Impersonation in containerd nerdbox microVM guest kernels.
+
+Origin: other, https://lore.kernel.org/netdev/?q=vsock+dgram+multi-transport
+Base-Tree: git https://github.com/gregkh/linux.git 03bae623ec326c2738198739625832aab0eb120a
+Adaptation: Rebased onto Linux 6.12.115. Unconnected SOCK_DGRAM sockets keep the transport ownership check and skip vsock_check_source peer validation until connect() leaves SS_UNCONNECTED; virtio_dgram_recv_ok() is that gate and the package build asserts it.
+Verify: cmd `dhi def build --fast package/main/nerdbox-kernel/debian-13/6.12.yaml` expect "success"
+Drop-When: never: nerdbox guest networking requires this unmerged vsock datagram series
 
 From 8e01b14892ef313342b0e738b65f6486f07aab26 Mon Sep 17 00:00:00 2001
 From: Bobby Eshleman <bobby.eshleman () bytedance ! com>
@@ -359,7 +360,16 @@ diff --git a/net/vmw_vsock/virtio_transport_common.c b/net/vmw_vsock/virtio_tran
 index 96b6303b24c2..0cb9261e433d 100644
 --- a/net/vmw_vsock/virtio_transport_common.c
 +++ b/net/vmw_vsock/virtio_transport_common.c
-@@ -238,7 +267,9 @@ EXPORT_SYMBOL_GPL(virtio_transport_deliver_tap_pkt);
+@@ -16,6 +16,8 @@
+ #include <net/sock.h>
+ #include <net/af_vsock.h>
+ 
++#include "virtio_dgram_rx.h"
++
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/vsock_virtio_transport_common.h>
+ 
+@@ -238,7 +269,9 @@ EXPORT_SYMBOL_GPL(virtio_transport_deliver_tap_pkt);
 
  static u16 virtio_transport_get_type(struct sock *sk)
  {
@@ -567,23 +577,42 @@ index 96b6303b24c2..0cb9261e433d 100644
  		sock_put(sk);
  		goto free_pkt;
  	}
-@@ -1661,12 +1739,18 @@ void virtio_transport_recv_pkt(struct virtio_transport *t,
- 	 */
- 	if (sock_flag(sk, SOCK_DONE) ||
- 	    (sk->sk_state != TCP_LISTEN && vsk->transport != &t->transport)) {
--		(void)virtio_transport_reset_no_sock(t, skb);
-+		if (type != VIRTIO_VSOCK_TYPE_DGRAM)
-+			(void)virtio_transport_reset_no_sock(t, skb);
- 		release_sock(sk);
- 		sock_put(sk);
- 		goto free_pkt;
- 	}
-
+@@ -1850,12 +1897,38 @@ void virtio_transport_recv_pkt(struct virtio_transport *t,
 +	if (sk->sk_type == SOCK_DGRAM) {
++		int connected = sk->sk_socket &&
++				sk->sk_socket->state != SS_UNCONNECTED;
++		int peer_ok = 1;
++
++		/* vsock_check_source() matches the stored peer. Unconnected
++		 * datagram sockets keep remote_addr.svm_port at
++		 * VMADDR_PORT_ANY, so that comparison rejects every packet.
++		 * Keep the transport ownership check and apply peer validation
++		 * only after connect() leaves SS_UNCONNECTED.
++		 */
++		if (connected)
++			peer_ok = vsock_check_source(vsk, &t->transport, &src);
++
++		if (!virtio_dgram_recv_ok(sock_flag(sk, SOCK_DONE),
++					  vsk->transport == &t->transport,
++					  connected, peer_ok)) {
++			release_sock(sk);
++			sock_put(sk);
++			goto free_pkt;
++		}
++
 +		virtio_transport_recv_dgram(sk, skb);
 +		goto out;
 +	}
 +
+ 	if (sock_flag(sk, SOCK_DONE) ||
+ 	    (sk->sk_state != TCP_LISTEN &&
+ 	     !vsock_check_source(vsk, &t->transport, &src))) {
+ 		(void)virtio_transport_reset_no_sock(t, skb);
+ 		release_sock(sk);
+ 		sock_put(sk);
+ 		goto free_pkt;
+ 	}
+ 
  	space_available = virtio_transport_space_update(sk, skb);
 
  	/* Update CID in case it has changed after a transport reset event */
@@ -595,6 +624,86 @@ index 96b6303b24c2..0cb9261e433d 100644
  	release_sock(sk);
 
  	/* Release refcnt obtained when we fetched this socket out of the
+diff --git a/net/vmw_vsock/virtio_dgram_rx.h b/net/vmw_vsock/virtio_dgram_rx.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/net/vmw_vsock/virtio_dgram_rx.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _VIRTIO_DGRAM_RX_H
++#define _VIRTIO_DGRAM_RX_H
++
++/*
++ * Gate for virtio_transport_recv_pkt() datagram delivery.
++ *
++ * done: socket is SOCK_DONE.
++ * transport_ok: packet arrived on the socket's transport.
++ * connected: socket state is not SS_UNCONNECTED.
++ * peer_ok: vsock_check_source() accepted the packet source.
++ *
++ * Unconnected sockets store VMADDR_PORT_ANY as the peer port, so peer_ok
++ * is ignored until connect(). Transport ownership always applies.
++ * Returns 1 when the packet may be queued.
++ */
++static inline int virtio_dgram_recv_ok(int done, int transport_ok,
++				       int connected, int peer_ok)
++{
++	if (done || !transport_ok)
++		return 0;
++	if (!connected)
++		return 1;
++	return peer_ok ? 1 : 0;
++}
++
++#endif
+diff --git a/tools/testing/vsock/dgram_unconnected_recv_assert.c b/tools/testing/vsock/dgram_unconnected_recv_assert.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/testing/vsock/dgram_unconnected_recv_assert.c
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Focused regression for unconnected virtio/vsock datagram receive.
++ * virtio_dgram_recv_ok() is the gate virtio_transport_recv_pkt() calls.
++ */
++#include "virtio_dgram_rx.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++
++static void expect(int got, int want, const char *name)
++{
++	if (got == want)
++		return;
++	fprintf(stderr, "%s: got %d, want %d\n", name, got, want);
++	exit(1);
++}
++
++int main(void)
++{
++	/* Peer check would fail (VMADDR_PORT_ANY) but the socket is
++	 * unconnected and the transport matches, so the packet is queued.
++	 */
++	expect(virtio_dgram_recv_ok(0, 1, 0, 0), 1,
++	       "unconnected datagram on its transport");
++
++	/* Wrong transport is dropped even when unconnected. */
++	expect(virtio_dgram_recv_ok(0, 0, 0, 1), 0,
++	       "unconnected datagram on another transport");
++
++	/* Connected sockets still require the stored peer. */
++	expect(virtio_dgram_recv_ok(0, 1, 1, 0), 0,
++	       "connected datagram from a different peer");
++	expect(virtio_dgram_recv_ok(0, 1, 1, 1), 1,
++	       "connected datagram from the stored peer");
++
++	/* A finished socket does not accept another datagram. */
++	expect(virtio_dgram_recv_ok(1, 1, 0, 1), 0, "SOCK_DONE datagram");
++
++	return 0;
++}
 diff --git a/net/vmw_vsock/vsock_loopback.c b/net/vmw_vsock/vsock_loopback.c
 index 9e9e124f8d2b..b3066c854bb9 100644
 --- a/net/vmw_vsock/vsock_loopback.c
