@@ -1,13 +1,13 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Trino 483 (compat, dev)
+name: Trino 484 (compat, dev)
 image: dhi.io/trino
 variant: dev
 flavor: compat
 tags:
-  - 483-compat-dev
-  - 483-debian-compat-dev
-  - 483-debian13-compat-dev
+  - 484-compat-dev
+  - 484-debian-compat-dev
+  - 484-debian13-compat-dev
 platforms:
   - linux/amd64
   - linux/arm64
@@ -15,17 +15,16 @@ dates:
   release: "2025-10-29"
 vars:
   ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
-  COMMIT_SHA: 50b0b50b75abd47f830b7805ee1b51716eb4065e
-  GOLANG_REFERENCE: dhi/golang:1.27.2-debian13-dev@sha256:58f9e2927dd152c3759c9123c97f48d9376c5d1a704b7246b70a31f041c78515
+  COMMIT_SHA: e2d50bb733e193607c44be84ad80ce2430ba1d01
   JAVA_FIPS_SUFFIX: ""
   JAVA_VARIANT: jdk
   JDK_MAJOR_VERSION: "25"
   JVM_KILL_COMMIT: 8a6ae95b38905f98ce6b7b727efb2dc75da16e11
-  LAUNCHER_COMMIT_SHA: 55cda05870182df2be6b7bb081989bbb4253611a
-  LAUNCHER_VERSION: "321"
-  MAVEN_REFERENCE: dhi/maven:3.10.0-jdk25-debian13-dev@sha256:64dde725c464b2c31e4d9c15395d67f624b3b9b62f39095971ebc9a95bf4eed7
+  LAUNCHER_COMMIT_SHA: 8ba11944b3953246ce0060ce4efca9878fae5b84
+  LAUNCHER_VERSION: "322"
+  MAVEN_REFERENCE: dhi/maven:3.10.0-jdk25-debian13-dev@sha256:e0cb4930e49fb263e3be157fc291b0f8fb7ee34bdc821d441c126df59b4f01d4
   MAVEN_VERSION: 3.10.0
-  VERSION: "483"
+  VERSION: "484"
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -114,6 +113,7 @@ contents:
           - eclipse-temurin-25-jdk
           - findutils
           - git
+          - grep
           - libc6
           - libstdc++6
           - mawk
@@ -123,20 +123,40 @@ contents:
           - sed
           - yarn-classic
         files:
-          - url: git+https://github.com/trinodb/trino.git#483
-            checksum: 50b0b50b75abd47f830b7805ee1b51716eb4065e
+          - url: git+https://github.com/trinodb/trino.git#484
+            checksum: e2d50bb733e193607c44be84ad80ce2430ba1d01
             path: ${source.dir}/trino
             spdx:
               name: trino
-              version: "483"
+              version: "484"
               packages:
                 - name: trino
-                  purl: pkg:dhi/trino@483
+                  purl: pkg:dhi/trino@484
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar
+            checksum: sha256:8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+            path: ${source.dir}/patch/deps/jackson-core-2.22.3.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
+            checksum: sha256:556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+            path: ${source.dir}/patch/deps/jackson-databind-2.22.3.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.22/jackson-annotations-2.22.jar
+            checksum: sha256:21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0
+            path: ${source.dir}/patch/deps/jackson-annotations-2.22.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/com/eed3si9n/jarjar/jarjar-assembly/1.14.1/jarjar-assembly-1.14.1.jar
+            checksum: sha256:270fe285e399e298fb08c5daf1486648203a5bd5e90eaba4a6466097be7dd50f
+            path: ${source.dir}/patch/deps/jarjar-assembly-1.14.1.jar
+            uid: 0
+            gid: 0
         artifacts:
-          - name: dhi.io/maven:3.10.0-jdk25-debian13-dev@sha256:64dde725c464b2c31e4d9c15395d67f624b3b9b62f39095971ebc9a95bf4eed7
+          - name: dhi.io/maven:3.10.0-jdk25-debian13-dev@sha256:e0cb4930e49fb263e3be157fc291b0f8fb7ee34bdc821d441c126df59b4f01d4
             includes:
               - opt/**
               - usr/local/bin/**
@@ -144,12 +164,6 @@ contents:
             gid: 0
       pipeline:
         - uses: mvn/mirror@v1
-        - name: patch dependencies
-          uses: patch@v1
-          with:
-            options: -p1
-            patches:
-              - /src/patch/ch-guava-grpc.patch
         - name: maven patch
           uses: mvn/patch@v1
           with:
@@ -174,36 +188,30 @@ contents:
             mvn package -q -DskipTests -Dair.check.skip-all -Dmaven.enforcer.skip=true -Dmaven.test.failure.ignore=true -pl '!:trino-docs' -am
 
             # The launcher binary is specifically excluded here as we build it in a later step.
-            tar -C "${target.dir}" -xzf "${source.dir}/trino/core/trino-server/target/trino-server-483.tar.gz" --wildcards \
-              "trino-server-483/lib" \
-              "trino-server-483/plugin" \
-              "trino-server-483/secrets-plugin" \
-              "trino-server-483/bin/launcher"{,.properties} \
-              "trino-server-483/bin/linux-${ARCH}/libprocname.so"
-        - name: patch secrets plugin dependencies
+            tar -C "${target.dir}" -xzf "${source.dir}/trino/core/trino-server/target/trino-server-484.tar.gz" --wildcards \
+              "trino-server-484/lib" \
+              "trino-server-484/plugin" \
+              "trino-server-484/secrets-plugin" \
+              "trino-server-484/bin/launcher"{,.properties} \
+              "trino-server-484/bin/linux-${ARCH}/libprocname.so"
+        - name: remediate shaded jackson in parquet
           runs: |
             set -eux -o pipefail
 
-            SECRETS_PLUGIN="${target.dir}/trino-server-483/secrets-plugin/keystore-secrets-plugin"
-
-            rm "${SECRETS_PLUGIN}"/jackson-core-*.jar
-            cp /root/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar "${SECRETS_PLUGIN}/"
-
-            rm "${SECRETS_PLUGIN}"/jackson-databind-*.jar
-            cp /root/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar "${SECRETS_PLUGIN}/"
-
-            rm "${SECRETS_PLUGIN}"/opentelemetry-api-*.jar
-            cp /root/.m2/repository/io/opentelemetry/opentelemetry-api/1.63.0/opentelemetry-api-1.63.0.jar "${SECRETS_PLUGIN}/"
+            bash /src/patch/remediate-parquet-jackson.sh \
+              "${target.dir}/trino-server-484" \
+              "${source.dir}/patch/deps" \
+              2.22.3
         - name: patch ignite plugin dependencies
           runs: |
             set -eux -o pipefail
 
-            IGNITE_PLUGIN="${target.dir}/trino-server-483/plugin/ignite"
+            IGNITE_PLUGIN="${target.dir}/trino-server-484/plugin/ignite"
 
             rm "${IGNITE_PLUGIN}"/org.apache.ignite_ignite-core-*.jar
             cp /root/.m2/repository/org/apache/ignite/ignite-core/2.18.0/ignite-core-2.18.0.jar "${IGNITE_PLUGIN}/org.apache.ignite_ignite-core-2.18.0.jar"
         - name: address plugin cves
-          work-dir: ${target.dir}/trino-server-483/plugin
+          work-dir: ${target.dir}/trino-server-484/plugin
           runs: |
             set -eux -o pipefail
 
@@ -215,10 +223,10 @@ contents:
           gid: 0
           source: image/trino/patch/bc-fips-hkdf.diff
         - type: file
-          path: /src/patch/ch-guava-grpc.patch
+          path: /src/patch/remediate-parquet-jackson.sh
           uid: 0
           gid: 0
-          source: image/trino/patch/ch-guava-grpc.patch
+          source: image/trino/patch/remediate-parquet-jackson.sh
         - type: file
           path: /src/patch/minimal-plugins.json
           uid: 0
@@ -235,11 +243,11 @@ contents:
           gid: 0
           source: image/trino/patch/mvn-properties.json
       outputs:
-        - source: ${source.dir}/trino/client/trino-cli/target/trino-cli-483-executable.jar
+        - source: ${source.dir}/trino/client/trino-cli/target/trino-cli-484-executable.jar
           target: /usr/bin/trino
           uid: 1000
           gid: 1000
-        - source: ${target.dir}/trino-server-483
+        - source: ${target.dir}/trino-server-484
           target: /usr/lib/trino
           uid: 1000
           gid: 1000
@@ -264,28 +272,27 @@ contents:
           - bash
           - ca-certificates-bundle
           - coreutils
-          - golang-1.26
+          - golang-1.27
           - findutils
           - mawk
           - sed
         files:
-          - url: git+https://github.com/airlift/launcher.git#321
-            checksum: 55cda05870182df2be6b7bb081989bbb4253611a
+          - url: git+https://github.com/airlift/launcher.git#322
+            checksum: 8ba11944b3953246ce0060ce4efca9878fae5b84
             path: /go/src/github.com/airlift/launcher
             spdx:
               name: launcher
-              version: "321"
+              version: "322"
               packages:
                 - name: launcher
-                  purl: pkg:golang/launcher@321
+                  purl: pkg:golang/launcher@322
             uid: 0
             gid: 0
       pipeline:
         - name: bump go dependencies
           uses: go/bump@v1
           with:
-            deps:
-              - golang.org/x/text@v0.41.0
+            deps: []
             download: true
         - name: build
           uses: go/build@v1
@@ -293,7 +300,7 @@ contents:
           with:
             ldflags:
               - -extldflags=-static
-              - -X launcher/args.Version=321
+              - -X launcher/args.Version=322
             output: ${target.dir}/launcher
       paths:
         - type: directory
@@ -369,6 +376,9 @@ annotations:
   org.opencontainers.image.description: A minimal Trino image
   org.opencontainers.image.licenses: Apache-2.0
 cmd:
-  - /usr/lib/trino/bin/run-trino
+  - /usr/lib/trino/bin/launcher
+  - run
+  - --etc-dir
+  - /etc/trino
 ports:
   - 8080/tcp

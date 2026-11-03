@@ -14,9 +14,9 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 
 This Docker Hardened Trino image includes:
 
-- Trino server binaries at `/usr/lib/trino/bin/`, including `run-trino`, `launcher`, and `health-check`
+- Trino server binaries at `/usr/lib/trino/bin/`, including `launcher` and `health-check`
 - Trino CLI at `/usr/bin/trino`
-- Default CMD: `/usr/lib/trino/bin/run-trino`
+- Default CMD: `/usr/lib/trino/bin/launcher run --etc-dir /etc/trino`
 
 Note: By default, only the `server-core` plugin set is included in the runtime and dev variants. The compat variant
 includes the full set of optional Trino plugins. See [Image variants](#image-variants) for details.
@@ -153,7 +153,7 @@ following table of migration notes:
 | Non-root user      | Runtime and compat variants run as the `trino` nonroot user. Ensure that necessary files and directories are accessible to that user.                                                                                                                                                          |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                                                                             |
 | Ports              | Runtime and compat variants run as a nonroot user by default. As a result, applications in these images can't bind to privileged ports (below 1024) when running in Docker Engine versions older than 20.10. Configure your application to listen on port 1025 or higher inside the container. |
-| Entry point        | All variants use `run-trino` as the default CMD rather than ENTRYPOINT, meaning it can be overridden easily. Inspect entry points and update your Dockerfile if necessary.                                                                                                                     |
+| Entry point        | All variants use `/usr/lib/trino/bin/launcher run --etc-dir /etc/trino` as the default CMD rather than ENTRYPOINT, meaning it can be overridden easily. Inspect entry points and update your Dockerfile if necessary.                                                                          |
 | Plugins            | The runtime variant includes only the `server-core` plugin set. Use the compat variant if you require the full plugin set.                                                                                                                                                                     |
 
 The following steps outline the general migration process.
@@ -214,5 +214,6 @@ example, `docker run -p 80:8080 my-image` will work because the port inside the 
 
 ### Entry point
 
-All variants use `run-trino` as the default CMD rather than ENTRYPOINT. This means the command can be overridden easily.
-Use `docker inspect` to verify the entry point and update your Dockerfile if necessary.
+All variants use `/usr/lib/trino/bin/launcher run --etc-dir /etc/trino` as the default CMD rather than ENTRYPOINT. This
+means the command can be overridden easily. Use `docker inspect` to verify the entry point and update your Dockerfile if
+necessary.
