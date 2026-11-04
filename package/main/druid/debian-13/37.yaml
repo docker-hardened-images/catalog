@@ -4,9 +4,9 @@ image: dhi.io/pkg-druid
 variant: runtime
 tags:
   - 37.0.0
-  - 37.0.0-r28
+  - 37.0.0-r29
   - 37.0.0-debian13
-  - 37.0.0-r28-debian13
+  - 37.0.0-r29-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -25,7 +25,7 @@ vars:
   NODEJS_VERSION: 24.22.2-0
   PACKAGE_HOME: /usr/share/druid
   PACKAGE_NAME: druid-37
-  REL: "28"
+  REL: "29"
   SEMVER_MAJOR_MINOR_VERSION: "37.0"
   SEMVER_MAJOR_VERSION: "37"
   SEMVER_VERSION: 37.0.0
@@ -86,6 +86,18 @@ contents:
               packages:
                 - name: maven
                   purl: pkg:generic/apache-maven@3.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/airlift/aircompressor/2.0.3/aircompressor-2.0.3.jar
+            checksum: sha256:b86bb66f610079e0bf790d62e2ff68853eb0dc4748a6d68ae28bce92b68094aa
+            path: ${source.dir}/patch/deps/aircompressor-2.0.3.jar
+            spdx:
+              name: aircompressor
+              version: 2.0.3
+              packages:
+                - name: aircompressor
+                  purl: pkg:maven/io.airlift/aircompressor@2.0.3
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -306,6 +318,42 @@ contents:
             fi
             printf '%s\n' "snappy-java jars after cleanup:"
             find "$home" -name 'snappy-java-*.jar' -print | sort
+        - name: replace aircompressor for CVE-2025-67721
+          runs: |
+            set -eux -o pipefail
+
+            AIRCOMPRESSOR_VERSION="2.0.3"
+            fixed_jar="aircompressor-${AIRCOMPRESSOR_VERSION}.jar"
+            fixed_src="${source.dir}/patch/deps/${fixed_jar}"
+            home="${target.dir}/usr/share/druid"
+
+            test -f "$fixed_src"
+            before=$(find "$home" -name 'aircompressor-*.jar' -print | sort)
+            if [ -z "$before" ]; then
+              echo "expected aircompressor jars in distribution extensions" >&2
+              exit 1
+            fi
+            printf '%s\n' "aircompressor jars before cleanup:" "$before"
+            find "$home" -name 'aircompressor-*.jar' -print | while IFS= read -r jar; do
+              dir=$(dirname "$jar")
+              install -m 0644 "$fixed_src" "$dir/$fixed_jar"
+              if [ "$(basename "$jar")" != "$fixed_jar" ]; then
+                rm -f "$jar"
+              fi
+            done
+            stale=$(find "$home" -name 'aircompressor-*.jar' ! -name "$fixed_jar" -print)
+            if [ -n "$stale" ]; then
+              echo "superseded aircompressor jars remain:" >&2
+              printf '%s\n' "$stale" >&2
+              exit 1
+            fi
+            fixed=$(find "$home" -name "$fixed_jar" -print)
+            if [ -z "$fixed" ]; then
+              echo "aircompressor ${AIRCOMPRESSOR_VERSION} was not packaged" >&2
+              exit 1
+            fi
+            printf '%s\n' "aircompressor jars after cleanup:"
+            find "$home" -name 'aircompressor-*.jar' -print | sort
         - name: replace calcite-core for CVE-2026-46718
           privileged: true
           runs: |
@@ -329,6 +377,18 @@ contents:
             mkdir -p "${target.dir}/usr/bin"
             install -m 0755 distribution/docker/druid.sh "${target.dir}/usr/bin/druid.sh"
             install -m 0755 distribution/docker/peon.sh "${target.dir}/usr/bin/peon.sh"
+        - name: druid distribution sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: pkg-druid-payload
+            source: ${target.dir}/usr/share/druid
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a "/opt/docker/sbom/pkg-druid-payload" "${target.dir}/opt/docker/sbom/"
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -341,7 +401,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-37
-            rel: 28
+            rel: 29
             url: https://druid.apache.org/
             version: 37.0.0
         - name: fipsify
@@ -375,7 +435,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-37-fips
-            rel: 28
+            rel: 29
             url: https://druid.apache.org/
             version: 37.0.0
       paths:
