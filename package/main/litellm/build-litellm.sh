@@ -73,6 +73,7 @@ pip install --no-cache-dir --upgrade \
   'opentelemetry-exporter-otlp==1.45.1' \
   'opentelemetry-instrumentation-fastapi==0.66b1'
 pip install --no-cache-dir --upgrade 'setuptools==84.1.0'
+pip install --no-cache-dir --upgrade 'msgpack==1.2.4'
 
 apply_npm_patch() {
   local search_path="$1"
@@ -108,7 +109,35 @@ apply_npm_patch() {
 
 apply_npm_patch "diff" "diff-8.0.3.tgz"
 apply_npm_patch "tar" "tar-7.5.21.tgz"
-apply_npm_patch "minimatch" "minimatch-10.2.3.tgz"
+apply_npm_patch "minimatch" "minimatch-11.0.1.tgz"
+# minimatch 11.x depends on @isaacs/nonrecursive-glob-match; the tarball copy does not
+# include node_modules, so install that dependency beside the patched minimatch tree.
+install_npm_tarball_into() {
+  local dest_dir="$1"
+  local tarball="$2"
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  tar -xzf "${SOURCE_DIR}/npm-patches/$tarball" -C "$tmp_dir"
+  mkdir -p "$(dirname "$dest_dir")"
+  rm -rf "$dest_dir"
+  cp -r "$tmp_dir/package" "$dest_dir"
+  rm -rf "$tmp_dir"
+}
+while IFS= read -r -d '' mm_dir; do
+  install_npm_tarball_into "$mm_dir/node_modules/@isaacs/nonrecursive-glob-match" "isaacs-nonrecursive-glob-match-1.0.1.tgz"
+done < <(find "$VENV/lib" -type d -path '*/nodejs_wheel/lib/node_modules/npm/node_modules/minimatch' -print0)
+apply_npm_patch "glob" "glob-14.0.2.tgz"
+# glob 14 depends on path-scurry ^3. nodejs_wheel still ships 2.0.2 at the
+# npm root, so install 3.0.0 where glob resolves it.
+glob_patched=0
+while IFS= read -r -d '' glob_dir; do
+  install_npm_tarball_into "$glob_dir/node_modules/path-scurry" "path-scurry-3.0.0.tgz"
+  glob_patched=$((glob_patched + 1))
+done < <(find "$VENV/lib" -type d -path '*/nodejs_wheel/lib/node_modules/npm/node_modules/glob' -print0)
+if [ "$glob_patched" -eq 0 ]; then
+  echo "Error: no nodejs_wheel glob paths to install path-scurry into"
+  exit 1
+fi
 apply_npm_patch "@isaacs/brace-expansion" "isaacs-brace-expansion-5.0.1.tgz" 1
 apply_npm_patch "brace-expansion" "brace-expansion-5.0.12.tgz"
 apply_npm_patch "ip-address" "ip-address-10.7.4.tgz"
@@ -184,6 +213,35 @@ for comp in bom.get("components", []):
         )
 if not found:
     raise SystemExit("setuptools component missing from pip vendor bom")
+PY
+  MSGPACK_VER=$("${VENV}/bin/python" -c 'import msgpack; print(msgpack.__version__)')
+  rm -rf "$sp/pip/_vendor/msgpack"
+  cp -a "$sp/msgpack" "$sp/pip/_vendor/msgpack"
+  sed -i "s/^msgpack==.*/msgpack==${MSGPACK_VER}/" "$sp/pip/_vendor/vendor.txt"
+  sed -i -E 's/pkg:pypi\/msgpack@[0-9.]+/pkg:pypi\/msgpack@'"${MSGPACK_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
+  sed -i 's/"version": "1.1.2"/"version": "'"${MSGPACK_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
+  "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${MSGPACK_VER}" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    bom = json.load(f)
+found = False
+for comp in bom.get("components", []):
+    if comp.get("name") != "msgpack":
+        continue
+    found = True
+    want = f"pkg:pypi/msgpack@{ver}"
+    if comp.get("version") != ver or comp.get("purl") != want or comp.get("bom-ref") != want:
+        raise SystemExit(
+            f"msgpack component is version={comp.get('version')!r} purl={comp.get('purl')!r} bom-ref={comp.get('bom-ref')!r}, want {ver}"
+        )
+if not found:
+    raise SystemExit("msgpack component missing from pip vendor bom")
+parts = ver.split(".")[:3]
+if len(parts) < 3 or not all(p.isdigit() for p in parts):
+    raise SystemExit(f"unexpected msgpack version {ver}")
+if tuple(int(p) for p in parts) < (1, 2, 3):
+    raise SystemExit(f"msgpack {ver} is below 1.2.3")
 PY
 fi
 "${VENV}/bin/pip" --version
