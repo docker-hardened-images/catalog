@@ -1,0 +1,97 @@
+#!/bin/bash
+# Runs a ZooKeeper class with the ZooKeeper classpath and the JVM options the
+# Confluent Platform images take from KAFKA_* variables.
+#
+# Upstream cp-zookeeper uses kafka-run-class, from confluent-kafka:
+# https://github.com/confluentinc/kafka/blob/v7.9.9/bin/kafka-run-class.sh
+# This image installs ZooKeeper on its own, so the classpath comes from
+# ${ZOOKEEPER_HOME}/lib. KAFKA_LOG4J_OPTS (logback is used instead),
+# KAFKA_DEBUG, JAVA_DEBUG_OPTS, JMX_PORT and CLASSPATH are not implemented.
+set -e
+
+if [ -z "${ZOOKEEPER_HOME}" ]; then
+    echo "ZOOKEEPER_HOME is not set" >&2
+    exit 1
+fi
+
+if [ $# -lt 1 ]; then
+    echo "USAGE: $0 classname [opts]" >&2
+    exit 1
+fi
+
+CLASSNAME=$1
+shift
+
+# Upstream renders the two ZOOKEEPER_LOG4J_* variables into log4j.properties:
+# https://github.com/confluentinc/kafka-images/blob/v7.9.9/zookeeper/include/etc/confluent/docker/log4j.properties.template
+# ZooKeeper 3.8 logs through logback, so they are applied to logback here.
+LOGBACK_CONFIG=${ZOOKEEPER_LOGBACK_CONFIG:-/etc/kafka/logback.xml}
+ROOT_LOGLEVEL=${ZOOKEEPER_LOG4J_ROOT_LOGLEVEL:-INFO}
+
+# Each "logger=LEVEL" pair becomes a <logger> element in a copy of the logback
+# file. Entries are kept only when they split on "=" once, as Confluent's
+# parse_log4j_loggers does. If the directory is not writable the copy is
+# skipped and only the root level, passed on the command line, applies.
+if [ -n "${ZOOKEEPER_LOG4J_LOGGERS:-}" ] && [ -w "$(dirname "${LOGBACK_CONFIG}")" ]; then
+    LOGGERS=""
+    IFS=',' read -ra ENTRIES <<< "${ZOOKEEPER_LOG4J_LOGGERS}"
+    for entry in "${ENTRIES[@]}"; do
+        name=${entry%%=*}
+        level=${entry#*=}
+        [ "${name}" = "${entry}" ] && continue
+        [ "${level}" != "${level#*=}" ] && continue
+        LOGGERS="${LOGGERS}  <logger name=\"${name}\" level=\"${level}\" />"$'\n'
+    done
+    if [ -n "${LOGGERS}" ]; then
+        # Must differ from the source, or the redirect truncates what we read.
+        GENERATED=${LOGBACK_CONFIG%.xml}-loggers.xml
+        [ "${GENERATED}" = "${LOGBACK_CONFIG}" ] && GENERATED=${LOGBACK_CONFIG}-loggers.xml
+        # Drop only the last </configuration>: a mounted file may have it in a
+        # comment too, sed would delete every match, and Debian has no awk.
+        mapfile -t CONFIG_LINES < "${LOGBACK_CONFIG}"
+        LAST=-1
+        for i in "${!CONFIG_LINES[@]}"; do
+            case "${CONFIG_LINES[$i]}" in
+                *"</configuration>"*) LAST=$i ;;
+            esac
+        done
+        {
+            for i in "${!CONFIG_LINES[@]}"; do
+                [ "$i" -eq "${LAST}" ] || printf '%s\n' "${CONFIG_LINES[$i]}"
+            done
+            printf '%s' "${LOGGERS}"
+            echo '</configuration>'
+        } > "${GENERATED}"
+        LOGBACK_CONFIG=${GENERATED}
+    fi
+fi
+
+# Upstream defaults. zookeeper-server-start raises the heap to 512M for the
+# server, so this 256M applies to the CLI entry points.
+if [ -z "${KAFKA_HEAP_OPTS:-}" ]; then
+    KAFKA_HEAP_OPTS="-Xmx256M"
+fi
+if [ -z "${KAFKA_JVM_PERFORMANCE_OPTS:-}" ]; then
+    KAFKA_JVM_PERFORMANCE_OPTS="-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent -XX:MaxInlineLevel=15 -Djava.awt.headless=true"
+fi
+
+# The -fips images install the BouncyCastle jars and point JAVA_FIPS_CLASSPATH
+# at them. Upstream kafka-run-class inherits them from CLASSPATH, but the -cp
+# below replaces CLASSPATH, so they have to be added back here. Leave them out
+# and the JVM silently falls back to the SUN provider, which is not FIPS.
+FIPS_CLASSPATH=${JAVA_FIPS_CLASSPATH:+:${JAVA_FIPS_CLASSPATH}}
+
+# KAFKA_JMX_OPTS and KAFKA_GC_LOG_OPTS are forwarded but never defaulted:
+# launch exports the first, and kafka-run-class's JMX default would also apply
+# to the CLI entry points. Each KAFKA_* variable holds several JVM flags in one
+# string, so they are unquoted here to word-split, as kafka-run-class does.
+exec java \
+    ${KAFKA_HEAP_OPTS} \
+    ${KAFKA_JVM_PERFORMANCE_OPTS} \
+    ${KAFKA_GC_LOG_OPTS:-} \
+    ${KAFKA_JMX_OPTS:-} \
+    ${KAFKA_OPTS:-} \
+    -Dzookeeper.root.logger="${ROOT_LOGLEVEL}" \
+    -Dlogback.configurationFile="file:${LOGBACK_CONFIG}" \
+    -cp "${ZOOKEEPER_HOME}/lib/*${FIPS_CLASSPATH}" \
+    "${CLASSNAME}" "$@"
