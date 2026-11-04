@@ -94,7 +94,7 @@ export PUBSUB_EMULATOR_HOST=localhost:8085
 The Spanner emulator has no `linux/arm64` build — on Apple Silicon or other `arm64` hosts, pass `--platform linux/amd64`
 to `docker run`. The other four emulators support both architectures.
 
-The Java-based emulators run on Eclipse Temurin 21.
+The Java-based emulators run on Eclipse Temurin 25.
 
 ### Use an emulator with Docker Compose
 
