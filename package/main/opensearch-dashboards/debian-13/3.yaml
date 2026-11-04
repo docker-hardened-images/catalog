@@ -4,9 +4,9 @@ image: dhi.io/pkg-opensearch-dashboards
 variant: runtime
 tags:
   - 3.9.0
-  - 3.9.0-r0
+  - 3.9.0-r1
   - 3.9.0-debian13
-  - 3.9.0-r0-debian13
+  - 3.9.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -43,7 +43,7 @@ vars:
   QUERY_INSIGHTS_DASHBOARDS_VERSION: 3.9.0.0
   QUERY_WORKBENCH_DASHBOARDS_COMMIT_SHA: 6aa7ce530fd5e5f23a8a656fce336a2ed0bfab21
   QUERY_WORKBENCH_DASHBOARDS_VERSION: 3.9.0.0
-  REL: "0"
+  REL: "1"
   REPORTS_DASHBOARDS_COMMIT_SHA: 156f63b3cd40d4ecfe228d1253a4a0f9d53b5f28
   REPORTS_DASHBOARDS_VERSION: 3.9.0.0
   SEARCH_RELEVANCE_DASHBOARDS_COMMIT_SHA: ad86c5cd1b685c4016cb161c29a4ca94395bb452
@@ -227,6 +227,29 @@ contents:
           with:
             bumps: ${source.dir}/patch/opensearch-dashboards-bumps.json
             yarn-root: ${source.dir}/opensearch-dashboards
+        - name: patch joi lockfile
+          run-as: opensearch-dashboards
+          work-dir: ${source.dir}/opensearch-dashboards
+          runs: |
+            set -eux -o pipefail
+
+            if grep -q '"joi": "18.2.8"' package.json; then
+              sed -i 's/"joi": "18.2.8"/"joi": "18.3.1"/' package.json
+            fi
+
+            if grep -Eq 'joi-18\.(2\.8|2\.9)\.tgz' yarn.lock; then
+              sed -i \
+                -e '/^joi@/,/^$/{
+                    s|^  version .*|  version "18.3.1"|
+                    s|^  resolved .*|  resolved "https://registry.npmjs.org/joi/-/joi-18.3.1.tgz#0d80d63b8ff103e61b414edc7943666e72458a3b"|
+                    s|^  integrity .*|  integrity sha512-mV9M4Llh4va3NT90p7KBtQhoZqjs8xLX7EWYE4y/GG3yLF6REbIBEHSUb0UX1JXRht2w5tiLSsvmpYc5akiqIw==|
+                  }' \
+                yarn.lock
+              sed -i 's|joi-18\.2\.[89]\.tgz|joi-18.3.1.tgz|g' yarn.lock
+            fi
+
+            ! grep -Eq 'joi-18\.2\.(8|9)\.tgz' yarn.lock
+            grep -q 'joi-18.3.1.tgz' yarn.lock
         - name: patch observabilityDashboards
           uses: yarn/bump@v2
           run-as: opensearch-dashboards
@@ -284,14 +307,21 @@ contents:
           run-as: opensearch-dashboards
           privileged: true
           with:
-            bumps: ${source.dir}/patch/no-bumps.json
+            bumps: ${source.dir}/patch/dashboards-alerting-bumps.json
             yarn-root: ${source.dir}/opensearch-dashboards/plugins/alertingDashboards
+        - name: patch searchRelevanceDashboards
+          uses: yarn/bump@v2
+          run-as: opensearch-dashboards
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/dashboards-search-relevance-bumps.json
+            yarn-root: ${source.dir}/opensearch-dashboards/plugins/searchRelevanceDashboards
         - name: patch securityAnalyticsDashboards
           uses: yarn/bump@v2
           run-as: opensearch-dashboards
           privileged: true
           with:
-            bumps: ${source.dir}/patch/no-bumps.json
+            bumps: ${source.dir}/patch/dashboards-security-analytics-bumps.json
             yarn-root: ${source.dir}/opensearch-dashboards/plugins/securityAnalyticsDashboards
         - name: patch securityDashboards
           uses: yarn/bump@v2
@@ -300,13 +330,6 @@ contents:
           with:
             bumps: ${source.dir}/patch/security-dashboards-bumps.json
             yarn-root: ${source.dir}/opensearch-dashboards/plugins/securityDashboards
-        - name: patch searchRelevanceDashboards
-          uses: yarn/bump@v2
-          run-as: opensearch-dashboards
-          privileged: true
-          with:
-            bumps: ${source.dir}/patch/no-bumps.json
-            yarn-root: ${source.dir}/opensearch-dashboards/plugins/searchRelevanceDashboards
         - name: patch assistantDashboards
           uses: yarn/bump@v2
           run-as: opensearch-dashboards
@@ -440,6 +463,30 @@ contents:
             rm -rf ${target.dir}/usr/share/opensearch-dashboards/plugins
             rm -rf ${source.dir}/tmp/plugins/opensearch-dashboards
             cp -r ${source.dir}/tmp/plugins ${target.dir}/usr/share/opensearch-dashboards/plugins
+        - name: replace stale plugin bundled npm deps
+          runs: |
+            set -eux -o pipefail
+
+            base="${target.dir}/usr/share/opensearch-dashboards"
+            root_nm="${base}/node_modules"
+
+            replace_mod() {
+              pkg="$1"
+              plugin="$2"
+              src="${root_nm}/${pkg}"
+              dst="${base}/plugins/${plugin}/node_modules/${pkg}"
+              test -d "${src}"
+              test -d "$(dirname "${dst}")"
+              rm -rf "${dst}"
+              cp -a "${src}" "${dst}"
+            }
+
+            replace_mod decode-uri-component alertingDashboards
+            replace_mod moment searchRelevanceDashboards
+            replace_mod moment securityAnalyticsDashboards
+
+            test "$(jq -r .version "${root_nm}/decode-uri-component/package.json")" = "0.5.1"
+            test "$(jq -r .version "${root_nm}/moment/package.json")" = "2.31.0"
         - name: strip plugin build lockfiles
           runs: |
             set -eux -o pipefail
@@ -461,7 +508,7 @@ contents:
               - deb
             license: Apache-2.0
             name: opensearch-dashboards
-            rel: 0
+            rel: 1
             url: https://opensearch.org/
             version: 3.9.0
       paths:
