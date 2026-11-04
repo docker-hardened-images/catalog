@@ -100,7 +100,13 @@ contents:
             bun pm pkg set overrides.markdown-it="15.0.3"            # CVE-2026-111758, CVE-2026-111766
             bun pm pkg set overrides.launch-editor="2.14.2"          # CVE-2026-112942, CVE-2026-112943, CVE-2026-112944
             bun pm pkg set overrides.vite="8.2.4"                    # CVE-2026-112942, CVE-2026-112943, CVE-2026-112944, CVE-2026-112945, CVE-2026-112946, CVE-2026-112947
-            bun pm pkg set overrides.nuxt="4.6.2"                    # CVE-2026-114130, CVE-2026-114132, CVE-2026-114133
+            bun pm pkg set overrides.nuxt="4.6.3"                    # CVE-2026-114130, CVE-2026-114132, CVE-2026-114133, CVE-2026-119198, CVE-2026-119199, CVE-2026-119200, CVE-2026-119201
+            bun pm pkg set overrides.node-forge="1.4.1"              # CVE-2026-118775, CVE-2026-118777, CVE-2026-118778, CVE-2026-118779, CVE-2026-118780, CVE-2026-118781, CVE-2026-118782, CVE-2026-119186, CVE-2026-119187, CVE-2026-119188, CVE-2026-119190
+            bun pm pkg set overrides.minimatch="11.0.1"              # CVE-2026-118764
+            bun pm pkg set overrides.glob="14.0.2"                   # CVE-2026-118773
+
+            jq '.overrides["@nuxt/vite-builder"] = "4.6.3" | .overrides["@nuxt/nitro-server"] = "4.6.3"' package.json > package.json.tmp
+            mv package.json.tmp package.json
 
             # Move nuxt to devDependencies since it's needed for build-time only.
             jq '.devDependencies.nuxt = .dependencies.nuxt | del(.dependencies.nuxt)' package.json > package.json.tmp
@@ -108,7 +114,32 @@ contents:
 
             bun install
             bun add --dev --exact yaml@2.9.1
+
+            bun - << 'BUN'
+            import { readFileSync, writeFileSync } from 'node:fs'
+            const path = 'nuxt.config.ts'
+            const source = readFileSync(path, 'utf8')
+            const needle = 'export default defineNuxtConfig({'
+            if (!source.includes(needle)) {
+              throw new Error('nuxt.config.ts missing defineNuxtConfig')
+            }
+            if (!source.includes('nitroConfig.baseURL')) {
+              const hook = `
+              hooks: {
+                'nitro:config'(nitroConfig) {
+                  nitroConfig.baseURL = '/'
+                },
+              },`
+              writeFileSync(path, source.replace(needle, needle + hook))
+            }
+            BUN
+            grep -q "nitroConfig.baseURL = '/'" nuxt.config.ts
+
             bun run generate
+
+            test -s dist/index.html
+            grep -q '<html' dist/index.html
+            grep -q 'baseURL:"."' dist/index.html
 
             mkdir ${target.dir}/kodata
             cp -r dist ${target.dir}/kodata/ui
