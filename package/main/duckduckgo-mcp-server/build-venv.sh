@@ -25,7 +25,8 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # Install strictly from upstream's committed uv.lock plus the targeted CVE
 # bumps below. Do NOT run a full `uv lock --upgrade`: regenerating the whole
 # lock would drift from the dependency set the release was tested against.
-# v0.7.0+ requires mcp[cli]>=2.1.1,<3; pin upstream's locked mcp==2.1.1.
+# v0.7.0+ requires mcp[cli]>=2.1.1,<3; upstream's lock pins mcp 2.1.1, so mcp is
+# moved to 2.2.0, which is inside that range and clears the mcp findings below.
 # GHSA-4xgf-cpjx-pc3j: pydantic-settings 2.14.1 path traversal.
 # CVE-2026-32597 / CVE-2026-48526: pyjwt <2.13.0.
 # CVE-2026-42561 / CVE-2026-53539: python-multipart <0.0.31.
@@ -36,8 +37,11 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # CVE-2026-45409: idna <3.15.
 # CVE-2026-4539: pygments <2.20.0.
 # CVE-2026-63374 / CVE-2026-64847: anyio <4.14.2.
+# CVE-2026-116684 / CVE-2026-116685 / CVE-2026-116686 / CVE-2026-59951: mcp <2.2.0.
+# GHSA-6q48-6c7w-9gw2: certifi <2026.10.19.
+# CVE-2026-114603: opentelemetry-api <1.45.1.
 uv lock \
-  --upgrade-package "mcp==2.1.1" \
+  --upgrade-package "mcp==2.2.0" \
   --upgrade-package "pydantic-settings>=2.14.2" \
   --upgrade-package "pyjwt>=2.13.0" \
   --upgrade-package "python-multipart>=0.0.31" \
@@ -47,7 +51,9 @@ uv lock \
   --upgrade-package "cryptography>=48.0.1" \
   --upgrade-package "idna>=3.15" \
   --upgrade-package "pygments>=2.20.0" \
-  --upgrade-package "anyio>=4.14.2"
+  --upgrade-package "anyio>=4.14.2" \
+  --upgrade-package "certifi>=2026.10.19" \
+  --upgrade-package "opentelemetry-api>=1.45.1"
 uv sync --locked --no-install-project --no-dev --no-editable
 uv sync --locked --no-dev --no-editable
 
