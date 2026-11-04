@@ -29,7 +29,7 @@ node -e '
 # Root yarn resolutions pin vulnerable transitive dependencies. Each pin stays inside
 # the range its dependents declare, except axios (director declares ^0.21.3), qs
 # (express declares ~6.15.1), the form-data 3.x copy under @types/node-fetch, and
-# decode-uri-component (query-string declares ^0.2.2; 0.5.0 keeps the single-function API).
+# decode-uri-component (query-string declares ^0.2.2; 0.5.1 keeps the single-function API).
 node -e '
   const fs = require("fs");
   const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -43,23 +43,26 @@ node -e '
     // CVE-2024-29041, CVE-2024-43796 and, through its send, serve-static and cookie,
     // CVE-2024-43799, CVE-2024-43800, CVE-2024-47764
     "express": "4.22.2",
-    // CVE-2024-45590, CVE-2026-12590
-    "body-parser": "1.20.8",
+    // CVE-2024-45590, CVE-2026-12590, CVE-2026-111181
+    "body-parser": "1.20.9",
     // CVE-2024-45296, CVE-2024-52798, CVE-2026-4867
     "express/path-to-regexp": "0.1.13",
-    // CVE-2025-15284, CVE-2026-2391, CVE-2026-82417
-    "qs": "6.16.0",
+    // CVE-2025-15284, CVE-2026-2391, CVE-2026-82417, CVE-2026-110816
+    "qs": "6.16.1",
     // CVE-2025-7783, CVE-2026-12143
     "form-data": "4.0.6",
     // CVE-2025-12816, CVE-2025-66030, CVE-2025-66031, CVE-2026-33891, CVE-2026-33894,
     // CVE-2026-33895, CVE-2026-33896 (replaces the 1.3.0 resolution upstream carries)
-    "node-forge": "1.4.0",
+    // CVE-2026-118775, CVE-2026-118777, CVE-2026-118778, CVE-2026-118779, CVE-2026-118780,
+    // CVE-2026-118781, CVE-2026-118782, CVE-2026-119186, CVE-2026-119187, CVE-2026-119188,
+    // CVE-2026-119190
+    "node-forge": "1.4.1",
     // CVE-2025-13465, CVE-2026-2950, CVE-2026-4800
     "lodash": "4.18.1",
     // CVE-2026-25896, CVE-2026-26278, CVE-2026-27942, CVE-2026-33036, CVE-2026-33349
     "fast-xml-parser": "4.5.7",
-    // CVE-2026-45822
-    "decode-uri-component": "0.5.0",
+    // CVE-2026-45822, CVE-2026-118664
+    "decode-uri-component": "0.5.1",
     // CVE-2021-43138
     "async": "3.2.6",
     // CVE-2025-9287
@@ -74,8 +77,8 @@ node -e '
     "elliptic": "6.6.1",
     // CVE-2023-46234
     "browserify-sign": "4.2.6",
-    // CVE-2023-26159, CVE-2024-28849, CVE-2026-111755, CVE-2026-111756
-    "follow-redirects": "1.16.1",
+    // CVE-2023-26159, CVE-2024-28849, CVE-2026-111755, CVE-2026-111756, CVE-2026-116689
+    "follow-redirects": "1.16.2",
     // CVE-2022-23539, CVE-2022-23540, CVE-2022-23541 (jsonwebtoken 9 via universal-github-app-jwt)
     "universal-github-app-jwt": "1.2.0",
     "jsonwebtoken": "9.0.3",
@@ -125,7 +128,7 @@ for bad in bn.js@4.12.0 debug@4.2.0; do
   test -z "$(find . -path "*/node_modules/${n}/package.json" -exec node -p "require(process.argv[1]).version" {} \; | grep -x "${v}")"
 done
 
-for pin in axios@0.34.0 express@4.22.2 body-parser@1.20.8 path-to-regexp@0.1.13 qs@6.16.0 form-data@4.0.6 node-forge@1.4.0 lodash@4.18.1 fast-xml-parser@4.5.7 async@3.2.6 cipher-base@1.0.7 sha.js@2.4.12 pbkdf2@3.1.7 proxy-addr@2.0.8 elliptic@6.6.1 browserify-sign@4.2.6 follow-redirects@1.16.1 universal-github-app-jwt@1.2.0 jsonwebtoken@9.0.3 jws@4.0.1 @octokit/rest@20.1.2 @octokit/auth-app@6.1.4 @octokit/request@8.4.1 @octokit/plugin-paginate-rest@11.4.4-cjs.2 @tootallnate/once@2.0.1 decode-uri-component@0.5.0; do
+for pin in axios@0.34.0 express@4.22.2 body-parser@1.20.9 path-to-regexp@0.1.13 qs@6.16.1 form-data@4.0.6 node-forge@1.4.1 lodash@4.18.1 fast-xml-parser@4.5.7 async@3.2.6 cipher-base@1.0.7 sha.js@2.4.12 pbkdf2@3.1.7 proxy-addr@2.0.8 elliptic@6.6.1 browserify-sign@4.2.6 follow-redirects@1.16.2 universal-github-app-jwt@1.2.0 jsonwebtoken@9.0.3 jws@4.0.1 @octokit/rest@20.1.2 @octokit/auth-app@6.1.4 @octokit/request@8.4.1 @octokit/plugin-paginate-rest@11.4.4-cjs.2 @tootallnate/once@2.0.1 decode-uri-component@0.5.1; do
   name="${pin%@*}"
   want="${pin##*@}"
   found="$(find . -path "*/node_modules/${name}/package.json" -exec node -p "require(process.argv[1]).version" {} \; | sort -u | tr '\n' ' ')"
