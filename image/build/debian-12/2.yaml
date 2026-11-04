@@ -18,6 +18,12 @@ vars:
   SEMVER_MAJOR_MINOR_VERSION: "2.27"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.27.1
+  UV_AUDITABLE_VERSION: 0.7.7
+  UV_COMMIT_SHA: 329bf9448afd9f9088d14a4d57fbc61eb454f117
+  UV_EXPECTED_VERSION: 0.13.6
+  UV_RUST_REFERENCE: dhi/rust:1.99.1-alpine3.22-dev@sha256:95146aa81cb5301a7d10134e6e81b573b590d40deb67ccbe16f85f2c91ff66dc
+  UV_RUST_TARGET: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.13.6
   VERSION: 2.27.1
   YQ_COMMIT_SHA: c14f446382944492701b16c1ddb48bb9dbe683e3
   YQ_VERSION: 4.53.6
@@ -122,7 +128,7 @@ contents:
             set -eux -o pipefail
 
             go get github.com/containerd/containerd/v2@v2.3.6 # CVE-2026-53488 CVE-2026-53489 CVE-2026-53492 CVE-2026-53493 CVE-2026-53495
-            go get golang.org/x/net@v0.60.0                   # CVE-2026-78659 CVE-2026-78660 CVE-2026-78663 CVE-2026-78669 CVE-2026-97032
+            go get golang.org/x/net@v0.62.0                   # CVE-2026-78659 CVE-2026-78660 CVE-2026-78661 CVE-2026-78663 CVE-2026-78669 CVE-2026-97032 CVE-2026-97045
 
             go mod tidy
             go mod vendor
@@ -160,7 +166,7 @@ contents:
               version: 4.53.6
               packages:
                 - name: yq
-                  purl: pkg:golang/github.com/mikefarah/yq/v4@4.53.6
+                  purl: pkg:golang/github.com/mikefarah/yq/v4@v4.53.6
                   license: MIT
             uid: 0
             gid: 0
@@ -179,6 +185,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            go get golang.org/x/net@v0.62.0 # CVE-2026-78659 CVE-2026-78660 CVE-2026-78661 CVE-2026-78663 CVE-2026-78669 CVE-2026-97032 CVE-2026-97045
             go mod vendor
         - name: compile yq
           work-dir: /go/src/github.com/mikefarah/yq
@@ -198,6 +205,79 @@ contents:
           mode: "0744"
         - source: /opt/docker/sbom/yq
           target: /opt/docker/sbom/yq
+          uid: 0
+          gid: 0
+    - name: uv
+      uses: dhi.io/rust:1.99.1-alpine3.22-dev@sha256:95146aa81cb5301a7d10134e6e81b573b590d40deb67ccbe16f85f2c91ff66dc
+      work-dir: /src/uv
+      caches:
+        - path: /root/.cargo
+        - path: /src/uv/target
+      contents:
+        files:
+          - url: git+https://github.com/astral-sh/uv.git#0.13.6
+            checksum: 329bf9448afd9f9088d14a4d57fbc61eb454f117
+            path: /src/uv
+            spdx:
+              name: uv
+              version: 0.13.6
+              packages:
+                - name: uv
+                  purl: pkg:pypi/uv@0.13.6
+                  license: MIT OR Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare uv sources
+          work-dir: /src/uv
+          privileged: true
+          environment:
+            CC: gcc
+            PATH: /tmp/uv-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            RUSTFLAGS: -C linker=gcc
+          runs: |
+            set -eux -o pipefail
+
+            cargo install cargo-auditable --version "0.7.7" --locked --root /tmp/uv-tools --jobs 2
+            cargo add --manifest-path crates/uv-python-managed/Cargo.toml zstd@0.14.3 --no-default-features
+            cargo add --manifest-path crates/uv-python-managed/Cargo.toml --build zstd@0.14.3 --no-default-features
+            cargo update --package memmap2 --precise 0.9.11
+            cargo update --package event-listener --precise 5.4.2
+            cargo update --package rustls --precise 0.23.46
+            cargo update --package tokio --precise 1.53.3
+            cargo update --package ctutils --precise 0.4.4
+            cargo update --package zstd-safe --precise 8.2.0
+            cargo update --package zstd-sys --precise 2.1.2
+            cargo fetch --locked --target "${UV_RUST_TARGET}"
+        - name: compile static uv
+          work-dir: /src/uv
+          environment:
+            CC: gcc
+            PATH: /tmp/uv-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            RUSTFLAGS: -C linker=gcc -C target-feature=+crt-static
+          runs: |
+            set -eux -o pipefail
+
+            cargo auditable build --offline --locked --release --no-default-features --package uv --bin uv --target "${UV_RUST_TARGET}" --jobs 2
+            uv_binary="/src/uv/target/${UV_RUST_TARGET}/release/uv"
+            readelf -l "${uv_binary}" > /tmp/uv-program-headers
+            readelf -d "${uv_binary}" > /tmp/uv-dynamic-section
+            if grep -Eq 'INTERP|NEEDED' /tmp/uv-program-headers /tmp/uv-dynamic-section; then
+              echo 'uv must be static for injection into Debian and Alpine steps' >&2
+              exit 1
+            fi
+            uv_reported_version=$("${uv_binary}" --version | cut -d ' ' -f 2)
+            [ "$uv_reported_version" = "0.13.6" ]
+            mkdir -p "${target.dir}/opt/docker/dhi"
+            cp -a "${uv_binary}" "${target.dir}/opt/docker/dhi/uv"
+      outputs:
+        - source: ${target.dir}/opt/docker/dhi/uv
+          target: /opt/docker/dhi/uv
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom/uv
+          target: /opt/docker/sbom/uv
           uid: 0
           gid: 0
     - name: add source to apt
