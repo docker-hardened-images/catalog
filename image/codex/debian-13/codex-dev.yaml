@@ -12,6 +12,7 @@ platforms:
   - linux/amd64
   - linux/arm64
 vars:
+  BANNER_KIT: codex docker 0.166.0
   CENTERED_KIT_NAME: '          codex docker 0.166.0'
   CLIPBOARD_BRIDGE_ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
   CLIPBOARD_BRIDGE_VERSION: v0.3.1
@@ -1121,6 +1122,105 @@ paths:
         esac
       } >/dev/null 2>&1
       exit 0
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: delete
+    path: /etc/profile.d/01-dhi.sh
+    uid: 0
+    gid: 0
+  - type: file
+    path: /etc/profile.d/01-dhi.sh
+    content: |
+      #!/bin/sh
+      _dhi_marker="${HOME:-/home/agent}/.local/state/dhi-banner-shown"
+      [ -f "$_dhi_marker" ] && { return 0 2>/dev/null || exit 0; }
+      # A function, so its set -- leaves the sourcing shell's arguments alone.
+      _dhi_banner() {
+        # The kits staged in the sandbox: the workload, then every mixin sbx
+        # composed onto it at create, which the build cannot know. A kit's
+        # name is its directory; its kind and version are top-level keys of
+        # its kit.yaml, which some kits quote.
+        _dhi_workload=""
+        _dhi_mixins=""
+        _dhi_width=0
+        for _dhi_kit in /usr/share/sandbox/kit/*/kit.yaml; do
+          [ -r "$_dhi_kit" ] || continue
+          _dhi_name=${_dhi_kit%/kit.yaml}
+          _dhi_name=${_dhi_name##*/}
+          _dhi_kind=""
+          _dhi_ver=""
+          while IFS= read -r _dhi_line || [ -n "$_dhi_line" ]; do
+            case "$_dhi_line" in
+              kind:*) _dhi_kind=$(printf '%s' "${_dhi_line#kind:}" | tr -d " \"'") ;;
+              version:*) _dhi_ver=$(printf '%s' "${_dhi_line#version:}" | tr -d " \"'") ;;
+            esac
+          done < "$_dhi_kit"
+          [ "${#_dhi_name}" -gt "$_dhi_width" ] && _dhi_width=${#_dhi_name}
+          if [ "$_dhi_kind" = workload ]; then
+            _dhi_workload="$_dhi_workload$_dhi_name $_dhi_ver;"
+          else
+            _dhi_mixins="$_dhi_mixins$_dhi_name $_dhi_ver;"
+          fi
+        done
+
+        # The column beside the art, from its second row down: the label, the
+        # sandbox, a blank row, then a row per kit, names padded to a column.
+        # Without staged kits it names the image this was built as.
+        set -- "Docker Sandbox / DHI" "${SANDBOX_VM_ID:-}" ""
+        _dhi_rest="$_dhi_workload$_dhi_mixins"
+        [ -n "$_dhi_rest" ] || set -- "$@" "$(printf '\033[96m%s\033[0m' "codex docker 0.166.0")"
+        while [ -n "$_dhi_rest" ]; do
+          _dhi_item=${_dhi_rest%%;*}
+          _dhi_rest=${_dhi_rest#*;}
+          set -- "$@" "$(printf '\033[96m%-*s\033[0m  %s' "$_dhi_width" "${_dhi_item% *}" "${_dhi_item#* }")"
+        done
+
+        # The art's lines carry color escapes, so the column is reached with a
+        # cursor move to column 47 rather than by padding them.
+        printf '\n'
+        _dhi_row=0
+        while IFS= read -r _dhi_art; do
+          _dhi_row=$((_dhi_row + 1))
+          if [ "$_dhi_row" -ge 2 ] && [ $# -gt 0 ]; then
+            printf '%b\033[47G%b\n' "$_dhi_art" "$1"
+            shift
+          else
+            printf '%b\n' "$_dhi_art"
+          fi
+        done <<'EOF'
+                        \033[36m.=****=.\033[0m
+                  \033[36m:+*******#******+:\033[0m
+              \033[36m.*********\033[0m        \033[36m*********.\033[0m
+            \033[36m:******:\033[0m                \033[36m:******:\033[0m
+            \033[36m***:\033[0m                        \033[36m:***\033[0m
+            \033[36m***\033[0m         \033[34m=******=\033[0m         \033[36m***\033[0m
+            \033[36m***\033[0m        \033[34m**********\033[0m        \033[36m*#*\033[0m
+            \033[36m**#\033[0m       \033[34m***=\033[0m    \033[34m=***\033[0m       \033[36m***\033[0m
+            \033[36m***\033[0m       \033[34m*#*\033[0m      \033[34m*#*\033[0m       \033[36m**#\033[0m
+            \033[36m***\033[0m       \033[34m+***\033[0m    \033[34m***+\033[0m       \033[36m***\033[0m
+            \033[36m**#\033[0m        \033[34m=***  *#*=\033[0m        \033[36m***\033[0m
+            \033[36m***\033[0m        \033[34m**#*  ****\033[0m        \033[36m***\033[0m
+            \033[36m****\033[0m       \033[34m***    ***\033[0m        \033[36m=+\033[0m
+            \033[36m***=\033[0m     \033[34m**#******#**\033[0m    \033[36m**=\033[0m
+              \033[36m****\033[0m     \033[34m**********\033[0m    \033[36m:***\033[0m
+              \033[36m****-\033[0m                 \033[36m:***\033[0m
+                \033[36m-****\033[0m           \033[96m**************\033[0m
+                  \033[36m*****\033[0m         \033[96m+*****#*******\033[0m
+                    \033[36m+****+\033[0m    \033[96m+*\033[0m     \033[96m:***\033[0m
+                      \033[36m.**********\033[0m    \033[96m:***\033[0m
+                        \033[36m.****.       \033[96m=+\033[0m
+      EOF
+        for _dhi_item in "$@"; do
+          printf '\033[47G%b\n' "$_dhi_item"
+        done
+        printf '\n'
+      }
+      _dhi_banner
+      unset -f _dhi_banner
+      unset _dhi_workload _dhi_mixins _dhi_width _dhi_kit _dhi_name _dhi_kind _dhi_ver _dhi_line _dhi_rest _dhi_item _dhi_row _dhi_art
+      mkdir -p "$(dirname "$_dhi_marker")" 2>/dev/null || true
+      : > "$_dhi_marker" 2>/dev/null || true
     uid: 0
     gid: 0
     mode: "0755"
