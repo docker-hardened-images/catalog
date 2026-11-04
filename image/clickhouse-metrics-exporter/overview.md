@@ -1,4 +1,4 @@
-## About clickhouse-metrics-exporter
+## About ClickHouse Metrics Exporter
 
 `clickhouse-metrics-exporter` is Altinity's official Prometheus metrics exporter for the ClickHouse Operator that
 provides comprehensive monitoring and observability for ClickHouse clusters running on Kubernetes. It operates as a
