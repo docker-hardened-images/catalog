@@ -1421,8 +1421,93 @@ paths:
       #!/bin/sh
       _dhi_marker="${HOME:-/home/agent}/.local/state/dhi-banner-shown"
       [ -f "$_dhi_marker" ] && { return 0 2>/dev/null || exit 0; }
+      # Replaces every $2 in $1 with $3, into _dhi_out.
+      _dhi_sub() {
+        _dhi_out=""
+        _dhi_s=$1
+        while :; do
+          case "$_dhi_s" in
+            *"$2"*)
+              _dhi_out="$_dhi_out${_dhi_s%%"$2"*}$3"
+              _dhi_s=${_dhi_s#*"$2"}
+              ;;
+            *) break ;;
+          esac
+        done
+        _dhi_out="$_dhi_out$_dhi_s"
+      }
+      # Value $1 cut from the left to $2 characters, into _dhi_out, and its
+      # width, which the ellipsis's bytes would overcount, into _dhi_len. The
+      # end of a path says more than its start, so whole leading components
+      # go first; the last is cut only when it alone does not fit.
+      _dhi_short() {
+        _dhi_out=$1
+        _dhi_len=${#_dhi_out}
+        [ "$_dhi_len" -le "$2" ] && return 0
+        while [ $((${#_dhi_out} + _dhi_ellw)) -gt "$2" ]; do
+          _dhi_t=${_dhi_out#/}
+          case "$_dhi_t" in
+            */*) _dhi_out="/${_dhi_t#*/}" ;;
+            *) break ;;
+          esac
+        done
+        while [ $((${#_dhi_out} + _dhi_ellw)) -gt "$2" ]; do
+          _dhi_out=${_dhi_out#?}
+        done
+        _dhi_len=$((${#_dhi_out} + _dhi_ellw))
+        _dhi_out="$_dhi_ell$_dhi_out"
+      }
+      # A panel row of label $1 and value $2, into _dhi_out; false without a
+      # value, so a fact the sandbox does not provide leaves no row.
+      _dhi_fact() {
+        [ -n "$2" ] || return 1
+        _dhi_short "$2" "$_dhi_vmax"
+        _dhi_v=$_dhi_out
+        _dhi_out=$(printf '%s%-11s%s%s' "$_dhi_dim" "$1" "$_dhi_off" "$_dhi_v")
+        [ $((11 + _dhi_len)) -gt "$_dhi_pw" ] && _dhi_pw=$((11 + _dhi_len))
+        return 0
+      }
+      # The host of URL $1, into _dhi_out.
+      _dhi_host() {
+        _dhi_out=${1#*://}
+        _dhi_out=${_dhi_out%%/*}
+        _dhi_out=${_dhi_out##*@}
+        case "$_dhi_out" in
+          *\]) ;;
+          *:*) _dhi_out=${_dhi_out%:*} ;;
+        esac
+      }
       # A function, so its set -- leaves the sourcing shell's arguments alone.
       _dhi_banner() {
+        # No escapes for NO_COLOR or a dumb terminal, 24-bit color where the
+        # terminal says it takes it, ASCII glyphs where it may lack UTF-8.
+        _dhi_e=$(printf '\033')
+        _dhi_mode=16
+        [ -n "${NO_COLOR:-}" ] && _dhi_mode=0
+        case "${TERM:-dumb}" in dumb) _dhi_mode=0 ;; esac
+        if [ "$_dhi_mode" = 16 ]; then
+          case "${COLORTERM:-}" in truecolor|24bit) _dhi_mode=24 ;; esac
+        fi
+        _dhi_bold="" _dhi_dim="" _dhi_off="" _dhi_ring="" _dhi_in="" _dhi_acc=""
+        case "$_dhi_mode" in
+          24)
+            _dhi_bold="$_dhi_e[1m" _dhi_dim="$_dhi_e[2m" _dhi_off="$_dhi_e[0m"
+            _dhi_in="$_dhi_e[38;2;29;99;237m" _dhi_acc="$_dhi_e[38;2;0;229;255m"
+            ;;
+          16)
+            _dhi_bold="$_dhi_e[1m" _dhi_dim="$_dhi_e[2m" _dhi_off="$_dhi_e[0m"
+            _dhi_ring="$_dhi_e[36m" _dhi_in="$_dhi_e[34m" _dhi_acc="$_dhi_e[96m"
+            ;;
+        esac
+        case "${TERM:-dumb}" in
+          dumb|linux)
+            _dhi_wk='*' _dhi_mx='o' _dhi_sep='-' _dhi_ell='...' _dhi_ellw=3 _dhi_hr='-'
+            ;;
+          *)
+            _dhi_wk='●' _dhi_mx='○' _dhi_sep='·' _dhi_ell='…' _dhi_ellw=1 _dhi_hr='─'
+            ;;
+        esac
+
         # The kits staged in the sandbox: the workload, then every mixin sbx
         # composed onto it at create, which the build cannot know. A kit's
         # name is its directory; its kind and version are top-level keys of
@@ -1430,6 +1515,7 @@ paths:
         _dhi_workload=""
         _dhi_mixins=""
         _dhi_width=0
+        _dhi_vw=0
         for _dhi_kit in /usr/share/sandbox/kit/*/kit.yaml; do
           [ -r "$_dhi_kit" ] || continue
           _dhi_name=${_dhi_kit%/kit.yaml}
@@ -1443,70 +1529,191 @@ paths:
             esac
           done < "$_dhi_kit"
           [ "${#_dhi_name}" -gt "$_dhi_width" ] && _dhi_width=${#_dhi_name}
+          [ "${#_dhi_ver}" -gt "$_dhi_vw" ] && _dhi_vw=${#_dhi_ver}
           if [ "$_dhi_kind" = workload ]; then
-            _dhi_workload="$_dhi_workload$_dhi_name $_dhi_ver;"
+            _dhi_workload="${_dhi_workload}w $_dhi_name $_dhi_ver;"
           else
-            _dhi_mixins="$_dhi_mixins$_dhi_name $_dhi_ver;"
+            _dhi_mixins="${_dhi_mixins}m $_dhi_name $_dhi_ver;"
           fi
         done
 
-        # The column beside the art, from its second row down: the label, the
-        # sandbox, a blank row, then a row per kit, names padded to a column.
-        # Without staged kits it names the image this was built as.
-        set -- "Docker Sandbox / DHI" "${SANDBOX_VM_ID:-}" ""
-        _dhi_rest="$_dhi_workload$_dhi_mixins"
-        [ -n "$_dhi_rest" ] || set -- "$@" "$(printf '\033[96m%s\033[0m' "claude docker 2.1.318")"
-        while [ -n "$_dhi_rest" ]; do
-          _dhi_item=${_dhi_rest%%;*}
-          _dhi_rest=${_dhi_rest#*;}
-          set -- "$@" "$(printf '\033[96m%-*s\033[0m  %s' "$_dhi_width" "${_dhi_item% *}" "${_dhi_item#* }")"
-        done
+        _dhi_ws=${WORKSPACE_DIR:-}
+        if [ -n "${HOME:-}" ]; then
+          case "$_dhi_ws" in "$HOME"|"$HOME"/*) _dhi_ws="~${_dhi_ws#"$HOME"}" ;; esac
+        fi
+        _dhi_os=""
+        if [ -r /etc/os-release ]; then
+          _dhi_id="" _dhi_vid="" _dhi_code=""
+          while IFS= read -r _dhi_line || [ -n "$_dhi_line" ]; do
+            case "$_dhi_line" in
+              ID=*) _dhi_id=$(printf '%s' "${_dhi_line#ID=}" | tr -d "\"'") ;;
+              VERSION_ID=*) _dhi_vid=$(printf '%s' "${_dhi_line#VERSION_ID=}" | tr -d "\"'") ;;
+              VERSION_CODENAME=*) _dhi_code=$(printf '%s' "${_dhi_line#VERSION_CODENAME=}" | tr -d "\"'") ;;
+            esac
+          done < /etc/os-release
+          if [ -n "$_dhi_id" ]; then
+            _dhi_cap=$(printf '%.1s' "$_dhi_id" | tr '[:lower:]' '[:upper:]')
+            _dhi_os="$_dhi_cap${_dhi_id#?}"
+            [ -n "$_dhi_vid" ] && _dhi_os="$_dhi_os $_dhi_vid"
+            [ -n "$_dhi_code" ] && _dhi_os="$_dhi_os ($_dhi_code)"
+          fi
+        fi
+        _dhi_egress=""
+        _dhi_proxy=${https_proxy:-}
+        [ -n "$_dhi_proxy" ] || _dhi_proxy=${HTTPS_PROXY:-}
+        if [ -n "$_dhi_proxy" ]; then
+          _dhi_host "$_dhi_proxy"
+          case "$_dhi_out" in
+            gateway.docker.internal) _dhi_egress="gateway proxy" ;;
+            *) _dhi_egress=$_dhi_out ;;
+          esac
+        fi
+        _dhi_mcp=""
+        if [ -n "${MCP_GATEWAY_URL:-}" ]; then
+          _dhi_host "$MCP_GATEWAY_URL"
+          case "$_dhi_out" in
+            mcp-gateway.docker.internal) _dhi_mcp=gateway ;;
+            *) _dhi_mcp=$_dhi_out ;;
+          esac
+        fi
 
-        # The art's lines carry color escapes, so the column is reached with a
-        # cursor move to column 47 rather than by padding them.
+        # The panel starts at column 45, beside the art, its last row level
+        # with the art's. A fact's value is cut to the room left there, or, on a terminal too
+        # narrow for the art beside the shortest panel, to the room left by
+        # the panel alone. A terminal of unknown width counts as 80 columns.
+        _dhi_cols=$( { stty size </dev/tty; } 2>/dev/null )
+        _dhi_cols=${_dhi_cols#* }
+        case "$_dhi_cols" in ''|0|*[!0-9]*) _dhi_cols=${COLUMNS:-0} ;; esac
+        case "$_dhi_cols" in ''|*[!0-9]*) _dhi_cols=0 ;; esac
+        _dhi_vmax=$_dhi_cols
+        [ "$_dhi_vmax" -gt 0 ] || _dhi_vmax=80
+        if [ "$_dhi_vmax" -ge $((44 + 34)) ]; then
+          _dhi_vmax=$((_dhi_vmax - 44 - 11))
+        else
+          _dhi_vmax=$((_dhi_vmax - 2 - 11))
+        fi
+        [ "$_dhi_vmax" -ge 12 ] || _dhi_vmax=12
+        # A cap keeps the panel compact on a wide terminal.
+        [ "$_dhi_vmax" -le 30 ] || _dhi_vmax=30
+
+        # The panel, a row per positional argument; _dhi_pw tracks its widest
+        # row, which escapes would overcount if measured from the rows. The
+        # title and the rule under it, as wide as that row, go on last.
+        set --
+        _dhi_pw=34
+        _dhi_fact sandbox "${SANDBOX_VM_ID:-}" && set -- "$@" "$_dhi_out"
+        _dhi_fact workspace "$_dhi_ws" && set -- "$@" "$_dhi_out"
+        _dhi_fact base "$_dhi_os" && set -- "$@" "$_dhi_out"
+        _dhi_fact egress "$_dhi_egress" && set -- "$@" "$_dhi_out"
+        _dhi_fact mcp "$_dhi_mcp" && set -- "$@" "$_dhi_out"
+        set -- "$@" ""
+        _dhi_rest="$_dhi_workload$_dhi_mixins"
+        if [ -n "$_dhi_rest" ]; then
+          set -- "$@" "${_dhi_dim}kits$_dhi_off"
+          while [ -n "$_dhi_rest" ]; do
+            _dhi_item=${_dhi_rest%%;*}
+            _dhi_rest=${_dhi_rest#*;}
+            _dhi_k=${_dhi_item%% *}
+            _dhi_item=${_dhi_item#* }
+            if [ "$_dhi_k" = w ]; then
+              _dhi_mk=$_dhi_wk
+            else
+              _dhi_mk="$_dhi_dim$_dhi_mx$_dhi_off"
+            fi
+            _dhi_out=$(printf '%s %s%-*s%s  %s%s%s' "$_dhi_mk" "$_dhi_acc" "$_dhi_width" "${_dhi_item% *}" "$_dhi_off" "$_dhi_dim" "${_dhi_item##* }" "$_dhi_off")
+            set -- "$@" "$_dhi_out"
+          done
+          [ $((_dhi_width + _dhi_vw + 4)) -gt "$_dhi_pw" ] && _dhi_pw=$((_dhi_width + _dhi_vw + 4))
+        else
+          _dhi_item="claude docker 2.1.318"
+          set -- "$@" "$_dhi_acc$_dhi_item$_dhi_off"
+          [ "${#_dhi_item}" -gt "$_dhi_pw" ] && _dhi_pw=${#_dhi_item}
+        fi
+        _dhi_rule=""
+        _dhi_n=0
+        while [ "$_dhi_n" -lt "$_dhi_pw" ]; do
+          _dhi_rule="$_dhi_rule$_dhi_hr"
+          _dhi_n=$((_dhi_n + 1))
+        done
+        set -- "${_dhi_bold}Docker Sandbox$_dhi_off$_dhi_dim  $_dhi_sep  hardened by DHI$_dhi_off" "$_dhi_dim$_dhi_rule$_dhi_off" "$@"
+
+        # A terminal too narrow for both gets the panel alone; one of unknown
+        # width gets both.
         printf '\n'
+        if [ "$_dhi_cols" -gt 0 ] && [ "$_dhi_cols" -lt $((44 + _dhi_pw)) ]; then
+          for _dhi_item in "$@"; do
+            printf '  %s\n' "$_dhi_item"
+          done
+          printf '\n'
+          return 0
+        fi
+
+        # The art's {o}uter ring, {i}nner mark and {a}ccent, each up to its
+        # {r}eset. In 24-bit color the ring shades from aqua at the top to
+        # Docker blue at the bottom, over its 21 rows. A panel taller than the
+        # art starts at its top and runs on below it.
+        _dhi_start=$((22 - $#))
+        [ "$_dhi_start" -ge 1 ] || _dhi_start=1
         _dhi_row=0
         while IFS= read -r _dhi_art; do
+          if [ "$_dhi_mode" = 24 ]; then
+            _dhi_ring="$_dhi_e[38;2;$((94 - 58 * _dhi_row / 20));$((234 - 84 * _dhi_row / 20));$((255 - 18 * _dhi_row / 20))m"
+          fi
           _dhi_row=$((_dhi_row + 1))
-          if [ "$_dhi_row" -ge 2 ] && [ $# -gt 0 ]; then
-            printf '%b\033[47G%b\n' "$_dhi_art" "$1"
+          _dhi_sub "$_dhi_art" '{o}' "$_dhi_ring"
+          _dhi_sub "$_dhi_out" '{i}' "$_dhi_in"
+          _dhi_sub "$_dhi_out" '{a}' "$_dhi_acc"
+          _dhi_sub "$_dhi_out" '{r}' "$_dhi_off"
+          _dhi_paint=$_dhi_out
+          _dhi_sub "$_dhi_art" '{o}' ""
+          _dhi_sub "$_dhi_out" '{i}' ""
+          _dhi_sub "$_dhi_out" '{a}' ""
+          _dhi_sub "$_dhi_out" '{r}' ""
+          if [ "$_dhi_row" -ge "$_dhi_start" ] && [ $# -gt 0 ]; then
+            printf '%s%*s%s\n' "$_dhi_paint" $((44 - ${#_dhi_out})) "" "$1"
             shift
           else
-            printf '%b\n' "$_dhi_art"
+            printf '%s\n' "$_dhi_paint"
           fi
         done <<'EOF'
-                        \033[36m.=****=.\033[0m
-                  \033[36m:+*******#******+:\033[0m
-              \033[36m.*********\033[0m        \033[36m*********.\033[0m
-            \033[36m:******:\033[0m                \033[36m:******:\033[0m
-            \033[36m***:\033[0m                        \033[36m:***\033[0m
-            \033[36m***\033[0m         \033[34m=******=\033[0m         \033[36m***\033[0m
-            \033[36m***\033[0m        \033[34m**********\033[0m        \033[36m*#*\033[0m
-            \033[36m**#\033[0m       \033[34m***=\033[0m    \033[34m=***\033[0m       \033[36m***\033[0m
-            \033[36m***\033[0m       \033[34m*#*\033[0m      \033[34m*#*\033[0m       \033[36m**#\033[0m
-            \033[36m***\033[0m       \033[34m+***\033[0m    \033[34m***+\033[0m       \033[36m***\033[0m
-            \033[36m**#\033[0m        \033[34m=***  *#*=\033[0m        \033[36m***\033[0m
-            \033[36m***\033[0m        \033[34m**#*  ****\033[0m        \033[36m***\033[0m
-            \033[36m****\033[0m       \033[34m***    ***\033[0m        \033[36m=+\033[0m
-            \033[36m***=\033[0m     \033[34m**#******#**\033[0m    \033[36m**=\033[0m
-              \033[36m****\033[0m     \033[34m**********\033[0m    \033[36m:***\033[0m
-              \033[36m****-\033[0m                 \033[36m:***\033[0m
-                \033[36m-****\033[0m           \033[96m**************\033[0m
-                  \033[36m*****\033[0m         \033[96m+*****#*******\033[0m
-                    \033[36m+****+\033[0m    \033[96m+*\033[0m     \033[96m:***\033[0m
-                      \033[36m.**********\033[0m    \033[96m:***\033[0m
-                        \033[36m.****.       \033[96m=+\033[0m
+                      {o}.=****=.{r}
+                {o}:+*******#******+:{r}
+            {o}.*********{r}        {o}*********.{r}
+          {o}:******:{r}                {o}:******:{r}
+          {o}***:{r}                        {o}:***{r}
+          {o}***{r}         {i}=******={r}         {o}***{r}
+          {o}***{r}        {i}**********{r}        {o}*#*{r}
+          {o}**#{r}       {i}***={r}    {i}=***{r}       {o}***{r}
+          {o}***{r}       {i}*#*{r}      {i}*#*{r}       {o}**#{r}
+          {o}***{r}       {i}+***{r}    {i}***+{r}       {o}***{r}
+          {o}**#{r}        {i}=***  *#*={r}        {o}***{r}
+          {o}***{r}        {i}**#*  ****{r}        {o}***{r}
+          {o}****{r}       {i}***    ***{r}        {o}=+{r}
+          {o}***={r}     {i}**#******#**{r}    {o}**={r}
+            {o}****{r}     {i}**********{r}    {o}:***{r}
+            {o}****-{r}                 {o}:***{r}
+              {o}-****{r}           {a}**************{r}
+                {o}*****{r}         {a}+*****#*******{r}
+                  {o}+****+{r}    {a}+*{r}     {a}:***{r}
+                    {o}.**********{r}    {a}:***{r}
+                      {o}.****.       {a}=+{r}
       EOF
         for _dhi_item in "$@"; do
-          printf '\033[47G%b\n' "$_dhi_item"
+          printf '%44s%s\n' "" "$_dhi_item"
         done
         printf '\n'
       }
       _dhi_banner
-      unset -f _dhi_banner
-      unset _dhi_workload _dhi_mixins _dhi_width _dhi_kit _dhi_name _dhi_kind _dhi_ver _dhi_line _dhi_rest _dhi_item _dhi_row _dhi_art
+      unset -f _dhi_banner _dhi_sub _dhi_short _dhi_fact _dhi_host
+      unset _dhi_out _dhi_s _dhi_e _dhi_mode _dhi_bold _dhi_dim _dhi_off _dhi_ring _dhi_in _dhi_acc \
+        _dhi_wk _dhi_mx _dhi_sep _dhi_rule _dhi_workload _dhi_mixins _dhi_width _dhi_vw _dhi_kit \
+        _dhi_name _dhi_kind _dhi_ver _dhi_line _dhi_ws _dhi_os _dhi_id _dhi_vid _dhi_code _dhi_cap \
+        _dhi_egress _dhi_proxy _dhi_mcp _dhi_pw _dhi_rest _dhi_item _dhi_k _dhi_mk _dhi_cols \
+        _dhi_row _dhi_art _dhi_paint _dhi_ell _dhi_vmax _dhi_v _dhi_start \
+        _dhi_ellw _dhi_hr _dhi_len _dhi_t _dhi_n
       mkdir -p "$(dirname "$_dhi_marker")" 2>/dev/null || true
       : > "$_dhi_marker" 2>/dev/null || true
+      unset _dhi_marker
     uid: 0
     gid: 0
     mode: "0755"
