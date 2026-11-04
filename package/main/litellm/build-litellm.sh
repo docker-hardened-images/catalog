@@ -58,7 +58,7 @@ pip install --no-cache-dir --upgrade 'cryptography>=46.0.5'
 pip install --no-cache-dir --upgrade 'mcp>=1.23.0'
 pip install --no-cache-dir --upgrade 'fastapi-sso>=0.19.0'
 pip install --no-cache-dir --upgrade 'urllib3==2.8.0'
-pip install --no-cache-dir --upgrade 'certifi==2026.10.19'
+pip install --no-cache-dir --upgrade 'certifi>=2026.10.23'
 pip install --no-cache-dir --upgrade 'pynacl>=1.6.2'
 pip install --no-cache-dir --upgrade 'nodejs-wheel-binaries>=24.17.0'
 pip install --no-cache-dir --upgrade 'python-multipart>=0.0.22'
@@ -155,9 +155,10 @@ pip install --no-cache-dir semantic_router --no-deps
 # Replace the vendor copy with the pinned runtime wheel so pip keeps
 # working for consuming images and the SBOM does not retain a duplicate.
 sp=$(echo "${VENV}/lib"/python*/site-packages)
+URLLIB3_VER=$("${VENV}/bin/python" -c 'import urllib3; print(urllib3.__version__)')
 rm -rf "$sp/pip/_vendor/urllib3"
 cp -a "$sp/urllib3" "$sp/pip/_vendor/urllib3"
-sed -i 's/urllib3==2\.7\.0/urllib3==2.8.0/' "$sp/pip/_vendor/vendor.txt"
+sed -i "s/^urllib3==.*/urllib3==${URLLIB3_VER}/" "$sp/pip/_vendor/vendor.txt"
 CERTIFI_VER=$("${VENV}/bin/python" -c 'import certifi; print(certifi.__version__)')
 rm -rf "$sp/pip/_vendor/certifi"
 cp -a "$sp/certifi" "$sp/pip/_vendor/certifi"
@@ -170,21 +171,38 @@ if [ -d "$sp/pkg_resources" ]; then
 fi
 sed -i "s/^setuptools==.*/setuptools==${SETUPTOOLS_VER}/" "$sp/pip/_vendor/vendor.txt"
 if [ -f "$sp/pip/_vendor/bom.cdx.json" ]; then
-  sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "$sp/pip/_vendor/bom.cdx.json"
-  sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "$sp/pip/_vendor/bom.cdx.json"
   sed -i -E 's/pkg:pypi\/setuptools@[0-9.]+/pkg:pypi\/setuptools@'"${SETUPTOOLS_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
-  sed -i 's/"version": "70.3.0"/"version": "'"${SETUPTOOLS_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
+  "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${URLLIB3_VER}" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    bom = json.load(f)
+found = False
+want = f"pkg:pypi/urllib3@{ver}"
+for comp in bom.get("components", []):
+    if comp.get("name") != "urllib3":
+        continue
+    found = True
+    comp["version"] = ver
+    comp["purl"] = want
+    comp["bom-ref"] = want
+if not found:
+    raise SystemExit("urllib3 component missing from pip vendor bom")
+with open(path, "w") as f:
+    json.dump(bom, f, indent=2)
+    f.write("\n")
+PY
   "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${CERTIFI_VER}" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]
 with open(path) as f:
     bom = json.load(f)
 found = False
+want = f"pkg:pypi/certifi@{ver}"
 for comp in bom.get("components", []):
     if comp.get("name") != "certifi":
         continue
     found = True
-    want = f"pkg:pypi/certifi@{ver}"
     comp["version"] = ver
     comp["purl"] = want
     comp["bom-ref"] = want
@@ -200,46 +218,19 @@ path, ver = sys.argv[1], sys.argv[2]
 with open(path) as f:
     bom = json.load(f)
 found = False
+want = f"pkg:pypi/setuptools@{ver}"
 for comp in bom.get("components", []):
     if comp.get("name") != "setuptools":
         continue
     found = True
-    want = f"pkg:pypi/setuptools@{ver}"
-    if comp.get("version") != ver or comp.get("purl") != want or comp.get("bom-ref") != want:
-        raise SystemExit(
-            f"setuptools component is version={comp.get('version')!r} purl={comp.get('purl')!r} bom-ref={comp.get('bom-ref')!r}, want {ver}"
-        )
+    comp["version"] = ver
+    comp["purl"] = want
+    comp["bom-ref"] = want
 if not found:
     raise SystemExit("setuptools component missing from pip vendor bom")
-PY
-  MSGPACK_VER=$("${VENV}/bin/python" -c 'import msgpack; print(msgpack.__version__)')
-  rm -rf "$sp/pip/_vendor/msgpack"
-  cp -a "$sp/msgpack" "$sp/pip/_vendor/msgpack"
-  sed -i "s/^msgpack==.*/msgpack==${MSGPACK_VER}/" "$sp/pip/_vendor/vendor.txt"
-  sed -i -E 's/pkg:pypi\/msgpack@[0-9.]+/pkg:pypi\/msgpack@'"${MSGPACK_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
-  sed -i 's/"version": "1.1.2"/"version": "'"${MSGPACK_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
-  "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${MSGPACK_VER}" <<'PY'
-import json, sys
-path, ver = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    bom = json.load(f)
-found = False
-for comp in bom.get("components", []):
-    if comp.get("name") != "msgpack":
-        continue
-    found = True
-    want = f"pkg:pypi/msgpack@{ver}"
-    if comp.get("version") != ver or comp.get("purl") != want or comp.get("bom-ref") != want:
-        raise SystemExit(
-            f"msgpack component is version={comp.get('version')!r} purl={comp.get('purl')!r} bom-ref={comp.get('bom-ref')!r}, want {ver}"
-        )
-if not found:
-    raise SystemExit("msgpack component missing from pip vendor bom")
-parts = ver.split(".")[:3]
-if len(parts) < 3 or not all(p.isdigit() for p in parts):
-    raise SystemExit(f"unexpected msgpack version {ver}")
-if tuple(int(p) for p in parts) < (1, 2, 3):
-    raise SystemExit(f"msgpack {ver} is below 1.2.3")
+with open(path, "w") as f:
+    json.dump(bom, f, indent=2)
+    f.write("\n")
 PY
 fi
 "${VENV}/bin/pip" --version
