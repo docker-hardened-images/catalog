@@ -43,7 +43,8 @@ The image version corresponds to the source-controller component version:
 
 | Image tag | Flux version |
 | --------- | ------------ |
-| `1.8.x`   | Flux 2.8.x   |
+| `1.10.x`  | Flux 2.10.x  |
+| `1.9.x`   | Flux 2.9.x   |
 | `1.7.x`   | Flux 2.7.x   |
 | `1.6.x`   | Flux 2.6.x   |
 
