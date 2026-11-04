@@ -135,6 +135,7 @@ contents:
           - nodejs-24
           - node-corepack
           - npm
+          - patch
           - python3
           - sed
           - yarn-classic
@@ -157,6 +158,8 @@ contents:
           runs: |
             set -eux -o pipefail
 
+            patch -p1 --forward -d /triggerdotdev < /triggerdotdev/patch/cli-v3-externals-minimatch11.patch
+
             corepack enable
             corepack prepare pnpm@10.33.2 --activate
 
@@ -178,7 +181,7 @@ contents:
             pnpm pkg set pnpm.overrides.effect=">=3.20.0"              # 5 HIGH
             pnpm pkg set pnpm.overrides.next=">=15.5.15"               # 5 CRITICAL+HIGH (transitive only; webapp uses Remix)
             pnpm pkg set pnpm.overrides.ws=">=8.20.1"                  # 3 HIGH + 1 MEDIUM (CVE-2026-45736)
-            pnpm pkg set pnpm.overrides.glob=">=11.1.0"                # 3 HIGH
+            pnpm pkg set pnpm.overrides.glob=">=14.0.2"                # CVE-2026-118773 (fixed 14.0.2); prior HIGH through >=11.1.0
             pnpm pkg set pnpm.overrides.tar-fs=">=3.1.1"               # 2 HIGH (CVE-2025-23234)
             pnpm pkg set pnpm.overrides.systeminformation=">=5.33.16"  # CVE-2026-116576 (fixed 5.33.16); CVE-2026-116674/116673; prior CVE-2026-44724
             pnpm pkg set pnpm.overrides.picomatch=">=4.0.4"            # 2 HIGH (CVE-2026-33671/2)
@@ -261,7 +264,8 @@ contents:
             # - @babel/runtime: 1 MEDIUM CVE-2025-27789 across 7.20.7/7.22.5/7.24.5/7.26.7 (fix 7.26.10)
             cat package.json | jq '
               .pnpm.overrides["socket.io-parser"] = ">=4.2.7"                     |
-              .pnpm.overrides["minimatch@^10"] = ">=10.2.3"                       |
+              .pnpm.overrides["minimatch@^10"] = ">=11.0.1"                       | # CVE-2026-118764 (fixed 11.0.1)
+              .pnpm.overrides["lodash.omit"] = ">=4.18.0"                         | # CVE-2026-2950 (fixed 4.18.0; 4.5.0 pulled in by @jsonhero/json-schema-fns and @jsonhero/schema-infer)
               .pnpm.overrides["path-to-regexp@^0"] = "0.1.13"                     |
               .pnpm.overrides["path-to-regexp@^1"] = "1.9.0"                      |
               .pnpm.overrides["path-to-regexp@^6"] = "6.3.0"                      |
@@ -327,6 +331,11 @@ contents:
             pnpm install --frozen-lockfile --ignore-scripts
             pnpx prisma@6.14.0 generate --schema internal-packages/database/prisma/schema.prisma
             pnpx prisma@6.14.0 generate --schema internal-packages/run-ops-database/prisma/schema.prisma
+        - name: cli-v3 externals esbuild regression
+          runs: |
+            set -eux -o pipefail
+
+            pnpm --dir packages/cli-v3 exec tsx src/build/forcedExternalResolve.esbuild.test.ts
         - name: build webapp
           runs: |
             set -eux -o pipefail
@@ -407,6 +416,12 @@ contents:
             # entrypoint writes to apps/webapp/prisma at startup; flip the tree
             # over so the runtime user owns it.
             chown -R 65532:65532 "${target.dir}/triggerdotdev"
+      paths:
+        - type: file
+          path: /triggerdotdev/patch/cli-v3-externals-minimatch11.patch
+          uid: 0
+          gid: 0
+          source: image/trigger-dev/patch/cli-v3-externals-minimatch11.patch
       outputs:
         - source: ${target.dir}/triggerdotdev
           target: /triggerdotdev
