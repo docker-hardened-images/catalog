@@ -172,10 +172,6 @@ sed -i "s/^setuptools==.*/setuptools==${SETUPTOOLS_VER}/" "$sp/pip/_vendor/vendo
 if [ -f "$sp/pip/_vendor/bom.cdx.json" ]; then
   sed -i 's/pkg:pypi\/urllib3@2\.7\.0/pkg:pypi\/urllib3@2.8.0/g' "$sp/pip/_vendor/bom.cdx.json"
   sed -i 's/"version": "2.7.0"/"version": "2.8.0"/' "$sp/pip/_vendor/bom.cdx.json"
-  sed -i -E 's/pkg:pypi\/certifi@[0-9.]+/pkg:pypi\/certifi@'"${CERTIFI_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
-  # Pip 26.2.1 records certifi's component version separately from its PURL.
-  # Rewrite both so an SBOM reader cannot keep the vendored 2026.6.17.
-  sed -i 's/"version": "2026.6.17"/"version": "'"${CERTIFI_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
   sed -i -E 's/pkg:pypi\/setuptools@[0-9.]+/pkg:pypi\/setuptools@'"${SETUPTOOLS_VER}"'/g' "$sp/pip/_vendor/bom.cdx.json"
   sed -i 's/"version": "70.3.0"/"version": "'"${SETUPTOOLS_VER}"'"/' "$sp/pip/_vendor/bom.cdx.json"
   "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${CERTIFI_VER}" <<'PY'
@@ -189,12 +185,14 @@ for comp in bom.get("components", []):
         continue
     found = True
     want = f"pkg:pypi/certifi@{ver}"
-    if comp.get("version") != ver or comp.get("purl") != want or comp.get("bom-ref") != want:
-        raise SystemExit(
-            f"certifi component is version={comp.get('version')!r} purl={comp.get('purl')!r} bom-ref={comp.get('bom-ref')!r}, want {ver}"
-        )
+    comp["version"] = ver
+    comp["purl"] = want
+    comp["bom-ref"] = want
 if not found:
     raise SystemExit("certifi component missing from pip vendor bom")
+with open(path, "w") as f:
+    json.dump(bom, f, indent=2)
+    f.write("\n")
 PY
   "${VENV}/bin/python" - "$sp/pip/_vendor/bom.cdx.json" "${SETUPTOOLS_VER}" <<'PY'
 import json, sys
