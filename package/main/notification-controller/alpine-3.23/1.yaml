@@ -4,7 +4,7 @@ image: dhi.io/pkg-notification-controller
 variant: runtime
 tags:
   - 1.10.0-alpine3.23
-  - 1.10.0-r0-alpine3.23
+  - 1.10.0-r1-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,7 +14,7 @@ vars:
   COMMIT_SHA: 08d8de010a16def89c1195b9360ceb1bd0042f70
   GOLANG_MAJOR_MINOR_VERSION: "1.27"
   GOLANG_VERSION: 1.27.3-r0
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "1.10"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.10.0
@@ -82,6 +82,12 @@ contents:
           with:
             fips: false
             output: ${target.dir}/usr/bin/fluxcd-notification-controller
+        - name: binary sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: go-module-binary-cataloger
+            prefix: fluxcd-notification-controller
+            source: ${target.dir}/usr/bin/fluxcd-notification-controller
         - name: build dev
           uses: go/build@v1
           work-dir: /go/src/github.com/fluxcd/notification-controller
@@ -92,18 +98,44 @@ contents:
             output: ${target.dir}/usr/bin/fluxcd-notification-controller-dev
             packages: .
             strip: false
+        - name: stage sbom
+          work-dir: /go/src/github.com/fluxcd/notification-controller
+          runs: |
+            set -eux -o pipefail
+
+            pkg=fluxcd-notification-controller
+            sbom_dir="/opt/docker/sbom/${pkg}"
+            bin_spdx="${sbom_dir}/.spdx.${pkg}.json"
+            test -s "$bin_spdx"
+            jose_ver=$(go list -m -f '{{.Version}}' github.com/go-jose/go-jose/v4)
+            test "$jose_ver" = "v4.1.6"
+            if ! grep -q 'pkg:golang/github.com/go-jose/go-jose/v4@4.1.6' "$bin_spdx"; then
+              tmp_spdx="${sbom_dir}/spdx-go-jose-merge.json"
+              jq --arg name "github.com/go-jose/go-jose/v4" --arg ver "4.1.6" --arg purl "pkg:golang/github.com/go-jose/go-jose/v4@4.1.6" \
+                '.packages += [{"SPDXID":"SPDXRef-Package-go-jose-v4","name":$name,"versionInfo":$ver,"downloadLocation":"NOASSERTION","filesAnalyzed":false,"externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":$purl}]}]' \
+                "$bin_spdx" > "$tmp_spdx"
+              mv "$tmp_spdx" "$bin_spdx"
+            fi
+            grep -q 'pkg:golang/github.com/go-jose/go-jose/v4@4.1.6' "$bin_spdx"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/dev/opt/docker/sbom"
+            cp -a "$sbom_dir" "${target.dir}/opt/docker/sbom/"
+            cp -a "$sbom_dir" "${target.dir}/dev/opt/docker/sbom/"
+            test -s "${target.dir}/opt/docker/sbom/${pkg}/.spdx.${pkg}.json"
         - uses: dhi/build-pkg:0
           with:
             description: Notification-controller
             files:
               - usr/bin/fluxcd-notification-controller
+              - opt/docker/sbom/fluxcd-notification-controller
             license: Apache-2.0
             name: fluxcd-notification-controller
-            rel: 0
+            rel: 1
             subpackages:
               - files:
                   - path: usr/bin/fluxcd-notification-controller
                     source: usr/bin/fluxcd-notification-controller-dev
+                  - path: opt/docker/sbom/fluxcd-notification-controller
+                    source: dev/opt/docker/sbom/fluxcd-notification-controller
                 name: fluxcd-notification-controller-dev
             url: https://github.com/fluxcd/notification-controller
             version: 1.10.0
