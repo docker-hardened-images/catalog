@@ -4,7 +4,7 @@ image: dhi.io/pkg-docker-dind
 variant: runtime
 tags:
   - 29.9.2-alpine3.24
-  - 29.9.2-r8-alpine3.24
+  - 29.9.2-r9-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,8 @@ vars:
   DOCKERD_ENTRYPOINT_CHECKSUM: sha256:a93495e8480d186bc7554618cca2c8964b248a3984034e5554df1bf4bfece245
   MODPROBE_CHECKSUM: sha256:d448b121929c7e06253a0f5400b5b4d73f9f3862f052fd9999f5209994805d1e
   PACKAGE_NAME: docker-dind
-  REL: "8"
+  REL: "9"
+  RUNC_STATIC_VERSION: 1.5.2-r4
   SEMVER_MAJOR_MINOR_VERSION: "29.9"
   SEMVER_MAJOR_VERSION: "29"
   SEMVER_VERSION: 29.9.2
@@ -30,14 +31,17 @@ contents:
     - https://dhi.io/apk/alpine/v3.23/main
     - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
     - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    - https://dhi.io/apk/alpine/v3.24/security
   keyring:
     - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+    - https://dhi.io/keyring/dhi-apk-sec@docker-0F81AD7700D99184.rsa.pub
   packages:
     - alpine-baselayout-data
   builds:
     - name: docker-dind
       contents:
         packages:
+          - apk-tools
           - bash
           - busybox
           - ca-certificates-bundle
@@ -73,6 +77,38 @@ contents:
             install -D -m 0755 "${source.dir}/dockerd-entrypoint.sh" "${target.dir}/usr/bin/dockerd-entrypoint.sh"
             install -D -m 0755 "${source.dir}/docker-entrypoint.sh" "${target.dir}/usr/bin/docker-entrypoint.sh"
             install -D -m 0755 "${source.dir}/modprobe.sh" "${target.dir}/usr/bin/modprobe"
+        - name: install runtime dependency tree for sbom (non-fips)
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}"
+            mkdir -p "$root/etc/apk"
+            cp -a /etc/apk/keys "$root/etc/apk/"
+            cp /etc/apk/repositories "$root/etc/apk/repositories"
+            apk add --root "$root" --initdb --no-cache \
+              btrfs-progs \
+              "containerd=2.4.2-r2" \
+              device-mapper \
+              "docker-cli=29.9.2-r2" \
+              "docker-cli-buildx=0.38.1-r1" \
+              "docker-engine=29.9.2-r2" \
+              e2fsprogs e2fsprogs-extra git iptables iptables-legacy \
+              openssh-client-default openssl pigz \
+              "runc-static-1.5=1.5.2-r4" \
+              xfsprogs xz zfs
+        - name: catalog runtime stack sbom
+          uses: sbom@v1
+          with:
+            prefix: docker-dind-runtime
+            source: ${target.dir}/usr
+        - name: stage runtime sbom into package payload
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            test -d /opt/docker/sbom/docker-dind-runtime
+            cp -a /opt/docker/sbom/docker-dind-runtime "${target.dir}/opt/docker/sbom/"
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -90,7 +126,7 @@ contents:
               - openssh-client-default
               - openssl
               - pigz
-              - runc
+              - runc-static-1.5=1.5.2-r4
               - xfsprogs
               - xz
               - zfs
@@ -99,11 +135,12 @@ contents:
               - usr/bin/dockerd-entrypoint.sh
               - usr/bin/docker-entrypoint.sh
               - usr/bin/modprobe
+              - opt/docker/sbom/docker-dind-runtime
             formats:
               - apk
             license: Apache-2.0
             name: docker-dind
-            rel: 8
+            rel: 9
             url: https://hub.docker.com/_/docker
             version: 29.9.2
         - uses: dhi/build-pkg:0
@@ -126,7 +163,7 @@ contents:
               - openssh-client-default
               - openssl
               - pigz
-              - runc
+              - runc-static-1.5=1.5.2-r4
               - xfsprogs
               - xz
               - zfs
@@ -135,11 +172,12 @@ contents:
               - usr/bin/dockerd-entrypoint.sh
               - usr/bin/docker-entrypoint.sh
               - usr/bin/modprobe
+              - opt/docker/sbom/docker-dind-runtime
             formats:
               - apk
             license: Apache-2.0
             name: docker-dind-dev
-            rel: 8
+            rel: 9
             url: https://hub.docker.com/_/docker
             version: 29.9.2
 os-release:
