@@ -4,7 +4,7 @@ image: dhi.io/pkg-aws-network-policy-agent
 variant: runtime
 tags:
   - 1.4.3-alpine3.23
-  - 1.4.3-r3-alpine3.23
+  - 1.4.3-r4-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -15,7 +15,7 @@ vars:
   COMMIT_SHA: 6b9c41cc2a373ad990faca10173cda64d4aace41
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.10-r0
-  REL: "3"
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "1.4"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.4.3
@@ -83,7 +83,23 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            bpftool btf dump file /sys/kernel/btf/vmlinux format c > pkg/ebpf/c/vmlinux.h
+            if [ -r /sys/kernel/btf/vmlinux ]; then
+              bpftool btf dump file /sys/kernel/btf/vmlinux format c > pkg/ebpf/c/vmlinux.h
+              exit 0
+            fi
+
+            case "$(uname -m)" in
+              x86_64) BTF_ARCHIVE="${source.dir}/vmlinux-amd64.btf.tar.xz" ;;
+              aarch64) BTF_ARCHIVE="${source.dir}/vmlinux-arm64.btf.tar.xz" ;;
+              *)
+                echo "unsupported architecture for ebpf build: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+
+            tar -xJf "$BTF_ARCHIVE" -C /tmp
+            BTF_FILE="$(find /tmp -maxdepth 1 -name '*.btf' -print -quit)"
+            bpftool btf dump file "$BTF_FILE" format c > pkg/ebpf/c/vmlinux.h
         - name: build BPF programs
           runs: |
             set -eux -o pipefail
@@ -100,6 +116,15 @@ contents:
             clang-22 ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v4egress.bpf.c -o ${EBPF_DIR}/tc.v4egress.bpf.o
             clang-22 ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6ingress.bpf.c -o ${EBPF_DIR}/tc.v6ingress.bpf.o
             clang-22 ${CLANG_FLAGS} -D__TARGET_ARCH_${ARCH} -c ${EBPF_DIR}/tc.v6egress.bpf.c -o ${EBPF_DIR}/tc.v6egress.bpf.o
+        - name: stage ebpf object files for packaging
+          runs: |
+            set -eux -o pipefail
+
+            EBPF_DIR=./pkg/ebpf/c
+            STAGE_DIR="${target.dir}/usr/lib/aws-network-policy-agent"
+            for obj in tc.v4ingress.bpf.o tc.v4egress.bpf.o tc.v6ingress.bpf.o tc.v6egress.bpf.o v4events.bpf.o v6events.bpf.o; do
+              install -Dm644 "${EBPF_DIR}/${obj}" "${STAGE_DIR}/${obj}"
+            done
         - name: build aws-network-policy-agent
           uses: go/build@v1
           work-dir: /go/src/github.com/aws/aws-network-policy-agent
@@ -145,14 +170,29 @@ contents:
             output: ${target.dir}/usr/bin/cli-dev
             packages: ./cmd/cli
             strip: false
+        - name: copy ebpf objects for the dev package
+          runs: |
+            set -eux -o pipefail
+
+            SRC="${target.dir}/usr/lib/aws-network-policy-agent"
+            DST="${target.dir}/usr/lib/aws-network-policy-agent-dev-bpf"
+            for obj in tc.v4ingress.bpf.o tc.v4egress.bpf.o tc.v6ingress.bpf.o tc.v6egress.bpf.o v4events.bpf.o v6events.bpf.o; do
+              install -Dm644 "${SRC}/${obj}" "${DST}/${obj}"
+            done
         - uses: dhi/build-pkg:0
           with:
             description: Aws-network-policy-agent binaries
             files:
               - usr/bin/aws-network-policy-agent
+              - usr/lib/aws-network-policy-agent/tc.v4ingress.bpf.o
+              - usr/lib/aws-network-policy-agent/tc.v4egress.bpf.o
+              - usr/lib/aws-network-policy-agent/tc.v6ingress.bpf.o
+              - usr/lib/aws-network-policy-agent/tc.v6egress.bpf.o
+              - usr/lib/aws-network-policy-agent/v4events.bpf.o
+              - usr/lib/aws-network-policy-agent/v6events.bpf.o
             license: Apache-2.0
             name: aws-network-policy-agent
-            rel: 3
+            rel: 4
             subpackages:
               - files:
                   - path: usr/bin/cliv6
@@ -163,6 +203,18 @@ contents:
               - files:
                   - path: usr/bin/aws-network-policy-agent
                     source: usr/bin/aws-network-policy-agent-dev
+                  - path: usr/lib/aws-network-policy-agent/tc.v4ingress.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/tc.v4ingress.bpf.o
+                  - path: usr/lib/aws-network-policy-agent/tc.v4egress.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/tc.v4egress.bpf.o
+                  - path: usr/lib/aws-network-policy-agent/tc.v6ingress.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/tc.v6ingress.bpf.o
+                  - path: usr/lib/aws-network-policy-agent/tc.v6egress.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/tc.v6egress.bpf.o
+                  - path: usr/lib/aws-network-policy-agent/v4events.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/v4events.bpf.o
+                  - path: usr/lib/aws-network-policy-agent/v6events.bpf.o
+                    source: usr/lib/aws-network-policy-agent-dev-bpf/v6events.bpf.o
                 name: aws-network-policy-agent-dev
               - files:
                   - path: usr/bin/cliv6
@@ -174,6 +226,17 @@ contents:
                 name: aws-network-policy-agent-cli-dev
             url: https://github.com/aws/aws-network-policy-agent
             version: 1.4.3
+      paths:
+        - type: file
+          path: ${source.dir}/vmlinux-amd64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: package/main/aws-network-policy-agent/bpf/vmlinux-amd64.btf.tar.xz
+        - type: file
+          path: ${source.dir}/vmlinux-arm64.btf.tar.xz
+          uid: 0
+          gid: 0
+          source: package/main/aws-network-policy-agent/bpf/vmlinux-arm64.btf.tar.xz
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
