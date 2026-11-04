@@ -4,9 +4,9 @@ image: dhi.io/pkg-jmx-exporter
 variant: runtime
 tags:
   - 1.7.0
-  - 1.7.0-r4
+  - 1.7.0-r5
   - 1.7.0-debian13
-  - 1.7.0-r4-debian13
+  - 1.7.0-r5-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -17,7 +17,7 @@ vars:
   MAVEN_VERSION: 3.10.0
   PACKAGE_HOME: /usr/share/jmx-exporter
   PACKAGE_NAME: jmx-exporter
-  REL: "4"
+  REL: "5"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0
@@ -87,20 +87,6 @@ contents:
               ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - uses: mvn/mirror@v1
-        - name: use maven central when mirror credentials are absent
-          secrets:
-            - id: maven_user
-              env: MAVEN_USER
-              optional: true
-            - id: maven_password
-              env: MAVEN_PASSWORD
-              optional: true
-          runs: |
-            set -eux -o pipefail
-
-            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
-              rm -f /root/.m2/settings.xml
-            fi
         - name: pin vulnerable dependency versions
           uses: mvn/patch@v1
           with:
@@ -108,6 +94,7 @@ contents:
             dependencies-key: dependencyManagement.dependencies
             mvn-root: ${source.dir}/jmx-exporter
         - name: patch prometheus otel agent embedded libraries
+          work-dir: /tmp
           privileged: true
           secrets:
             - id: maven_user
@@ -119,19 +106,19 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            otel_api_version="1.62.0"
-            otel_context_version="1.62.0"
+            otel_api_version="1.67.0"
+            otel_context_version="1.67.0"
             agent_version="1.7.0"
 
             patch_lib=$(mktemp -d)
-            mvn -B dependency:copy \
+            mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy \
               -Dartifact=io.opentelemetry:opentelemetry-api:${otel_api_version} \
               -DoutputDirectory="${patch_lib}"
-            mvn -B dependency:copy \
+            mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy \
               -Dartifact=io.opentelemetry:opentelemetry-context:${otel_context_version} \
               -DoutputDirectory="${patch_lib}"
 
-            mvn -B dependency:get \
+            mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
               -Dartifact=io.prometheus:prometheus-metrics-exporter-opentelemetry-otel-agent-resources:${agent_version}
 
             agent_jar="/root/.m2/repository/io/prometheus/prometheus-metrics-exporter-opentelemetry-otel-agent-resources/${agent_version}/prometheus-metrics-exporter-opentelemetry-otel-agent-resources-${agent_version}.jar"
@@ -196,11 +183,15 @@ contents:
 
             find "${source.dir}/jmx-exporter-deps" -name 'opentelemetry-api-*.jar' -delete
             find "${source.dir}/jmx-exporter-deps" -name 'opentelemetry-context-*.jar' -delete
-            mvn -B dependency:copy \
-              -Dartifact=io.opentelemetry:opentelemetry-api:1.62.0 \
+            find "${source.dir}/jmx-exporter-deps" \
+              -name 'prometheus-metrics-exporter-opentelemetry-otel-agent-resources-*.jar' \
+              -delete
+
+            mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-api:1.67.0 \
               -DoutputDirectory="${source.dir}/jmx-exporter-deps"
-            mvn -B dependency:copy \
-              -Dartifact=io.opentelemetry:opentelemetry-context:1.62.0 \
+            mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy \
+              -Dartifact=io.opentelemetry:opentelemetry-context:1.67.0 \
               -DoutputDirectory="${source.dir}/jmx-exporter-deps"
         - name: maven sbom
           uses: sbom@v1
@@ -219,7 +210,7 @@ contents:
               - deb
             license: Apache-2.0
             name: jmx-exporter
-            rel: 4
+            rel: 5
             url: https://github.com/prometheus/jmx_exporter
             version: 1.7.0
       paths:
