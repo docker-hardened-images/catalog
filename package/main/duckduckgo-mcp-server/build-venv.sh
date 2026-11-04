@@ -35,6 +35,7 @@ export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
 # GHSA-537C-GMF6-5CCF: cryptography <48.0.1.
 # CVE-2026-45409: idna <3.15.
 # CVE-2026-4539: pygments <2.20.0.
+# CVE-2026-63374 / CVE-2026-64847: anyio <4.14.2.
 uv lock \
   --upgrade-package "mcp==2.1.1" \
   --upgrade-package "pydantic-settings>=2.14.2" \
@@ -45,7 +46,8 @@ uv lock \
   --upgrade-package "click>=8.3.3" \
   --upgrade-package "cryptography>=48.0.1" \
   --upgrade-package "idna>=3.15" \
-  --upgrade-package "pygments>=2.20.0"
+  --upgrade-package "pygments>=2.20.0" \
+  --upgrade-package "anyio>=4.14.2"
 uv sync --locked --no-install-project --no-dev --no-editable
 uv sync --locked --no-dev --no-editable
 
