@@ -4,9 +4,9 @@ image: dhi.io/pkg-spark-dependencies
 variant: runtime
 tags:
   - 0.7.2
-  - 0.7.2-r12
+  - 0.7.2-r13
   - 0.7.2-debian13
-  - 0.7.2-r12-debian13
+  - 0.7.2-r13-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -20,7 +20,7 @@ vars:
   MAVEN_VERSION: 3.10.0-1
   PACKAGE_HOME: /usr/share/spark-dependencies
   PACKAGE_NAME: spark-dependencies
-  REL: "12"
+  REL: "13"
   SEMVER_MAJOR_MINOR_VERSION: "0.7"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.7.2
@@ -41,6 +41,7 @@ contents:
         MAVEN_HOME: /usr/share/java/maven-3
       caches:
         - path: /root/.m2/repository
+          sharing: private
       contents:
         packages:
           - bash
@@ -83,6 +84,36 @@ contents:
             if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
               rm -f /root/.m2/settings.xml
             fi
+        - name: rebuild parquet-jackson with fixed Jackson
+          work-dir: ${source.dir}/patch
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B -f parquet-jackson-pom.xml clean install \
+              -DskipTests -Dmaven.javadoc.skip=true
+
+            jar_path="${HOME}/.m2/repository/org/apache/parquet/parquet-jackson/1.18.1-dhi1/parquet-jackson-1.18.1-dhi1.jar"
+            verify_dir=$(mktemp -d)
+            (
+              cd "$verify_dir"
+              jar xf "$jar_path" \
+                META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties \
+                META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties
+              jar tf "$jar_path" > entries
+              grep -qx 'version=2.22.3' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
+              grep -qx 'version=2.22.3' META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties
+              grep -q '^shaded/parquet/com/fasterxml/jackson/core/' entries
+              grep -q '^shaded/parquet/com/fasterxml/jackson/databind/' entries
+            )
+            rm -rf "$verify_dir"
         - name: pin vulnerable dependency versions
           uses: mvn/patch@v1
           with:
@@ -319,7 +350,7 @@ contents:
               - deb
             license: Apache-2.0
             name: spark-dependencies
-            rel: 12
+            rel: 13
             subpackages:
               - depends:
                   - eclipse-temurin-21-jre
@@ -354,6 +385,11 @@ contents:
           uid: 0
           gid: 0
           source: package/main/spark-dependencies/patch/mvn-dependencies.json
+        - type: file
+          path: ${source.dir}/patch/parquet-jackson-pom.xml
+          uid: 0
+          gid: 0
+          source: package/main/spark-dependencies/patch/parquet-jackson-pom.xml
         - type: file
           path: ${source.dir}/patch/mvn-direct-dependencies.json
           uid: 0
