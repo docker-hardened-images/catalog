@@ -30,12 +30,15 @@ if [ "${1:-}" != "--self-test" ]; then
     LIBTHRIFT="${PATCH_DIR}/libthrift-0.24.0.jar"
     COMMONS_LANG3="${PATCH_DIR}/commons-lang3-3.18.0.jar"
     NIMBUS_JOSE_JWT="${PATCH_DIR}/nimbus-jose-jwt-10.0.2.jar"
+    GUAVA_JAR="${PATCH_DIR}/guava-33.7.2-jre.jar"
+    FAILUREACCESS_JAR="${PATCH_DIR}/failureaccess-1.0.3.jar"
+    KERBY_ASN1_JAR="${PATCH_DIR}/kerby-asn1-2.1.2.jar"
 
     for jar in \
         "$JACKSON_CORE" "$JACKSON_DATABIND" "$JACKSON_ANNOTATIONS" \
         "$COMMONS_CONFIGURATION2" "$JLINE_REMOTE_TELNET" "$JLINE_UBER_JAR" "$JARJAR_JAR" \
         "$DERBY" "$DERBYSHARED" "$DERBYTOOLS" "$LIBTHRIFT" \
-        "$COMMONS_LANG3" "$NIMBUS_JOSE_JWT"; do
+        "$COMMONS_LANG3" "$NIMBUS_JOSE_JWT" "$GUAVA_JAR" "$FAILUREACCESS_JAR" "$KERBY_ASN1_JAR"; do
         if [ ! -f "$jar" ]; then
             echo "missing patch dependency: $jar" >&2
             exit 1
@@ -487,38 +490,66 @@ nimbus_version_vulnerable() {
     return 0
 }
 
-if [ "${1:-}" = "--self-test" ]; then
-    fail=0
-    expect_vulnerable() {
-        if nimbus_version_vulnerable "$1"; then
-            echo "vulnerable $1"
-        else
-            echo "expected vulnerable: $1" >&2
-            fail=1
-        fi
-    }
-    expect_fixed() {
-        if nimbus_version_vulnerable "$1"; then
-            echo "expected fixed: $1" >&2
-            fail=1
-        else
-            echo "fixed $1"
-        fi
-    }
-    expect_vulnerable 9.37.2
-    expect_vulnerable 9.37.3
-    expect_fixed 9.37.4
-    expect_fixed 9.38.0
-    expect_fixed 9.39.0
-    expect_vulnerable 10.0.1
-    expect_fixed 10.0.2
-    expect_fixed 10.4
-    if [ "$fail" -ne 0 ]; then
-        exit 1
+# CVE-2026-102554 is fixed in Guava 33.7.2-jre. Hadoop shades an older copy inside
+# hadoop-client-runtime; dependencyManagement bumps do not rewrite that jar.
+guava_version_vulnerable() {
+    local ver="$1"
+    if [ -z "$ver" ] || [ "$ver" = "33.7.2-jre" ]; then
+        return 1
     fi
-    echo "nimbus version checks passed"
-    exit 0
-fi
+    local base="${ver%%-jre}"
+    local major minor patch
+    IFS=. read -r major minor patch <<<"${base}"
+    major="${major:-0}"
+    minor="${minor:-0}"
+    patch="${patch:-0}"
+    if [ "$major" -lt 33 ]; then
+        return 0
+    fi
+    if [ "$major" -gt 33 ]; then
+        return 1
+    fi
+    if [ "$minor" -lt 7 ]; then
+        return 0
+    fi
+    if [ "$minor" -gt 7 ]; then
+        return 1
+    fi
+    if [ "$patch" -le 1 ]; then
+        return 0
+    fi
+    return 1
+}
+
+# CVE-2026-57914 is fixed in kerby-asn1 2.1.2. Hadoop shades kerby-asn1 into
+# hadoop-client-runtime; dependencyManagement bumps do not rewrite that copy.
+kerby_asn1_version_vulnerable() {
+    local ver="$1"
+    local major minor patch
+    if [ -z "$ver" ]; then
+        return 1
+    fi
+    IFS=. read -r major minor patch <<<"${ver%%[^0-9.]*}"
+    major="${major:-0}"
+    minor="${minor:-0}"
+    patch="${patch:-0}"
+    if [ "$major" -gt 2 ]; then
+        return 1
+    fi
+    if [ "$major" -lt 2 ]; then
+        return 0
+    fi
+    if [ "$minor" -gt 1 ]; then
+        return 1
+    fi
+    if [ "$minor" -lt 1 ]; then
+        return 0
+    fi
+    if [ "$patch" -ge 2 ]; then
+        return 1
+    fi
+    return 0
+}
 
 write_pom_properties() {
     local workdir="$1"
@@ -577,6 +608,41 @@ patch_hadoop_jar() {
     else
         echo "keeping shaded nimbus-jose-jwt ${nimbus_ver:-absent}"
     fi
+    guava_pom="META-INF/maven/com.google.guava/guava/pom.properties"
+    guava_ver=""
+    if [ -f "$guava_pom" ]; then
+        guava_ver="$(sed -n 's/^version=//p' "$guava_pom" | head -n 1)"
+    fi
+    if guava_version_vulnerable "$guava_ver"; then
+        echo "replacing shaded guava ${guava_ver} with 33.7.2-jre"
+        rm -rf org/apache/hadoop/shaded/com/google/common
+        find META-INF/versions -type d -path '*/org/apache/hadoop/shaded/com/google/common' -prune -exec rm -rf {} + 2>/dev/null || true
+        relocate_jarjar_tree "$PWD" "$GUAVA_JAR" org/apache/hadoop/shaded/com/google/common \
+            'rule com.google.common.** org.apache.hadoop.shaded.com.google.common.@1'
+        relocate_jarjar_tree "$PWD" "$FAILUREACCESS_JAR" org/apache/hadoop/shaded/com/google/common/util/concurrent/internal \
+            'rule com.google.common.util.concurrent.internal.** org.apache.hadoop.shaded.com.google.common.util.concurrent.internal.@1'
+        write_pom_properties "$PWD" com.google.guava guava 33.7.2-jre
+        write_pom_properties "$PWD" com.google.guava failureaccess 1.0.3
+    else
+        echo "keeping shaded guava ${guava_ver:-absent}"
+    fi
+    kerby_pom="META-INF/maven/org.apache.kerby/kerby-asn1/pom.properties"
+    kerby_ver=""
+    if [ -f "$kerby_pom" ]; then
+        kerby_ver="$(sed -n 's/^version=//p' "$kerby_pom" | head -n 1)"
+    fi
+    if kerby_asn1_version_vulnerable "$kerby_ver"; then
+        echo "replacing shaded kerby-asn1 ${kerby_ver} with 2.1.2"
+        relocate_jarjar_tree "$PWD" "$KERBY_ASN1_JAR" org/apache/hadoop/shaded/org/apache/kerby/asn1 \
+            'rule org.apache.kerby.asn1.** org.apache.hadoop.shaded.org.apache.kerby.asn1.@1'
+        # Take the artifact's own metadata so pom.xml and pom.properties both
+        # say 2.1.2; a leftover 2.0.3 pom.xml would keep the old version visible.
+        rm -rf META-INF/maven/org.apache.kerby/kerby-asn1
+        jar xf "$KERBY_ASN1_JAR" META-INF/maven/org.apache.kerby/kerby-asn1
+        grep -q '^version=2.1.2$' META-INF/maven/org.apache.kerby/kerby-asn1/pom.properties
+    else
+        echo "keeping shaded kerby-asn1 ${kerby_ver:-absent}"
+    fi
     write_pom_properties "$PWD" com.fasterxml.jackson.core jackson-core "${JACKSON_VERSION}"
     write_pom_properties "$PWD" com.fasterxml.jackson.core jackson-databind "${JACKSON_VERSION}"
     write_pom_properties "$PWD" org.apache.commons commons-configuration2 2.15.0
@@ -612,6 +678,39 @@ patch_parquet_jar() {
     write_pom_properties "$PWD" com.fasterxml.jackson.core jackson-databind "${JACKSON_VERSION}"
 }
 
+patch_spark_connect_guava_jar() {
+    local guava_pom guava_ver failure_pom failure_ver rules
+    guava_pom="META-INF/maven/com.google.guava/guava/pom.properties"
+    guava_ver=""
+    if [ -f "$guava_pom" ]; then
+        guava_ver="$(sed -n 's/^version=//p' "$guava_pom" | head -n 1)"
+    fi
+    if ! guava_version_vulnerable "$guava_ver"; then
+        echo "keeping spark connect guava ${guava_ver:-absent}"
+        return 0
+    fi
+    echo "replacing spark connect guava ${guava_ver} with 33.7.2-jre"
+    rm -rf org/sparkproject/connect/guava
+    find META-INF/versions -type d -path '*/org/sparkproject/connect/guava' -prune -exec rm -rf {} + 2>/dev/null || true
+    rules='rule com.google.common.** org.sparkproject.connect.guava.@1'
+    relocate_jarjar_tree "$PWD" "$GUAVA_JAR" org/sparkproject/connect/guava "$rules"
+    # The tree delete above removes relocated failureaccess classes, including
+    # when the jar already records 1.0.3 or has no pom.properties. Always copy
+    # the pinned tree. The recorded version only decides whether pom metadata
+    # is rewritten.
+    failure_pom="META-INF/maven/com.google.guava/failureaccess/pom.properties"
+    failure_ver=""
+    if [ -f "$failure_pom" ]; then
+        failure_ver="$(sed -n 's/^version=//p' "$failure_pom" | head -n 1)"
+    fi
+    relocate_jarjar_tree "$PWD" "$FAILUREACCESS_JAR" org/sparkproject/connect/guava/util/concurrent/internal \
+        'rule com.google.common.util.concurrent.internal.** org.sparkproject.connect.guava.util.concurrent.internal.@1'
+    if [ -n "$failure_ver" ] && [ "$failure_ver" != "1.0.3" ]; then
+        write_pom_properties "$PWD" com.google.guava failureaccess 1.0.3
+    fi
+    write_pom_properties "$PWD" com.google.guava guava 33.7.2-jre
+}
+
 strip_jline_telnet() {
     rm -rf org/jline/builtins/telnet
     rm -rf META-INF/maven/org.jline/jline-remote-telnet
@@ -622,6 +721,132 @@ replace_loose_jar() {
     local srcjar="$2"
     install -T -m 0644 "$srcjar" "${JARS_DIR}/${destname}"
 }
+
+if [ "${1:-}" = "--self-test" ]; then
+    fail=0
+    expect_vulnerable() {
+        if nimbus_version_vulnerable "$1"; then
+            echo "vulnerable $1"
+        else
+            echo "expected vulnerable: $1" >&2
+            fail=1
+        fi
+    }
+    expect_fixed() {
+        if nimbus_version_vulnerable "$1"; then
+            echo "expected fixed: $1" >&2
+            fail=1
+        else
+            echo "fixed $1"
+        fi
+    }
+    expect_vulnerable 9.37.2
+    expect_vulnerable 9.37.3
+    expect_fixed 9.37.4
+    expect_fixed 9.38.0
+    expect_fixed 9.39.0
+    expect_vulnerable 10.0.1
+    expect_fixed 10.0.2
+    expect_fixed 10.4
+    if ! guava_version_vulnerable 32.0.1-jre; then fail=1; fi
+    if ! guava_version_vulnerable 33.4.8-jre; then fail=1; fi
+    if guava_version_vulnerable 33.7.2-jre; then fail=1; fi
+    if ! kerby_asn1_version_vulnerable 2.0.3; then fail=1; fi
+    if ! kerby_asn1_version_vulnerable 2.1.0; then fail=1; fi
+    if ! kerby_asn1_version_vulnerable 2.1.1; then fail=1; fi
+    if kerby_asn1_version_vulnerable 2.1.2; then fail=1; fi
+    if kerby_asn1_version_vulnerable 2.2.0; then fail=1; fi
+    if kerby_asn1_version_vulnerable 3.0.0; then fail=1; fi
+
+    # Jarjar is stubbed so the failureaccess branch runs without dependency jars.
+    # A replacement must recreate InternalFutureFailureAccess even when the
+    # recorded failureaccess version is already 1.0.3 or the pom is absent.
+    GUAVA_JAR="/self-test/guava-33.7.2-jre.jar"
+    FAILUREACCESS_JAR="/self-test/failureaccess-1.0.3.jar"
+    relocate_calls=0
+    relocate_jarjar_tree() {
+        local workdir="$1"
+        local srcjar="$2"
+        local destsub="$3"
+        relocate_calls=$((relocate_calls + 1))
+        rm -rf "${workdir}/${destsub}"
+        mkdir -p "${workdir}/${destsub}"
+        if [ "$srcjar" = "$FAILUREACCESS_JAR" ]; then
+            : > "${workdir}/${destsub}/InternalFutureFailureAccess.class"
+        fi
+    }
+    check_connect_failureaccess() {
+        local label="$1"
+        local guava_ver="$2"
+        local failure_mode="$3"
+        local expect_replace="$4"
+        local work failure_pom class_path old_class
+        work="$(mktemp -d)"
+        mkdir -p "${work}/org/sparkproject/connect/guava/util/concurrent/internal"
+        old_class="${work}/org/sparkproject/connect/guava/util/concurrent/internal/OldFailureAccess.class"
+        : > "$old_class"
+        mkdir -p "${work}/META-INF/maven/com.google.guava/guava"
+        printf 'version=%s\n' "$guava_ver" > "${work}/META-INF/maven/com.google.guava/guava/pom.properties"
+        failure_pom="${work}/META-INF/maven/com.google.guava/failureaccess/pom.properties"
+        if [ "$failure_mode" != "omit" ]; then
+            mkdir -p "$(dirname "$failure_pom")"
+            printf 'version=%s\nkept=1\n' "$failure_mode" > "$failure_pom"
+        fi
+        relocate_calls=0
+        pushd "$work" >/dev/null
+        patch_spark_connect_guava_jar
+        popd >/dev/null
+        class_path="${work}/org/sparkproject/connect/guava/util/concurrent/internal/InternalFutureFailureAccess.class"
+        if [ "$expect_replace" = "yes" ]; then
+            if [ "$relocate_calls" -ne 2 ] || [ ! -f "$class_path" ]; then
+                echo "expected failureaccess restore on ${label}: calls=${relocate_calls}" >&2
+                fail=1
+            fi
+            if [ -f "$old_class" ]; then
+                echo "old failureaccess class survived replacement on ${label}" >&2
+                fail=1
+            fi
+            if [ "$failure_mode" = "omit" ]; then
+                if [ -f "$failure_pom" ]; then
+                    echo "omitted failureaccess pom was written on ${label}" >&2
+                    fail=1
+                fi
+            elif [ "$failure_mode" = "1.0.3" ]; then
+                if ! grep -q '^kept=1$' "$failure_pom" || ! grep -q '^version=1.0.3$' "$failure_pom"; then
+                    echo "1.0.3 failureaccess pom was rewritten on ${label}" >&2
+                    fail=1
+                fi
+            elif grep -q '^kept=1$' "$failure_pom" || ! grep -q '^version=1.0.3$' "$failure_pom"; then
+                echo "failureaccess pom was not rewritten to 1.0.3 on ${label}" >&2
+                fail=1
+            fi
+        else
+            if [ "$relocate_calls" -ne 0 ] || [ ! -f "$old_class" ]; then
+                echo "expected guava keep to skip failureaccess restore on ${label}" >&2
+                fail=1
+            fi
+            if [ "$failure_mode" != "omit" ] && ! grep -q '^kept=1$' "$failure_pom"; then
+                echo "failureaccess pom changed on keep path ${label}" >&2
+                fail=1
+            fi
+        fi
+        rm -rf "$work"
+        echo "failureaccess ${label} checked"
+    }
+    check_connect_failureaccess "already-1.0.3" "33.4.8-jre" "1.0.3" "yes"
+    check_connect_failureaccess "omitted-pom" "33.4.0-jre" "omit" "yes"
+    check_connect_failureaccess "older-pom" "32.0.1-jre" "1.0.1" "yes"
+    check_connect_failureaccess "fixed-guava" "33.7.2-jre" "1.0.1" "no"
+
+    if [ "$fail" -ne 0 ]; then
+        exit 1
+    fi
+    echo "nimbus version checks passed"
+    echo "guava version checks passed"
+    echo "kerby-asn1 version checks passed"
+    echo "failureaccess restoration checks passed"
+    exit 0
+fi
 
 echo "remediating loose jars in ${JARS_DIR}"
 
@@ -654,5 +879,12 @@ if [ -n "$JLINE_UBER" ] && [ -f "$JLINE_UBER" ]; then
     echo "replacing ${JLINE_UBER} with jline 3.30.17 (${destname})"
     replace_loose_jar "$destname" "$JLINE_UBER_JAR"
 fi
+
+while IFS= read -r -d '' CONNECT_JAR; do
+    if [ -f "$CONNECT_JAR" ]; then
+        echo "repacking spark connect guava in ${CONNECT_JAR}"
+        repack_jar "$CONNECT_JAR" patch_spark_connect_guava_jar
+    fi
+done < <(find "${JARS_DIR}" \( -name 'spark-connect_*.jar' -o -path '*/connect-repl/spark-connect*.jar' \) -print0)
 
 echo "jar remediation complete"
