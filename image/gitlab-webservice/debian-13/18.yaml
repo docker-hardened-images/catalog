@@ -183,6 +183,8 @@ contents:
 
             cd /srv/gitlab
 
+            bundle config set --local without 'development test mysql aws omnibus'
+
             # Update lockfile only (no install) — bumps Rails security patch,
             # addressable, and faraday (CVE-2026-25765, allowed by ~> 2 pin).
             # Also bumps gems with CVEs that stay within the same major:
@@ -203,10 +205,10 @@ contents:
             #   oauth2          2.0.10/2.0.20 -> 2.0.22 (CVE-2026-54603)
             # oauth stays on 0.5.6 (CVE-2026-54605 needs a 1.x major bump that
             # jira-ruby's "oauth (~> 0.5, >= 0.5.0)" pin blocks) — see VEX.
-            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron puma concurrent-ruby websocket-driver excon css_parser loofah rails-html-sanitizer json msgpack oauth2 --conservative
+            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron puma concurrent-ruby websocket-driver excon css_parser loofah rails-html-sanitizer json msgpack oauth2 rubyzip crass --conservative
 
             echo "Lockfile updated:"
-            grep -E "activestorage|addressable|^    faraday |^    net-imap |^    nokogiri |^    sidekiq-cron |^    puma |^    concurrent-ruby |^    websocket-driver |^    excon |^    css_parser |^    loofah |^    rails-html-sanitizer |^    json |^    msgpack |^    oauth2 " Gemfile.lock | head -30
+            grep -E "activestorage|addressable|^    faraday |^    net-imap |^    nokogiri |^    sidekiq-cron |^    puma |^    concurrent-ruby |^    websocket-driver |^    excon |^    css_parser |^    loofah |^    rails-html-sanitizer |^    json |^    msgpack |^    oauth2 |^    crass " Gemfile.lock | head -30
 
             # Keep graphql at upstream 2.6.10 (GHSA-3h96-34p3-xm76 floor 2.5.26). Do not
             # bundle lock --update graphql; resolver can pick 2.6.11 and trip GitLab's patch guard.
@@ -219,12 +221,28 @@ contents:
             '
             echo "graphql lockfile version:"
             grep -E "^    graphql " Gemfile.lock
+
+            ruby -rbundler -e '
+              specs = Bundler::LockfileParser.new(File.read("Gemfile.lock")).specs.to_h { |spec| [spec.name, spec.version] }
+              abort "rubyzip resolved to #{specs.fetch("rubyzip")}, expected >= 3.4.0" if specs.fetch("rubyzip") < Gem::Version.new("3.4.0")
+            '
+            echo "rubyzip lockfile version:"
+            grep -E "^    rubyzip " Gemfile.lock
+
+            ruby -rbundler -e '
+              specs = Bundler::LockfileParser.new(File.read("Gemfile.lock")).specs.to_h { |spec| [spec.name, spec.version] }
+              abort "crass resolved to #{specs.fetch("crass")}, expected >= 1.0.8" if specs.fetch("crass") < Gem::Version.new("1.0.8")
+            '
+            echo "crass lockfile version:"
+            grep -E "^    crass " Gemfile.lock
         - name: bump mail gem for CVE-2026-63435
           privileged: true
           runs: |
             set -eux -o pipefail
 
             cd /srv/gitlab
+
+            bundle config set --local without 'development test mysql aws omnibus'
 
             # GitLab locks mail to (= 2.9.0); --conservative cannot move exact pins.
             bundle lock --update mail
@@ -256,7 +274,7 @@ contents:
             bundle config set --local version system
             bundle config set --local clean 'true'
             bundle config set --local deployment 'true'
-            bundle config set --local without 'development test mysql aws'
+            bundle config set --local without 'development test mysql aws omnibus'
 
             bundle install --jobs 4 --retry 5
         - name: compile gettext
@@ -597,7 +615,7 @@ environment:
   BOOTSNAP_CACHE_DIR: /srv/gitlab/bootsnap
   BUNDLE_DEPLOYMENT: "true"
   BUNDLE_PATH: /srv/gitlab/vendor/bundle
-  BUNDLE_WITHOUT: development:test:mysql:aws
+  BUNDLE_WITHOUT: development:test:mysql:aws:omnibus
   CONFIG_TEMPLATE_DIRECTORY: /srv/gitlab/config
   EXECJS_RUNTIME: Disabled
   LANG: C.UTF-8
