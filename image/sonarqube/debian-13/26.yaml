@@ -24,6 +24,7 @@ vars:
   ELASTICSEARCH_LINUX_ARCH: '#{ target.arch == "arm64" ? "aarch64" : "x86_64" }'
   ELASTICSEARCH_LINUX_SHA512: '#{ target.arch == "arm64" ? "8b7b38b4b8d4049844d550024e58389c8953dfcbc46f6d2edc0def7a5883820b15bf8d73188ba88e4e74e34afbbee6b01bad00836b8da1ed9df0ceaefb556d80" : "e846908391081231a1a2ae4d1350dada9b7cc5cc1a3f5a6bb394ee6a83b94f07dc04d99919167f806db0a3b29b682d76dbb858b5bd6598af98abee97e291d3e3" }'
   ELASTICSEARCH_VERSION: 9.4.7
+  GUAVA_VERSION: 33.7.2-jre
   HTTPCLIENT5_VERSION: 5.6.3
   HTTPCORE5_VERSION: 5.4.3
   JACKSON_CORE_2_VERSION: 2.21.7
@@ -42,6 +43,7 @@ vars:
   MAVEN_VERSION: 3.10.0
   NETTY_VERSION: 4.1.137.Final
   OGNL_VERSION: 3.4.13
+  OPENTELEMETRY_API_VERSION: 1.67.0
   REACTOR_NETTY_VERSION: 1.2.8
   SEMVER_MAJOR_MINOR_VERSION: "26.11"
   SEMVER_MAJOR_VERSION: "26"
@@ -245,6 +247,30 @@ contents:
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar
             path: ${source.dir}/patch/deps/httpclient5-5.6.3.jar
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar
+            checksum: sha256:538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+            path: ${source.dir}/patch/deps/opentelemetry-api-1.67.0.jar
+            spdx:
+              name: opentelemetry-api
+              version: 1.67.0
+              packages:
+                - name: opentelemetry-api
+                  purl: pkg:maven/io.opentelemetry/opentelemetry-api@1.67.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar
+            checksum: sha256:b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+            path: ${source.dir}/patch/deps/guava-33.7.2-jre.jar
+            spdx:
+              name: guava
+              version: 33.7.2-jre
+              packages:
+                - name: guava
+                  purl: pkg:maven/com.google.guava/guava@33.7.2-jre
+                  license: Apache-2.0
             uid: 0
             gid: 0
           - url: https://maven-central.storage-download.googleapis.com/maven2/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar
@@ -532,6 +558,108 @@ contents:
             fi
 
             echo "Patched ${patched_count} bundled jackson JARs"
+        - name: patch bundled guava in fat jars
+          runs: |
+            set -eux -o pipefail
+
+            shopt -s nullglob
+
+            patch_jar="${source.dir}/patch/deps/guava-33.7.2-jre.jar"
+            metadata_dir="META-INF/maven/com.google.guava/guava"
+            patched_count=0
+
+            patch_guava_in_jar() {
+              local outer_jar="$1"
+              patch_dir="$(mktemp -d)"
+              repack_dir="${patch_dir}/repack"
+              overlay_dir="${patch_dir}/overlay"
+              mkdir -p "${repack_dir}" "${overlay_dir}"
+
+              (cd "${repack_dir}" && jar xf "${outer_jar}")
+
+              if [[ ! -f "${repack_dir}/${metadata_dir}/pom.properties" ]]; then
+                rm -rf "${patch_dir}"
+                return
+              fi
+
+              if grep -q "version=33.7.2-jre" "${repack_dir}/${metadata_dir}/pom.properties"; then
+                rm -rf "${patch_dir}"
+                return
+              fi
+
+              rm -rf "${overlay_dir:?}"/*
+              (cd "${overlay_dir}" && jar xf "${patch_jar}")
+
+              rm -rf "${repack_dir:?}/com/google/common" \
+                "${repack_dir:?}/com/google/thirdparty" \
+                "${repack_dir:?}/${metadata_dir}"
+              mkdir -p "${repack_dir}/com/google" "${repack_dir}/META-INF/maven/com.google.guava"
+              cp -a "${overlay_dir}/com/google/common" "${repack_dir}/com/google/common"
+              if [[ -d "${overlay_dir}/com/google/thirdparty" ]]; then
+                cp -a "${overlay_dir}/com/google/thirdparty" "${repack_dir}/com/google/thirdparty"
+              fi
+              cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+
+              grep -q "version=33.7.2-jre" "${repack_dir}/${metadata_dir}/pom.properties"
+
+              case "$(basename "${outer_jar}")" in
+                sonar-python-plugin-*.jar)
+                  rm -f "${repack_dir}/META-INF/versions/9/module-info.class"
+                  ;;
+              esac
+
+              patched_jar="${patch_dir}/$(basename "${outer_jar}")"
+              (cd "${repack_dir}" && jar --create --file "${patched_jar}" --manifest META-INF/MANIFEST.MF .)
+              mv "${patched_jar}" "${outer_jar}"
+              rm -rf "${patch_dir}"
+
+              patched_count=$((patched_count + 1))
+            }
+
+            for outer_jar in \
+              "${target.dir}/sonarqube/lib/extensions/"sonar-javascript-plugin-*-multi.jar \
+              "${target.dir}/sonarqube/lib/extensions/"sonar-python-plugin-*.jar \
+              "${target.dir}/sonarqube/lib/"sonar-application-*.jar \
+              "${target.dir}/sonarqube/lib/scanner/"sonar-scanner-engine-community-*.jar; do
+              if [[ -f "${outer_jar}" ]]; then
+                patch_guava_in_jar "${outer_jar}"
+              fi
+            done
+
+            if [[ "${patched_count}" -lt 1 ]]; then
+              echo "ERROR: expected at least one bundled guava patch" >&2
+              exit 1
+            fi
+
+            js_jar=$(find "${target.dir}/sonarqube/lib/extensions" -maxdepth 1 -name 'sonar-javascript-plugin-*-multi.jar' -type f | head -1)
+            if [[ -z "${js_jar}" ]]; then
+              echo "ERROR: sonar-javascript-plugin multi jar not found" >&2
+              exit 1
+            fi
+            unzip -p "${js_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+
+            python_jar=$(find "${target.dir}/sonarqube/lib/extensions" -maxdepth 1 -name 'sonar-python-plugin-*.jar' -type f | head -1)
+            if [[ -z "${python_jar}" ]]; then
+              echo "ERROR: sonar-python-plugin jar not found" >&2
+              exit 1
+            fi
+            unzip -p "${python_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+
+            app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
+            if [[ -z "${app_jar}" ]]; then
+              echo "ERROR: sonar-application jar not found" >&2
+              exit 1
+            fi
+            unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+
+            scanner_jar=$(find "${target.dir}/sonarqube/lib/scanner" -maxdepth 1 -name 'sonar-scanner-engine-community-*.jar' -type f | head -1)
+            if [[ -z "${scanner_jar}" ]]; then
+              echo "ERROR: sonar-scanner-engine-community jar not found" >&2
+              exit 1
+            fi
+            unzip -p "${scanner_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+
+            echo "Patched ${patched_count} bundled guava JAR(s)"
         - name: patch bundled jackson core
           runs: |
             set -eux -o pipefail
