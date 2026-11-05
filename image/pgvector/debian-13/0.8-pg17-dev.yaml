@@ -20,17 +20,34 @@ dates:
   release: "2024-09-26"
   end-of-life: "2029-11-08"
 vars:
-  COMMIT_SHA: f37c13f68b57d2c3472b2214fbcff699d6d34876
+  GOSU_VERSION: 1.20.0-0
   PG_MAJOR_VERSION: "17"
+  PG_MINOR_VERSION: "11"
+  PG_PACKAGE_VERSION: 17.11-1
   PG_VERSION: "17.11"
+  PG14_PACKAGE_VERSION: 14.24-1
+  PG15_PACKAGE_VERSION: 15.19-1
+  PG16_PACKAGE_VERSION: 16.15-1
+  PG17_PACKAGE_VERSION: 17.11-1
+  PG18_PACKAGE_VERSION: 18.6-1
   PGDATA: /var/lib/postgresql/17/data
-  POSTGRES_BUILD_REFERENCE: dhi/postgres:17.11-debian13-dev@sha256:9e49247613a9566ecb1343044f01d6e2bc3bf45577f50c01a8dca049f7334898
-  POSTGRES_RUNTIME_REFERENCE: dhi/postgres:17.11-debian13@sha256:f56921e1f1f458fc2a11b1e044d20eb1cd2f9e27b6a5decd6b1305aa6b112195
+  PGVECTOR_PACKAGE_NAME: pgvector-0-pg17
+  PGVECTOR_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR14_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR15_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR16_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR17_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR18_PACKAGE_VERSION: 0.8.7-0
+  POSTGRES_PACKAGE_NAME: postgresql-17
   SEMVER_MAJOR_MINOR_VERSION: "0.8"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.8.7
-  VERSION: 0.8.7
+  VERSION: 0.8.7-0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!gawk'
     - '!libelogind0'
@@ -40,21 +57,27 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - diffutils
     - dpkg
     - findutils
+    - gosu=1.20.0-0
     - grep
     - less
     - libc-bin
+    - libcurl4t64
     - libgssapi-krb5-2
     - libicu76
     - libldap2
     - liblz4-1
+    - libnuma1
     - libpam0g
     - libreadline8t64
     - libselinux1
     - libssl3t64
+    - liburing2
+    - libuuid1
     - libxml2
     - libxslt1.1
     - libzstd1
@@ -62,62 +85,46 @@ contents:
     - locales
     - mawk
     - perl-base
+    - pgvector-0-pg17=0.8.7-0
+    - postgresql-17=17.11-1
     - sed
     - tzdata
     - util-linux
     - zlib1g
   builds:
-    - name: pgvector
-      work-dir: ${source.dir}/pgvector
+    - name: legacy /opt/postgresql layout
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
-          - build-essential
-          - clang
           - coreutils
-          - findutils
-          - llvm-dev
-          - sed
-        files:
-          - url: git+https://github.com/pgvector/pgvector.git#v0.8.7
-            checksum: f37c13f68b57d2c3472b2214fbcff699d6d34876
-            path: ${source.dir}/pgvector
-            spdx:
-              name: pgvector
-              version: 0.8.7
-              packages:
-                - name: pgvector
-                  purl: pkg:github/pgvector/pgvector@0.8.7
-                  license: PostgreSQL
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/postgres:17.11-debian13-dev@sha256:9e49247613a9566ecb1343044f01d6e2bc3bf45577f50c01a8dca049f7334898
-            includes:
-              - opt/postgresql/17/**
-              - usr/bin/pg_config
-              - usr/lib/postgresql/17/**
-            uid: 0
-            gid: 0
+          - postgresql-17=17.11-1
       pipeline:
-        - name: build and install
-          runs: |
+        - runs: |
             set -eux -o pipefail
 
-            export PG_CONFIG=/opt/postgresql/17/bin/pg_config
+            mkdir -p "/opt/postgresql/17/bin"
 
-            # OPTFLAGS="" disables -march=native so the resulting vector.so is
-            # portable across the build host's CPU family. Upstream's
-            # pgvector/pgvector image does the same.
-            make OPTFLAGS="" -j"$(nproc)"
-            make install DESTDIR='${target.dir}/install'
+            for item in "/usr/lib/postgresql/17/"*; do
+              [ -e "${item}" ] || continue
+              name="$(basename "${item}")"
+              ln -sfn "${item}" "/opt/postgresql/17/${name}"
+            done
+
+            while IFS= read -r path; do
+              case "${path}" in
+                /usr/bin/*)
+                  [ -e "${path}" ] || continue
+                  ln -sfn "${path}" "/opt/postgresql/17/bin/$(basename "${path}")"
+                  ;;
+              esac
+            done < "/var/lib/dpkg/info/postgresql-17.list"
       outputs:
-        - source: ${target.dir}/install/usr/lib/postgresql/17
-          target: /usr/lib/postgresql/17
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/pgvector
-          target: /opt/docker/sbom/pgvector
+        - source: /opt/postgresql
+          target: /opt/postgresql
           uid: 0
           gid: 0
     - name: locale
@@ -145,21 +152,6 @@ contents:
           target: /usr/lib/locale
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/postgres:17.11-debian13@sha256:f56921e1f1f458fc2a11b1e044d20eb1cd2f9e27b6a5decd6b1305aa6b112195
-      excludes:
-        - etc/os-release
-        - var/lib/dpkg/status
-        - var/lock
-      uid: 0
-      gid: 0
-    - name: dhi.io/postgres:17.11-debian13-dev@sha256:9e49247613a9566ecb1343044f01d6e2bc3bf45577f50c01a8dca049f7334898
-      excludes:
-        - etc/os-release
-        - var/lib/dpkg/status
-        - var/lock
-      uid: 0
-      gid: 0
 accounts:
   root: true
   run-as: root
@@ -191,6 +183,7 @@ environment:
   LC_ALL: en_US.UTF-8
   PATH: /opt/postgresql/17/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   PG_MAJOR: "17"
+  PG_MINOR: "11"
   PGDATA: /var/lib/postgresql/17/data
 paths:
   - type: directory
@@ -198,6 +191,12 @@ paths:
     uid: 70
     gid: 70
     mode: "0700"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/pgvector/bin/docker-entrypoint.sh
 annotations:
   org.opencontainers.image.description: A minimal pgvector image
   org.opencontainers.image.licenses: PostgreSQL

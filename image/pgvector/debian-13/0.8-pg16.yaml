@@ -20,17 +20,33 @@ dates:
   release: "2023-09-14"
   end-of-life: "2028-11-09"
 vars:
-  COMMIT_SHA: f37c13f68b57d2c3472b2214fbcff699d6d34876
   PG_MAJOR_VERSION: "16"
+  PG_MINOR_VERSION: "15"
+  PG_PACKAGE_VERSION: 16.15-1
   PG_VERSION: "16.15"
+  PG14_PACKAGE_VERSION: 14.24-1
+  PG15_PACKAGE_VERSION: 15.19-1
+  PG16_PACKAGE_VERSION: 16.15-1
+  PG17_PACKAGE_VERSION: 17.11-1
+  PG18_PACKAGE_VERSION: 18.6-1
   PGDATA: /var/lib/postgresql/16/data
-  POSTGRES_BUILD_REFERENCE: dhi/postgres:16.15-debian13-dev@sha256:7854c91bc59a5e4d65a91914bb028758b042bb87baa682eae0f71331b275f7ca
-  POSTGRES_RUNTIME_REFERENCE: dhi/postgres:16.15-debian13@sha256:a2c1c9f0e92fadb40c2437fe86b5c4abd10253653c17f14a81e3cd3f88a7e34f
+  PGVECTOR_PACKAGE_NAME: pgvector-0-pg16
+  PGVECTOR_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR14_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR15_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR16_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR17_PACKAGE_VERSION: 0.8.7-0
+  PGVECTOR18_PACKAGE_VERSION: 0.8.7-0
+  POSTGRES_PACKAGE_NAME: postgresql-16
   SEMVER_MAJOR_MINOR_VERSION: "0.8"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.8.7
-  VERSION: 0.8.7
+  VERSION: 0.8.7-0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!libelogind0'
     - '!mawk'
@@ -38,75 +54,66 @@ contents:
     - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
+    - findutils
     - less
+    - libcurl4t64
     - libgssapi-krb5-2
     - libicu76
     - libldap2
     - liblz4-1
+    - libnuma1
     - libpam0g
     - libreadline8t64
     - libselinux1
     - libssl3t64
+    - liburing2
+    - libuuid1
     - libxml2
     - libxslt1.1
     - libzstd1
     - llvm
     - locales
+    - pgvector-0-pg16=0.8.7-0
+    - postgresql-16=16.15-1
+    - sed
     - tzdata
     - zlib1g
   builds:
-    - name: pgvector
-      work-dir: ${source.dir}/pgvector
+    - name: legacy /opt/postgresql layout
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
-          - build-essential
-          - clang
           - coreutils
-          - findutils
-          - llvm-dev
-          - sed
-        files:
-          - url: git+https://github.com/pgvector/pgvector.git#v0.8.7
-            checksum: f37c13f68b57d2c3472b2214fbcff699d6d34876
-            path: ${source.dir}/pgvector
-            spdx:
-              name: pgvector
-              version: 0.8.7
-              packages:
-                - name: pgvector
-                  purl: pkg:github/pgvector/pgvector@0.8.7
-                  license: PostgreSQL
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/postgres:16.15-debian13-dev@sha256:7854c91bc59a5e4d65a91914bb028758b042bb87baa682eae0f71331b275f7ca
-            includes:
-              - opt/postgresql/16/**
-              - usr/bin/pg_config
-              - usr/lib/postgresql/16/**
-            uid: 0
-            gid: 0
+          - postgresql-16=16.15-1
       pipeline:
-        - name: build and install
-          runs: |
+        - runs: |
             set -eux -o pipefail
 
-            export PG_CONFIG=/opt/postgresql/16/bin/pg_config
+            mkdir -p "/opt/postgresql/16/bin"
 
-            # OPTFLAGS="" disables -march=native so the resulting vector.so is
-            # portable across the build host's CPU family. Upstream's
-            # pgvector/pgvector image does the same.
-            make OPTFLAGS="" -j"$(nproc)"
-            make install DESTDIR='${target.dir}/install'
+            for item in "/usr/lib/postgresql/16/"*; do
+              [ -e "${item}" ] || continue
+              name="$(basename "${item}")"
+              ln -sfn "${item}" "/opt/postgresql/16/${name}"
+            done
+
+            while IFS= read -r path; do
+              case "${path}" in
+                /usr/bin/*)
+                  [ -e "${path}" ] || continue
+                  ln -sfn "${path}" "/opt/postgresql/16/bin/$(basename "${path}")"
+                  ;;
+              esac
+            done < "/var/lib/dpkg/info/postgresql-16.list"
       outputs:
-        - source: ${target.dir}/install/usr/lib/postgresql/16
-          target: /usr/lib/postgresql/16
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/pgvector
-          target: /opt/docker/sbom/pgvector
+        - source: /opt/postgresql
+          target: /opt/postgresql
           uid: 0
           gid: 0
     - name: locale
@@ -134,14 +141,6 @@ contents:
           target: /usr/lib/locale
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/postgres:16.15-debian13@sha256:a2c1c9f0e92fadb40c2437fe86b5c4abd10253653c17f14a81e3cd3f88a7e34f
-      excludes:
-        - etc/os-release
-        - var/lib/dpkg/status
-        - var/lock
-      uid: 0
-      gid: 0
 accounts:
   run-as: postgres
   users:
@@ -168,6 +167,7 @@ environment:
   LC_ALL: en_US.UTF-8
   PATH: /opt/postgresql/16/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   PG_MAJOR: "16"
+  PG_MINOR: "15"
   PGDATA: /var/lib/postgresql/16/data
 paths:
   - type: directory
@@ -175,6 +175,12 @@ paths:
     uid: 70
     gid: 70
     mode: "0700"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/pgvector/bin/docker-entrypoint.sh
 annotations:
   org.opencontainers.image.description: A minimal pgvector image
   org.opencontainers.image.licenses: PostgreSQL
