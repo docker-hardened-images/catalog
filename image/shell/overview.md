@@ -2,8 +2,8 @@
 
 Shell provides a Bash development environment for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), built on
 Docker Hardened Images. It includes a Docker engine with Compose and Buildx, Git and GitHub CLI, common CLI tooling, and
-Python with pip and uv for development and agent-mixin composition. It opens a login shell as the nonroot `agent` user;
-apt sources are reachable by default, and it declares no credentials.
+Python with pip and uv for development and agent-mixin composition. It opens a login shell as the nonroot `agent` user
+and declares no network policy or credentials.
 
 ## About Docker Hardened Images
 

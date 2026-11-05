@@ -34,8 +34,8 @@ sbx run dhi.io/shell:<tag> /path/to/workspace
 The initial DHI Shell workload release uses the `1.0.0` tag. The `latest` tag follows the current workload release.
 Select a versioned tag from the Tags tab to pin the workload release.
 
-Shell's network policy admits the image's apt sources (`deb.debian.org`, `dhi.io`) and declares no credentials or
-SSH-agent forwarding. Composed kits or your sandbox policy must explicitly allow any other destinations.
+Shell declares no network policy, credentials, or SSH-agent forwarding. Composed kits or your sandbox policy must
+explicitly allow any destinations it needs, including the image's apt sources (`deb.debian.org`, `dhi.io`).
 
 ### Run a command directly
 
