@@ -1,267 +1,57 @@
 # syntax=dhi.io/build:2-debian13
 
-name: Apache Solr 10.0.x
+name: Apache Solr 10.1.x
 image: dhi.io/solr
 variant: runtime
 tags:
   - "10"
-  - "10.0"
-  - 10.0.0
+  - "10.1"
+  - 10.1.0
   - 10-debian
   - 10-debian13
-  - 10.0-debian
-  - 10.0-debian13
-  - 10.0.0-debian
-  - 10.0.0-debian13
+  - 10.1-debian
+  - 10.1-debian13
+  - 10.1.0-debian
+  - 10.1.0-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-03-03"
 vars:
-  COMMIT_SHA: 6c6c48a6f78486130682ea9c1f7a2723af5a87be
-  GRADLE_REFERENCE: dhi/gradle:8.14.6-jdk21-debian13-dev@sha256:fcd023961e46c4e04b055193bb0393dd4e7e61d9c0c578a5fa7ca4599a445366
-  GRADLE_VERSION: 8.14.6
-  JAVA_REFERENCE: dhi/eclipse-temurin:21.0.13.9-debian13@sha256:96e25d5e5ca9902445aacfb3b6fb2f8df9c461312023bf1d1cfbfed28928f8d7
-  JAVA_VERSION: 21.0.13.9
-  SEMVER_MAJOR_MINOR_VERSION: "10.0"
+  JAVA_HOME_PATH: /usr/lib/jvm/temurin-21
+  JDK_MAJOR_VERSION: "21"
+  PACKAGE_NAME: solr-10
+  PACKAGE_SUFFIX: ""
+  SEMVER_MAJOR_MINOR_VERSION: "10.1"
   SEMVER_MAJOR_VERSION: "10"
-  SEMVER_VERSION: 10.0.0
+  SEMVER_VERSION: 10.1.0
   SOLR_MAJOR_VERSION: "10"
-  VERSION: 10.0.0
+  VERSION: 10.1.0-2
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - '!libelogind0'
     - '!mawk'
     - '!original-awk'
     - base-files
     - bash
-    - ca-certificates
+    - ca-certificates-bundle
     - coreutils
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
     - findutils
+    - gawk
     - grep
     - procps
     - sed
+    - solr-10=10.1.0-2
     - tini
     - tzdata
   builds:
-    - name: solr
-      work-dir: ${source.dir}/solr
-      contents:
-        packages:
-          - bash
-          - coreutils
-          - findutils
-          - grep
-          - gzip
-          - libstdc++6
-          - patch
-          - sed
-          - tar
-        files:
-          - url: git+https://github.com/apache/solr.git#releases/solr/10.0.0
-            checksum: 6c6c48a6f78486130682ea9c1f7a2723af5a87be
-            path: ${source.dir}/solr
-            spdx:
-              name: solr
-              version: 10.0.0
-              packages:
-                - name: solr
-                  purl: pkg:github/apache/solr@10.0.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-        artifacts:
-          - name: dhi.io/gradle:8.14.6-jdk21-debian13-dev@sha256:fcd023961e46c4e04b055193bb0393dd4e7e61d9c0c578a5fa7ca4599a445366
-            includes:
-              - opt/**
-              - usr/local/bin/**
-            excludes:
-              - var/lock
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: apply opentelemetry prometheus reader patch
-          uses: git/patch@v1
-          with:
-            patch: ${source.dir}/patch/otel-prometheus-metric-reader.patch
-        - name: strip develocity
-          runs: |
-            set -eux -o pipefail
-
-            sed -i \
-              -e "/id 'com\.gradle\.develocity'/d" \
-              -e "/id 'com\.gradle\.common-custom-user-data-gradle-plugin'/d" \
-              -e "/apply from: file('gradle\/develocity\.gradle')/d" \
-              settings.gradle
-            sed -i \
-              -e "/apply from: file('gradle\/testing\/retry-test\.gradle')/d" \
-              build.gradle
-        - name: mirror maven central
-          runs: |
-            set -eux -o pipefail
-
-            MIRROR='https://maven-central.storage-download.googleapis.com/maven2/'
-            find . -type f -name '*.gradle' -print0 | xargs -0 sed -i \
-              -e "s|mavenCentral()|maven { url '${MIRROR}' }|g" \
-              -e "s|gradlePluginPortal()|maven { url '${MIRROR}' }; gradlePluginPortal()|g"
-        - name: inject pluginManagement for included builds
-          runs: |
-            set -eux -o pipefail
-
-            MIRROR='https://maven-central.storage-download.googleapis.com/maven2/'
-            PM_BLOCK="pluginManagement { repositories { maven { url '${MIRROR}' }; gradlePluginPortal() } }"
-            for s in build-tools/missing-doclet/settings.gradle build-tools/build-infra/settings.gradle; do
-              if [ -f "$s" ]; then sed -i "1i ${PM_BLOCK}" "$s"; fi
-            done
-        - name: pin cve-remediated dependency versions (10.x)
-          runs: |
-            set -eux -o pipefail
-
-            expect() {
-              local file="$1" pattern="$2" desc="$3"
-              if ! grep -qE "$pattern" "$file"; then
-                echo "ERROR: ${desc} not found in ${file}; refresh the pin step." >&2
-                exit 1
-              fi
-            }
-
-            expect gradle/libs.versions.toml '^netty = ' 'netty alias'
-            sed -i 's|^netty = ".*"$|netty = "4.2.17.Final"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^netty-tcnative = ' 'netty-tcnative alias'
-            sed -i 's|^netty-tcnative = ".*"$|netty-tcnative = "2.0.74.Final"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^apache-zookeeper = ' 'apache-zookeeper alias'
-            sed -i 's|^apache-zookeeper = ".*"$|apache-zookeeper = "3.9.5"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^eclipse-jetty = ' 'eclipse-jetty alias'
-            sed -i 's|^eclipse-jetty = ".*"$|eclipse-jetty = "12.0.36"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^fasterxml = ' 'fasterxml alias'
-            sed -i 's|^fasterxml = ".*"$|fasterxml = "2.21.7"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^apache-log4j = ' 'apache-log4j alias'
-            sed -i 's|^apache-log4j = ".*"$|apache-log4j = "2.25.5"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^opentelemetry = ' 'opentelemetry alias'
-            sed -i 's|^opentelemetry = ".*"$|opentelemetry = "1.67.0"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^opentelemetry-prometheus = ' 'opentelemetry-prometheus alias'
-            sed -i 's|^opentelemetry-prometheus = ".*"$|opentelemetry-prometheus = "1.67.0-alpha"|' gradle/libs.versions.toml
-
-            LOCKS=$(find . -name 'gradle.lockfile')
-            test -n "$LOCKS"
-            grep -qE '^io\.netty:netty-buffer:4\.2\.6\.Final=' $LOCKS \
-              || {
-                echo "ERROR: io.netty:netty-* at 4.2.6.Final not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^io\.netty:netty-tcnative-classes:2\.0\.70\.Final=' $LOCKS \
-              || {
-                echo "ERROR: io.netty:netty-tcnative-* at 2.0.70.Final not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^org\.apache\.zookeeper:zookeeper:3\.9\.4=' $LOCKS \
-              || {
-                echo "ERROR: org.apache.zookeeper:zookeeper at 3.9.4 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^org\.eclipse\.jetty:jetty-http:12\.0\.27=' $LOCKS \
-              || {
-                echo "ERROR: org.eclipse.jetty:jetty-http at 12.0.27 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^com\.fasterxml\.jackson\.core:jackson-databind:2\.20\.0=' $LOCKS \
-              || {
-                echo "ERROR: com.fasterxml.jackson.core:jackson-databind at 2.20.0 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^com\.fasterxml\.jackson\.core:jackson-annotations:2\.20=' $LOCKS \
-              || {
-                echo "ERROR: com.fasterxml.jackson.core:jackson-annotations at 2.20 (bare) not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^org\.apache\.logging\.log4j:log4j-core:2\.25\.3=' $LOCKS \
-              || {
-                echo "ERROR: org.apache.logging.log4j:log4j-core at 2.25.3 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^io\.opentelemetry:opentelemetry-api:1\.56\.0=' $LOCKS \
-              || {
-                echo "ERROR: io.opentelemetry:opentelemetry-api at 1.56.0 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            expect gradle/libs.versions.toml '^google-guava = ' 'google-guava alias'
-            sed -i 's|^google-guava = ".*"$|google-guava = "33.7.2-jre"|' gradle/libs.versions.toml
-            expect gradle/libs.versions.toml '^xerial-snappy = ' 'xerial-snappy alias'
-            sed -i 's|^xerial-snappy = ".*"$|xerial-snappy = "1.1.10.9"|' gradle/libs.versions.toml
-            grep -qE '^com\.google\.guava:guava:33\.4\.8-jre=' $LOCKS \
-              || {
-                echo "ERROR: com.google.guava:guava at 33.4.8-jre not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^org\.xerial\.snappy:snappy-java:1\.1\.10\.8=' $LOCKS \
-              || {
-                echo "ERROR: org.xerial.snappy:snappy-java at 1.1.10.8 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            grep -qE '^org\.jspecify:jspecify:1\.0\.0=' $LOCKS \
-              || {
-                echo "ERROR: org.jspecify:jspecify at 1.0.0 not found in any gradle.lockfile" >&2
-                exit 1
-              }
-            find . -name 'gradle.lockfile' -print0 | xargs -0 sed -i \
-              -e 's|^\(io\.netty:netty[a-z0-9-]*:\)4\.2\.6\.Final\(=\)|\14.2.17.Final\2|' \
-              -e 's|^\(io\.netty:netty-tcnative[a-z0-9-]*:\)2\.0\.70\.Final\(=\)|\12.0.74.Final\2|' \
-              -e 's|^\(org\.apache\.zookeeper:zookeeper[a-z-]*:\)3\.9\.4\(=\)|\13.9.5\2|' \
-              -e 's|^\(org\.eclipse\.jetty[a-z0-9.]*:[a-z][a-z0-9-]*:\)12\.0\.27\(=\)|\112.0.36\2|' \
-              -e 's|^\(com\.fasterxml\.jackson[^:]*:[^:]*:\)2\.20\.0\(=\)|\12.21.7\2|' \
-              -e 's|^\(com\.fasterxml\.jackson[^:]*:[^:]*:\)2\.20\(=\)|\12.21\2|' \
-              -e 's|^\(org\.apache\.logging\.log4j:[^:]*:\)2\.25\.3\(=\)|\12.25.5\2|' \
-              -e 's|^\(io\.opentelemetry:[^:]*:\)1\.56\.0-alpha\(=\)|\11.67.0-alpha\2|' \
-              -e 's|^\(io\.opentelemetry:[^:]*:\)1\.56\.0\(=\)|\11.67.0\2|' \
-              -e 's|^\(com\.google\.guava:guava:\)33\.4\.8-jre\(=\)|\133.7.2-jre\2|' \
-              -e 's|^\(org\.xerial\.snappy:snappy-java:\)1\.1\.10\.8\(=\)|\11.1.10.9\2|' \
-              -e 's|^\(org\.jspecify:jspecify:\)1\.0\.0\(=\)|\11.0.1\2|'
-        - name: build solr distribution
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            ./gradlew \
-              -Pversion.release=10.0.0 \
-              :solr:packaging:assemble \
-              --no-daemon \
-              --console=plain \
-              --warning-mode=summary
-        - name: extract distribution
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${target.dir}/opt/solr"
-            tarball=$(find solr/packaging/build/distributions -maxdepth 1 -name "solr-*.tgz" ! -name "*-src.tgz" ! -name "*-slim.tgz" -print -quit)
-            test -n "$tarball"
-            tar -xzf "$tarball" --strip-components=1 -C "${target.dir}/opt/solr"
-            rm -rf \
-              "${target.dir}/opt/solr/modules" \
-              "${target.dir}/opt/solr/prometheus-exporter" \
-              "${target.dir}/opt/solr/cross-dc-manager"
-
-            mkdir -p "${target.dir}/etc/default"
-            cp "${target.dir}/opt/solr/bin/solr.in.sh" "${target.dir}/etc/default/solr.in.sh"
-      paths:
-        - type: file
-          path: ${source.dir}/patch/otel-prometheus-metric-reader.patch
-          uid: 0
-          gid: 0
-          source: image/solr/patch/otel-prometheus-metric-reader.patch
-      outputs:
-        - source: ${target.dir}/opt/solr
-          target: /opt/solr
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/default/solr.in.sh
-          target: /etc/default/solr.in.sh
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/solr
-          target: /opt/docker/sbom/solr
-          uid: 0
-          gid: 0
     - name: locale
       contents:
         packages:
@@ -287,13 +77,6 @@ contents:
           target: /usr/lib/locale
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/eclipse-temurin:21.0.13.9-debian13@sha256:96e25d5e5ca9902445aacfb3b6fb2f8df9c461312023bf1d1cfbfed28928f8d7
-      includes:
-        - opt/**
-        - usr/local/bin/**
-      uid: 0
-      gid: 0
 accounts:
   run-as: solr
   users:
@@ -314,6 +97,7 @@ os-release:
   home-url: https://docker.com/products/hardened-images/
   bug-report-url: https://docker.com/support/
 environment:
+  JAVA_HOME: /usr/lib/jvm/temurin-21
   LANG: en_US.UTF-8
   LANGUAGE: en_US:en
   LC_ALL: en_US.UTF-8
@@ -326,6 +110,15 @@ environment:
   SOLR_PID_DIR: /var/solr
   SOLR_ZK_EMBEDDED_HOST: 0.0.0.0
 paths:
+  - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/solr
+    uid: 0
+    gid: 0
+    source: /usr/share/solr
   - type: directory
     path: /var/solr
     uid: 65532
