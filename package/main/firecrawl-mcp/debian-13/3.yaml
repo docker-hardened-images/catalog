@@ -4,16 +4,16 @@ image: dhi.io/pkg-firecrawl-mcp
 variant: runtime
 tags:
   - 3.36.1
-  - 3.36.1-r0
+  - 3.36.1-r1
   - 3.36.1-debian13
-  - 3.36.1-r0-debian13
+  - 3.36.1-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   COMMIT_SHA: 6bd077c69a0143f03de93687f5f8bb8477944845
   NODEJS_VERSION: 24.22.2-0
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "3.36"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.36.1
@@ -44,6 +44,7 @@ contents:
           - coreutils
           - findutils
           - git
+          - grep
           - libc6
           - libstdc++6
           - mawk
@@ -64,35 +65,29 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: pin vulnerable transitive dependencies
+        - name: enable corepack pnpm
+          privileged: true
           runs: |
             set -eux -o pipefail
 
+            corepack enable
+            chmod +x /usr/lib/nodejs/corepack/dist/*.js
+            corepack prepare pnpm@10.17.1 --activate
+
             cd "${source.dir}/firecrawl-mcp"
 
-            node -e '
-              const fs = require("fs");
-              const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
-              p.pnpm = p.pnpm || {};
-              Object.assign(p.pnpm.overrides = p.pnpm.overrides || {}, {
-                "axios": "1.20.0", // CVE-2026-101898, CVE-2026-101899, CVE-2026-101900, CVE-2026-101901, CVE-2026-101902, CVE-2026-101903, CVE-2026-101904, CVE-2026-101905, CVE-2026-101906, CVE-2026-101907, CVE-2026-101908, CVE-2026-101909
-                "file-type": "21.3.2",
-                "follow-redirects": "1.16.2", // CVE-2026-111755, CVE-2026-111756, CVE-2026-116689
-                "@modelcontextprotocol/sdk": "1.32.0", // CVE-2026-104850; CVE-2026-111767, CVE-2026-111768, CVE-2026-111769, CVE-2026-111771
-                "form-data": "4.0.6",
-                "@hono/node-server": "2.1.3", // CVE-2026-118663
-                "fast-uri": "3.1.9",       // CVE-2026-18446, CVE-2026-86472, CVE-2026-110306, CVE-2026-110180, CVE-2026-110725, CVE-2026-110095
-                "hono": "4.13.11",         // CVE-2026-111757, CVE-2026-69207
-                "ip-address": "10.7.4",    // CVE-2026-101911, CVE-2026-101912; CVE-2026-101910, CVE-2026-101913; CVE-2026-69192, CVE-2026-54272, CVE-2026-69198; CVE-2026-111997
-                "path-to-regexp": "8.4.0", // CVE-2026-4926, CVE-2026-4923
-                "proxy-addr": "2.0.8",     // CVE-2026-90711
-                "undici": "7.30.1",        // CVE-2026-84890, CVE-2026-84933, CVE-2026-84947, CVE-2026-84961, CVE-2026-85008, CVE-2026-85014, CVE-2026-85024, CVE-2026-18149, CVE-2026-18540, CVE-2026-19534; CVE-2026-13697, CVE-2026-14643, CVE-2026-15157, CVE-2026-16728, CVE-2026-16729; CVE-2026-87018, CVE-2026-109869, CVE-2026-109829, CVE-2026-109383, CVE-2026-87029, CVE-2026-109932, CVE-2026-109924, CVE-2026-109841
-                "qs": "6.16.1",            // CVE-2026-82562, CVE-2026-82417, CVE-2026-110816
-                "body-parser": "2.4.0",    // CVE-2026-111181
-                "zod": "4.6.6",            // CVE-2023-54404
-              });
-              fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
-            '
+            pnpm config set fetch-retries 5
+            pnpm config set fetch-retry-mintimeout 20000
+            pnpm config set fetch-retry-maxtimeout 120000
+            pnpm config set network-concurrency 1
+
+            pnpm install --no-frozen-lockfile --ignore-scripts
+        - name: bump pnpm dependencies
+          uses: pnpm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/pnpm-bumps.json
+            pnpm-root: ${source.dir}/firecrawl-mcp
         - name: install and build
           privileged: true
           environment:
@@ -139,9 +134,15 @@ contents:
               - deb
             license: MIT
             name: firecrawl-mcp
-            rel: 0
+            rel: 1
             url: https://github.com/firecrawl/firecrawl-mcp-server
             version: 3.36.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/pnpm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/firecrawl-mcp/patch/pnpm-bumps.json
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
