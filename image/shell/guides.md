@@ -34,8 +34,8 @@ identity. It ships only a Debian 13 variant and makes no FIPS compliance claim.
 sbx run dhi.io/shell:<tag> /path/to/workspace
 ```
 
-The `latest` and `<VERSION>` tags contain the same Shell workload with Docker support. Select a versioned tag from the
-Tags tab to pin the workload release.
+The initial DHI Shell workload release uses the `1.0.0` tag. The `latest` tag follows the current workload release.
+Select a versioned tag from the Tags tab to pin the workload release.
 
 Shell grants no network destinations and declares no credentials or SSH-agent forwarding. The sandbox policy and
 composed kits decide what is reachable. Installing packages requires explicitly allowing the configured apt sources,
