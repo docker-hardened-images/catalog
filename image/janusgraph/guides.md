@@ -19,7 +19,7 @@ Gremlin traffic on port `8182`.
 ### Start a JanusGraph server
 
 ```bash
-docker run --rm -p 8182:8182 dhi.io/<namespace>/janusgraph:1.1
+docker run --rm -p 8182:8182 dhi.io/<namespace>/janusgraph:1.2
 ```
 
 The server is ready once the logs show `Channel started at port 8182.`.
@@ -32,7 +32,7 @@ The backend is selected with the `JANUS_PROPS_TEMPLATE` environment variable, wh
 ```bash
 docker run --rm -p 8182:8182 \
   -e JANUS_PROPS_TEMPLATE=cql-es \
-  dhi.io/<namespace>/janusgraph:1.1
+  dhi.io/<namespace>/janusgraph:1.2
 ```
 
 Individual settings can be overridden at runtime by passing environment variables prefixed with `janusgraph.` (written
@@ -41,13 +41,13 @@ to the properties file) or `gremlinserver.` (written to the server YAML). For ex
 ```bash
 docker run --rm -p 8182:8182 \
   -e janusgraph.storage.hostname=cassandra \
-  dhi.io/<namespace>/janusgraph:1.1
+  dhi.io/<namespace>/janusgraph:1.2
 ```
 
 ### Connect with the Gremlin console
 
 ```bash
-docker run --rm -it dhi.io/<namespace>/janusgraph:1.1 gremlin
+docker run --rm -it dhi.io/<namespace>/janusgraph:1.2 gremlin
 ```
 
 ### Persist data
@@ -58,7 +58,7 @@ restarts:
 ```bash
 docker run --rm -p 8182:8182 \
   -v janusgraph-data:/var/lib/janusgraph \
-  dhi.io/<namespace>/janusgraph:1.1
+  dhi.io/<namespace>/janusgraph:1.2
 ```
 
 ## Image variants
