@@ -110,7 +110,7 @@ node -e '
   if (!ws.includes(overrideAnchor)) throw new Error("pnpm-workspace.yaml has no overrides map");
   ws = ws.replace(overrideAnchor, overrideAnchor + overrideLines + "\n");
   for (const [from, to, current, why] of [
-    ["qs: 6.16.0", "qs: 6.16.1", "qs: 6.16.0", "CVE-2026-110816"],
+    ["qs: 6.16.0", "qs: 6.16.1", "qs: 6.16.1", "CVE-2026-110816"],
   ]) {
     const line = "\n  " + from + "\n";
     const currentLine = "\n  " + current + "\n";
