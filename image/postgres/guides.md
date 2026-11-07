@@ -458,13 +458,16 @@ For existing data migration, choose an option:
   docker stop old-postgres
   ```
 
-  Copy data to a new location with versioned subdirectory (replace `16` with your major version):
+  Copy data to a new location with versioned subdirectory (replace `16` with your major version). The command
+  creates the versioned directory first, because a new volume doesn't have it, and then hands the files to the
+  image's nonroot user (UID 70), because `cp -a` keeps the official image's owner (UID 999), which the hardened
+  image can't read:
 
   ```bash
   docker run --rm \
     -v old-postgres-data:/old \
     -v new-postgres-data:/new \
-    busybox sh -c "cp -a /old/. /new/16/data/"
+    busybox sh -c "mkdir -p /new/16/data && cp -a /old/. /new/16/data/ && chown -R 70:70 /new/16"
   ```
 
   Start new DHI container with parent directory mount:
