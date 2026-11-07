@@ -1,0 +1,115 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+name: FreeRADIUS 3.0.x
+image: dhi.io/freeradius
+variant: runtime
+tags:
+  - 3-alpine
+  - 3.0-alpine
+  - 3-alpine3.24
+  - 3.0.27-alpine
+  - 3.0-alpine3.24
+  - 3.0.27-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  SEMVER_MAJOR_MINOR_VERSION: "3.0"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.0.27
+  VERSION: 3.0.27-r3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+    - freeradius=3.0.27-r3
+    - tzdata
+  builds:
+    - name: freeradius
+      contents:
+        packages:
+          - alpine-baselayout-data
+          - busybox
+          - freeradius=3.0.27-r3
+      pipeline:
+        - name: configure and validate
+          runs: |
+            set -eux -o pipefail
+
+            setup-freeradius enable-default-mods
+
+            # The image starts unprivileged, so radiusd must not attempt to
+            # change users or groups after startup.
+            sed -i \
+              -e 's/^[[:space:]]*user = radius/# user = radius/' \
+              -e 's/^[[:space:]]*group = radius/# group = radius/' \
+              /etc/raddb/radiusd.conf
+
+            test -L /etc/raddb/mods-enabled/files
+            ! grep -Eq '^[[:space:]]*(user|group)[[:space:]]*=' /etc/raddb/radiusd.conf
+            radiusd -XC
+
+            chgrp -R 65532 /etc/raddb
+            chmod -R g+rX /etc/raddb
+      outputs:
+        - source: /
+          target: /
+          uid: 0
+          gid: 0
+          diff: true
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+environment:
+  FREERADIUS_VERSION: 3.0.27
+paths:
+  - type: directory
+    path: /run/radiusd
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+  - type: directory
+    path: /var/cache/radiusd
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /var/lib/radiusd
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+  - type: directory
+    path: /var/log/radius
+    uid: 65532
+    gid: 65532
+    mode: "0750"
+annotations:
+  org.opencontainers.image.description: A minimal FreeRADIUS image
+  org.opencontainers.image.licenses: GPL-2.0-or-later
+entrypoint:
+  - radiusd
+cmd:
+  - -f
+ports:
+  - 1812/udp
+  - 1813/udp
