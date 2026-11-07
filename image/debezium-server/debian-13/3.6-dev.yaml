@@ -1,0 +1,193 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Debezium Server 3.6.x (dev)
+image: dhi.io/debezium-server
+variant: dev
+tags:
+  - 3-dev
+  - 3.6-dev
+  - 3.6.0.Final-dev
+  - 3-debian-dev
+  - 3-debian13-dev
+  - 3.6-debian-dev
+  - 3.6-debian13-dev
+  - 3.6.0.Final-debian-dev
+  - 3.6.0.Final-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-01"
+vars:
+  COMMIT_SHA: 20a0003fdf473d080752948a19e5bb3ba8f771cc
+  JAVA_FIPS_SUFFIX: ""
+  JAVA_VARIANT: jdk
+  JDK_MAJOR_VERSION: "21"
+  MAVEN_REFERENCE: dhi/maven:3.9.16-jdk21-debian13-dev@sha256:8cb6eddfbed88f19003f0d2b5dd20f9be5c32cfb290b0220469aca2003352d44
+  MAVEN_VERSION: 3.9.16
+  SEMVER_MAJOR_MINOR_VERSION: "3.6"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.6.0
+  VERSION: 3.6.0.Final
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jdk
+    - eclipse-temurin-21-jdk-oci-config
+    - findutils
+    - grep
+    - libc-bin
+    - libc6
+    - libstdc++6
+    - mawk
+    - perl-base
+    - sed
+    - tar
+    - util-linux
+  builds:
+    - name: debezium-server
+      uses: dhi.io/maven:3.9.16-jdk21-debian13-dev@sha256:8cb6eddfbed88f19003f0d2b5dd20f9be5c32cfb290b0220469aca2003352d44
+      work-dir: ${source.dir}/debezium-server
+      environment:
+        MAVEN_ARGS: --batch-mode --no-transfer-progress
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - sed
+          - tar
+        files:
+          - url: git+https://github.com/debezium/debezium-server.git#v3.6.0.Final
+            checksum: 20a0003fdf473d080752948a19e5bb3ba8f771cc
+            path: ${source.dir}/debezium-server
+            spdx:
+              name: debezium-server
+              version: 3.6.0.Final
+              packages:
+                - name: debezium-server
+                  purl: pkg:maven/io.debezium/debezium-server-dist@3.6.0.Final
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: mvn/mirror@v1
+        - name: add AWS STS for web identity credentials
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/kinesis-sts.patch
+        - name: build distribution
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn clean package \
+              -Dquick \
+              -Passembly \
+              -pl debezium-server-dist \
+              -am
+        - name: install distribution
+          runs: |
+            set -eux -o pipefail
+
+            archive="debezium-server-dist/target/debezium-server-dist-3.6.0.Final.tar.gz"
+            test -f "${archive}"
+
+            mkdir -p "${target.dir}/debezium"
+            tar xzf "${archive}" \
+              -C "${target.dir}/debezium" \
+              --strip-components 1
+
+            test -x "${target.dir}/debezium/run.sh"
+            test -f "${target.dir}/debezium/debezium-server-3.6.0.Final-runner.jar"
+            find "${target.dir}/debezium/lib" -name 'sts-*.jar' -print -quit | grep -q .
+      paths:
+        - type: file
+          path: ${source.dir}/patch/kinesis-sts.patch
+          uid: 0
+          gid: 0
+          source: image/debezium-server/patch/kinesis-sts.patch
+      outputs:
+        - source: ${target.dir}/debezium
+          target: /debezium
+          uid: 185
+          gid: 0
+        - source: /opt/docker/sbom/debezium-server
+          target: /opt/docker/sbom/debezium-server
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: debezium
+      uid: 185
+      gid: 0
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /debezium
+environment:
+  DEBEZIUM_VERSION: 3.6.0.Final
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  OTEL_ENABLED: "true"
+  OTEL_SDK_DISABLED: "true"
+  PATH: /usr/lib/jvm/temurin-21/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  SERVER_HOME: /debezium
+paths:
+  - type: directory
+    path: /debezium/config
+    uid: 185
+    gid: 0
+    mode: "0775"
+  - type: directory
+    path: /debezium/data
+    uid: 185
+    gid: 0
+    mode: "0775"
+annotations:
+  org.opencontainers.image.description: A minimal Debezium Server image
+  org.opencontainers.image.licenses: Apache-2.0
+cmd:
+  - /debezium/run.sh
+ports:
+  - 8080/tcp
