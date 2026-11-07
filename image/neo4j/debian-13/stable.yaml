@@ -6,19 +6,19 @@ variant: runtime
 tags:
   - "2026"
   - "2026.10"
-  - 2026.10.1
+  - 2026.10.2
   - 2026-debian
   - 2026-debian13
   - 2026.10-debian
   - 2026.10-debian13
-  - 2026.10.1-debian
-  - 2026.10.1-debian13
+  - 2026.10.2-debian
+  - 2026.10.2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   ARCH: '#{ target.arch == "amd64" ? "x64" : "aarch64" }'
-  COMMIT_SHA: 2994b43b44f35bf6520bd2667ab181bb76a45585
+  COMMIT_SHA: 11fe55832db7219cbdb9e4535cda9795a069610e
   GOSU_REFERENCE: dhi/pkg-gosu:1.20-debian13@sha256:bd9680872812851827edd4646613d8ef11bb6b3eb8f84db573ca481ccea27018
   JAVA_HOME: /usr/lib/jvm/temurin-21
   JDK_MAJOR_VERSION: "21"
@@ -28,8 +28,8 @@ vars:
   NEO4J_HOME: /var/lib/neo4j
   SEMVER_MAJOR_MINOR_VERSION: "2026.10"
   SEMVER_MAJOR_VERSION: "2026"
-  SEMVER_VERSION: 2026.10.1
-  VERSION: 2026.10.1
+  SEMVER_VERSION: 2026.10.2
+  VERSION: 2026.10.2
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -64,15 +64,15 @@ contents:
           - tar
           - xmlstarlet
         files:
-          - url: git+https://github.com/neo4j/neo4j.git#2026.10.1
-            checksum: 2994b43b44f35bf6520bd2667ab181bb76a45585
+          - url: git+https://github.com/neo4j/neo4j.git#2026.10.2
+            checksum: 11fe55832db7219cbdb9e4535cda9795a069610e
             path: ${source.dir}/neo4j
             spdx:
               name: neo4j
-              version: 2026.10.1
+              version: 2026.10.2
               packages:
                 - name: neo4j
-                  purl: pkg:dhi/neo4j@2026.10.1
+                  purl: pkg:dhi/neo4j@2026.10.2
                   license: GPL-3.0
             uid: 0
             gid: 0
@@ -80,10 +80,10 @@ contents:
             path: ${source.dir}/docker-neo4j-publish
             spdx:
               name: docker-neo4j-publish
-              version: 2026.10.1
+              version: 2026.10.2
               packages:
                 - name: docker-neo4j-publish
-                  purl: pkg:dhi/docker-neo4j-publish@2026.10.1
+                  purl: pkg:dhi/docker-neo4j-publish@2026.10.2
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -122,7 +122,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            cp -R 2026.10.1/trixie/community/local-package ${target.dir}/startup
+            cp -R 2026.10.2/trixie/community/local-package ${target.dir}/startup
         - name: patch entrypoint to use gosu instead of su-exec
           work-dir: ${target.dir}/startup
           runs: |
@@ -203,10 +203,7 @@ contents:
             fi
 
             # Set release version (source pom.xml uses SNAPSHOT versioning)
-            mvn versions:set -DnewVersion=2026.10.1 -DgenerateBackupPoms=false -q
-
-            # After updated dependencies, the pom.xml file may need linting;
-            mvn spotless:apply
+            mvn versions:set -DnewVersion=2026.10.2 -DgenerateBackupPoms=false -q
 
             # Drop the test-only com.neo4j:enterprise-it-test-support dependency from the
             # genai-plugin module (added in 2026.05.0). It is an Enterprise artifact not
@@ -231,6 +228,29 @@ contents:
                 -d "/m:project/m:dependencies/m:dependency[m:groupId='org.neo4j' and m:artifactId='neo4j-values' and m:type='test-jar']" \
                 community/testing/random-values/pom.xml
             fi
+
+            find . -name pom.xml -exec \
+              xmlstarlet ed -L \
+              -d "//*[local-name()='dependency'][*[local-name()='type']='test-jar' and *[local-name()='scope']='test']" \
+              {} \;
+
+            if [ "stable" = "5" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='modules']/*[local-name()='module'][text()='logical-plan-generator']" \
+                community/cypher/pom.xml
+              xmlstarlet ed -L \
+                -d "//*[local-name()='dependency'][*[local-name()='artifactId']='neo4j-cypher-logical-plan-generator-test-util' and *[local-name()='scope']='test']" \
+                community/cypher/runtime-spec-suite/pom.xml
+            elif [ "stable" = "stable" ]; then
+              xmlstarlet ed -L \
+                -d "//*[local-name()='modules']/*[local-name()='module'][text()='cypher-it-test-util']" \
+                community/community-it/pom.xml
+              xmlstarlet ed -L \
+                -d "//*[local-name()='dependency'][*[local-name()='artifactId']='cypher-it-test-util' and *[local-name()='scope']='test']" \
+                community/community-it/cypher-it/pom.xml
+            fi
+
+            mvn spotless:apply
 
             # Use maven.test.skip (not skipTests) so Maven skips test compilation; this
             # also avoids resolving the remaining test-scoped dependencies of the test
