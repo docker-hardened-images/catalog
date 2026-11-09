@@ -38,7 +38,7 @@ $ docker cp forklift-bundle:/metadata ./metadata
 $ docker rm forklift-bundle
 ```
 
-Validate the extracted bundle with `operator-sdk`, using the same optional suite the build enforces:
+Validate the extracted bundle with `operator-sdk`, using the same optional suite the image's tests enforce:
 
 ```console
 $ operator-sdk bundle validate ./ --select-optional suite=operatorframework
