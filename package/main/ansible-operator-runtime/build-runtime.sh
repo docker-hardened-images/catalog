@@ -26,8 +26,8 @@ grep -c '^ansible-core==' "${REQ}"
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "pyasn1==0.6.5"
 # CVE-2026-97687, CVE-2026-97688, CVE-2026-97689: the lock pins urllib3 2.7.0
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "urllib3==2.8.0"
-# CVE-2026-49264, CVE-2026-49265: the lock pins oauthlib 3.3.1
-"${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "oauthlib==4.0.0"
+# CVE-2026-49264, CVE-2026-49265, CVE-2026-49272: the lock pins oauthlib 3.3.1
+"${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "oauthlib==4.0.1"
 # GHSA-6q48-6c7w-9gw2: the lock pins certifi 2026.6.17
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "certifi==2026.10.19"
 "${VENV}/bin/python3" -m pip install --no-cache-dir --no-deps "${IMAGE_SRC}/ansible_runner_http"
