@@ -24,7 +24,8 @@ cd "${SRC}"
 "${VENV}/bin/python" -m pip install --no-cache-dir "urllib3==2.8.0"
 "${VENV}/bin/python" -m pip install --no-cache-dir "certifi==2026.10.19"
 "${VENV}/bin/python" -m pip install --no-cache-dir "cryptography==50.0.0"
-"${VENV}/bin/python" -m pip install --no-cache-dir "oauthlib==4.0.0"
+# oauthlib 4.0.1 is the first release fixing CVE-2026-49272 (Scout fixed version 4.0.1).
+"${VENV}/bin/python" -m pip install --no-cache-dir "oauthlib==4.0.1"
 
 # pip vendors urllib3/certifi for its own HTTP stack; Scout indexes that tree
 # as pkg:pypi/* even when site-packages already has the pinned wheels.
