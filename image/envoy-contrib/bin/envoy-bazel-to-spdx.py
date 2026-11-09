@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-1. Runs `bazel query` to get all external dependencies with full metadata (URLs, SHAs, etc.)
+1. Reads Bazel repository rules for external dependency metadata (URLs, SHAs, etc.)
 2. Runs `bazel aquery` to determine which deps are actually linked into the binary
 3. Filters the query results to only include actually-linked dependencies
 4. Generates SPDX with complete metadata for only the runtime dependencies
@@ -11,7 +11,7 @@ Usage:
 Any arguments after $version are passed through to `bazel aquery` so it
 analyzes the same configuration the build produced (e.g. --config=boringssl-fips
 changes both the linked SSL library and the contrib extension set). The
-metadata `bazel query` is configuration-independent and takes no build options.
+metadata commands are configuration-independent and take no build options.
 
 Example:
     python envoy-bazel-to-spdx.py envoy-contrib 1.39.0 -c opt --config=boringssl-fips
@@ -42,13 +42,13 @@ def run_bazel(description, *args):
     return result.stdout
 
 
-def parse_http_archive_calls(query_output):
+def parse_http_archive_calls(repository_output):
     print("Parsing http_archive calls...", file=sys.stderr)
 
     repositories = {}
 
     # Query output is technically Starlark but also valid Python - parse the whole thing as a module
-    tree = ast.parse(query_output)
+    tree = ast.parse(repository_output)
 
     # Walk the AST and find all Call nodes with func name 'http_archive'
     for node in ast.walk(tree):
@@ -65,7 +65,74 @@ def parse_http_archive_calls(query_output):
         if "name" in repo_data:
             repositories[repo_data["name"]] = repo_data
 
-    print(f"Found {len(repositories)} dependencies from bazel query", file=sys.stderr)
+    print(
+        f"Found {len(repositories)} dependencies with repository metadata",
+        file=sys.stderr,
+    )
+    return repositories
+
+
+def get_module_repositories(linked_repositories):
+    """Return metadata for the active Bazel dependency system.
+
+    Envoy 1.40 uses Bzlmod and no longer has a WORKSPACE file, so //external
+    cannot enumerate repository rules. `mod show_repo` is the supported Bzlmod
+    equivalent and emits the same http_archive calls this script already
+    parses. Envoy 1.39 explicitly disables Bzlmod and still uses //external.
+    """
+    try:
+        graph_output = run_bazel(
+            "Reading the Bzlmod dependency graph...",
+            "mod",
+            "graph",
+            "--output=json",
+        )
+    except RuntimeError as error:
+        if "Bzlmod has to be enabled" not in str(error):
+            raise
+        return parse_http_archive_calls(
+            run_bazel(
+                "Reading WORKSPACE repository metadata...",
+                "query",
+                "--output=build",
+                'kind("http_archive", //external:*)',
+            )
+        )
+
+    root = json.loads(graph_output)
+    modules = {}
+    pending = [*root["dependencies"], *root["indirectDependencies"]]
+    while pending:
+        module = pending.pop()
+        if module["key"] in modules:
+            continue
+        modules[module["key"]] = module
+        pending.extend(module.get("dependencies", []))
+        pending.extend(module.get("indirectDependencies", []))
+
+    repositories_to_show = set(modules)
+    repositories_to_show.update(
+        f"@@{repo}" for repo in linked_repositories if "++" in repo
+    )
+
+    repositories = parse_http_archive_calls(
+        run_bazel(
+            "Reading Bzlmod repository metadata...",
+            "mod",
+            "show_repo",
+            *sorted(repositories_to_show),
+        )
+    )
+
+    modules_by_name = {module["name"]: module for module in modules.values()}
+    for canonical_name, repository in repositories.items():
+        if "++" in canonical_name:
+            repository["_module_name"] = canonical_name.rsplit("+", 1)[-1]
+            continue
+        module = modules_by_name.get(canonical_name.split("+", 1)[0])
+        if module:
+            repository["_module_name"] = module["name"]
+
     return repositories
 
 
@@ -101,11 +168,13 @@ def resolve_archive_repos(input_files, all_repositories):
             if target in all_repositories:
                 repos.add(target)
                 continue
-            candidates = [
-                repo
-                for repo in all_repositories
-                if len(repo) >= 3 and (repo in target or target in repo)
-            ]
+            candidates = []
+            for repo, repo_data in all_repositories.items():
+                module_name = repo_data.get("_module_name", repo)
+                if len(module_name) >= 3 and (
+                    module_name in target or target in module_name
+                ):
+                    candidates.append(repo)
             if len(candidates) == 1:
                 repos.add(candidates[0])
             else:
@@ -124,10 +193,7 @@ def resolve_archive_repos(input_files, all_repositories):
     return repos
 
 
-def parse_aquery_output(aquery_output, all_repositories):
-    """Parse aquery output to extract linked dependencies."""
-    print("Parsing aquery Linking action output...", file=sys.stderr)
-
+def get_link_inputs(aquery_output):
     # format is something like:
     # action 'Linking envoy'
     #   Mnemonic: CppLink
@@ -143,13 +209,18 @@ def parse_aquery_output(aquery_output, all_repositories):
         raise RuntimeError(
             "Could not find Linking action with Inputs line in aquery output"
         )
-    inputs_str = match.group(1).strip()
+    return [f.strip() for f in match.group(1).strip().split(",") if f.strip()]
+
+
+def parse_aquery_output(aquery_output, all_repositories):
+    """Parse aquery output to extract linked dependencies."""
+    print("Parsing aquery Linking action output...", file=sys.stderr)
 
     # Extract external/<repo>/ directory segments from input files (the
     # trailing slash keeps files that sit directly under an external/ segment,
     # like contrib/vcl's genrule archives, from being taken for repo names).
     external_deps = set()
-    input_files = [f.strip() for f in inputs_str.split(",") if f.strip()]
+    input_files = get_link_inputs(aquery_output)
     for input_file in input_files:
         matches = re.findall(r"external/([^/]+)/", input_file)
         external_deps.update(matches)
@@ -248,9 +319,10 @@ def generate_spdx(linked_deps, all_repositories, name, version):
         # release version, or advisory matching can never hit.
         dep_version = extract_version_from_metadata(repo_data)
 
+        package_name = repo_data.get("_module_name", dep)
         package = {
             "SPDXID": f"SPDXRef-Package-{i}",
-            "name": dep,
+            "name": package_name,
             "versionInfo": dep_version,
             "downloadLocation": urls[0] if urls else "NOASSERTION",
             "filesAnalyzed": False,
@@ -261,7 +333,9 @@ def generate_spdx(linked_deps, all_repositories, name, version):
                 {
                     "referenceCategory": "PACKAGE-MANAGER",
                     "referenceType": "purl",
-                    "referenceLocator": create_purl(dep, repo_data, dep_version),
+                    "referenceLocator": create_purl(
+                        package_name, repo_data, dep_version
+                    ),
                 }
             ],
         }
@@ -286,15 +360,6 @@ def main():
     version = sys.argv[2]
     bazel_opts = sys.argv[3:]
 
-    # Get all dependencies with bazel query
-    query_output = run_bazel(
-        "Running bazel query to get all http_archive dependency metadata...",
-        "query",
-        "--output=build",
-        'kind("http_archive", //external:*)',
-    )
-    all_repositories = parse_http_archive_calls(query_output)
-
     # Get actually-linked dependencies with aquery
     aquery_output = run_bazel(
         "Running bazel aquery to find actually-linked dependencies...",
@@ -302,6 +367,14 @@ def main():
         *bazel_opts,
         f'outputs(".*envoy-static$", {ENVOY_TARGET})',
     )
+    linked_repositories = {
+        repo
+        for input_file in get_link_inputs(aquery_output)
+        for repo in re.findall(r"external/([^/]+)/", input_file)
+    }
+
+    # Get dependency metadata from Bzlmod or the legacy WORKSPACE interface.
+    all_repositories = get_module_repositories(linked_repositories)
     linked_deps = parse_aquery_output(aquery_output, all_repositories)
 
     # Generate SPDX with filtered deps
