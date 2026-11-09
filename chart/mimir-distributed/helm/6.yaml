@@ -1,0 +1,123 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Grafana Mimir Helm chart 6.x
+image: dhi.io/mimir-distributed-chart
+variant: helm
+tags:
+  - 6.2.2
+platforms:
+  - linux/amd64
+vars:
+  APPVERSION_MINOR: "3.2"
+  CHART_COMMIT_SHA: 7966f863acabfaba112f257fcb5d6841fe712ad2
+  CHART_HELM_NAME: mimir-distributed-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  GRAFANA_ROLLOUT_OPERATOR_CHART_REFERENCE: dhi/grafana-rollout-operator-chart:0.50.1@sha256:ed959e3ce3d066209bad636129b5ca9c37998bc8390c1f766f7c62096a6aaf88
+  HELM_VERSION: 4.1.4-2
+  KAFKA_REFERENCE: dhi/kafka:4.1.2-debian13-native@sha256:6eff49039d1be722520b72ff754a739b57f6999e251ad4b5daa44d0dd0025c2c
+  MEMCACHED_EXPORTER_REFERENCE: dhi/memcached-exporter:0.18.0-debian13@sha256:c6c64daf19a9d1e461d43a37d5f9cda1c27408b7730ba49c51665b1674548142
+  MEMCACHED_REFERENCE: dhi/memcached:1.6.45-debian13@sha256:1ebc8d83218d289f46812fd422ad193605dd1ca63fe483cf6eb2a30b415bd467
+  MIMIR_REFERENCE: dhi/mimir:3.2.4-debian13@sha256:6df1e2cbc005dba243430a23f8ae2e01b938460614e52dddb0754c00eb190942
+  NGINX_REFERENCE: dhi/nginx:1.31.8-debian13@sha256:90078e0243f7db503cb926371952c73a389cf1417974a9f214feab259b1c73e1
+  ROLLOUT_OPERATOR_CHART_VERSION: 0.50.1
+  SEMVER_MAJOR_MINOR_VERSION: "6.2"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.2.2
+  VERSION: 6.2.2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: mimir-distributed
+      work-dir: ${source.dir}/helm-charts/operations/helm/charts/mimir-distributed
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - helm=4.1.4-2
+          - yq-go
+        files:
+          - url: git+https://github.com/grafana/mimir.git#mimir-distributed-6.2.2
+            checksum: 7966f863acabfaba112f257fcb5d6841fe712ad2
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          with:
+            chart:
+              appRef: mimir
+              dependencies:
+                - alias: rollout_operator
+                  condition: rollout_operator.enabled
+                  name: rollout-operator
+                  ref: dhi/grafana-rollout-operator-chart:0.50.1@sha256:ed959e3ce3d066209bad636129b5ca9c37998bc8390c1f766f7c62096a6aaf88
+              description: Docker Hardened Images Helm chart for Grafana Mimir
+              images:
+                - name: mimir
+                  ref: dhi/mimir:3.2.4-debian13@sha256:6df1e2cbc005dba243430a23f8ae2e01b938460614e52dddb0754c00eb190942
+                - name: kafka
+                  ref: dhi/kafka:4.1.2-debian13-native@sha256:6eff49039d1be722520b72ff754a739b57f6999e251ad4b5daa44d0dd0025c2c
+                - name: nginx
+                  ref: dhi/nginx:1.31.8-debian13@sha256:90078e0243f7db503cb926371952c73a389cf1417974a9f214feab259b1c73e1
+                - name: memcached
+                  ref: dhi/memcached:1.6.45-debian13@sha256:1ebc8d83218d289f46812fd422ad193605dd1ca63fe483cf6eb2a30b415bd467
+                - name: memcached-exporter
+                  ref: dhi/memcached-exporter:0.18.0-debian13@sha256:c6c64daf19a9d1e461d43a37d5f9cda1c27408b7730ba49c51665b1674548142
+              name: mimir-distributed-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/grafana/mimir
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: remove minio dependency
+          uses: yq/patch@v1
+          with:
+            file: Chart.yaml
+            patches:
+              - del(.dependencies[] | select(.name == "minio"))
+        - name: remove grafana-agent-operator dependency
+          uses: yq/patch@v1
+          with:
+            file: Chart.yaml
+            patches:
+              - del(.dependencies[] | select(.name == "grafana-agent-operator"))
+        - name: helm login
+          uses: helm/login@v1
+          with:
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          privileged: true
+          with:
+            chart: .
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          with:
+            chart: .
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: .
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/mimir-distributed/config
