@@ -19,199 +19,44 @@ platforms:
 dates:
   release: "2024-12-12"
 vars:
-  BASE_DIGEST: sha256:4749130e822c145dbdf9ca11ec0cc2f694b5fe687fd74268a2b62160e6726f39
-  BASE_TAG: 20250419-debian13
-  BAZEL_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "arm64" }'
-  BAZEL_VERSION: 7.7.2
-  COMMIT_SHA: ddc85be461165c9eb4506669343aa0d0c627e687
+  FLAVORED_SUFFIX: -dev
+  PACKAGE_SUFFIX: ""
   SEMVER_MAJOR_MINOR_VERSION: "3.9"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.9.4
-  VERSION: 3.9.4
+  SUFFIX: -dev
+  VERSION: 3.9.4-0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - '!base-files'
     - '!gawk'
     - '!libelogind0'
     - '!original-awk'
     - apt
+    - base-files
     - bash
     - ca-certificates
+    - ca-certificates-bundle
     - coreutils
     - diffutils
     - dpkg
     - findutils
     - grep
+    - kong-3=3.9.4-0
     - libc-bin
+    - libcrypt1
     - libstdc++6
     - libyaml-0-2
     - mawk
     - perl
     - perl-base
     - sed
+    - tzdata
     - util-linux
-  builds:
-    - name: kong
-      contents:
-        packages:
-          - bash
-          - coreutils
-          - findutils
-          - automake
-          - build-essential
-          - ca-certificates
-          - curl
-          - file
-          - git
-          - grep
-          - gzip
-          - libyaml-dev
-          - libprotobuf-dev
-          - m4
-          - perl
-          - pkg-config
-          - procps
-          - sed
-          - unzip
-          - valgrind
-          - zlib1g-dev
-        files:
-          - url: git+https://github.com/Kong/kong.git#3.9.4
-            checksum: ddc85be461165c9eb4506669343aa0d0c627e687
-            path: ${source.dir}/kong
-            spdx:
-              name: kong
-              version: 3.9.4
-              packages:
-                - name: kong
-                  purl: pkg:github/Kong/kong@3.9.4
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://github.com/bazelbuild/bazel/releases/download/7.7.2/bazel-7.7.2-linux-${BAZEL_ARCH}
-            checksum: https://github.com/bazelbuild/bazel/releases/download/7.7.2/bazel-7.7.2-linux-${BAZEL_ARCH}.sha256
-            path: /opt/bazel/bin/bazel
-            uid: 0
-            gid: 0
-            mode: "0755"
-      pipeline:
-        - name: apply patch
-          uses: git/patch@v1
-          work-dir: ${source.dir}/kong
-          with:
-            options: -p1
-            patch: ${source.dir}/patch/no-github-cli.patch
-        - name: build kong
-          work-dir: ${source.dir}/kong
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            BAZEL_ARGS=(
-              --config=release
-              --verbose_failures
-              --action_env=BUILD_NAME=kong-dev
-            )
-            test '${target.fips}' = 'true' && BAZEL_ARGS+=("--//:fips=true")
-
-            /opt/bazel/bin/bazel build "${BAZEL_ARGS[@]}" //build:kong //build:venv
-        - name: install kong artifacts
-          work-dir: ${source.dir}/kong
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${target.dir}/usr/local/"
-
-            # Copy complete OpenResty installation
-            cp -r bazel-bin/build/kong-dev/openresty "${target.dir}/usr/local/"
-
-            # Copy Kong libraries and assets
-            cp -r bazel-bin/build/kong-dev/kong "${target.dir}/usr/local/"
-
-            # Copy proto files from Kong source (OpenTelemetry and Kong model protos)
-            # These must be copied AFTER the build output to merge both sets of proto files:
-            # - Build output includes Google protobuf headers from @protoc
-            # - Source includes OpenTelemetry and Kong model proto files
-            cp -r kong/include/* "${target.dir}/usr/local/kong/include/"
-
-            # Copy Lua libraries
-            cp -r bazel-bin/build/kong-dev/lib "${target.dir}/usr/local/"
-
-            # Copy Kong Lua modules
-            cp -r bazel-bin/build/kong-dev/share "${target.dir}/usr/local/"
-
-            # # Copy configuration files
-            # cp -r bazel-bin/build/kong-dev/etc "${target.dir}/usr/local/"
-
-            # Install LuaRocks binaries
-            install -D -m 755 bazel-bin/build/kong-dev/bin/luarocks "${target.dir}/usr/local/bin/luarocks"
-            install -D -m 755 bazel-bin/build/kong-dev/bin/luarocks-admin "${target.dir}/usr/local/bin/luarocks-admin"
-
-            # Install Kong CLI binaries from repository
-            install -D -m 755 bin/kong "${target.dir}/usr/local/bin/kong"
-            install -D -m 755 bin/kong-health "${target.dir}/usr/local/bin/kong-health"
-
-            # Copy Kong configuration to /etc/kong
-            mkdir -p "${target.dir}/etc/kong"
-            cp bazel-bin/build/kong-dev/etc/kong/kong.conf.default "${target.dir}/etc/kong/"
-
-            # Ensure OpenResty tree is 0755 (directories and all files)
-            find "${target.dir}/usr/local/openresty" -exec chmod 0755 {} \;
-      paths:
-        - type: directory
-          path: ${source.dir}/patch
-          uid: 0
-          gid: 0
-          source: image/kong/patch
-      outputs:
-        - source: ${target.dir}/usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/openresty
-          target: /usr/local/openresty
-          uid: 65532
-          gid: 65532
-        - source: ${target.dir}/usr/local/lib
-          target: /usr/local/lib
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/share
-          target: /usr/local/share
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/usr/local/kong
-          target: /usr/local/kong
-          uid: 65532
-          gid: 65532
-        - source: ${target.dir}/etc/kong
-          target: /etc/kong
-          uid: 65532
-          gid: 65532
-        - source: /opt/docker/sbom/kong
-          target: /opt/docker/sbom/kong
-          uid: 0
-          gid: 0
-  artifacts:
-    - name: dhi.io/static:20250419-debian13@sha256:4749130e822c145dbdf9ca11ec0cc2f694b5fe687fd74268a2b62160e6726f39
-      includes:
-        - bin
-        - etc
-        - home
-        - lib
-        - lib64
-        - opt
-        - sbin
-        - tmp
-        - usr
-        - var
-      excludes:
-        - etc/group
-        - etc/os-release
-        - etc/passwd
-        - var/lib/dpkg/status
-      uid: 0
-      gid: 0
+    - zlib1g
 accounts:
   root: true
   run-as: root
@@ -249,10 +94,69 @@ paths:
     mode: "0755"
     source: image/kong/bin/docker-entrypoint.sh
   - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/kong
+    uid: 0
+    gid: 0
+    source: /usr/bin/kong
+  - type: symlink
+    path: /usr/local/bin/kong-health
+    uid: 0
+    gid: 0
+    source: /usr/bin/kong-health
+  - type: symlink
+    path: /usr/local/bin/luarocks
+    uid: 0
+    gid: 0
+    source: /usr/bin/luarocks
+  - type: symlink
+    path: /usr/local/bin/luarocks-admin
+    uid: 0
+    gid: 0
+    source: /usr/bin/luarocks-admin
+  - type: symlink
+    path: /usr/local/openresty
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/openresty
+  - type: symlink
+    path: /usr/local/lib
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/lib
+  - type: symlink
+    path: /usr/local/share
+    uid: 0
+    gid: 0
+    source: /usr/share/kong
+  - type: directory
     path: /usr/local/kong
     uid: 65532
     gid: 65532
     mode: "0755"
+  - type: symlink
+    path: /usr/local/kong/bin
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/kong/bin
+  - type: symlink
+    path: /usr/local/kong/gui
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/kong/gui
+  - type: symlink
+    path: /usr/local/kong/include
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/kong/include
+  - type: symlink
+    path: /usr/local/kong/lib
+    uid: 0
+    gid: 0
+    source: /usr/lib/kong/kong/lib
   - type: directory
     path: /etc/kong
     uid: 65532
