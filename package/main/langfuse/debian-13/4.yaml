@@ -3,8 +3,8 @@
 image: dhi.io/pkg-langfuse
 variant: runtime
 tags:
-  - 4.76.0-r0
-  - 4.76.0-r0-debian13
+  - 4.76.0-r1
+  - 4.76.0-r1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -12,12 +12,12 @@ dates:
   release: "2026-08-31"
 vars:
   COMMIT_SHA: 246b892eae98860e6475940cae593bdb95c2ec95
-  DHI_VERSION: 4.76.0-0
+  DHI_VERSION: 4.76.0-1
   NODEJS_VERSION: 24.22.2-0
   PACKAGE_NAME: langfuse-4
   PNPM_VERSION: 12.16.1
   PRISMA_VERSION: 6.19.3
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "4.76"
   SEMVER_MAJOR_VERSION: "4"
   SEMVER_VERSION: 4.76.0
@@ -112,7 +112,7 @@ contents:
             yq -i '.overrides."axios" = "1.20.0"' pnpm-workspace.yaml
             yq -i '.overrides."fast-uri" = "3.1.9"' pnpm-workspace.yaml
             yq -i '.overrides."langsmith" = "0.6.0"' pnpm-workspace.yaml
-            yq -i '.overrides."nodemailer" = "9.1.1"' pnpm-workspace.yaml
+            yq -i '.overrides."nodemailer" = "10.1.4"' pnpm-workspace.yaml
             yq -i '.overrides."brace-expansion" = "5.0.9"' pnpm-workspace.yaml
             yq -i '.overrides."brace-expansion@2" = "2.1.7"' pnpm-workspace.yaml
             yq -i '.overrides."fast-xml-parser" = "5.7.0"' pnpm-workspace.yaml
@@ -201,8 +201,27 @@ contents:
                 -e 's| && source | \&\& . |g' \
                 -e 's|&> /dev/null|>/dev/null 2>\&1|g' \
                 -e 's|" == "|" = "|g' \
+                -e 's|^SCRIPT_DIR=.*dirname.*$|SCRIPT_DIR=${0%/*}; [ "$SCRIPT_DIR" = "$0" ] \&\& SCRIPT_DIR=.; SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR" \&\& pwd)|' \
+                -e 's|rm -rf -- "\$MIGRATIONS_DIRECTORY"|node "$SCRIPT_DIR/cleanup-migrations.cjs" "$MIGRATIONS_DIRECTORY"|' \
                 ./packages/shared/clickhouse/scripts/up.sh
+              node -e '
+                const s = require("node:fs").readFileSync(
+                  "./packages/shared/clickhouse/scripts/up.sh",
+                  "utf8",
+                );
+                if (s.includes("dirname") || s.includes("rm -rf")) process.exit(1);
+              '
+              cat > ./packages/shared/clickhouse/scripts/cleanup-migrations.cjs << 'EOF'
+            require("node:fs").rmSync(process.argv[2], {
+              recursive: true,
+              force: true,
+            });
+            EOF
             fi
+            node ./packages/shared/clickhouse/scripts/prepare-migrations.mjs materialize \
+              ./packages/shared/clickhouse/migrations
+            chmod 755 ./packages/shared/clickhouse/migrations/clustered \
+              ./packages/shared/clickhouse/migrations/unclustered
             cp -a ./packages/shared/clickhouse "${target.dir}/usr/lib/langfuse-4/packages/shared/clickhouse"
             cp ./web/next.config.mjs "${target.dir}/usr/lib/langfuse-4/next.config.mjs"
             cp ./web/package.json "${target.dir}/usr/lib/langfuse-4/package.json"
@@ -242,7 +261,7 @@ contents:
           with:
             changelog:
               - DHI Build
-            version: 4.76.0-0
+            version: 4.76.0-1
         - uses: dpkg/build@v1
           work-dir: ${source.dir}/langfuse-pkg
           with:
