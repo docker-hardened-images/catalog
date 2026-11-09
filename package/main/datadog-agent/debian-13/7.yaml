@@ -5,8 +5,8 @@ variant: runtime
 tags:
   - 7.85.2
   - 7.85.2-debian13
-  - 7.85.2-r0.0.0.2
-  - 7.85.2-r0.0.0.2-debian13
+  - 7.85.2-r1.0.0.2
+  - 7.85.2-r1.0.0.2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -53,7 +53,7 @@ vars:
   MQ_ZLIB_VERSION: 1.3.2
   PYNACL_LIBSODIUM_VERSION: 1.0.20
   PYTHON_VERSION: 3.13.18-6
-  REL: "0"
+  REL: "1"
   RUSTC_VERSION: 1.98.1-0
   SECURITY_AGENT_POLICIES_SHA256: 5028ebd1b03071b89f5112277e303f388dcf968e52fca90253147dc9cd8367b3
   SECURITY_AGENT_POLICIES_VERSION: 0.85.0
@@ -162,6 +162,12 @@ contents:
               $py "$tool" tasks/schema/produce_byproduct.py embedded "pkg/config/schema/yaml/$s.yaml" "/tmp/$s.embedded.yaml"
               zstd --force --no-check -5 "/tmp/$s.embedded.yaml" -o "pkg/config/schema/compressed/$s.yaml.zstd"
             done
+
+            $py "$tool" tasks/schema/template.py \
+              ./pkg/config/schema/yaml/core_schema.yaml \
+              dca \
+              linux \
+              ./Dockerfiles/cluster-agent/datadog-cluster.yaml
         - name: test
           runs: |
             set -eux -o pipefail
@@ -246,6 +252,26 @@ contents:
             packages: ./cmd/cluster-agent
             strip: false
             tags: clusterchecks,datadog.no_waf,kubeapiserver,orchestrator,zlib,ec2,cel,grpcnotrace,retrynotrace,trivy_no_javadb,external_libzstd
+        - name: build nosys.so
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/usr/lib/datadog-agent
+            gcc -pipe -Wall -Wextra -O2 -shared -fPIC \
+              -Wl,--version-script=./Dockerfiles/agent/nosys-seccomp/nosys.sym \
+              -o ${target.dir}/usr/lib/datadog-agent/nosys.so \
+              ./Dockerfiles/agent/nosys-seccomp/nosys.c -lseccomp
+        - name: stage cluster-agent runtime files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/etc/datadog-agent/conf.d
+            mkdir -p ${target.dir}/etc/datadog-agent/private-action-runner
+            cp -r ./Dockerfiles/cluster-agent/conf.d/. ${target.dir}/etc/datadog-agent/conf.d/
+            cp ./Dockerfiles/cluster-agent/datadog-cluster.yaml ${target.dir}/etc/datadog-agent/datadog-cluster.yaml
+            cp ./Dockerfiles/cluster-agent/install_info ${target.dir}/etc/datadog-agent/install_info
+            cp ./pkg/privateactionrunner/autoconnections/conf/script-config.yaml \
+              ${target.dir}/etc/datadog-agent/private-action-runner/script-config.yaml
         - name: cws-instrumentation sbom
           uses: spdx@v1
           with:
@@ -295,7 +321,7 @@ contents:
               - deb
             license: BSD-3-Clause
             name: datadog-agent
-            rel: 0
+            rel: 1
             subpackages:
               - description: Datadog Agent secret backend connector with debug information
                 files:
@@ -316,7 +342,7 @@ contents:
               - deb
             license: Apache-2.0
             name: cws-instrumentation
-            rel: 0
+            rel: 1
             subpackages:
               - depends:
                   - libc6
@@ -342,6 +368,12 @@ contents:
                     source: usr/bin/datadog-cluster-agent-dev
                   - path: usr/share/doc/datadog-cluster-agent-dev
                 name: datadog-cluster-agent-dev
+              - depends:
+                  - libseccomp2
+                files:
+                  - path: usr/lib/datadog-agent/nosys.so
+                  - path: etc/datadog-agent
+                name: cluster-agent-runtime-files
             url: https://github.com/DataDog/datadog-agent
             version: 7.85.2
       paths:
