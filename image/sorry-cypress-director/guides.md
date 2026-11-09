@@ -53,7 +53,7 @@ the upstream `agoldis/sorry-cypress-api` and `agoldis/sorry-cypress-dashboard` i
 ```yaml
 services:
   mongo:
-    image: mongo:9
+    image: mongo:7.0.45
     volumes:
       - mongo-data:/data/db
   director:
