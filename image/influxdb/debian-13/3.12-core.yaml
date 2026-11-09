@@ -86,157 +86,35 @@ contents:
             uid: 0
             gid: 0
       pipeline:
-        - name: bump quinn-proto cargo dep
+        - name: bump cargo dependencies
+          uses: cargo/bump@v1
           work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # GHSA-4w2j-m93h-cj5j, GHSA-qfwj-vfxf-92j2, GHSA-3g6h-r5qx-f6hq:
-            # quinn-proto 0.11.16 -> 0.11.18. Patch Cargo.lock directly so
-            # cargo update does not drag wasmtime 48.x (breaks datafusion-udf-wasm).
-            python3 - << 'EOF'
-            import pathlib
-            lock = pathlib.Path('Cargo.lock')
-            c = lock.read_text()
-            targets = [
-                (
-                    'name = "quinn-proto"\nversion = "0.11.16"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "2f4bfc015262b9df63c8845072ce59068853ff5872180c2ce2f13038b970e560"',
-                    'name = "quinn-proto"\nversion = "0.11.18"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"',
-                ),
-            ]
-            for old, new in targets:
-                if old in c:
-                    c = c.replace(old, new, 1)
-                    lock.write_text(c)
-                    print('patched: quinn-proto -> 0.11.18')
-                    break
-            else:
-                raise SystemExit('quinn-proto lock block not found')
-            EOF
-        - name: bump wasmtime cargo deps
+          with:
+            deps:
+              - quinn-proto@0.11.18
+              - serde_with@3.21.0
+              - rustls@0.23.40@0.23.46
+              - rustls-webpki@0.103.13@0.103.16
+              - webpki-roots@1.0.7@1.0.10
+              - webpki-root-certs@1.0.10
+              - anyhow@1.0.103
+              - event-listener@5.4.2
+              - pulldown-cmark@0.13.6
+              - tokio@1.53.3
+              - zstd-sys@2.1.2
+              - zstd-safe@7.4.0
+              - zstd@0.13.4
+              - arrow-buffer@57.3.2
+              - arrow-schema@57.3.2
+              - arrow-data@57.3.2
+        - name: bump wasmtime cargo dependencies
+          uses: cargo/bump@v1
           work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cargo update --package wasmtime --precise 48.0.8
-            cargo update --package wasmtime-wasi --precise 48.0.8
-            cargo update --package wasmtime-wasi-http --precise 48.0.8
-        - name: bump event-listener cargo dep
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            python3 - << 'EOF'
-            import pathlib
-            lock = pathlib.Path('Cargo.lock')
-            c = lock.read_text()
-            old = (
-                'name = "event-listener"\nversion = "5.4.1"\n'
-                'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
-                'checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"'
-            )
-            new = (
-                'name = "event-listener"\nversion = "5.4.2"\n'
-                'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
-                'checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"'
-            )
-            if old in c:
-                lock.write_text(c.replace(old, new, 1))
-                print('patched: event-listener -> 5.4.2')
-            elif new in c:
-                print('event-listener already at 5.4.2')
-            else:
-                raise SystemExit('event-listener lock block not found')
-            EOF
-        - name: bump pulldown-cmark cargo dep
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cargo update --package pulldown-cmark --precise 0.13.6
-        - name: bump tokio cargo dep
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cargo update --package tokio --precise 1.53.3
-        - name: bump rustls and webpki cargo deps
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            python3 - << 'EOF'
-            import subprocess
-            import tomllib
-
-            def versions(name):
-                with open("Cargo.lock", "rb") as lock:
-                    packages = tomllib.load(lock)["package"]
-                return {package["version"] for package in packages if package["name"] == name}
-
-            def bump(name, old, new):
-                found = versions(name)
-                if old in found:
-                    subprocess.run(
-                        ["cargo", "update", "--package", f"{name}@{old}", "--precise", new],
-                        check=True,
-                    )
-                elif new in found:
-                    print(f"{name} already at {new}")
-                else:
-                    raise SystemExit(
-                        f"{name} expected {old} or {new}, found {sorted(found)}"
-                    )
-
-            bump("rustls", "0.23.45", "0.23.46")
-            bump("rustls-webpki", "0.103.13", "0.103.16")
-            bump("rustls-webpki", "0.103.15", "0.103.16")
-            bump("webpki-roots", "1.0.7", "1.0.10")
-            bump("webpki-root-certs", "1.0.7", "1.0.10")
-            EOF
-        - name: bump zstd cargo deps
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            python3 - << 'EOF'
-            import subprocess
-            import tomllib
-
-            def versions(name):
-                with open("Cargo.lock", "rb") as lock:
-                    packages = tomllib.load(lock)["package"]
-                return {package["version"].split("+")[0] for package in packages if package["name"] == name}
-
-            def bump(name, old, new, spec):
-                found = versions(name)
-                if old in found:
-                    subprocess.run(["cargo", "update", "--package", spec, "--precise", new], check=True)
-                elif new in found:
-                    print(f"{name} already at {new}")
-                else:
-                    raise SystemExit(f"{name} expected {old} or {new}, found {sorted(found)}")
-
-            bump("zstd-sys", "2.0.16", "2.1.2", "zstd-sys")
-            bump("zstd-safe", "7.2.4", "7.4.0", "zstd-safe@7.2.4")
-            bump("zstd", "0.13.3", "0.13.4", "zstd@0.13.3")
-            EOF
-        - name: bump arrow-data cargo deps
-          work-dir: ${source.dir}/influxdb3
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cargo update --package arrow-buffer --precise 57.3.2
-            cargo update --package arrow-schema --precise 57.3.2
-            cargo update --package arrow-data --precise 57.3.2
+          with:
+            deps:
+              - wasmtime@48.0.8
+              - wasmtime-wasi@48.0.8
+              - wasmtime-wasi-http@48.0.8
         - name: cargo sbom
           uses: sbom@v1
           with:
@@ -276,6 +154,12 @@ contents:
 
             install -D target/release/influxdb3 \
               '${target.dir}/usr/local/bin/influxdb3'
+      paths:
+        - type: file
+          path: ${source.dir}/cargo-bumps.json
+          uid: 0
+          gid: 0
+          source: image/influxdb/patch/3.10/cargo-bumps.json
       outputs:
         - source: ${target.dir}/usr/local/bin
           target: /usr/local/bin
