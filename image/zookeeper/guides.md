@@ -308,13 +308,14 @@ The ZooKeeper image is published as runtime variants only. The 3.9 line uses a J
 the bundled Java runtime, while the 3.8 line retains plain version tags. Both lines bundle JRE 25. No `dev`, `fips`, or
 `fips-dev` variants are published for this image.
 
-| Variant                     | Tag pattern                                               | User            | Compliance | Availability |
-| --------------------------- | --------------------------------------------------------- | --------------- | ---------- | ------------ |
-| Runtime (3.9.x with JRE 25) | `3-jre25`, `3.9-jre25`, `3.9.6-jre25`, `3-jre25-debian13` | nonroot (65532) | CIS        | Public       |
-| Runtime (3.8.x with JRE 25) | `3.8`, `3.8.7`, `3.8-debian13`                            | nonroot (65532) | CIS        | Public       |
+| Variant                     | Tag pattern                                                                              | User            | Compliance | Availability |
+| --------------------------- | ---------------------------------------------------------------------------------------- | --------------- | ---------- | ------------ |
+| Runtime (3.9.x with JRE 25) | `3`, `3-debian`, `3-debian13`, `3-jre25`, `3.9-jre25`, `3.9.7-jre25`, `3-jre25-debian13` | nonroot (65532) | CIS        | Public       |
+| Runtime (3.8.x with JRE 25) | `3.8`, `3.8.8`, `3.8-debian13`                                                           | nonroot (65532) | CIS        | Public       |
 
 Tags include rolling aliases — `3-jre25` always points to the latest 3.9.x release with JRE 25, and `3.9-jre25` to the
-latest 3.9.x patch.
+latest 3.9.x patch. The bare major tags `3`, `3-debian`, and `3-debian13` are published by the 3.9 line only, so they
+select the same latest 3.9.x release with JRE 25 as `3-jre25`. ZooKeeper 3.8 publishes no bare major tag.
 
 To view all published tags and get more information about each variant, select the **Tags** tab for this repository.
 
@@ -326,7 +327,7 @@ the following table of migration notes.
 
 | Item               | Migration note                                                                                                                                                                                                                            |
 | :----------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base image         | Replace your base image with `dhi.io/zookeeper:<tag>`. ZooKeeper 3.9 tags use the JRE-version suffix `-jre25`; ZooKeeper 3.8 retains plain version tags.                                                                                  |
+| Base image         | Replace your base image with `dhi.io/zookeeper:<tag>`. ZooKeeper 3.9 tags use the JRE-version suffix `-jre25` (the bare `3` alias excepted); ZooKeeper 3.8 retains plain version tags.                                                    |
 | Package management | The runtime image doesn't contain a package manager. To install additional packages, build your own image `FROM dhi.io/zookeeper:<tag>` in a separate environment that has access to package management.                                  |
 | Non-root user      | The image runs as the nonroot user (UID 65532). Ensure that any mounted data, datalog, or configuration directories are writable by UID 65532.                                                                                            |
 | TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                                                        |

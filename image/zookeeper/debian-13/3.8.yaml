@@ -16,19 +16,13 @@ platforms:
 dates:
   release: "2022-02-25"
 vars:
-  DIGEST: 22d2e7d09c8651796b8975fe40de6e5cf6781015
-  JDK_DIGEST: sha256:24baba80db715fa06993087017d8cf5ad9e77418bb4f3716303f6d2cf37fcad3
   JDK_MAJOR_VERSION: "25"
-  JDK_VERSION: 25.0.5.8
-  JRE_DIGEST: sha256:be93b0fc8ea887dd1880f86df20005bacc56a563f12a7ce27c44394082f420be
   JRE_PATH: /opt/java/openjdk/25-jre
-  JRE_VERSION: 25.0.5.8
-  MAVEN_DIGEST: sha256:4726fd122d4ed9461a82bc74a80b2beae0c77a35b21fff89fd237ce2a9648449
-  MAVEN_VERSION: 3.10.0
   SEMVER_MAJOR_MINOR_VERSION: "3.8"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.8.8
-  VERSION: 3.8.8
+  VERSION: 3.8.8-1
+  ZOOKEEPER_BIN_SHA256: 41a8314b8f6d1b6f5b7019c0374e3f16ad68a8ca4b61b34539eaaa32d56c1cb5
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -40,106 +34,47 @@ contents:
     - '!original-awk'
     - base-files
     - bash
+    - ca-certificates-bundle
     - coreutils
+    - eclipse-temurin-25-jre
+    - eclipse-temurin-25-jre-oci-config
     - grep
     - sed
+    - tzdata
     - zlib1g
+    - zookeeper-3.8=3.8.8-1
   builds:
-    - name: zookeeper
+    - name: zookeeper docs
       contents:
         packages:
-          - coreutils
           - bash
-          - findutils
+          - coreutils
           - gzip
-          - hostname
-          - sed
+          - tar
         files:
-          - url: git+https://github.com/apache/zookeeper.git#release-3.8.8
-            checksum: 22d2e7d09c8651796b8975fe40de6e5cf6781015
-            path: ${source.dir}/src/zookeeper
+          - url: https://archive.apache.org/dist/zookeeper/zookeeper-3.8.8/apache-zookeeper-3.8.8-bin.tar.gz
+            checksum: sha256:41a8314b8f6d1b6f5b7019c0374e3f16ad68a8ca4b61b34539eaaa32d56c1cb5
+            path: ${source.dir}/zookeeper-bin.tar.gz
             spdx:
-              name: zookeeper
+              name: zookeeper-docs
               version: 3.8.8
               packages:
-                - name: zookeeper
-                  purl: pkg:dhi/zookeeper@3.8.8
+                - name: zookeeper-docs
+                  purl: pkg:maven/org.apache.zookeeper/zookeeper@3.8.8
                   license: Apache-2.0
             uid: 0
             gid: 0
-        artifacts:
-          - name: dhi.io/maven:3.10.0-jdk25-debian13-dev@sha256:4726fd122d4ed9461a82bc74a80b2beae0c77a35b21fff89fd237ce2a9648449
-            includes:
-              - opt/**
-              - usr/local/bin/**
-            uid: 0
-            gid: 0
-          - name: dhi.io/eclipse-temurin:25.0.5.8-jdk-debian13-dev@sha256:24baba80db715fa06993087017d8cf5ad9e77418bb4f3716303f6d2cf37fcad3
-            includes:
-              - opt/java/openjdk/**
-              - usr/local/bin/**
-            uid: 0
-            gid: 0
       pipeline:
-        - name: patch
-          uses: mvn/patch@v1
-          with:
-            mvn-root: ${source.dir}/src/zookeeper
-            properties: ${source.dir}/patch/mvn-properties-3.8.json
-        - name: drop jline jdk8 classifier
+        - name: extract docs
           runs: |
             set -eux -o pipefail
 
-            find "${source.dir}/src/zookeeper" -name pom.xml -exec sed -i '/<artifactId>jline<\/artifactId>/,/<\/dependency>/{ /<classifier>jdk8<\/classifier>/d }' {} +
-        - name: configure maven mirror
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /root/.m2
-            cat > /root/.m2/settings.xml << 'EOF'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-              <mirrors>
-                <mirror>
-                  <id>google-maven-central</id>
-                  <name>GCS Maven Central mirror</name>
-                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
-                  <mirrorOf>central</mirrorOf>
-                </mirror>
-              </mirrors>
-            </settings>
-            EOF
-        - name: install
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            export MAVEN_HOME="/opt/java/apache-maven-3.10.0"
-            export MAVEN_VERSION="3.10.0"
-            export JAVA_HOME="/opt/java/openjdk/25"
-
-            mkdir -p "${target.dir}/zookeeper"
-
-            cd "${source.dir}/src/zookeeper"
-
-            mvn clean install -DskipTests
-
-            tar -zxf "zookeeper-assembly/target/apache-zookeeper-3.8.8-bin.tar.gz" -C "${target.dir}/zookeeper" --strip-components=1
-            chown -R 65532:65532 "${target.dir}/zookeeper/conf"
-      paths:
-        - type: file
-          path: /src/patch/mvn-properties-3.8.json
-          uid: 0
-          gid: 0
-          source: image/zookeeper/patch/mvn-properties-3.8.json
+            mkdir -p "${target.dir}/usr/share/zookeeper"
+            tar -xzf "${source.dir}/zookeeper-bin.tar.gz" -C "${target.dir}/usr/share/zookeeper" --strip-components=1 "apache-zookeeper-3.8.8-bin/docs"
+            test -f "${target.dir}/usr/share/zookeeper/docs/index.html"
       outputs:
-        - source: ${target.dir}/zookeeper
-          target: /opt/zookeeper
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
+        - source: ${target.dir}/usr/share/zookeeper/docs
+          target: /usr/share/zookeeper/docs
           uid: 0
           gid: 0
     - name: locale
@@ -167,12 +102,6 @@ contents:
           target: /usr/lib/locale
           uid: 0
           gid: 0
-  artifacts:
-    - name: dhi.io/eclipse-temurin:25.0.5.8-debian13@sha256:be93b0fc8ea887dd1880f86df20005bacc56a563f12a7ce27c44394082f420be
-      includes:
-        - opt/**
-      uid: 0
-      gid: 0
 accounts:
   run-as: nonroot
   users:
@@ -212,12 +141,36 @@ environment:
   ZOO_TICK_TIME: "2000"
   ZOOCFGDIR: /opt/zookeeper/conf
 paths:
+  - type: directory
+    path: /opt/java
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: directory
+    path: /opt/java/openjdk
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /opt/java/openjdk/25-jre
+    uid: 0
+    gid: 0
+    source: /usr/lib/jvm/temurin-25
+  - type: symlink
+    path: /opt/zookeeper
+    uid: 0
+    gid: 0
+    source: /usr/share/zookeeper
   - type: file
     path: /opt/zookeeper/bin/entrypoint.sh
     uid: 0
     gid: 0
     mode: "0755"
     source: image/zookeeper/bin/entrypoint.sh
+  - type: directory
+    path: /opt/zookeeper/conf
+    uid: 65532
+    gid: 65532
   - type: directory
     path: /var/zookeeper/data
     uid: 65532
