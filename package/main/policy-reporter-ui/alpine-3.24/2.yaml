@@ -4,7 +4,7 @@ image: dhi.io/pkg-policy-reporter-ui
 variant: runtime
 tags:
   - 2.9.1-alpine3.24
-  - 2.9.1-r1-alpine3.24
+  - 2.9.1-r2-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,7 +14,7 @@ vars:
   COMMIT_SHA: 777b05a0da847f431e43df854fedd4f28a382f2d
   GOLANG_MAJOR_MINOR_VERSION: "1.27"
   GOLANG_VERSION: 1.27.3-r0
-  REL: "1"
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "2.9"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.9.1
@@ -81,17 +81,42 @@ contents:
             bun pm pkg set overrides."node-forge"="1.4.1"              # CVE-2026-118774, CVE-2026-118775, CVE-2026-118776, CVE-2026-118777, CVE-2026-118778, CVE-2026-118779, CVE-2026-118780, CVE-2026-118781, CVE-2026-118782, CVE-2026-119186, CVE-2026-119187, CVE-2026-119188, CVE-2026-119190
             bun pm pkg set overrides.minimatch="11.0.1"                # CVE-2026-118764
             bun pm pkg set overrides.glob="14.0.2"                     # CVE-2026-118773
-            bun pm pkg set dependencies.yaml="2.8.3"
 
             # Move nuxt to devDependencies since it's needed for build-time only.
             jq '.devDependencies.nuxt = .dependencies.nuxt | del(.dependencies.nuxt)' package.json > package.json.tmp
             mv package.json.tmp package.json
 
             bun install
+            bun test
+
+            bun - << 'BUN'
+            import { readFileSync, writeFileSync } from 'node:fs'
+            const path = 'nuxt.config.ts'
+            const source = readFileSync(path, 'utf8')
+            const needle = 'export default defineNuxtConfig({'
+            if (!source.includes(needle)) {
+              throw new Error('nuxt.config.ts missing defineNuxtConfig')
+            }
+            if (!source.includes('nitroConfig.baseURL')) {
+              const hook = `
+              hooks: {
+                'nitro:config'(nitroConfig) {
+                  nitroConfig.baseURL = '/'
+                },
+              },`
+              writeFileSync(path, source.replace(needle, needle + hook))
+            }
+            BUN
+            grep -q "nitroConfig.baseURL = '/'" nuxt.config.ts
+
             bun run generate
 
-            mkdir ${target.dir}/kodata
-            cp -r dist ${target.dir}/kodata/ui
+            test -s dist/index.html
+            grep -q '<html' dist/index.html
+            grep -qF 'baseURL:"."' dist/index.html
+
+            mkdir -p ${target.dir}/usr/share/kyverno-policy-reporter-ui/ui
+            cp -r dist/. ${target.dir}/usr/share/kyverno-policy-reporter-ui/ui/
         - name: prepare ui for sbom
           work-dir: /go/src/github.com/kyverno/policy-reporter-ui/frontend
           privileged: true
@@ -116,7 +141,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            cp -r templates ${target.dir}/kodata/templates
+            cp -r templates ${target.dir}/usr/share/kyverno-policy-reporter-ui/templates
         - name: download backend dependencies
           uses: go/bump@v2
           work-dir: /go/src/github.com/kyverno/policy-reporter-ui/backend
@@ -146,18 +171,32 @@ contents:
             output: ${target.dir}/usr/bin/kyverno-policy-reporter-ui-dev
             packages: .
             strip: false
+        - name: stage dev data and frontend sbom
+          runs: |
+            set -eux -o pipefail
+
+            cp -a ${target.dir}/usr/share/kyverno-policy-reporter-ui ${target.dir}/usr/share/kyverno-policy-reporter-ui-dev
+            mkdir -p ${target.dir}/opt/docker/sbom ${target.dir}/opt/docker/sbom-dev
+            cp -a /opt/docker/sbom/kyverno-policy-reporter-ui-frontend ${target.dir}/opt/docker/sbom/
+            cp -a /opt/docker/sbom/kyverno-policy-reporter-ui-frontend ${target.dir}/opt/docker/sbom-dev/
         - uses: dhi/build-pkg:0
           with:
             description: Policy-reporter-ui
             files:
               - usr/bin/kyverno-policy-reporter-ui
+              - usr/share/kyverno-policy-reporter-ui
+              - opt/docker/sbom/kyverno-policy-reporter-ui-frontend
             license: Apache-2.0
             name: kyverno-policy-reporter-ui
-            rel: 1
+            rel: 2
             subpackages:
               - files:
                   - path: usr/bin/kyverno-policy-reporter-ui
                     source: usr/bin/kyverno-policy-reporter-ui-dev
+                  - path: usr/share/kyverno-policy-reporter-ui
+                    source: usr/share/kyverno-policy-reporter-ui-dev
+                  - path: opt/docker/sbom/kyverno-policy-reporter-ui-frontend
+                    source: opt/docker/sbom-dev/kyverno-policy-reporter-ui-frontend
                 name: kyverno-policy-reporter-ui-dev
             url: https://github.com/kyverno/policy-reporter-ui
             version: 2.9.1
