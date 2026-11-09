@@ -5,28 +5,28 @@ image: dhi.io/litellm
 variant: runtime
 tags:
   - "1"
-  - "1.106"
-  - 1.106.0
+  - "1.108"
+  - 1.108.1
   - 1-debian
   - 1-debian13
-  - 1.106-debian
-  - 1.106-debian13
-  - 1.106.0-debian
-  - 1.106.0-debian13
+  - 1.108-debian
+  - 1.108-debian13
+  - 1.108.1-debian
+  - 1.108.1-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2026-08-01"
 vars:
-  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "1.106"
+  DEBIAN_EPOCH_MAJOR_MINOR_VERSION: "1.108"
   DEBIAN_EPOCH_MAJOR_VERSION: "1"
-  DEBIAN_EPOCH_VERSION: 1.106.0
-  PYTHON_VERSION: 3.13.18-4
-  SEMVER_MAJOR_MINOR_VERSION: "1.106"
+  DEBIAN_EPOCH_VERSION: 1.108.1
+  PYTHON_VERSION: 3.13.18-6
+  SEMVER_MAJOR_MINOR_VERSION: "1.108"
   SEMVER_MAJOR_VERSION: "1"
-  SEMVER_VERSION: 1.106.0
-  VERSION: 1.106.0-9
+  SEMVER_VERSION: 1.108.1
+  VERSION: 1.108.1-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -42,6 +42,7 @@ contents:
     - ca-certificates-bundle
     - coreutils
     - libatomic1
+    - libpq5
     - libstdc++6
     - openssl
     - python-3.13
@@ -55,12 +56,15 @@ contents:
           - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - bash
+          - build-essential
           - coreutils
           - findutils
           - grep
+          - libpq-dev
           - mawk
           - python-3.13
-          - litellm=1.106.0-9
+          - python-3.13-dev
+          - litellm=1.108.1-1
       pipeline:
         - name: restore runtime contract on installed package payload
           privileged: true
@@ -85,6 +89,25 @@ contents:
             versioned_node_modules=$(find /app/.cache/prisma-python/binaries -maxdepth 3 -type d -name node_modules | head -n1)
             test -x "$versioned_node_modules/.bin/prisma"
             ln -sfn "$versioned_node_modules" /app/.cache/prisma-python/binaries/node_modules
+        - name: build psycopg against the system libpq
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/usr/lib/litellm
+            SITE="${VENV}/lib/python3.13/site-packages"
+
+            psycopg_version="$("${VENV}/bin/pip" show psycopg | awk '/^Version:/ {print $2}')"
+            test -n "${psycopg_version}"
+
+            "${VENV}/bin/pip" uninstall -y psycopg-binary
+            "${VENV}/bin/pip" install --no-cache-dir --no-binary=psycopg-c "psycopg-c==${psycopg_version}"
+
+            # No vendored libpq/OpenSSL may remain, and psycopg must use the C
+            # implementation linked to the system libpq.
+            test ! -e "${SITE}/psycopg_binary.libs"
+            test ! -e "${SITE}/psycopg_binary"
+            "${VENV}/bin/python3" -c "import psycopg; assert psycopg.pq.__impl__ == 'c', psycopg.pq.__impl__"
         - name: slice litellm dpkg stanza into status.d
           shell: /bin/bash
           runs: |
@@ -157,7 +180,7 @@ environment:
   PRISMA_HOME_DIR: /app
   PRISMA_OFFLINE_MODE: "true"
   PRISMA_USE_GLOBAL_NODE: "true"
-  PYTHON_VERSION: 3.13.18-4
+  PYTHON_VERSION: 3.13.18-6
 paths:
   - type: directory
     path: /usr/share/litellm/.cache
