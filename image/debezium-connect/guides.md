@@ -23,7 +23,8 @@ docker run --rm -p 8083:8083 \
   dhi.io/debezium-connect:<tag>
 ```
 
-The worker fails fast at startup if any of these four variables is missing.
+The worker fails fast at startup if `CONNECT_CONFIG_STORAGE_TOPIC` or `CONNECT_OFFSET_STORAGE_TOPIC` is missing.
+`CONNECT_BOOTSTRAP_SERVERS` defaults to `0.0.0.0:9092` and `CONNECT_GROUP_ID` defaults to `1`, as in the upstream image.
 
 ## Register a connector
 
@@ -81,11 +82,14 @@ environment variables that older Debezium images accept.
 
 When replacing `debezium/connect:<tag>` with `dhi.io/debezium-connect:<tag>`:
 
-- The Kafka home directory moved from `/kafka` to `/usr/share/kafka`. Update any scripts or volumes that reference the
-  upstream path.
+- The Kafka home directory moved from `/kafka` to `/usr/share/kafka`. Update any scripts that reference the upstream
+  path. `/kafka/config`, `/kafka/data` and `/kafka/logs` exist as empty directories owned by UID 65532.
 - Connector plugins install to `/usr/share/kafka/connect/<connector-name>` rather than `/kafka/connect`; `plugin.path`
   is preset accordingly.
-- Environment variable names are unchanged (`CONNECT_BOOTSTRAP_SERVERS`, `CONNECT_GROUP_ID`, and so on).
+- Environment variable names are unchanged (`CONNECT_BOOTSTRAP_SERVERS`, `CONNECT_GROUP_ID`, and so on). The upstream
+  unprefixed names `BOOTSTRAP_SERVERS`, `GROUP_ID`, `CONFIG_STORAGE_TOPIC`, `OFFSET_STORAGE_TOPIC`, `REST_PORT`,
+  `KEY_CONVERTER`, `VALUE_CONVERTER` and `HEAP_OPTS` (which sets `KAFKA_HEAP_OPTS`) are also accepted. A `CONNECT_*`
+  variable takes precedence over its unprefixed name.
 - If your deployment relies on arbitrary-UID execution (OpenShift), adjust it to run as the image's non-root user (UID
   65532).
 

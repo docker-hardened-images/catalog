@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -e -o pipefail
 
+# Same invocation contract as the upstream debezium/connect image: `start`
+# runs the Connect distributed worker, and any other command is executed as
+# given. The image's default command is `start`.
+if [ "${1:-start}" != "start" ]; then
+    exec "$@"
+fi
+
 kafka_home="/usr/share/kafka"
 runtime_dir="/var/lib/kafka-connect"
 config="${runtime_dir}/connect-distributed.properties"
@@ -53,17 +60,47 @@ process_connect_environment() {
     done < <(env)
 }
 
+# The upstream image reads these unprefixed names (and defaults the first
+# few). Map each one onto its CONNECT_* or KAFKA_* setting before validation.
+# An explicit CONNECT_* (or KAFKA_*) value always takes precedence.
+alias_connect_setting() {
+    local target="$1"
+    local alias_name="$2"
+    local default_value="${3:-}"
+    local value="${!target:-}"
+
+    if [ -z "$value" ]; then
+        value="${!alias_name:-$default_value}"
+    fi
+    if [ -n "$value" ]; then
+        export "${target}=${value}"
+    fi
+}
+
+alias_connect_setting CONNECT_BOOTSTRAP_SERVERS BOOTSTRAP_SERVERS "0.0.0.0:9092"
+alias_connect_setting CONNECT_GROUP_ID GROUP_ID "1"
+alias_connect_setting CONNECT_CONFIG_STORAGE_TOPIC CONFIG_STORAGE_TOPIC
+alias_connect_setting CONNECT_OFFSET_STORAGE_TOPIC OFFSET_STORAGE_TOPIC
+alias_connect_setting CONNECT_REST_PORT REST_PORT "8083"
+alias_connect_setting CONNECT_KEY_CONVERTER KEY_CONVERTER "org.apache.kafka.connect.json.JsonConverter"
+alias_connect_setting CONNECT_VALUE_CONVERTER VALUE_CONVERTER "org.apache.kafka.connect.json.JsonConverter"
+alias_connect_setting KAFKA_HEAP_OPTS HEAP_OPTS
+
 # Point Kafka Connect at the connector plugins installed by the debezium
 # connector packages. A CONNECT_PLUGIN_PATH override below wins if the caller
 # sets one.
 set_connect_property "plugin.path" "/usr/share/kafka/connect"
 
-for required in CONNECT_BOOTSTRAP_SERVERS CONNECT_GROUP_ID CONNECT_CONFIG_STORAGE_TOPIC CONNECT_OFFSET_STORAGE_TOPIC; do
-    if [ -z "${!required:-}" ]; then
-        echo "${required} must be set" >&2
-        exit 1
-    fi
-done
+# Bootstrap servers and group id have defaults (as upstream does); the storage
+# topics have none, so the worker refuses to start without them.
+if [ -z "${CONNECT_CONFIG_STORAGE_TOPIC:-}" ]; then
+    echo "CONNECT_CONFIG_STORAGE_TOPIC (or CONFIG_STORAGE_TOPIC) must be set" >&2
+    exit 1
+fi
+if [ -z "${CONNECT_OFFSET_STORAGE_TOPIC:-}" ]; then
+    echo "CONNECT_OFFSET_STORAGE_TOPIC (or OFFSET_STORAGE_TOPIC) must be set" >&2
+    exit 1
+fi
 
 process_connect_environment
 
