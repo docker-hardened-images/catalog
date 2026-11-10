@@ -19,13 +19,19 @@ vars:
   JDK_MAJOR_VERSION: "21"
   JDK_VERSION: 1:21.0.13+9-3
   MAVEN_VERSION: 3.10.0
-  PACKAGE_NAME: jenkins
+  NODEJS_VERSION: 24.22.2-0
+  PACKAGE_NAME: jenkins-2.580
+  PACKAGE_REL: "0"
   REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "2.580"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.580.2
   VERSION: 2.580.2
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
   builds:
@@ -55,6 +61,8 @@ contents:
           - zip
           - curl
           - xmlstarlet
+          - libstdc++6
+          - nodejs-24=24.22.2-0
           - eclipse-temurin-21-jdk=1:21.0.13+9-3
         files:
           - url: git+https://github.com/jenkinsci/jenkins.git#jenkins-2.580.2
@@ -99,21 +107,12 @@ contents:
               ln -sf "/opt/java/apache-maven-3.10.0/bin/$filename" "/usr/local/bin/$filename"
             done
         - uses: mvn/mirror@v1
-        - name: use maven central when mirror credentials are absent
-          secrets:
-            - id: maven_user
-              env: MAVEN_USER
-              optional: true
-            - id: maven_password
-              env: MAVEN_PASSWORD
-              optional: true
+        - name: require maven mirror settings
           runs: |
             set -eux -o pipefail
 
-            if [ -z "${MAVEN_USER:-}" ] || [ -z "${MAVEN_PASSWORD:-}" ]; then
-              rm -f /root/.m2/settings.xml
-            fi
-        - name: remove git-changelist-maven-extension
+            test -s /root/.m2/settings.xml
+        - name: remove unavailable maven extensions
           work-dir: ${source.dir}/jenkins
           runs: |
             set -eux -o pipefail
@@ -122,6 +121,7 @@ contents:
             if [ -f "${ext_xml}" ]; then
               xmlstarlet ed -L \
                 -d "//*[local-name()='extension'][*[local-name()='artifactId']='git-changelist-maven-extension']" \
+                -d "//*[local-name()='extension'][*[local-name()='artifactId']='develocity-maven-extension']" \
                 "${ext_xml}"
             fi
         - name: patch maven dependencies
@@ -143,10 +143,8 @@ contents:
           secrets:
             - id: maven_user
               env: MAVEN_USER
-              optional: true
             - id: maven_password
               env: MAVEN_PASSWORD
-              optional: true
           runs: |
             set -eux -o pipefail
 
@@ -170,14 +168,42 @@ contents:
             cp jenkins-support "${target.dir}/usr/share/jenkins/bin/jenkins-support"
         - uses: dhi/build-pkg:0
           with:
+            apk:
+              depends:
+                - ttf-dejavu
+            deb:
+              depends:
+                - fonts-dejavu-core
             depends:
               - bash
               - coreutils
+              - eclipse-temurin-21-jre
+              - fontconfig
             description: Jenkins open-source automation server
             files:
               - usr
-            formats:
-              - deb
+            license: MIT
+            name: jenkins-2.580
+            rel: 0
+            url: https://www.jenkins.io/
+            version: 2.580.2
+        - name: publish legacy package name
+          uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - ttf-dejavu
+            deb:
+              depends:
+                - fonts-dejavu-core
+            depends:
+              - bash
+              - coreutils
+              - eclipse-temurin-21-jre
+              - fontconfig
+            description: Jenkins open-source automation server
+            files:
+              - usr
             license: MIT
             name: jenkins
             rel: 3
