@@ -4,9 +4,9 @@ image: dhi.io/pkg-nextcloud
 variant: runtime
 tags:
   - 34.0.5
-  - 34.0.5-r3
+  - 34.0.5-r4
   - 34.0.5-debian13
-  - 34.0.5-r3-debian13
+  - 34.0.5-r4-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -18,12 +18,14 @@ vars:
   PACKAGE_NAME: nextcloud-34
   PHP_MAJOR_MINOR: "8.5"
   PHP_VERSION: 8.5.12-0
-  REL: "3"
+  PHPSECLIB_VERSION: 3.0.57
+  REL: "4"
   SEMVER_MAJOR_MINOR_VERSION: "34.0"
   SEMVER_MAJOR_VERSION: "34"
   SEMVER_VERSION: 34.0.5
   SYMFONY_HTTP_FOUNDATION_VERSION: 6.4.46
   VERSION: 34.0.5
+  WEBAUTHN_LIB_VERSION: ""
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -120,37 +122,81 @@ contents:
           privileged: true
           environment:
             COMPOSER_ALLOW_SUPERUSER: "1"
+            PHPSECLIB_VERSION: 3.0.57
             SYMFONY_HTTP_FOUNDATION_VERSION: 6.4.46
+            WEBAUTHN_LIB_VERSION: ""
           runs: |
             set -eux -o pipefail
 
             export COMPOSER_HOME="$(mktemp -d)"
-            export SYMFONY_HTTP_FOUNDATION_VERSION
+            export SYMFONY_HTTP_FOUNDATION_VERSION PHPSECLIB_VERSION WEBAUTHN_LIB_VERSION
             test -f composer.json
             test -f composer.lock
 
-            php "${source.dir}/composer.phar" require --no-update --no-interaction --no-ansi --no-progress \
-              "symfony/http-foundation:6.4.46"
+            require_args=()
+            update_args=()
 
-            php "${source.dir}/composer.phar" update symfony/http-foundation \
+            if [ -n "$SYMFONY_HTTP_FOUNDATION_VERSION" ]; then
+              require_args+=("symfony/http-foundation:6.4.46")
+              update_args+=(symfony/http-foundation)
+            fi
+            if [ -n "$PHPSECLIB_VERSION" ]; then
+              require_args+=("phpseclib/phpseclib:3.0.57")
+              update_args+=(phpseclib/phpseclib)
+            fi
+            if [ -n "$WEBAUTHN_LIB_VERSION" ]; then
+              require_args+=("web-auth/webauthn-lib:")
+              update_args+=(web-auth/webauthn-lib)
+            fi
+
+            if [ ${#require_args[@]} -eq 0 ]; then
+              echo "no composer CVE bumps configured" >&2
+              exit 1
+            fi
+
+            php "${source.dir}/composer.phar" require --no-update --no-interaction --no-ansi --no-progress \
+              "${require_args[@]}"
+
+            php "${source.dir}/composer.phar" update "${update_args[@]}" \
               --with-all-dependencies \
               --no-dev --prefer-dist --no-scripts --no-interaction --no-ansi --no-progress
 
             php -r '
             $lock = json_decode(file_get_contents("composer.lock"), true);
-            $want = getenv("SYMFONY_HTTP_FOUNDATION_VERSION");
-            $got = null;
+            $checks = [];
+            if ($v = getenv("SYMFONY_HTTP_FOUNDATION_VERSION")) {
+              $checks["symfony/http-foundation"] = $v;
+            }
+            if ($v = getenv("PHPSECLIB_VERSION")) {
+              $checks["phpseclib/phpseclib"] = $v;
+            }
+            if ($v = getenv("WEBAUTHN_LIB_VERSION")) {
+              $checks["web-auth/webauthn-lib"] = $v;
+            }
+            $got = [];
             foreach ($lock["packages"] as $package) {
-              if ($package["name"] === "symfony/http-foundation") {
-                $got = ltrim($package["version"], "v");
-                break;
+              $got[$package["name"]] = ltrim($package["version"], "v");
+            }
+            foreach ($checks as $name => $want) {
+              if (!isset($got[$name]) || $got[$name] !== $want) {
+                fwrite(STDERR, "dependency $name is ".($got[$name] ?? "missing").", need $want\n");
+                exit(1);
               }
             }
-            if ($got !== $want) {
-              fwrite(STDERR, "dependency symfony/http-foundation is ".($got ?? "missing").", need $want\n");
-              exit(1);
-            }
             '
+        - name: 3rdparty composer packages sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: php-composer-installed-cataloger
+            prefix: nextcloud-3rdparty
+            source: ${target.dir}/usr/share/nextcloud/3rdparty
+        - name: stage 3rdparty composer sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/nextcloud-3rdparty/.spdx.nextcloud-3rdparty.json
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/nextcloud-3rdparty "${target.dir}/opt/docker/sbom/"
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -159,9 +205,10 @@ contents:
             description: Nextcloud server, a self-hosted file sync, share, and collaboration platform
             files:
               - usr/share/nextcloud
+              - opt/docker/sbom/nextcloud-3rdparty
             license: AGPL-3.0-or-later
             name: nextcloud-34
-            rel: 3
+            rel: 4
             url: https://nextcloud.com/
             version: 34.0.5
       paths:
