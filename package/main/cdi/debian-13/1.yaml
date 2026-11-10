@@ -4,9 +4,9 @@ image: dhi.io/pkg-cdi
 variant: runtime
 tags:
   - 1.66.1
-  - 1.66.1-r8
+  - 1.66.1-r9
   - 1.66.1-debian13
-  - 1.66.1-r8-debian13
+  - 1.66.1-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   COMMIT_SHA: c8129be0728afa1a2c49b69b1c0847a42730a732
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.10-0
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "1.66"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.66.1
@@ -61,6 +61,22 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: patch pkg/token for go-jose v4
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/go-jose-v4-token-imports.patch
+        - name: migrate go-jose module require to v4
+          environment:
+            GOWORK: "off"
+          runs: |
+            set -eux -o pipefail
+
+            go mod edit -droprequire=github.com/go-jose/go-jose/v3
+            go mod edit -require=github.com/go-jose/go-jose/v4@v4.1.6
+        - name: fix klog Fatalf exit code format
+          uses: git/patch@v1
+          with:
+            patch: ${source.dir}/patch/fix-klog-fatalf-exit-code-format.patch
         - name: patch vulnerable Go dependencies
           uses: go/bump@v2
           environment:
@@ -68,7 +84,7 @@ contents:
           with:
             deps:
               - golang.org/x/net@v0.62.0
-              - github.com/go-jose/go-jose/v3@v3.0.5
+              - golang.org/x/crypto@v0.58.0
               - github.com/go-jose/go-jose/v4@v4.1.6
               - github.com/klauspost/compress@v1.20.2
               - github.com/moby/sys/user@v0.4.1
@@ -94,6 +110,7 @@ contents:
             set -eux -o pipefail
 
             go test ./pkg/importer/...
+            go test ./pkg/token/...
         - name: build cdi-importer
           uses: go/build@v1
           environment:
@@ -368,7 +385,7 @@ contents:
               - deb
             license: Apache-2.0
             name: cdi
-            rel: 8
+            rel: 9
             subpackages:
               - depends:
                   - libnbd0
@@ -471,6 +488,16 @@ contents:
             url: https://github.com/kubevirt/containerized-data-importer
             version: 1.66.1
       paths:
+        - type: file
+          path: ${source.dir}/patch/go-jose-v4-token-imports.patch
+          uid: 0
+          gid: 0
+          source: package/main/cdi/patch/go-jose-v4-token-imports.patch
+        - type: file
+          path: ${source.dir}/patch/fix-klog-fatalf-exit-code-format.patch
+          uid: 0
+          gid: 0
+          source: package/main/cdi/patch/fix-klog-fatalf-exit-code-format.patch
         - type: file
           path: ${source.dir}/patch/gcs-secret-private-key.patch
           uid: 0
