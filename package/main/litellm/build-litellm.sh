@@ -49,6 +49,18 @@ fi
 WHEEL_FILE="${WHEEL_FILES[0]}"
 pip install --no-cache-dir "${WHEEL_FILE}[proxy,extra_proxy,proxy-runtime]" 'redis==5.3.1'
 
+# psycopg-binary vendors its own libpq and OpenSSL, which cannot load the system FIPS
+# provider, so every SCRAM-authenticated connection fails under -fips. Build psycopg-c
+# against the system libpq instead and drop the vendored copy.
+psycopg_version="$(pip show psycopg | sed -n 's/^Version: //p')"
+test -n "${psycopg_version}"
+pip uninstall -y psycopg-binary
+pip install --no-cache-dir --no-binary=psycopg-c "psycopg-c==${psycopg_version}"
+SITE_PACKAGES=$(echo "${VENV}/lib"/python*/site-packages)
+test ! -e "${SITE_PACKAGES}/psycopg_binary"
+test ! -e "${SITE_PACKAGES}/psycopg_binary.libs"
+"${VENV}/bin/python3" -c "import psycopg; assert psycopg.pq.__impl__ == 'c', psycopg.pq.__impl__"
+
 pip uninstall jwt -y || true
 pip uninstall PyJWT -y || true
 pip install --no-cache-dir PyJWT==2.9.0
@@ -56,7 +68,7 @@ pip install --no-cache-dir PyJWT==2.9.0
 pip install --no-cache-dir --force-reinstall 'starlette>=1.3.1'
 pip install --no-cache-dir --upgrade 'aiohttp>=3.12.14'
 pip install --no-cache-dir --upgrade 'cryptography>=46.0.5'
-pip install --no-cache-dir --upgrade 'mcp>=1.23.0'
+pip install --no-cache-dir --upgrade 'mcp>=2.2.0,<3'
 pip install --no-cache-dir --upgrade 'fastapi-sso>=0.19.0'
 pip install --no-cache-dir --force-reinstall "fastapi==${FASTAPI_VERSION}"
 pip install --no-cache-dir --upgrade 'urllib3==2.8.0'
@@ -243,8 +255,27 @@ cp docker/prod_entrypoint.sh "${APP}/docker/"
 cp schema.prisma "${APP}/"
 chmod +x "${APP}/docker/entrypoint.sh" "${APP}/docker/prod_entrypoint.sh"
 
-export PRISMA_HOME_DIR="${APP}"
-python3 -m prisma generate --schema "${APP}/schema.prisma"
+# The generated Prisma client bakes absolute paths for the schema and the query engines.
+# They must name the runtime location (/usr/share/litellm), not the build staging root
+# (${TARGET_DIR}), or the proxy cannot find its engines (catalog issue #513). Move the app
+# directory to the runtime path for generation, then move it back, so the paths baked
+# are real directories rather than links the generator could resolve away.
+PRISMA_RUNTIME_APP=/usr/share/litellm
+test ! -e "${PRISMA_RUNTIME_APP}"
+mv "${APP}" "${PRISMA_RUNTIME_APP}"
+export PRISMA_HOME_DIR="${PRISMA_RUNTIME_APP}"
+python3 -m prisma generate --schema "${PRISMA_RUNTIME_APP}/schema.prisma"
+mv "${PRISMA_RUNTIME_APP}" "${APP}"
+test -f "${APP}/schema.prisma"
+
+# Offline `prisma migrate deploy` runs the CLI from a stable path under the cache, not the
+# versioned hash directory the engine download created.
+prisma_binaries="${APP}/.cache/prisma-python/binaries"
+mapfile -t prisma_node_modules < <(find "${prisma_binaries}" -mindepth 3 -maxdepth 3 -type d -name node_modules)
+test "${#prisma_node_modules[@]}" -eq 1
+test -x "${prisma_node_modules[0]}/.bin/prisma"
+ln -sfn "$(realpath --relative-to="${prisma_binaries}" "${prisma_node_modules[0]}")" "${prisma_binaries}/node_modules"
+test -x "${prisma_binaries}/node_modules/.bin/prisma"
 
 find "${VENV}" \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
 
@@ -258,6 +289,13 @@ done
 
 test -e "${VENV}/bin/litellm"
 ln -sf ../lib/litellm/bin/litellm "${TARGET_DIR}/usr/bin/litellm"
+
+# The proxy runs prisma's migrations with the bundled node; expose it on the venv PATH.
+# Linked after the shebang rewrite above, which reads the first line of each bin entry.
+node_bin="${SITE_PACKAGES}/nodejs_wheel/bin/node"
+test -x "${node_bin}"
+ln -sfn "../${node_bin#"${VENV}/"}" "${VENV}/bin/node"
+test -x "${VENV}/bin/node"
 
 cat > "${TARGET_DIR}/usr/bin/supervisord" << 'EOF'
 #!/bin/bash
