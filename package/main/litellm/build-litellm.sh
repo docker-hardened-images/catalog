@@ -10,6 +10,7 @@ set -eux -o pipefail
 : "${SOURCE_DIR:?SOURCE_DIR is required}"
 : "${TARGET_DIR:?TARGET_DIR is required}"
 : "${PYTHON_BIN:?PYTHON_BIN is required}"
+: "${FASTAPI_VERSION:?FASTAPI_VERSION is required}"
 
 SRC="${SOURCE_DIR}/litellm-src"
 VENV="${TARGET_DIR}/usr/lib/litellm"
@@ -57,6 +58,7 @@ pip install --no-cache-dir --upgrade 'aiohttp>=3.12.14'
 pip install --no-cache-dir --upgrade 'cryptography>=46.0.5'
 pip install --no-cache-dir --upgrade 'mcp>=1.23.0'
 pip install --no-cache-dir --upgrade 'fastapi-sso>=0.19.0'
+pip install --no-cache-dir --force-reinstall "fastapi==${FASTAPI_VERSION}"
 pip install --no-cache-dir --upgrade 'urllib3==2.8.0'
 pip install --no-cache-dir --upgrade 'certifi>=2026.10.23'
 pip install --no-cache-dir --upgrade 'pynacl>=1.6.2'
