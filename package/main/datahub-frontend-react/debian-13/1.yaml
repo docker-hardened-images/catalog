@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-frontend-react
 variant: runtime
 tags:
   - 1.7.0.1
-  - 1.7.0.1-r22
+  - 1.7.0.1-r23
   - 1.7.0.1-debian13
-  - 1.7.0.1-r22-debian13
+  - 1.7.0.1-r23-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -20,11 +20,12 @@ vars:
   JMX_PROMETHEUS_SHA256: 8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320
   JMX_PROMETHEUS_VERSION: 0.20.0
   NODEJS_VERSION: 24.22.2-0
-  OTEL_JAVAAGENT_SHA256: 130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500
-  OTEL_JAVAAGENT_VERSION: 2.28.0
+  OTEL_API_BUNDLED_VERSION: 1.67.0
+  OTEL_JAVAAGENT_SHA256: e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149
+  OTEL_JAVAAGENT_VERSION: 2.33.1
   PACKAGE_HOME: /usr/share/datahub-frontend-react
   PACKAGE_NAME: datahub-frontend-react
-  REL: "22"
+  REL: "23"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0
@@ -200,6 +201,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/json/json/20260719/json-20260719.jar
+            checksum: sha256:c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6
+            path: ${source.dir}/patch/deps/json-20260719.jar
+            spdx:
+              name: json
+              version: "20260719"
+              packages:
+                - name: json
+                  purl: pkg:maven/org.json/json@20260719
+                  license: Unlicense
+            uid: 0
+            gid: 0
       pipeline:
         - name: install gradle init scripts
           runs: |
@@ -255,10 +268,15 @@ contents:
                 -e 's|com\.google\.guava:guava:32\.1\.2-jre|com.google.guava:guava:33.7.2-jre|g' \
                 -e 's|com\.google\.guava:guava:33\.6\.0-jre|com.google.guava:guava:33.7.2-jre|g' \
                 -e 's|org\.xerial\.snappy:snappy-java:1\.1\.10\.7|org.xerial.snappy:snappy-java:1.1.10.9|g' \
-                -e 's|org\.xerial\.snappy:snappy-java:1\.1\.10\.8|org.xerial.snappy:snappy-java:1.1.10.9|g'
+                -e 's|org\.xerial\.snappy:snappy-java:1\.1\.10\.8|org.xerial.snappy:snappy-java:1.1.10.9|g' \
+                -e 's|org\.json:json:20231013|org.json:json:20260719|g'
 
             if grep -rE 'at\.yawk\.lz4:lz4-java:1\.(10|11)\.[0-3]' --include='*.gradle' --include='*.gradle.kts' --include='gradle.lockfile' .; then
               echo "lz4-java pin below 1.11.4 still present after sed" >&2
+              exit 1
+            fi
+            if grep -rE 'org\.json:json:20231013' --include='*.gradle' --include='*.gradle.kts' --include='gradle.lockfile' .; then
+              echo "org.json 20231013 pin still present after sed" >&2
               exit 1
             fi
 
@@ -341,6 +359,10 @@ contents:
                             details.useVersion '1.1.10.9'
                             details.because 'DHI CVE remediation: CVE-2026-108106, CVE-2026-93451, CVE-2026-116590'
                         }
+                        if (req.group == 'org.json' && req.name == 'json') {
+                            details.useVersion '20260719'
+                            details.because 'DHI CVE remediation for CVE-2026-59171'
+                        }
                         if (req.group == 'io.opentelemetry'
                                 && req.name.endsWith('-incubator')) {
                             details.useVersion '1.67.0-alpha'
@@ -375,7 +397,7 @@ contents:
               --warning-mode=summary \
               --parallel \
               --max-workers=4 \
-              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,com.fasterxml.jackson:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,at.yawk.lz4:*,ch.qos.logback:*,com.typesafe.akka:*,com.google.guava:*,io.netty:*,io.opentelemetry:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:*,org.apache.logging.log4j:*,org.springframework.boot:*,org.bouncycastle:*,org.xerial.snappy:*' \
+              --update-locks 'com.fasterxml.jackson.core:*,com.fasterxml.jackson.dataformat:*,com.fasterxml.jackson.datatype:*,com.fasterxml.jackson.module:*,com.fasterxml.jackson:*,tools.jackson.core:*,tools.jackson.dataformat:*,tools.jackson.datatype:*,tools.jackson.module:*,at.yawk.lz4:*,ch.qos.logback:*,com.typesafe.akka:*,com.google.guava:*,io.netty:*,io.opentelemetry:*,org.apache.httpcomponents.core5:*,org.apache.httpcomponents.client5:*,org.apache.logging.log4j:*,org.springframework.boot:*,org.bouncycastle:*,org.json:*,org.xerial.snappy:*' \
               :datahub-frontend:stage \
               -x test \
               -x check
@@ -410,6 +432,7 @@ contents:
             HZ_JAR="$(find "$LIB" -maxdepth 1 -type f -name 'hazelcast-[0-9]*.jar' | sort | head -1 || true)"
             if [ -n "$HZ_JAR" ]; then
               bash "${source.dir}/patch/patch-hazelcast-jackson-play.sh" "$HZ_JAR" "$PATCH_DIR"
+              bash "${source.dir}/patch/patch-hazelcast-orgjson-play.sh" "$HZ_JAR" "$PATCH_DIR"
             fi
 
             replace_loose_jar() {
@@ -451,8 +474,8 @@ contents:
             set -eux -o pipefail
 
             curl -fsSL -o /tmp/opentelemetry-javaagent.jar \
-              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.28.0/opentelemetry-javaagent.jar"
-            echo "130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
+              "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.33.1/opentelemetry-javaagent.jar"
+            echo "e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
             mv /tmp/opentelemetry-javaagent.jar \
               "${target.dir}/usr/share/datahub-frontend-react/lib/opentelemetry-javaagent.jar"
         - name: fetch jmx prometheus javaagent
@@ -471,8 +494,23 @@ contents:
           with:
             license: Apache-2.0
             name: opentelemetry-javaagent
-            purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.28.0
-            version: 2.28.0
+            purl: pkg:maven/io.opentelemetry.javaagent/opentelemetry-javaagent@2.33.1
+            version: 2.33.1
+        - name: verify opentelemetry-api bundled in javaagent
+          runs: |
+            set -eux -o pipefail
+
+            OTEL_API_PROPS="$(python3 -c 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())' \
+              "${target.dir}/usr/share/datahub-frontend-react/lib/opentelemetry-javaagent.jar" \
+              io/opentelemetry/javaagent/shaded/io/opentelemetry/api/version.properties)"
+            test "${OTEL_API_PROPS}" = "sdk.version=1.67.0"
+        - name: opentelemetry-api bundled in javaagent sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: opentelemetry-api
+            purl: pkg:maven/io.opentelemetry/opentelemetry-api@1.67.0
+            version: 1.67.0
         - name: jmx_prometheus_javaagent sbom
           uses: spdx@v1
           with:
@@ -501,7 +539,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-frontend-react
-            rel: 22
+            rel: 23
             url: https://datahubproject.io/
             version: 1.7.0.1
       paths:
@@ -526,6 +564,12 @@ contents:
           gid: 0
           mode: "0755"
           source: package/main/datahub-frontend-react/patch/patch-hazelcast-jackson-play.sh
+        - type: file
+          path: ${source.dir}/patch/patch-hazelcast-orgjson-play.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/datahub-frontend-react/patch/patch-hazelcast-orgjson-play.sh
         - type: file
           path: ${source.dir}/patch/patch-graphql-java-guava.sh
           uid: 0
