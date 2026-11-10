@@ -4,9 +4,9 @@ image: dhi.io/pkg-dependencytrack-apiserver
 variant: runtime
 tags:
   - 5.2.1
-  - 5.2.1-r1
+  - 5.2.1-r2
   - 5.2.1-debian13
-  - 5.2.1-r1-debian13
+  - 5.2.1-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -22,7 +22,7 @@ vars:
   LINE_DEP_VERSION: 2.3.35
   MAVEN_ARTIFACT: apiserver
   PACKAGE_NAME: dependencytrack-apiserver-5
-  REL: "1"
+  REL: "2"
   RELEASE_ASSET: dependency-track-apiserver-dist.tar.gz
   RELEASE_SHA256: a39242248034f4e372fcb11092b69752070cd342a57bd00ef2936fe8b76f8ff9
   SEMVER_MAJOR_MINOR_VERSION: "5.2"
@@ -116,6 +116,18 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: https://repo1.maven.org/maven2/org/json/json/20260719/json-20260719.jar
+            checksum: sha256:c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6
+            path: ${source.dir}/deps/json-20260719.jar
+            spdx:
+              name: json
+              version: "20260719"
+              packages:
+                - name: json
+                  purl: pkg:maven/org.json/json@20260719
+                  license: Unlicense
+            uid: 0
+            gid: 0
       pipeline:
         - uses: mvn/mirror@v1
         - name: stage line 5 payload
@@ -171,6 +183,29 @@ contents:
               cd "${tmp}"
               zip -r "${dest}/dependency-track-apiserver.jar" META-INF/MANIFEST.MF
             )
+        - name: replace json on line 5
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/dependencytrack-apiserver-5"
+            tmp=$(mktemp -d)
+            echo "c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6  deps/json-20260719.jar" | sha256sum -c -
+            rm "${dest}/lib/json-20231013.jar"
+            install -m 0644 deps/json-20260719.jar "${dest}/lib/json-20260719.jar"
+            unzip -p "${dest}/dependency-track-apiserver.jar" META-INF/MANIFEST.MF \
+              | sed \
+                -e 's/json-20231013.jar/json-20260719.jar/' > "${tmp}/MANIFEST.MF"
+            grep -qF 'json-20260719.jar' "${tmp}/MANIFEST.MF"
+            if grep -qF 'json-20231013.jar' "${tmp}/MANIFEST.MF"; then
+              echo "stale json-20231013.jar in manifest" >&2
+              exit 1
+            fi
+            mkdir -p "${tmp}/META-INF"
+            mv "${tmp}/MANIFEST.MF" "${tmp}/META-INF/MANIFEST.MF"
+            (
+              cd "${tmp}"
+              zip -r "${dest}/dependency-track-apiserver.jar" META-INF/MANIFEST.MF
+            )
         - name: maven sbom
           uses: sbom@v1
           with:
@@ -186,7 +221,7 @@ contents:
               - usr/share/dependencytrack-apiserver-5
             license: Apache-2.0
             name: dependencytrack-apiserver-5
-            rel: 1
+            rel: 2
             url: https://github.com/DependencyTrack/dependency-track
             version: 5.2.1
 os-release:

@@ -4,9 +4,9 @@ image: dhi.io/pkg-dependencytrack-apiserver
 variant: runtime
 tags:
   - 4.14.6
-  - 4.14.6-r1
+  - 4.14.6-r2
   - 4.14.6-debian13
-  - 4.14.6-r1-debian13
+  - 4.14.6-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -23,7 +23,7 @@ vars:
   LINE_DEP_VERSION: 1.16.6
   MAVEN_ARTIFACT: dependency-track
   PACKAGE_NAME: dependencytrack-apiserver-4
-  REL: "1"
+  REL: "2"
   RELEASE_ASSET: dependency-track-apiserver.jar
   RELEASE_SHA256: 3a6866f8919864dca70c50f438874d0c0396c27077d3ef8e4d358d940459eeb5
   SEMVER_MAJOR_MINOR_VERSION: "4.14"
@@ -103,6 +103,18 @@ contents:
                 - name: micrometer-core
                   purl: pkg:maven/io.micrometer/micrometer-core@1.16.6
                   license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/json/json/20260719/json-20260719.jar
+            checksum: sha256:c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6
+            path: ${source.dir}/deps/json-20260719.jar
+            spdx:
+              name: json
+              version: "20260719"
+              packages:
+                - name: json
+                  purl: pkg:maven/org.json/json@20260719
+                  license: Unlicense
             uid: 0
             gid: 0
       pipeline:
@@ -197,6 +209,29 @@ contents:
               grep -qxF "${entry}" "${tmp}/after"
             done
             unzip -t -q "${jar}"
+        - name: replace json on line 4
+          runs: |
+            set -eux -o pipefail
+
+            jar="${target.dir}/usr/share/dependencytrack-apiserver-4/dependency-track-apiserver.jar"
+            tmp=$(mktemp -d)
+            echo "c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6  deps/json-20260719.jar" | sha256sum -c -
+            mkdir -p "${tmp}/WEB-INF/lib"
+            cp deps/json-20260719.jar "${tmp}/WEB-INF/lib/json-20260719.jar"
+            unzip -Z1 "${jar}" > "${tmp}/before"
+            grep -qxF 'WEB-INF/lib/json-20251224.jar' "${tmp}/before"
+            zip -d "${jar}" 'WEB-INF/lib/json-20251224.jar'
+            (
+              cd "${tmp}"
+              zip -r "${jar}" WEB-INF/lib/json-20260719.jar
+            )
+            unzip -Z1 "${jar}" > "${tmp}/after"
+            if grep -qxF 'WEB-INF/lib/json-20251224.jar' "${tmp}/after"; then
+              echo "stale org.json 20251224 remains" >&2
+              exit 1
+            fi
+            grep -qxF 'WEB-INF/lib/json-20260719.jar' "${tmp}/after"
+            unzip -t -q "${jar}"
         - name: maven sbom
           uses: sbom@v1
           with:
@@ -212,7 +247,7 @@ contents:
               - usr/share/dependencytrack-apiserver-4
             license: Apache-2.0
             name: dependencytrack-apiserver-4
-            rel: 1
+            rel: 2
             url: https://github.com/DependencyTrack/dependency-track
             version: 4.14.6
 os-release:
