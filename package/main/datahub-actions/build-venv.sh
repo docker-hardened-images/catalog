@@ -6,12 +6,18 @@
 #   TARGET_DIR  - package root
 #   PYTHON_BIN  - interpreter path (e.g. /usr/bin/python3.11)
 #   EXTRAS      - pip extras for acryl-datahub-actions (e.g. all)
+#   ACTIONS_VERSION        - release version written into datahub-actions
+#   ACRYL_DATAHUB_VERSION  - pinned acryl-datahub release (sdist at SOURCE_DIR)
 set -eux -o pipefail
 
 : "${SOURCE_DIR:?SOURCE_DIR is required}"
 : "${TARGET_DIR:?TARGET_DIR is required}"
 : "${PYTHON_BIN:?PYTHON_BIN is required}"
 : "${EXTRAS:?EXTRAS is required}"
+: "${ACTIONS_VERSION:?ACTIONS_VERSION is required}"
+: "${ACRYL_DATAHUB_VERSION:?ACRYL_DATAHUB_VERSION is required}"
+
+test -f "${SOURCE_DIR}/acryl_datahub.tar.gz"
 
 VENV="${TARGET_DIR}/usr/lib/datahub-actions"
 
@@ -41,6 +47,18 @@ certifi>=2026.10.19
 filelock>=4.2.1
 EOF
 
+# acryl-datahub: the tag's _version.py is the 1!0.0.0.dev0 placeholder, which turns
+# off datahub-actions' acryl-datahub==<version> self-pin. Once the version is set
+# below, that pin is live, and PyPI has no acryl-datahub 1.7.0.1, so override it
+# with the pinned sdist (same input as image/datahub-actions).
+echo "acryl-datahub[datahub-kafka] @ file://${SOURCE_DIR}/acryl_datahub.tar.gz" >> "${SOURCE_DIR}/overrides.txt"
+
+# Set the release version the way the docker build does (python-build/version_updater.py).
+"${PYTHON_BIN}" "${SOURCE_DIR}/datahub-src/python-build/version_updater.py" \
+  --directory "${SOURCE_DIR}/datahub-src/datahub-actions/" \
+  --version "${ACTIONS_VERSION}" \
+  --expected-update-count 1
+
 export UV_PYTHON_DOWNLOADS=never
 export UV_LINK_MODE=copy
 
@@ -50,6 +68,12 @@ uv pip install \
   --override "${SOURCE_DIR}/overrides.txt" \
   --no-binary cryptography \
   "${SOURCE_DIR}/datahub-src/datahub-actions[${EXTRAS}]"
+
+# Fail the build if the packaged versions are not the intended ones.
+installed_actions=$("${VENV}/bin/python" -c 'import importlib.metadata as m; print(m.version("acryl-datahub-actions"))')
+installed_datahub=$("${VENV}/bin/python" -c 'import importlib.metadata as m; print(m.version("acryl-datahub"))')
+test "${installed_actions}" = "${ACTIONS_VERSION}"
+test "${installed_datahub}" = "${ACRYL_DATAHUB_VERSION}"
 
 # drop caches, tests, and uv/pip build-env leaks from the shipped venv
 find "${VENV}" \
