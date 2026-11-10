@@ -4,15 +4,20 @@ image: dhi.io/pkg-datahub-frontend-react
 variant: runtime
 tags:
   - 1.7.0.1
-  - 1.7.0.1-r23
+  - 1.7.0.1-r24
   - 1.7.0.1-debian13
-  - 1.7.0.1-r23-debian13
+  - 1.7.0.1-r24-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 dates:
   release: "2025-08-22"
 vars:
+  BCFIPS_VERSION: 2.1.3
+  BCPKIXFIPS_VERSION: 2.1.13
+  BCRNGJENT_VERSION: 1.3.6
+  BCTLSFIPS_VERSION: 2.1.25
+  BCUTILFIPS_VERSION: 2.1.8
   COMMIT_SHA: e99431ec510d7a2001f815c6bf70913c493af76e
   GRADLE_VERSION: 8.14.6-3
   JDK_MAJOR_VERSION: "21"
@@ -25,7 +30,7 @@ vars:
   OTEL_JAVAAGENT_VERSION: 2.33.1
   PACKAGE_HOME: /usr/share/datahub-frontend-react
   PACKAGE_NAME: datahub-frontend-react
-  REL: "23"
+  REL: "24"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0
@@ -468,6 +473,26 @@ contents:
               exit 1
             fi
             bash "${source.dir}/patch/patch-graphql-java-guava.sh" "$GJ_JAR" "$PATCH_DIR"
+        - name: generate FIPS properties
+          runs: |
+            set -eux -o pipefail
+
+            BC_CLASSPATH="/usr/lib/bouncycastle/bc-fips-2.1.3.jar:\
+            /usr/lib/bouncycastle/bctls-fips-2.1.25.jar:\
+            /usr/lib/bouncycastle/bcutil-fips-2.1.8.jar:\
+            /usr/lib/bouncycastle/bc-rng-jent-1.3.6.jar:\
+            /usr/lib/bouncycastle/bcpkix-fips-2.1.13.jar"
+
+            cat > "${target.dir}/usr/share/datahub-frontend-react/scripts/datahub-fips.properties" << EOF
+            -Xbootclasspath/a:${BC_CLASSPATH}
+            --add-exports=java.base/sun.security.internal.spec=ALL-UNNAMED
+            --add-exports=java.base/sun.security.provider=ALL-UNNAMED
+            -Dorg.bouncycastle.fips.approved_only=true
+            -Djavax.net.ssl.trustStore=/usr/lib/bouncycastle/cacerts.bcfks
+            -Djavax.net.ssl.trustStoreType=BCFKS
+            -Djavax.net.ssl.trustStorePassword=changeit
+            EOF
+            chmod 0444 "${target.dir}/usr/share/datahub-frontend-react/scripts/datahub-fips.properties"
         - name: fetch otel javaagent
           privileged: true
           runs: |
@@ -539,7 +564,7 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-frontend-react
-            rel: 23
+            rel: 24
             url: https://datahubproject.io/
             version: 1.7.0.1
       paths:
