@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2018-06-14"
 vars:
-  COMMIT_SHA: c8129be0728afa1a2c49b69b1c0847a42730a732
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "1.66"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.66.1
-  VERSION: 1.66.1
+  SUFFIX: -dev
+  VERSION: 1.66.1-9
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -38,6 +39,7 @@ contents:
     - bash
     - ca-certificates
     - ca-certificates-bundle
+    - cdi-uploadproxy-dev=1.66.1-9
     - coreutils
     - diffutils
     - dpkg
@@ -49,108 +51,6 @@ contents:
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: cdi-uploadproxy
-      work-dir: /go/src/kubevirt.io/containerized-data-importer
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.66.1
-            checksum: c8129be0728afa1a2c49b69b1c0847a42730a732
-            path: /go/src/kubevirt.io/containerized-data-importer
-            spdx:
-              name: cdi-uploadproxy
-              version: 1.66.1
-              packages:
-                - name: cdi-uploadproxy
-                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.66.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: patch pkg/token for go-jose v4
-          uses: patch@v1
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          with:
-            options: -p1
-            patch: ${source.dir}/patch/go-jose-v4-token-imports.patch
-        - name: migrate go-jose module require to v4
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          privileged: true
-          environment:
-            GOWORK: "off"
-          runs: |
-            set -eux -o pipefail
-
-            go mod edit -droprequire=github.com/go-jose/go-jose/v3
-            go get github.com/go-jose/go-jose/v4@v4.1.6
-        - name: patch vulnerable Go dependencies
-          uses: go/bump@v1
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          environment:
-            GOWORK: "off"
-          with:
-            deps:
-              - golang.org/x/crypto@v0.56.0
-              - golang.org/x/net@v0.62.0
-              - github.com/go-jose/go-jose/v4@v4.1.6
-            download: true
-        - name: sync vendor directory
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          privileged: true
-          environment:
-            GODEBUG: ""
-            GOFIPS140: ""
-          runs: |
-            set -eux -o pipefail
-
-            # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
-            if [ -f go.work ]; then
-              go work vendor
-            else
-              go mod vendor
-            fi
-        - name: test
-          environment:
-            GOWORK: "off"
-          runs: |
-            set -eux -o pipefail
-
-            CGO_ENABLED=0 go test ./pkg/uploadproxy/... ./pkg/token/...
-        - name: build
-          uses: go/build@v1
-          environment:
-            GOWORK: "off"
-          with:
-            ldflags:
-              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.66.1
-              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=c8129be0728afa1a2c49b69b1c0847a42730a732
-            output: ${target.dir}/usr/local/bin/cdi-uploadproxy
-            packages: ./cmd/cdi-uploadproxy
-      paths:
-        - type: file
-          path: ${source.dir}/patch/go-jose-v4-token-imports.patch
-          uid: 0
-          gid: 0
-          source: image/cdi-uploadproxy/patch/go-jose-v4-token-imports.patch
-      outputs:
-        - source: ${target.dir}/usr/local/bin/cdi-uploadproxy
-          target: /usr/local/bin/cdi-uploadproxy
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/cdi-uploadproxy
-          target: /opt/docker/sbom/cdi-uploadproxy
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -178,6 +78,15 @@ work-dir: /home/cdi-uploadproxy
 environment:
   DEBIAN_FRONTEND: noninteractive
 paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/cdi-uploadproxy
+    uid: 0
+    gid: 0
+    source: /usr/bin/cdi-uploadproxy
   - type: directory
     path: /home/cdi-uploadproxy
     uid: 0
