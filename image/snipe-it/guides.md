@@ -27,7 +27,7 @@ The runtime process runs as user `snipeit` (uid 10000, gid 10000). Dev variants 
 ### Generate an application key
 
 ```bash
-docker run --rm dhi.io/snipe-snipe-it:<tag> php /var/www/html/artisan key:generate --show
+docker run --rm dhi.io/snipe-it:<tag> php /var/www/html/artisan key:generate --show
 ```
 
 That command runs `php`, because nothing wraps extra arguments in `/startup.sh`.
@@ -75,7 +75,7 @@ services:
       start_period: 20s
 
   snipeit:
-    image: dhi.io/snipe-snipe-it:<tag>
+    image: dhi.io/snipe-it:<tag>
     depends_on:
       mariadb:
         condition: service_healthy
@@ -99,7 +99,7 @@ volumes:
 From the directory that contains `compose.yaml`:
 
 ```bash
-export APP_KEY="$(docker run --rm dhi.io/snipe-snipe-it:<tag> php /var/www/html/artisan key:generate --show)"
+export APP_KEY="$(docker run --rm dhi.io/snipe-it:<tag> php /var/www/html/artisan key:generate --show)"
 docker compose up -d
 ```
 
