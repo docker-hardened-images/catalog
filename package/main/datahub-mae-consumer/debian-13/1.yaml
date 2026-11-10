@@ -4,9 +4,9 @@ image: dhi.io/pkg-datahub-mae-consumer
 variant: runtime
 tags:
   - 1.7.0.1
-  - 1.7.0.1-r22
+  - 1.7.0.1-r23
   - 1.7.0.1-debian13
-  - 1.7.0.1-r22-debian13
+  - 1.7.0.1-r23-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,6 +16,7 @@ vars:
   COMMIT_SHA: e99431ec510d7a2001f815c6bf70913c493af76e
   DOCKERIZE_COMMIT_SHA: a21f69ff60cdf1b2d54dadb7d04f28c8b6723c19
   DOCKERIZE_VERSION: 0.24.3
+  FIPS_REL: "0"
   GOLANG_VERSION: 1.26.10-0
   GRADLE_VERSION: 8.14.6-3
   JDK_MAJOR_VERSION: "21"
@@ -26,7 +27,7 @@ vars:
   OTEL_JAVAAGENT_VERSION: 2.28.0
   PACKAGE_HOME: /usr/share/datahub-mae-consumer
   PACKAGE_NAME: datahub-mae-consumer
-  REL: "22"
+  REL: "23"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0.1
@@ -41,6 +42,8 @@ contents:
   builds:
     - name: datahub-mae-consumer
       work-dir: ${source.dir}/datahub
+      environment:
+        PACKAGE_FIPS: "0"
       caches:
         - path: /root/.gradle
         - path: /go/pkg/mod
@@ -196,7 +199,8 @@ contents:
           uses: go/build@v1
           work-dir: /go/src/github.com/powerman/dockerize
           with:
-            output: ${target.dir}/usr/bin/dockerize
+            fips: false
+            output: ${target.dir}/datahub-mae-consumer/usr/bin/dockerize
             packages: ./
         - name: install gradle init scripts
           runs: |
@@ -377,28 +381,49 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            mkdir -p "${target.dir}/usr/share/datahub-mae-consumer/bin"
-            mkdir -p "${target.dir}/usr/share/datahub-mae-consumer/scripts"
-            mkdir -p "${target.dir}/usr/share/datahub-mae-consumer/resources"
-            mkdir -p "${target.dir}/usr/share/datahub-mae-consumer/lib"
+            dest="${target.dir}/datahub-mae-consumer/usr/share/datahub-mae-consumer"
+            mkdir -p "${dest}/bin" "${dest}/scripts" "${dest}/resources" "${dest}/lib"
 
             cp metadata-jobs/mae-consumer-job/build/libs/mae-consumer-job.jar \
-              "${target.dir}/usr/share/datahub-mae-consumer/bin/mae-consumer-job.jar"
+              "${dest}/bin/mae-consumer-job.jar"
 
             bash "${source.dir}/patch/patch-hazelcast-jackson.sh" \
-              "${target.dir}/usr/share/datahub-mae-consumer/bin/mae-consumer-job.jar" \
+              "${dest}/bin/mae-consumer-job.jar" \
               "${source.dir}/patch/deps"
             bash "${source.dir}/patch/patch-graphql-guava.sh" \
-              "${target.dir}/usr/share/datahub-mae-consumer/bin/mae-consumer-job.jar" \
+              "${dest}/bin/mae-consumer-job.jar" \
               "${source.dir}/patch/deps"
             cp metadata-models/src/main/resources/entity-registry.yml \
-              "${target.dir}/usr/share/datahub-mae-consumer/resources/entity-registry.yml"
+              "${dest}/resources/entity-registry.yml"
             cp docker/monitoring/client-prometheus-config.yaml \
-              "${target.dir}/usr/share/datahub-mae-consumer/scripts/prometheus-config.yaml"
+              "${dest}/scripts/prometheus-config.yaml"
 
             cp "${source.dir}/files/start.sh" \
-              "${target.dir}/usr/share/datahub-mae-consumer/scripts/start.sh"
-            chmod 0755 "${target.dir}/usr/share/datahub-mae-consumer/scripts/start.sh"
+              "${dest}/scripts/start.sh"
+            chmod 0755 "${dest}/scripts/start.sh"
+        - name: generate FIPS properties
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${PACKAGE_FIPS}" != "1" ]; then
+              exit 0
+            fi
+
+            BC_CLASSPATH="/usr/lib/bouncycastle/current/bc-fips.jar:\
+            /usr/lib/bouncycastle/current/bctls-fips.jar:\
+            /usr/lib/bouncycastle/current/bcutil-fips.jar:\
+            /usr/lib/bouncycastle/current/bc-rng-jent.jar:\
+            /usr/lib/bouncycastle/current/bcpkix-fips.jar"
+
+            cat > "${target.dir}/datahub-mae-consumer/usr/share/datahub-mae-consumer/scripts/datahub-fips.properties" << EOF
+            -Xbootclasspath/a:${BC_CLASSPATH}
+            --add-exports=java.base/sun.security.internal.spec=ALL-UNNAMED
+            --add-exports=java.base/sun.security.provider=ALL-UNNAMED
+            -Dorg.bouncycastle.fips.approved_only=true
+            -Djavax.net.ssl.trustStore=/usr/lib/bouncycastle/cacerts.bcfks
+            -Djavax.net.ssl.trustStoreType=BCFKS
+            -Djavax.net.ssl.trustStorePassword=changeit
+            EOF
         - name: fetch otel javaagent
           privileged: true
           runs: |
@@ -408,7 +433,7 @@ contents:
               "https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.28.0/opentelemetry-javaagent.jar"
             echo "130606aed07f101458fe42b8f453ef3a2536f6bce8a7ae64f222f5688ada2500  /tmp/opentelemetry-javaagent.jar" | sha256sum -c -
             mv /tmp/opentelemetry-javaagent.jar \
-              "${target.dir}/usr/share/datahub-mae-consumer/lib/opentelemetry-javaagent.jar"
+              "${target.dir}/datahub-mae-consumer/usr/share/datahub-mae-consumer/lib/opentelemetry-javaagent.jar"
         - name: fetch jmx prometheus javaagent
           privileged: true
           runs: |
@@ -418,13 +443,13 @@ contents:
               "https://maven-central.storage-download.googleapis.com/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar"
             echo "8b67ed40485d475648c36d11d21464b484406f85faf912b3363f71a6a7861320  /tmp/jmx_prometheus_javaagent.jar" | sha256sum -c -
             mv /tmp/jmx_prometheus_javaagent.jar \
-              "${target.dir}/usr/share/datahub-mae-consumer/lib/jmx_prometheus_javaagent.jar"
+              "${target.dir}/datahub-mae-consumer/usr/share/datahub-mae-consumer/lib/jmx_prometheus_javaagent.jar"
         - name: java sbom
           uses: sbom@v1
           with:
             extra-scanners: java-archive-cataloger
             prefix: datahub-mae-consumer
-            source: ${target.dir}/usr/share/datahub-mae-consumer
+            source: ${target.dir}/datahub-mae-consumer/usr/share/datahub-mae-consumer
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -438,7 +463,8 @@ contents:
               - deb
             license: Apache-2.0
             name: datahub-mae-consumer
-            rel: 22
+            rel: 23
+            root: ${target.dir}/datahub-mae-consumer
             url: https://datahubproject.io/
             version: 1.7.0.1
       paths:
