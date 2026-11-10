@@ -19,7 +19,8 @@ per session, and drives Chromium for the lifetime of that session. It is the can
 
 The image ships:
 
-- The `selenium-server` JAR (the same artifact used by the official Selenium project) built from source with Bazel.
+- The `selenium-server` JAR (the same artifact used by the official Selenium project), installed from the
+  `selenium-node-chromium` Debian package and linked at `/opt/selenium/selenium-server.jar`.
 - Chromium and chromedriver from the Debian trixie apt sources (`trixie/main` plus the `trixie-security` channel).
 - An entrypoint script at `/usr/local/bin/selenium-node`. The script is a port of upstream `selenium/node-chromium`'s
   `start-selenium-node.sh` that maps upstream's `SE_*` environment variables (node host/port, max sessions, timeouts,
