@@ -1,0 +1,175 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-aws-controllers-k8s-eks-controller
+variant: runtime
+tags:
+  - 1.26.0-alpine3.24
+  - 1.26.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-02-03"
+vars:
+  COMMIT_SHA: 2549d1be1a9f1841aaf3a4303a0d5696ea941473
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: aws-controllers-k8s-eks-controller-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.26"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.26.0
+  VERSION: 1.26.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: aws-controllers-k8s-eks-controller-1
+      work-dir: /go/src/github.com/aws-controllers-k8s/eks-controller
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/aws-controllers-k8s/eks-controller.git#v1.26.0
+            checksum: 2549d1be1a9f1841aaf3a4303a0d5696ea941473
+            path: /go/src/github.com/aws-controllers-k8s/eks-controller
+            spdx:
+              name: eks-controller
+              version: 1.26.0
+              packages:
+                - name: eks-controller
+                  purl: pkg:golang/github.com/aws-controllers-k8s/eks-controller@1.26.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            go test -count=1 ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.GitVersion=1.26.0
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.GitCommit=2549d1be1a9f1841aaf3a4303a0d5696ea941473
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-eks-controller
+            packages: ./cmd/controller
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.GitVersion=1.26.0
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.GitCommit=2549d1be1a9f1841aaf3a4303a0d5696ea941473
+              - -X github.com/aws-controllers-k8s/eks-controller/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-eks-controller-dev
+            packages: ./cmd/controller
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/bin/ack-eks-controller
+            devbin=${target.dir}/usr/bin/ack-eks-controller-dev
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qxF "$(printf '\tbuild\tCGO_ENABLED=0')" /tmp/buildinfo.txt
+              grep -qF "pkg/version.GitVersion=1.26.0" /tmp/buildinfo.txt
+              grep -qF "pkg/version.GitCommit=2549d1be1a9f1841aaf3a4303a0d5696ea941473" /tmp/buildinfo.txt
+              if grep -qF "pkg/version.GitVersion=v" /tmp/buildinfo.txt; then
+                echo "$bin: GitVersion must not carry a v prefix" >&2
+                exit 1
+              fi
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' /tmp/buildinfo.txt
+              elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if go version -m "$devbin" | grep -E -- '-trimpath=true|-w( |"|$)'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/aws-controllers-k8s/eks-controller
+            test -s /opt/docker/sbom/eks-controller/.spdx.eks-controller.json
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+            test -s "$src/NOTICE"
+            test -s "$src/ATTRIBUTION.md"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/eks-controller "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/eks-controller "${target.dir}/opt/docker/sbom-dev/"
+            for f in LICENSE NOTICE ATTRIBUTION.md; do
+              install -D -m 0644 "$src/$f" "${target.dir}/usr/share/licenses/aws-controllers-k8s-eks-controller/$f"
+              install -D -m 0644 "$src/$f" "${target.dir}/usr/share/licenses/aws-controllers-k8s-eks-controller-dev/$f"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: AWS Controllers for Kubernetes (ACK) controller for Amazon EKS
+            files:
+              - usr/bin/ack-eks-controller
+              - opt/docker/sbom/eks-controller
+              - usr/share/licenses/aws-controllers-k8s-eks-controller/LICENSE
+              - usr/share/licenses/aws-controllers-k8s-eks-controller/NOTICE
+              - usr/share/licenses/aws-controllers-k8s-eks-controller/ATTRIBUTION.md
+            license: Apache-2.0
+            name: aws-controllers-k8s-eks-controller-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/ack-eks-controller
+                    source: usr/bin/ack-eks-controller-dev
+                  - path: opt/docker/sbom/eks-controller
+                    source: opt/docker/sbom-dev/eks-controller
+                  - path: usr/share/licenses/aws-controllers-k8s-eks-controller/LICENSE
+                    source: usr/share/licenses/aws-controllers-k8s-eks-controller-dev/LICENSE
+                  - path: usr/share/licenses/aws-controllers-k8s-eks-controller/NOTICE
+                    source: usr/share/licenses/aws-controllers-k8s-eks-controller-dev/NOTICE
+                  - path: usr/share/licenses/aws-controllers-k8s-eks-controller/ATTRIBUTION.md
+                    source: usr/share/licenses/aws-controllers-k8s-eks-controller-dev/ATTRIBUTION.md
+                name: aws-controllers-k8s-eks-controller-1-dev
+            url: https://github.com/aws-controllers-k8s/eks-controller
+            version: 1.26.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
