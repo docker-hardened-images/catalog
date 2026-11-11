@@ -19,11 +19,12 @@ platforms:
 dates:
   release: "2025-12-11"
 vars:
-  COMMIT_SHA: c8129be0728afa1a2c49b69b1c0847a42730a732
+  FLAVORED_SUFFIX: -dev
   SEMVER_MAJOR_MINOR_VERSION: "1.66"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.66.1
-  VERSION: 1.66.1
+  SUFFIX: -dev
+  VERSION: 1.66.1-11
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -38,6 +39,7 @@ contents:
     - bash
     - ca-certificates
     - ca-certificates-bundle
+    - cdi-apiserver-dev=1.66.1-11
     - coreutils
     - diffutils
     - dpkg
@@ -49,98 +51,6 @@ contents:
     - sed
     - tzdata
     - util-linux
-  builds:
-    - name: cdi-apiserver
-      caches:
-        - path: /go/pkg/mod
-      contents:
-        packages:
-          - bash
-          - ca-certificates-bundle
-          - coreutils
-          - golang-1.26
-          - findutils
-          - mawk
-          - sed
-        files:
-          - url: git+https://github.com/kubevirt/containerized-data-importer.git#v1.66.1
-            checksum: c8129be0728afa1a2c49b69b1c0847a42730a732
-            path: /go/src/kubevirt.io/containerized-data-importer
-            spdx:
-              name: cdi-apiserver
-              version: 1.66.1
-              packages:
-                - name: cdi-apiserver
-                  purl: pkg:golang/kubevirt.io/containerized-data-importer@1.66.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: migrate pkg/token to go-jose v4
-          uses: patch@v1
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          with:
-            options: -p1
-            patch: ${source.dir}/patch/go-jose-v4-token.patch
-        - name: patch vulnerable Go dependencies
-          uses: go/bump@v2
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          environment:
-            GOWORK: "off"
-          with:
-            deps:
-              - golang.org/x/crypto@v0.56.0
-              - golang.org/x/net@v0.62.0
-              - github.com/go-jose/go-jose/v4@v4.1.6
-            download: true
-        - name: sync vendor directory
-          work-dir: /go/src/kubevirt.io/containerized-data-importer
-          privileged: true
-          environment:
-            GODEBUG: ""
-            GOFIPS140: ""
-          runs: |
-            set -eux -o pipefail
-
-            # requires manual patch due to go/bump not supporting GOWORK=true (uses go mod vendor)
-            if [ -f go.work ]; then
-              go work vendor
-            else
-              go mod vendor
-            fi
-        - name: test
-          work-dir: /go/src/kubevirt.io/containerized-data-importer/cmd/cdi-apiserver
-          environment:
-            GOWORK: "off"
-          runs: |
-            set -eux -o pipefail
-
-            CGO_ENABLED=0 go test ./...
-        - name: build
-          uses: go/build@v1
-          work-dir: /go/src/kubevirt.io/containerized-data-importer/cmd/cdi-apiserver
-          environment:
-            GOWORK: "off"
-          with:
-            ldflags:
-              - -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v1.66.1
-              - -X kubevirt.io/containerized-data-importer/pkg/version.gitCommit=c8129be0728afa1a2c49b69b1c0847a42730a732
-            output: ${target.dir}/usr/local/bin/cdi-apiserver
-      paths:
-        - type: directory
-          path: ${source.dir}/patch
-          uid: 0
-          gid: 0
-          source: image/cdi-apiserver/patch
-      outputs:
-        - source: ${target.dir}/usr/local/bin/cdi-apiserver
-          target: /usr/local/bin/cdi-apiserver
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/cdi-apiserver
-          target: /opt/docker/sbom/cdi-apiserver
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -166,6 +76,16 @@ os-release:
   bug-report-url: https://docker.com/support/
 environment:
   DEBIAN_FRONTEND: noninteractive
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/cdi-apiserver
+    uid: 0
+    gid: 0
+    source: /usr/bin/cdi-apiserver
 annotations:
   org.opencontainers.image.description: A minimal Containerized Data Importer API Server image
   org.opencontainers.image.licenses: Apache-2.0
