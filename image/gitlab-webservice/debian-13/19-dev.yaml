@@ -279,6 +279,32 @@ contents:
 
             echo "mail lockfile version:"
             grep -E "^    mail " Gemfile.lock
+        - name: bump omniauth for CVE-2026-63183
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cd /srv/gitlab
+
+            bundle config set --local without 'development test mysql aws omnibus'
+
+            sed --in-place -e "s/^gem 'omniauth', '~> 2.1.0'/gem 'omniauth', '~> 2.2.0'/" \
+              -e "/^gem 'omniauth', '~> 2.2.0'/a gem 'rack-protection', '~> 2.2.0', feature_category: :system_access" Gemfile
+            grep -q "^gem 'omniauth', '~> 2.2.0'" Gemfile
+            grep -q "^gem 'rack-protection', '~> 2.2.0'" Gemfile
+
+            bundle lock --update omniauth --conservative
+
+            ruby -rbundler -e '
+              specs = Bundler::LockfileParser.new(File.read("Gemfile.lock")).specs.to_h { |spec| [spec.name, spec.version] }
+              got = specs.fetch("omniauth")
+              abort "omniauth resolved to #{got}, expected 2.2.x" unless got >= Gem::Version.new("2.2.0") && got < Gem::Version.new("2.3")
+              rp = specs.fetch("rack-protection")
+              abort "rack-protection resolved to #{rp}, expected 2.2.x" unless rp >= Gem::Version.new("2.2.0") && rp < Gem::Version.new("2.3")
+            '
+
+            echo "omniauth and rack-protection lockfile versions:"
+            grep -E "^    (omniauth|rack-protection) " Gemfile.lock
         - name: update GitLab 19 gems with new CVE fixes
           privileged: true
           runs: |
