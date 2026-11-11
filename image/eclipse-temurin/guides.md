@@ -16,7 +16,7 @@ This Docker Hardened Eclipse Temurin image provides enterprise-grade OpenJDK dis
 image includes:
 
 - Eclipse Temurin JDK/JRE: High-performance, TCK-tested Java runtime
-- Multiple Java versions: Support for Java 8, 11, 17, 21, and 24
+- Multiple Java versions: Support for Java 8, 11, 17, 21, 25, and 26
 - JDK development variants and lightweight runtime variants
 - FIPS compliance: Meets Federal Information Processing Standards
 - STIG certification: Complies with Security Technical Implementation Guides
