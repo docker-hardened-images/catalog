@@ -1,0 +1,337 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-linkerd-web
+variant: runtime
+tags:
+  - 26.10.2-alpine3.24
+  - 26.10.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: a4c00ac553f0f2ff84558dd7a35ed24dcd6cc6eb
+  GOLANG_VERSION: 1.26.10-r0
+  NODEJS_VERSION: 20.20.2-r2
+  PACKAGE_NAME: linkerd-web
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "26.10"
+  SEMVER_MAJOR_VERSION: "26"
+  SEMVER_VERSION: 26.10.2
+  VERSION: 26.10.2
+  YARN_VERSION: 1.22.22_git20260611-r1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: linkerd-web
+      work-dir: /go/src/github.com/linkerd/linkerd2
+      environment:
+        CI: "true"
+        YARN_CACHE_FOLDER: /usr/local/share/.cache/yarn
+      caches:
+        - path: /usr/local/share/.cache/yarn
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - gawk
+          - jq
+          - golang-1.26=1.26.10-r0
+          - golang-1.26-oci-config=1.26.10-r0
+          - nodejs-20=20.20.2-r2
+          - yarn=1.22.22_git20260611-r1
+        files:
+          - url: git+https://github.com/linkerd/linkerd2.git#edge-26.10.2
+            checksum: a4c00ac553f0f2ff84558dd7a35ed24dcd6cc6eb
+            path: /go/src/github.com/linkerd/linkerd2
+            spdx:
+              name: linkerd-web-source
+              version: 26.10.2
+              packages:
+                - name: linkerd-web
+                  purl: pkg:golang/github.com/linkerd/linkerd2@26.10.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install frontend
+          work-dir: /go/src/github.com/linkerd/linkerd2/web/app
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            yarn config set disable-self-update-check true
+            yarn install --frozen-lockfile --network-timeout 1000000
+            test -d node_modules
+        - name: bump frontend dependencies
+          uses: yarn/bump@v2
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/yarn-bumps.json
+            yarn-root: /go/src/github.com/linkerd/linkerd2/web/app
+        - name: build frontend
+          work-dir: /go/src/github.com/linkerd/linkerd2/web/app
+          environment:
+            NODE_ENV: production
+          runs: |
+            set -eux -o pipefail
+
+            yarn config set disable-self-update-check true
+            yarn lingui compile
+            yarn webpack
+            test -f dist/index_bundle.js
+            test -f dist/img/favicon.png
+            mainjs=$(find dist -type f -name 'main.*.js' ! -name '*.js.map' ! -name '*.LICENSE.txt')
+            test -n "${mainjs}"
+            test -f "${mainjs}.map"
+            test -f "${mainjs}.LICENSE.txt"
+            leftover=$(find dist -type d -name node_modules -print -quit)
+            test -z "${leftover}"
+        - name: production frontend modules
+          work-dir: /go/src/github.com/linkerd/linkerd2/web/app
+          privileged: true
+          environment:
+            NODE_ENV: production
+          runs: |
+            set -eux -o pipefail
+
+            yarn config set disable-self-update-check true
+            test -d node_modules
+            rm -r node_modules
+            yarn install --frozen-lockfile --production --network-timeout 1000000
+            test -d node_modules
+            test -f node_modules/react/package.json
+            leftover=$(find node_modules -type d -name webpack -print -quit)
+            test -z "${leftover}"
+            native=$(find node_modules -name '*.node' -print -quit)
+            test -z "${native}"
+            node << 'NODE'
+            const fs = require('fs')
+            const path = require('path')
+            const found = []
+            function walk(dir) {
+              if (!fs.existsSync(dir)) return
+              for (const name of fs.readdirSync(dir)) {
+                if (name === '.bin') continue
+                const entry = path.join(dir, name)
+                if (name.startsWith('@')) {
+                  for (const sub of fs.readdirSync(entry)) walkPkg(path.join(entry, sub))
+                } else {
+                  walkPkg(entry)
+                }
+              }
+            }
+            function walkPkg(dir) {
+              const manifest = path.join(dir, 'package.json')
+              if (!fs.existsSync(manifest)) return
+              const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'))
+              found.push([pkg.name, pkg.version, dir])
+              walk(path.join(dir, 'node_modules'))
+            }
+            walk('node_modules')
+            function older(version, floor) {
+              const parse = (value) => value.split('.').map((part) => Number(part))
+              const left = parse(version)
+              const right = parse(floor)
+              for (let i = 0; i < 3; i++) {
+                if ((left[i] || 0) !== (right[i] || 0)) return (left[i] || 0) < (right[i] || 0)
+              }
+              return false
+            }
+            const rules = [
+              ['ajv', '6.', '6.14.0'],
+              ['brace-expansion', '1.', '1.1.21'],
+              ['decode-uri-component', '', '0.5.1'],
+              ['js-yaml', '4.', '4.3.2'],
+              ['linkify-it', '', '5.0.2'],
+              ['minimatch', '3.', '3.1.4'],
+              ['moment', '2.', '2.31.0'],
+              ['path-to-regexp', '1.', '1.9.0'],
+              ['yaml', '1.', '1.10.3'],
+            ]
+            let failed = false
+            for (const [name, prefix, floor] of rules) {
+              const hits = found.filter((row) => row[0] === name && row[1].startsWith(prefix))
+              if (hits.length === 0) {
+                console.error('missing ' + name + ' ' + prefix)
+                failed = true
+                continue
+              }
+              for (const [, version, dir] of hits) {
+                if (older(version, floor)) {
+                  console.error(dir + ' ' + version + ' is older than ' + floor)
+                  failed = true
+                }
+              }
+            }
+            if (failed) process.exit(1)
+            NODE
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: linkerd-web-frontend
+            source: /go/src/github.com/linkerd/linkerd2/web/app/node_modules
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./web/... -count=1
+        - name: build linkerd-web
+          uses: go/build@v1
+          with:
+            extra-args: -mod=readonly
+            fips: false
+            ldflags:
+              - -s
+              - -w
+            output: ${target.dir}/usr/bin/linkerd-web
+            packages: ./web
+        - name: build linkerd-web dev
+          uses: go/build@v1
+          with:
+            extra-args: -mod=readonly
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/bin/linkerd-web-dev
+            packages: ./web
+            strip: false
+        - name: verify build info
+          environment:
+            VARIANT_FIPS: "false"
+          runs: |
+            set -eux -o pipefail
+
+            runtime="${target.dir}/usr/bin/linkerd-web"
+            dev="${target.dir}/usr/bin/linkerd-web-dev"
+            test -x "${runtime}"
+            test -x "${dev}"
+
+            go version -m "${runtime}" > /tmp/linkerd-web-runtime.txt
+            go version -m "${dev}" > /tmp/linkerd-web-dev.txt
+            grep -F "vcs.revision=a4c00ac553f0f2ff84558dd7a35ed24dcd6cc6eb" /tmp/linkerd-web-runtime.txt
+            grep -F "vcs.revision=a4c00ac553f0f2ff84558dd7a35ed24dcd6cc6eb" /tmp/linkerd-web-dev.txt
+            grep -F $'mod\tgithub.com/linkerd/linkerd2\tv0.0.0-' /tmp/linkerd-web-runtime.txt
+            grep -F $'mod\tgithub.com/linkerd/linkerd2\tv0.0.0-' /tmp/linkerd-web-dev.txt
+            grep -F $'dep\tgolang.org/x/net\tv0.62.0' /tmp/linkerd-web-runtime.txt
+            grep -F $'dep\tgolang.org/x/net\tv0.62.0' /tmp/linkerd-web-dev.txt
+
+            runtime_ldflags=$(go version -m "${runtime}" | grep -F -- '-ldflags=')
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- '-s -w'
+            if printf '%s\n' "${runtime_ldflags}" | grep -F -- '-X'; then
+              echo "runtime binary ldflags must not set -X" >&2
+              exit 1
+            fi
+            dev_ldflags=$(go version -m "${dev}" | grep -F -- '-ldflags=')
+            printf '%s\n' "${dev_ldflags}" | grep -F -- '-linkmode=internal'
+            if printf '%s\n' "${dev_ldflags}" | grep -F -- '-s'; then
+              echo "dev binary ldflags must not include -s" >&2
+              exit 1
+            fi
+            if printf '%s\n' "${dev_ldflags}" | grep -F -- '-X'; then
+              echo "dev binary ldflags must not set -X" >&2
+              exit 1
+            fi
+
+            if [ "$VARIANT_FIPS" = "true" ]; then
+              grep -a -q -F 'crypto/internal/fips140/v' "${runtime}"
+              grep -a -q -F 'crypto/internal/fips140/v' "${dev}"
+            else
+              if grep -a -q -F 'crypto/internal/fips140/v' "${runtime}"; then
+                echo "runtime binary must not link the Go FIPS module" >&2
+                exit 1
+              fi
+              if grep -a -q -F 'crypto/internal/fips140/v' "${dev}"; then
+                echo "dev binary must not link the Go FIPS module" >&2
+                exit 1
+              fi
+            fi
+        - name: linkerd-web sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: linkerd-web
+            purl: pkg:golang/github.com/linkerd/linkerd2@v26.10.2
+            version: 26.10.2
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            test -f /opt/docker/sbom/linkerd-web/.spdx.linkerd-web.json
+            test -f /opt/docker/sbom/linkerd-web-frontend/.spdx.linkerd-web-frontend.json
+            grep -q 'pkg:golang/github.com/linkerd/linkerd2@v26.10.2' /opt/docker/sbom/linkerd-web/.spdx.linkerd-web.json
+            grep -q 'pkg:npm/' /opt/docker/sbom/linkerd-web-frontend/.spdx.linkerd-web-frontend.json
+
+            share="${target.dir}/usr/share/linkerd-web"
+            sharedev="${target.dir}/usr/share/linkerd-web-devpayload"
+            install -d "${share}/app" "${sharedev}" "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a web/templates "${share}/templates"
+            cp -a web/app/dist "${share}/app/dist"
+            cp -a LICENSE "${share}/LICENSE"
+            test -f "${share}/templates/app.tmpl.html"
+            test -f "${share}/templates/includes/base.tmpl.html"
+            test -f "${share}/app/dist/index_bundle.js"
+            test -f "${share}/app/dist/img/favicon.png"
+            test -f "${share}/LICENSE"
+            cp -a "${share}/." "${sharedev}/"
+            cp -a /opt/docker/sbom/linkerd-web /opt/docker/sbom/linkerd-web-frontend "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/linkerd-web /opt/docker/sbom/linkerd-web-frontend "${target.dir}/opt/docker/sbom-dev/"
+            leftover=$(find "${share}" "${sharedev}" -type d -name node_modules -print -quit)
+            test -z "${leftover}"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Linkerd viz web dashboard
+            files:
+              - usr/bin/linkerd-web
+              - usr/share/linkerd-web
+              - opt/docker/sbom/linkerd-web
+              - opt/docker/sbom/linkerd-web-frontend
+            license: Apache-2.0
+            name: linkerd-web
+            rel: 0
+            subpackages:
+              - description: Linkerd viz web dashboard binary without strip (dev)
+                files:
+                  - path: usr/bin/linkerd-web
+                    source: usr/bin/linkerd-web-dev
+                  - path: usr/share/linkerd-web
+                    source: usr/share/linkerd-web-devpayload
+                  - path: opt/docker/sbom/linkerd-web
+                    source: opt/docker/sbom-dev/linkerd-web
+                  - path: opt/docker/sbom/linkerd-web-frontend
+                    source: opt/docker/sbom-dev/linkerd-web-frontend
+                name: linkerd-web-dev
+            url: https://github.com/linkerd/linkerd2
+            version: 26.10.2
+      paths:
+        - type: file
+          path: ${source.dir}/patch/yarn-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/linkerd-web/patch/yarn-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
