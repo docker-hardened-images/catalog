@@ -4,9 +4,9 @@ image: dhi.io/pkg-opensearch-dashboards
 variant: runtime
 tags:
   - 3.9.0
-  - 3.9.0-r1
+  - 3.9.0-r2
   - 3.9.0-debian13
-  - 3.9.0-r1-debian13
+  - 3.9.0-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -36,6 +36,8 @@ vars:
   OBSERVABILITY_DASHBOARDS_COMMIT_SHA: 00d7b29e8e3dca8d91154ce6b61b7529c7e54c36
   OBSERVABILITY_DASHBOARDS_VERSION: 3.9.0.0
   OPENSEARCH_BUILD_ARCH: '#{ target.arch == "amd64" ? "linux" : "linux-arm" }'
+  OPENSEARCH_BUILD_COMMIT_SHA: 63bf3cad11086f19288c382ef10f85aaabab25dd
+  OPENSEARCH_BUILD_VERSION: 3.9.0
   OPENSEARCH_DASHBOARDS_MAJOR_MINOR_VERSION: "3.9"
   OPENSEARCH_DIST_ARCH: '#{ target.arch == "amd64" ? "linux-x64" : "linux-arm64" }'
   PACKAGE_NAME: opensearch-dashboards
@@ -43,7 +45,7 @@ vars:
   QUERY_INSIGHTS_DASHBOARDS_VERSION: 3.9.0.0
   QUERY_WORKBENCH_DASHBOARDS_COMMIT_SHA: 6aa7ce530fd5e5f23a8a656fce336a2ed0bfab21
   QUERY_WORKBENCH_DASHBOARDS_VERSION: 3.9.0.0
-  REL: "1"
+  REL: "2"
   REPORTS_DASHBOARDS_COMMIT_SHA: 156f63b3cd40d4ecfe228d1253a4a0f9d53b5f28
   REPORTS_DASHBOARDS_VERSION: 3.9.0.0
   SEARCH_RELEVANCE_DASHBOARDS_COMMIT_SHA: ad86c5cd1b685c4016cb161c29a4ca94395bb452
@@ -102,6 +104,11 @@ contents:
                   license: Apache-2.0
             uid: 1000
             gid: 1000
+          - url: git+https://github.com/opensearch-project/opensearch-build.git#3.9.0
+            checksum: 63bf3cad11086f19288c382ef10f85aaabab25dd
+            path: ${source.dir}/opensearch-build-63bf3cad11086f19288c382ef10f85aaabab25dd
+            uid: 0
+            gid: 0
           - url: git+https://github.com/opensearch-project/dashboards-observability.git#3.9.0.0
             checksum: 00d7b29e8e3dca8d91154ce6b61b7529c7e54c36
             path: ${source.dir}/opensearch-dashboards/plugins/observabilityDashboards
@@ -496,19 +503,42 @@ contents:
               echo "ERROR: plugin yarn.lock files remain after cleanup" >&2
               exit 1
             fi
+        - name: stage docker entrypoint and config
+          runs: |
+            set -eux -o pipefail
+
+            build_repo="${source.dir}/opensearch-build-63bf3cad11086f19288c382ef10f85aaabab25dd"
+            entrypoint_src="${build_repo}/docker/release/config/opensearch-dashboards/opensearch-dashboards-docker-entrypoint-3.x.sh"
+            config_src="${build_repo}/config/opensearch_dashboards-3.x.yml"
+            config_dir="${target.dir}/usr/share/opensearch-dashboards/config"
+            config_file="${config_dir}/opensearch_dashboards.yml"
+
+            test -f "${entrypoint_src}"
+            test -f "${config_src}"
+            test -d "${config_dir}"
+
+            install -d "${target.dir}/usr/bin"
+            install -m 0755 "${entrypoint_src}" "${target.dir}/usr/bin/opensearch-dashboards-docker-entrypoint.sh"
+
+            install -m 0644 "${config_src}" "${config_file}"
+            echo "server.host: '0.0.0.0'" >> "${config_file}"
+            grep -q "^server.host: '0.0.0.0'$" "${config_file}"
         - uses: dhi/build-pkg:0
           with:
             depends:
               - nodejs-22
               - libstdc++6
+              - bash
+              - sed
             description: OpenSearch Dashboards visualization and analytics UI
             files:
               - usr/share/opensearch-dashboards
+              - usr/bin/opensearch-dashboards-docker-entrypoint.sh
             formats:
               - deb
             license: Apache-2.0
             name: opensearch-dashboards
-            rel: 1
+            rel: 2
             url: https://opensearch.org/
             version: 3.9.0
       paths:
