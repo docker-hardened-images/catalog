@@ -6,10 +6,10 @@ replacement for the upstream `goharbor/harbor-db` image, shipping Harbor-specifi
 healthcheck scripts with the PostgreSQL major versions selected by upstream Harbor. Harbor uses the database for
 persistent storage of project metadata, user accounts, access policies, audit logs, and schema migrations.
 
-Harbor 2.15 images include PostgreSQL 15 and 18. On first start, the entrypoint initializes PostgreSQL 18 and creates
-the `registry` database with a `schema_migrations` table. When an existing PostgreSQL 15 data directory is detected, the
-entrypoint automatically performs a `pg_upgrade` to PostgreSQL 18. Earlier supported Harbor lines retain their upstream
-PostgreSQL 14-to-15 upgrade path.
+Harbor 2.15 and 2.16 images include PostgreSQL 15 and 18. On first start, the entrypoint initializes PostgreSQL 18 and
+creates the `registry` database with a `schema_migrations` table. When an existing PostgreSQL 15 data directory is
+detected, the entrypoint automatically performs a `pg_upgrade` to PostgreSQL 18. Earlier supported Harbor lines retain
+their upstream PostgreSQL 14-to-15 upgrade path.
 
 This image is purpose-built for Harbor deployments and is not a general-purpose PostgreSQL image. It is designed to be
 used as a component within a full Harbor installation, whether deployed via Docker Compose or Kubernetes.

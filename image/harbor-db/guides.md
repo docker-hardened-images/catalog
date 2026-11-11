@@ -17,7 +17,8 @@ This Docker Hardened harbor-db image includes:
 - **postgres** — The PostgreSQL server major selected by the corresponding upstream Harbor release
 - **psql** — The PostgreSQL interactive terminal and command-line client
 - **pg_dump** / **pg_restore** — Backup and restore utilities
-- **pg_upgrade** — In-place upgrade utility (PostgreSQL 15 to 18 for Harbor 2.15; PostgreSQL 14 to 15 for earlier lines)
+- **pg_upgrade** — In-place upgrade utility (PostgreSQL 15 to 18 for Harbor 2.15 and 2.16; PostgreSQL 14 to 15 for
+  earlier lines)
 - **Harbor initialization scripts** — Automatic database and schema setup on first start
 - **Healthcheck script** — Verifies the database is accepting connections
 
@@ -83,34 +84,34 @@ services:
 
 ### Environment variables
 
-| Variable                   | Default                    | Description                                                                                                             |
-| -------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`        | *(none)*                   | Password for the `postgres` superuser. Supports `_FILE` suffix for Docker secrets.                                      |
-| `POSTGRES_USER`            | `postgres`                 | Superuser name. Supports `_FILE` suffix.                                                                                |
-| `POSTGRES_DB`              | `$POSTGRES_USER`           | Default database name. Supports `_FILE` suffix.                                                                         |
-| `POSTGRES_MAX_CONNECTIONS` | `1024`                     | Maximum number of concurrent connections (capped at 262143).                                                            |
-| `POSTGRES_INITDB_ARGS`     | *(none)*                   | Additional arguments passed to `initdb`.                                                                                |
-| `PGDATA`                   | `/var/lib/postgresql/data` | Data directory root. Harbor 2.15 stores active data under `$PGDATA/pg18/`; earlier supported lines use `$PGDATA/pg15/`. |
+| Variable                   | Default                    | Description                                                                                                                     |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`        | *(none)*                   | Password for the `postgres` superuser. Supports `_FILE` suffix for Docker secrets.                                              |
+| `POSTGRES_USER`            | `postgres`                 | Superuser name. Supports `_FILE` suffix.                                                                                        |
+| `POSTGRES_DB`              | `$POSTGRES_USER`           | Default database name. Supports `_FILE` suffix.                                                                                 |
+| `POSTGRES_MAX_CONNECTIONS` | `1024`                     | Maximum number of concurrent connections (capped at 262143).                                                                    |
+| `POSTGRES_INITDB_ARGS`     | *(none)*                   | Additional arguments passed to `initdb`.                                                                                        |
+| `PGDATA`                   | `/var/lib/postgresql/data` | Data directory root. Harbor 2.15 and 2.16 store active data under `$PGDATA/pg18/`; earlier supported lines use `$PGDATA/pg15/`. |
 
 ## Differences from upstream `goharbor/harbor-db`
 
 This image is a drop-in replacement for `goharbor/harbor-db`, but there are important differences to be aware of when
 migrating:
 
-| Difference           | Upstream (`goharbor/harbor-db`)                    | This image                                                                                                                                                                                     |
-| :------------------- | :------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base OS              | VMware Photon OS 5.0                               | Debian 13 (Trixie)                                                                                                                                                                             |
-| PostgreSQL packages  | Photon `tdnf` packages                             | Binaries from the Docker Hardened `dhi/postgres` image, built from source.                                                                                                                     |
-| PG binary paths      | `/usr/pgsql/{15,18}/bin/` for Harbor 2.15          | `/opt/postgresql/{15,18}/bin/` for Harbor 2.15. Earlier supported lines use PostgreSQL 14 and 15.                                                                                              |
-| `VOLUME` declaration | `VOLUME /var/lib/postgresql/data` baked into image | Not declared. You must use `-v` or a named volume explicitly.                                                                                                                                  |
-| `HEALTHCHECK`        | `CMD /docker-healthcheck.sh` baked into image      | Not declared. Configure healthchecks in your Compose file or orchestrator. The `/docker-healthcheck.sh` script is still included.                                                              |
-| User (runtime)       | `postgres` (uid 999)                               | `postgres` (uid 70), matching `dhi/postgres`.                                                                                                                                                  |
-| User (dev variant)   | `postgres` (uid 999)                               | Starts as `root`, then drops to `postgres` (uid 70) via `gosu` before running the entrypoint. This allows the dev variant to work with APT while still running PostgreSQL as the correct user. |
-| Entrypoint           | `/docker-entrypoint.sh 15 18` for Harbor 2.15      | Same version-specific signature. The script is adapted for the `/opt/postgresql/` binary layout and adds `gosu` root-drop support.                                                             |
+| Difference           | Upstream (`goharbor/harbor-db`)                        | This image                                                                                                                                                                                     |
+| :------------------- | :----------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base OS              | VMware Photon OS 5.0                                   | Debian 13 (Trixie)                                                                                                                                                                             |
+| PostgreSQL packages  | Photon `tdnf` packages                                 | Binaries from the Docker Hardened `dhi/postgres` image, built from source.                                                                                                                     |
+| PG binary paths      | `/usr/pgsql/{15,18}/bin/` for Harbor 2.15 and 2.16     | `/opt/postgresql/{15,18}/bin/` for Harbor 2.15 and 2.16. Earlier supported lines use PostgreSQL 14 and 15.                                                                                     |
+| `VOLUME` declaration | `VOLUME /var/lib/postgresql/data` baked into image     | Not declared. You must use `-v` or a named volume explicitly.                                                                                                                                  |
+| `HEALTHCHECK`        | `CMD /docker-healthcheck.sh` baked into image          | Not declared. Configure healthchecks in your Compose file or orchestrator. The `/docker-healthcheck.sh` script is still included.                                                              |
+| User (runtime)       | `postgres` (uid 999)                                   | `postgres` (uid 70), matching `dhi/postgres`.                                                                                                                                                  |
+| User (dev variant)   | `postgres` (uid 999)                                   | Starts as `root`, then drops to `postgres` (uid 70) via `gosu` before running the entrypoint. This allows the dev variant to work with APT while still running PostgreSQL as the correct user. |
+| Entrypoint           | `/docker-entrypoint.sh 15 18` for Harbor 2.15 and 2.16 | Same version-specific signature. The script is adapted for the `/opt/postgresql/` binary layout and adds `gosu` root-drop support.                                                             |
 
-**Data directory layout matches upstream:** Harbor 2.15 uses `$PGDATA/pg18/` for the active cluster and `$PGDATA/pg15/`
-during upgrades. Existing PostgreSQL 15 and 18 volumes from upstream Harbor 2.15 deployments are compatible after
-ensuring the volume is writable by uid 70. Back up the database before any major-version upgrade.
+**Data directory layout matches upstream:** Harbor 2.15 and 2.16 use `$PGDATA/pg18/` for the active cluster and
+`$PGDATA/pg15/` during upgrades. Existing PostgreSQL 15 and 18 volumes from upstream Harbor 2.15 and 2.16 deployments
+are compatible after ensuring the volume is writable by uid 70. Back up the database before any major-version upgrade.
 
 ## Image variants
 
@@ -144,15 +145,15 @@ To migrate your application to a Docker Hardened Image, you must update your Doc
 base image in your existing Dockerfile to a Docker Hardened Image. This and a few other common changes are listed in the
 following table of migration notes.
 
-| Item               | Migration note                                                                                                                                                                                 |
-| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base image         | Replace `goharbor/harbor-db:<version>` with `dhi.io/harbor-db:<tag>`. See the differences table above for behavioral changes.                                                                  |
-| Volume             | You must explicitly mount a volume for `/var/lib/postgresql/data`. This image does not declare a `VOLUME`, so Docker will not create an anonymous volume automatically.                        |
-| Healthcheck        | This image does not embed a `HEALTHCHECK`. Configure one in your Compose file or orchestrator using `/docker-healthcheck.sh`.                                                                  |
-| Package management | Runtime images do not contain a package manager. Use images with a `dev` tag for debugging or installing additional packages.                                                                  |
-| User               | Runtime images run as `postgres` (uid 70), matching `dhi/postgres`. Dev images start as `root` and drop to `postgres` via `gosu`.                                                              |
-| Entry point        | Harbor 2.15 uses `/docker-entrypoint.sh 15 18`, matching upstream. Its binaries live under `/opt/postgresql/{15,18}/bin/`. Earlier supported Harbor lines retain their upstream 14-to-15 path. |
-| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                             |
+| Item               | Migration note                                                                                                                                                                                         |
+| :----------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base image         | Replace `goharbor/harbor-db:<version>` with `dhi.io/harbor-db:<tag>`. See the differences table above for behavioral changes.                                                                          |
+| Volume             | You must explicitly mount a volume for `/var/lib/postgresql/data`. This image does not declare a `VOLUME`, so Docker will not create an anonymous volume automatically.                                |
+| Healthcheck        | This image does not embed a `HEALTHCHECK`. Configure one in your Compose file or orchestrator using `/docker-healthcheck.sh`.                                                                          |
+| Package management | Runtime images do not contain a package manager. Use images with a `dev` tag for debugging or installing additional packages.                                                                          |
+| User               | Runtime images run as `postgres` (uid 70), matching `dhi/postgres`. Dev images start as `root` and drop to `postgres` via `gosu`.                                                                      |
+| Entry point        | Harbor 2.15 and 2.16 use `/docker-entrypoint.sh 15 18`, matching upstream. Its binaries live under `/opt/postgresql/{15,18}/bin/`. Earlier supported Harbor lines retain their upstream 14-to-15 path. |
+| TLS certificates   | Docker Hardened Images contain standard TLS certificates by default. There is no need to install TLS certificates.                                                                                     |
 
 The following steps outline the general migration process.
 
@@ -204,7 +205,7 @@ readable by uid 70.
 
 ### PostgreSQL binary paths
 
-For Harbor 2.15, PostgreSQL binaries are installed under `/opt/postgresql/{15,18}/bin/`, matching the Docker Hardened
-`dhi/postgres` image layout, not `/usr/pgsql/{15,18}/bin/` (Photon layout). Earlier supported Harbor lines use
+For Harbor 2.15 and 2.16, PostgreSQL binaries are installed under `/opt/postgresql/{15,18}/bin/`, matching the Docker
+Hardened `dhi/postgres` image layout, not `/usr/pgsql/{15,18}/bin/` (Photon layout). Earlier supported Harbor lines use
 `/opt/postgresql/{14,15}/bin/`. If you have scripts that reference PostgreSQL binary paths directly, update them
 accordingly. The entrypoint and bundled scripts already use the correct paths.
