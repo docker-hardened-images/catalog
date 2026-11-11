@@ -253,3 +253,14 @@ with no shell.
 
 Docker Hardened Images may have different entry points than images such as Docker Official Images. Use `docker inspect`
 to inspect entry points for Docker Hardened Images and update your Dockerfile if necessary.
+
+## Inherited CVEs
+
+Each entry is accepted stock-Debian dependency debt on the PostGIS/GDAL stack (`postgresql-17-postgis-3` pulls `libgdal36`
+→ `libopenexr`). DHI does not publish hardened PostGIS/osm2pgsql yet; see `image/nominatim/debian-13/.nominatim.inc.yaml`.
+`vex/nominatim/openexr.vex.json` documents the openexr findings. Debt retires when trixie ships a fixed `openexr` or DHI
+publishes PostGIS/GDAL packages this image can consume.
+
+- **Decision:** HIGH openexr decode CVEs on `openexr` 3.2.12-1~deb13u1 (`pkg:deb/debian/openexr@3.2.12-1~deb13u1`) are
+  accepted on all debian-13/5.3 variants. Fix not published in trixie (observed on PR stage scans, 2026-11-11). Nominatim's
+  documented workload is PBF import and HTTP geocoding; reachability of EXR decode from that surface is under investigation.
