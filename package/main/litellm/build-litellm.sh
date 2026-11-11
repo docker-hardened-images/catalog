@@ -277,7 +277,15 @@ test -x "${prisma_node_modules[0]}/.bin/prisma"
 ln -sfn "$(realpath --relative-to="${prisma_binaries}" "${prisma_node_modules[0]}")" "${prisma_binaries}/node_modules"
 test -x "${prisma_binaries}/node_modules/.bin/prisma"
 
-find "${VENV}" \( -type d -a \( -name __pycache__ -o -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
+find "${VENV}" \( -type d -a \( -name test -o -name tests \) \) -prune -exec rm -rf {} + || true
+
+# Precompile the venv and keep __pycache__. The runtime user cannot write under the
+# root-owned venv, so bytecode is never cached at runtime and every cold start would
+# compile LiteLLM's source on import. checked-hash keeps each pyc valid regardless of
+# file mtimes, and -s strips the staging root so code objects name the runtime paths.
+"${VENV}/bin/python" -m compileall -q -f -s "${TARGET_DIR}" --invalidation-mode checked-hash "${VENV}/lib"
+proxy_pyc="$(find "${VENV}/lib/python"*/site-packages/litellm/proxy/__pycache__ -name 'proxy_server.cpython-*.pyc' -print -quit)"
+test -n "${proxy_pyc}"
 
 for f in "${VENV}/bin"/*; do
   [ -f "$f" ] || continue
