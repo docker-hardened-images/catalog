@@ -133,8 +133,8 @@ contents:
           - patch
           - cpio
           - gperf
-          - rustc
-          - cargo
+          - cargo-1.97
+          - rustc-1.97
           - ca-certificates
           - curl
           - apt-transport-https
@@ -274,6 +274,11 @@ contents:
           work-dir: ${source.dir}/ceph
           with:
             patch: ${source.dir}/patch/types.patch
+        - name: patch ceph 19 mgr to load modules in the main interpreter
+          uses: git/patch@v1
+          work-dir: ${source.dir}/ceph
+          with:
+            patch: ${source.dir}/patch/19-mgr-main-interpreter.patch
         - name: install missing mgr deps and fix bcrypt
           work-dir: ${source.dir}/ceph/src/pybind/mgr
           privileged: true
@@ -284,10 +289,49 @@ contents:
             sed -i 's,scipy,scipy<1.15.0,' requirements-required.txt
             sed -i 's,cryptography,cryptography<37,' requirements-required.txt
             sed -i 's,cherrypy,cherrypy<19,' requirements-required.txt
-            sed -i 's,setuptools,setuptools<82,' requirements-required.txt
+            sed -i 's,setuptools,setuptools==83.0.0,' requirements-required.txt
             echo "numpy<2" >> requirements-required.txt
 
             pip install --ignore-installed --no-binary :all: --only-binary=scipy --no-cache-dir -r requirements-required.txt
+        - name: upgrade python deps for cve fixes
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export OPENSSL_NO_VENDOR=1 OPENSSL_STATIC=0 PIP_NO_BINARY=cryptography
+
+            pip install --no-cache-dir --no-binary cryptography --upgrade 'cryptography==50.0.2'
+            pip install --no-cache-dir --no-deps --upgrade 'pyopenssl==26.4.0'
+
+            python3.12 - << 'PY'
+            import importlib.util
+            import subprocess
+            from pathlib import Path
+
+            spec = importlib.util.find_spec("cryptography.hazmat.bindings._rust")
+            if spec is None or not spec.origin:
+                raise SystemExit("cryptography rust bindings not found")
+            so_path = Path(spec.origin)
+            if not so_path.is_file():
+                raise SystemExit(f"cryptography bindings path missing: {so_path}")
+            needed = subprocess.check_output(
+                ["readelf", "-d", str(so_path)], text=True
+            )
+            if "libssl" not in needed or "libcrypto" not in needed:
+                raise SystemExit(
+                    "cryptography must link against system libssl/libcrypto, not a bundled wheel:\n"
+                    + needed
+                )
+
+            from importlib.metadata import version
+
+            setuptools_version = version("setuptools")
+            if int(setuptools_version.split(".")[0]) < 83:
+                raise SystemExit(f"setuptools {setuptools_version} is below 83.0.0")
+            import cherrypy
+            import cheroot.wsgi
+            import pecan
+            PY
         - name: configure and create build
           work-dir: ${source.dir}/ceph
           privileged: true
@@ -378,6 +422,11 @@ contents:
           uid: 0
           gid: 0
           source: image/ceph/patch/types.patch
+        - type: file
+          path: ${source.dir}/patch/19-mgr-main-interpreter.patch
+          uid: 0
+          gid: 0
+          source: image/ceph/patch/19-mgr-main-interpreter.patch
       outputs:
         - source: ${target.dir}/usr/bin
           target: /usr/bin
