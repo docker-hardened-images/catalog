@@ -23,15 +23,11 @@ platforms:
 dates:
   release: "2025-10-01"
 vars:
-  ACRYL_DATAHUB_SDIST_CHECKSUM: sha256:4d8c7227bda8ab75bf76a125e28c8f7314f4cd596ab0fb5f0723b7b2a82bbd92
-  COMMIT_SHA: e99431ec510d7a2001f815c6bf70913c493af76e
-  EXTRAS: base
-  PYPI_VERSION: 1.7.0.19
-  PYTHON_MAJOR_MINOR_VERSION: "3.10"
+  PYTHON_MAJOR_MINOR_VERSION: "3.11"
   SEMVER_MAJOR_MINOR_VERSION: "1.7"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.7.0.1
-  VERSION: 1.7.0.1
+  VERSION: 1.7.0.1-1
   VERSION_MAJOR_MINOR_PATCH: 1.7.0
 contents:
   repositories:
@@ -48,6 +44,7 @@ contents:
     - ca-certificates
     - coreutils
     - curl
+    - datahub-actions-locked=1.7.0.1-1
     - diffutils
     - dpkg
     - findutils
@@ -69,8 +66,8 @@ contents:
     - libstdc++6
     - mawk
     - perl-base
-    - python-3.10
-    - python-3.10-dev
+    - python-3.11
+    - python-3.11-dev
     - python3-pip
     - python3-setuptools
     - python3-wheel
@@ -78,150 +75,6 @@ contents:
     - tzdata
     - unixodbc
     - util-linux
-  builds:
-    - name: datahub-actions
-      work-dir: ${source.dir}
-      environment:
-        UV_NO_MANAGED_PYTHON: "true"
-        UV_PYTHON_DOWNLOADS: never
-      caches:
-        - path: /root/.cache/uv
-      contents:
-        packages:
-          - bash
-          - build-essential
-          - cargo
-          - g++
-          - libaio-dev
-          - libffi-dev
-          - libkrb5-dev
-          - libldap2-dev
-          - librdkafka-dev
-          - libsasl2-dev
-          - libssl-dev
-          - libxml2-dev
-          - libxslt1-dev
-          - pkg-config
-          - unixodbc-dev
-          - python-3.10
-          - python-3.10-dev
-          - python3-pip
-          - python3-setuptools
-          - python3-wheel
-          - libstdc++6
-          - coreutils
-          - diffutils
-          - findutils
-          - gawk
-          - grep
-          - sed
-        files:
-          - url: https://files.pythonhosted.org/packages/source/a/acryl-datahub/acryl_datahub-1.7.0.19.tar.gz
-            checksum: sha256:4d8c7227bda8ab75bf76a125e28c8f7314f4cd596ab0fb5f0723b7b2a82bbd92
-            path: ${source.dir}/acryl_datahub.tar.gz
-            spdx:
-              name: acryl-datahub
-              version: 1.7.0.19
-              packages:
-                - name: acryl-datahub
-                  purl: pkg:pypi/acryl-datahub@1.7.0.19
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: git+https://github.com/datahub-project/datahub.git#v1.7.0.1
-            checksum: e99431ec510d7a2001f815c6bf70913c493af76e
-            path: ${source.dir}/datahub-src
-            spdx:
-              name: datahub
-              version: 1.7.0.1
-              packages:
-                - name: datahub
-                  purl: pkg:github/datahub-project/datahub@v1.7.0.1
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-      pipeline:
-        - name: install uv
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            pip install uv
-        - name: install datahub-actions
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            cat > ${source.dir}/overrides.txt << EOF
-            urllib3>=2.7.0
-            lxml>=6.1.0
-            cryptography>=50.0.0
-            setuptools>=83.0.0
-            acryl-datahub[datahub-kafka] @ file://${source.dir}/acryl_datahub.tar.gz
-            EOF
-
-            python3 ${source.dir}/datahub-src/python-build/version_updater.py \
-              --directory ${source.dir}/datahub-src/datahub-actions/ \
-              --version "1.7.0.1" \
-              --expected-update-count 1
-
-            UV_LINK_MODE=copy uv pip install \
-              --prefix ${target.dir}/opt/datahub \
-              --override ${source.dir}/overrides.txt \
-              --no-binary cryptography \
-              "${source.dir}/acryl_datahub.tar.gz[datahub-kafka]" \
-              "${source.dir}/datahub-src/datahub-actions[base]"
-        - name: install datahub-actions glue from the monorepo checkout
-          work-dir: ${source.dir}/datahub-src/docker/datahub-actions
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/opt/datahub/scripts \
-              ${target.dir}/etc/datahub/actions/system/conf
-
-            python3 - start.sh "${target.dir}/opt/datahub/scripts/start.sh" << 'PY'
-            import sys
-
-            src, dst = sys.argv[1], sys.argv[2]
-            s = open(src).read()
-            n = s.count("/home/datahub")
-            assert n == 6, f"expected 6 /home/datahub refs in start.sh, found {n}; upstream changed, re-evaluate the swap"
-            open(dst, "w").write(s.replace("/home/datahub", "/home/nonroot"))
-            PY
-            chmod 0755 ${target.dir}/opt/datahub/scripts/start.sh
-
-            install -m 0644 config/executor.yaml \
-              config/doc_propagation_action.yaml \
-              config/slack_action.yaml \
-              config/teams_action.yaml \
-              ${target.dir}/etc/datahub/actions/system/conf/
-        - name: python dependencies sbom
-          uses: sbom@v1
-          with:
-            extra-scanners: python-package-cataloger
-            prefix: datahub-actions
-            source: ${target.dir}/opt/datahub
-        - name: clean python cache and tests
-          runs: |
-            set -eux -o pipefail
-
-            find ${target.dir}/opt/datahub \
-              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
-              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
-              -exec rm -rf '{}' + || true
-      outputs:
-        - source: ${target.dir}/opt/datahub
-          target: /opt/datahub
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/datahub/actions/system/conf
-          target: /etc/datahub/actions/system/conf
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom/datahub-actions
-          target: /opt/docker/sbom/datahub-actions
-          uid: 0
-          gid: 0
 accounts:
   root: true
   run-as: root
@@ -252,9 +105,37 @@ environment:
   DEBIAN_FRONTEND: noninteractive
   PATH: /opt/datahub/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   PIP_INDEX_URL: http://127.0.0.1:1/simple
-  PYTHONPATH: /opt/datahub/lib/python3.10/site-packages
+  PYTHONPATH: /opt/datahub/lib/python3.11/site-packages
   UV_INDEX_URL: http://127.0.0.1:1/simple
 paths:
+  - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+  - type: directory
+    path: /opt/datahub
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/datahub/bin
+    uid: 0
+    gid: 0
+    source: /usr/lib/datahub-actions/bin
+  - type: symlink
+    path: /opt/datahub/lib
+    uid: 0
+    gid: 0
+    source: /usr/lib/datahub-actions/lib
+  - type: symlink
+    path: /opt/datahub/scripts
+    uid: 0
+    gid: 0
+    source: /usr/share/datahub-actions/scripts
+  - type: symlink
+    path: /home/datahub
+    uid: 0
+    gid: 0
+    source: /home/nonroot
   - type: directory
     path: /home/nonroot
     uid: 65532
