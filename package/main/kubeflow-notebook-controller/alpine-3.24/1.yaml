@@ -1,0 +1,421 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kubeflow-notebook-controller
+variant: runtime
+tags:
+  - 1.11.1-alpine3.24
+  - 1.11.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-04"
+vars:
+  COMMIT_SHA: 88fbd77f777ceea627101699879b7ed5677b8c09
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: kubeflow-notebook-controller-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.11"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.11.1
+  VERSION: 1.11.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubeflow-notebook-controller-1
+      work-dir: /go/src/github.com/kubeflow/notebooks/components/notebook-controller
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - jq
+          - mawk
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/kubeflow/notebooks.git#v1.11.1
+            checksum: 88fbd77f777ceea627101699879b7ed5677b8c09
+            path: /go/src/github.com/kubeflow/notebooks
+            spdx:
+              name: kubeflow-notebook-controller
+              version: 1.11.1
+              packages:
+                - name: kubeflow-notebook-controller
+                  purl: pkg:golang/github.com/kubeflow/notebooks/components/notebook-controller@1.11.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/text@v0.43.0
+              - golang.org/x/sys@v0.49.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test ./controllers/ -count=1 -v -skip '^TestAPIs$'
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/bin/manager
+            packages: .
+        - name: build dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -buildid=
+            output: ${target.dir}/usr/bin/manager-dev
+            packages: .
+            strip: false
+        - name: assemble notices
+          runs: |
+            set -eux -o pipefail
+
+            T="${target.dir}"
+            B="$T/usr/bin/manager"
+            BD="$T/usr/bin/manager-dev"
+            D="$T/usr/share/doc/kubeflow-notebook-controller"
+            work="$(mktemp -d)"
+
+            go version -m "$B" > "$work/buildinfo.txt"
+            test -s "$work/buildinfo.txt"
+            if awk -F'\t' '$2 == "=>" { found = 1 } END { exit !found }' "$work/buildinfo.txt"; then
+              echo "replace directive in build; notice assembly needs a replace-free graph" >&2
+              exit 1
+            fi
+            GOV="$(awk 'NR == 1 { print $2 }' "$work/buildinfo.txt")"
+            case "$GOV" in
+              go1.*) ;;
+              *)
+                echo "unexpected Go version: $GOV" >&2
+                exit 1
+                ;;
+            esac
+            PM="$(awk -F'\t' '$2 == "path" { print $3 }' "$work/buildinfo.txt")"
+            test -n "$PM"
+
+            awk -F'\t' '$2 == "dep" { print $3 " " $4 }' "$work/buildinfo.txt" | LC_ALL=C sort -u > "$work/linked.txt"
+            test -s "$work/linked.txt"
+
+            go version -m "$BD" > "$work/buildinfo-dev.txt"
+            test -s "$work/buildinfo-dev.txt"
+            awk -F'\t' '$2 == "dep" { print $3 " " $4 }' "$work/buildinfo-dev.txt" | LC_ALL=C sort -u > "$work/linked-dev.txt"
+            cmp "$work/linked.txt" "$work/linked-dev.txt"
+
+            settings() {
+              awk -F'\t' '$2 == "build" {
+                k = $3; sub(/=.*/, "", k)
+                if (k ~ /^(CGO_ENABLED|GOOS|GOARCH|GOAMD64|GOARM64|GOEXPERIMENT|GOFIPS140|-tags)$/) print $3
+              }' "$1" | LC_ALL=C sort
+            }
+            settings "$work/buildinfo.txt" > "$work/settings.txt"
+            settings "$work/buildinfo-dev.txt" > "$work/settings-dev.txt"
+            test -s "$work/settings.txt"
+            cmp "$work/settings.txt" "$work/settings-dev.txt"
+            grep -qx 'CGO_ENABLED=0' "$work/settings.txt"
+
+            envs="$(grep -v '^-tags=' "$work/settings.txt" | tr '\n' ' ')"
+            tags="$(sed -n 's/^-tags=//p' "$work/settings.txt")"
+            gofips="$(sed -n 's/^GOFIPS140=//p' "$work/settings.txt")"
+            tagarg=""
+            if [ -n "$tags" ]; then
+              tagarg="-tags=$tags"
+            fi
+            GOROOT="$(go env GOROOT)"
+            GOMODCACHE="$(go env GOMODCACHE)"
+            test -d "$GOROOT"
+            fipsdir="$GOMODCACHE/golang.org/fips140@$gofips"
+
+            env $envs go list -deps $tagarg -f '{{.Standard}}|{{if .Module}}{{.Module.Path}}|{{.Module.Version}}|{{.Module.Dir}}{{else}}||{{end}}|{{.Dir}}|{{join .GoFiles " "}}|{{join .SFiles " "}}|{{join .CgoFiles " "}}|{{.ImportPath}}' . > "$work/pkgs.txt"
+            test -s "$work/pkgs.txt"
+
+            : > "$work/licenses.txt"
+            : > "$work/headers.txt"
+            : > "$work/nonstd.txt"
+            cat > "$work/markers.txt" << 'MARKERS'
+            Redistribution and use
+            Permission is hereby granted
+            Permission to use, copy
+            MIT license
+            Licensed under the
+            public domain
+            SPDX-License-Identifier
+            Mozilla Public License
+            GNU General Public
+            GNU Lesser General
+            MARKERS
+
+            for lic in LICENSE PATENTS; do
+              if [ ! -f "$D/third_party/go@$GOV/$lic" ]; then
+                src="$GOROOT/src/vendor/golang.org/x/crypto/$lic"
+                test -s "$src"
+                case "$lic" in
+                  LICENSE) grep -q 'The Go Authors' "$src" ;;
+                  PATENTS) grep -q 'Additional IP Rights Grant' "$src" ;;
+                esac
+                install -D -m 0644 "$src" "$D/third_party/go@$GOV/$lic"
+                printf 'go@%s\t%s\n' "$GOV" "$lic" >> "$work/licenses.txt"
+              fi
+            done
+
+            while IFS='|' read -r std mpath mver mdir dir gofiles sfiles cgofiles ip <&3; do
+              if [ "$std" = true ]; then
+                if [ -n "$mpath" ]; then
+                  echo "standard package with a module path: $ip" >&2
+                  exit 1
+                fi
+                isfips=no
+                if [ -n "$gofips" ]; then
+                  case "$dir/" in
+                    "$fipsdir"/*) isfips=yes ;;
+                  esac
+                fi
+                if [ "$isfips" = yes ]; then
+                  root="$fipsdir"
+                  name="go@$GOV/fips140@$gofips"
+                else
+                  root="$GOROOT"
+                  name="go@$GOV"
+                fi
+              elif [ -z "$mver" ]; then
+                if [ "$mpath" != "$PM" ]; then
+                  echo "module without a version: $mpath" >&2
+                  exit 1
+                fi
+                continue
+              else
+                test -n "$mdir"
+                root="$mdir"
+                name="$mpath@$mver"
+                printf '%s %s\n' "$mpath" "$mver" >> "$work/nonstd.txt"
+              fi
+              test -n "$dir"
+              case "$dir/" in
+                "$root/"*) ;;
+                *)
+                  echo "Dir $dir is not under its root $root" >&2
+                  exit 1
+                  ;;
+              esac
+
+              : > "$work/walk.txt"
+              d="$dir"
+              while :; do
+                find "$d" -maxdepth 1 -type f \( -iname 'LICEN[CS]E*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'PATENTS*' \) >> "$work/walk.txt"
+                if [ "$d" = "$root" ]; then
+                  break
+                fi
+                d="$(dirname "$d")"
+              done
+
+              : > "$work/texts.txt"
+              while IFS= read -r f; do
+                cat "$f" >> "$work/texts.txt"
+              done < "$work/walk.txt"
+              if [ "$root" = "$GOROOT" ]; then
+                for lic in LICENSE PATENTS; do
+                  cat "$D/third_party/go@$GOV/$lic" >> "$work/texts.txt"
+                done
+              fi
+
+              while IFS= read -r f; do
+                rel="$(printf '%s\n' "$f" | sed "s#^$root/##")"
+                printf '%s\t%s\n' "$name" "$rel" >> "$work/licenses.txt"
+                install -D -m 0644 "$f" "$D/third_party/$name/$rel"
+              done < "$work/walk.txt"
+
+              for s in $gofiles $sfiles $cgofiles; do
+                src="$dir/$s"
+                test -f "$src"
+                case "$s" in
+                  *.s) stop='^(TEXT|GLOBL|DATA|#include)' ;;
+                  *) stop='^package ' ;;
+                esac
+                awk -v stop="$stop" '$0 ~ stop { exit } { print }' "$src" > "$work/hdr.txt"
+                reasons=""
+                while IFS= read -r m; do
+                  if grep -qiF -- "$m" "$work/hdr.txt" && ! grep -qiF -- "$m" "$work/texts.txt"; then
+                    reasons="$reasons marker:$m"
+                  fi
+                done < "$work/markers.txt"
+                if grep -qiF -e 'Redistribution and use' -e 'Permission is hereby granted' -e 'Permission to use, copy' "$work/hdr.txt"; then
+                  awk '/[Cc]opyright[[:space:]]+(\([Cc]\)[[:space:]]*)?[A-Z0-9]/' "$work/hdr.txt" \
+                    | sed -e 's/^.*[Cc]opyright//' -e 's/([Cc])//g' -e 's/©//g' -e 's/[0-9][0-9,-]*//g' \
+                      -e 's/[Aa]ll rights reserved.*$//' -e 's/^[ ,.]*//' -e 's/[ ,.]*$//' > "$work/holders.txt"
+                  while IFS= read -r h; do
+                    if [ -n "$h" ] && ! grep -qiF -- "$h" "$work/texts.txt"; then
+                      reasons="$reasons holder:$h"
+                    fi
+                  done < "$work/holders.txt"
+                fi
+                if [ -n "$reasons" ]; then
+                  test -s "$work/hdr.txt"
+                  srel="$(printf '%s\n' "$src" | sed "s#^$root/##")"
+                  install -D -m 0644 "$work/hdr.txt" "$D/third_party/$name/$srel.header"
+                  printf '%s/%s.header\t%s\n' "$name" "$srel" "$reasons" >> "$work/headers.txt"
+                fi
+              done
+            done 3< "$work/pkgs.txt"
+
+            test -s "$work/licenses.txt"
+            LC_ALL=C sort -u "$work/licenses.txt" > "$work/licenses-sorted.txt"
+            LC_ALL=C sort -u "$work/nonstd.txt" > "$work/nonstd-sorted.txt"
+            cmp "$work/linked.txt" "$work/nonstd-sorted.txt"
+
+            awk -F'\t' '
+              {
+                name = $1
+                if (name ~ /^go@/) {
+                  if (index(name, "/fips140@") > 0) {
+                    label = "fips140 " substr(name, index(name, "/fips140@") + 9)
+                  } else {
+                    label = "stdlib " substr(name, 4)
+                  }
+                } else {
+                  i = index(name, "@")
+                  label = substr(name, 1, i - 1) " " substr(name, i + 1)
+                }
+                files[label] = files[label] " " $2
+              }
+              END { for (l in files) print l files[l] }
+            ' "$work/licenses-sorted.txt" | LC_ALL=C sort > "$D/third_party/MODULES.txt"
+            test -s "$D/third_party/MODULES.txt"
+            test -f "$D/third_party/go@$GOV/LICENSE"
+            while IFS=' ' read -r p v; do
+              test -n "$(find "$D/third_party/$p@$v" -maxdepth 1 -type f \( -iname 'LICEN[CS]E*' -o -iname 'COPYING*' \))"
+            done < "$work/linked.txt"
+            if [ -s "$work/headers.txt" ]; then
+              LC_ALL=C sort "$work/headers.txt" > "$D/third_party/HEADERS.txt"
+            else
+              : > "$D/third_party/HEADERS.txt"
+            fi
+
+            if grep -rlE 'Mozilla Public License|GNU General Public License|GNU Lesser General Public License' "$D"; then
+              echo "copyleft license text found in the notice bundle" >&2
+              exit 1
+            fi
+
+            find "$D/third_party" -mindepth 1 -type d -name '*@*' -not -path "$D/third_party/go@*" -print \
+              | sed "s#^$D/third_party/##" | LC_ALL=C sort > "$work/dirs.txt"
+            awk '{ print $1 "@" $2 }' "$work/linked.txt" | LC_ALL=C sort > "$work/linkeddirs.txt"
+            cmp "$work/linkeddirs.txt" "$work/dirs.txt"
+            test -f ../../LICENSE
+            grep -q 'Apache License' ../../LICENSE
+            install -D -m 0644 ../../LICENSE "$D/LICENSE"
+
+            rm -r "$work"
+
+            cp -a "$D" "$T/usr/share/doc/kubeflow-notebook-controller-dev"
+            test -s "$T/usr/share/doc/kubeflow-notebook-controller-dev/LICENSE"
+            test -s "$T/usr/share/doc/kubeflow-notebook-controller-dev/third_party/MODULES.txt"
+            test -s /opt/docker/sbom/kubeflow-notebook-controller/.spdx.kubeflow-notebook-controller.json
+            install -d "$T/opt/docker/sbom"
+            cp -a /opt/docker/sbom/kubeflow-notebook-controller "$T/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/kubeflow-notebook-controller "$T/opt/docker/sbom/kubeflow-notebook-controller-dev"
+        - name: stage binary for sbom scan
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /tmp/sbom-check
+            install -D -m 0755 "${target.dir}/usr/bin/manager" /tmp/sbom-check/manager
+            test -s /tmp/sbom-check/manager
+        - name: binary sbom
+          uses: sbom@v1
+          with:
+            prefix: kubeflow-notebook-controller-binscan
+            source: /tmp/sbom-check
+        - name: reconcile sbom with notice bundle
+          runs: |
+            set -eux -o pipefail
+
+            work="$(mktemp -d)"
+            sbom=/opt/docker/sbom/kubeflow-notebook-controller-binscan/.spdx.kubeflow-notebook-controller-binscan.json
+            D="${target.dir}/usr/share/doc/kubeflow-notebook-controller"
+            test -s "$sbom"
+
+            jq -r '.packages[]? | .externalRefs[]? | select(.referenceType == "purl") | .referenceLocator' "$sbom" > "$work/purls.txt"
+            test -s "$work/purls.txt"
+            grep '^pkg:golang/' "$work/purls.txt" \
+              | sed -e 's#^pkg:golang/##' -e 's/?.*$//' -e 's/%2[bB]/+/g' \
+              | tr 'A-Z' 'a-z' | LC_ALL=C sort -u > "$work/sbom-all.txt"
+            test -s "$work/sbom-all.txt"
+
+            GOV="$(go version -m "${target.dir}/usr/bin/manager" | awk 'NR == 1 { print $2 }')"
+            goVer="$(printf '%s\n' "$GOV" | sed 's/^go//')"
+            grep -qx "stdlib@v$goVer" "$work/sbom-all.txt"
+            test "$(grep -c '^stdlib@' "$work/sbom-all.txt")" -eq 1
+
+            grep -v -e '^stdlib@' -e '^github.com/kubeflow/notebooks/components/notebook-controller@' "$work/sbom-all.txt" \
+              > "$work/sbom-deps.txt"
+
+            fipsver="$(awk '$1 == "fips140" { print $2 }' "$D/third_party/MODULES.txt")"
+            if [ -n "$fipsver" ]; then
+              fipsexpect="golang.org/fips140@$(printf '%s' "$fipsver" | tr 'A-Z' 'a-z')"
+            else
+              fipsexpect=""
+            fi
+            awk -v v="$fipsexpect" 'index($0, "golang.org/fips140@") == 1 && $0 != v { bad = 1 } END { exit bad }' "$work/sbom-deps.txt"
+            awk '$0 !~ /^golang\.org\/fips140@/' "$work/sbom-deps.txt" > "$work/sbom-mods.txt"
+
+            awk '$1 != "stdlib" && $1 != "fips140" { print tolower($1) "@" tolower($2) }' "$D/third_party/MODULES.txt" \
+              | LC_ALL=C sort -u > "$work/bundle.txt"
+            test -s "$work/bundle.txt"
+            cmp "$work/sbom-mods.txt" "$work/bundle.txt"
+
+            rm -r /opt/docker/sbom/kubeflow-notebook-controller-binscan /tmp/sbom-check
+            rm -r "$work"
+        - uses: dhi/build-pkg:0
+          with:
+            commit: 88fbd77f777ceea627101699879b7ed5677b8c09
+            description: Kubeflow Notebook Controller
+            files:
+              - usr/bin/manager
+              - usr/share/doc/kubeflow-notebook-controller
+              - opt/docker/sbom/kubeflow-notebook-controller
+            license: Apache-2.0
+            name: kubeflow-notebook-controller-1
+            rel: 0
+            subpackages:
+              - description: Kubeflow Notebook Controller debug build
+                files:
+                  - path: usr/bin/manager
+                    source: usr/bin/manager-dev
+                  - path: usr/share/doc/kubeflow-notebook-controller
+                    source: usr/share/doc/kubeflow-notebook-controller-dev
+                  - path: opt/docker/sbom/kubeflow-notebook-controller
+                    source: opt/docker/sbom/kubeflow-notebook-controller-dev
+                name: kubeflow-notebook-controller-1-dev
+            url: https://github.com/kubeflow/notebooks
+            version: 1.11.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
