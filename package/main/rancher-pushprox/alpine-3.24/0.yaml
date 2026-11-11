@@ -1,0 +1,239 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-rancher-pushprox
+variant: runtime
+tags:
+  - 0.1.11-alpine3.24
+  - 0.1.11-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7faa61631ac414ec0cb2425f4ab5c6a790ab4ffa
+  GOLANG_VERSION: 1.26.10-r0
+  PACKAGE_NAME: rancher-pushprox-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.1"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.1.11
+  VERSION: 0.1.11
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: rancher-pushprox-0
+      work-dir: /go/src/github.com/rancher/pushprox
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.26=1.26.10-r0
+          - golang-1.26-oci-config=1.26.10-r0
+        files:
+          - url: git+https://github.com/rancher/PushProx.git#v0.1.11
+            checksum: 7faa61631ac414ec0cb2425f4ab5c6a790ab4ffa
+            path: /go/src/github.com/rancher/pushprox
+            spdx:
+              name: pushprox
+              version: 0.1.11
+              packages:
+                - name: pushprox
+                  purl: pkg:golang/github.com/rancher/pushprox@0.1.11
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            test "$(go env GOTOOLCHAIN)" = local
+            go version | grep -q 'go1\.26\.'
+            GODEBUG='' go test ./... -count=1
+        - name: build proxy
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+            output: ${target.dir}/usr/bin/pushprox-proxy
+            packages: ./cmd/proxy
+        - name: build client
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+            output: ${target.dir}/usr/bin/pushprox-client
+            packages: ./cmd/client
+        - name: build proxy dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -checklinkname=1
+            output: ${target.dir}/usr/bin/pushprox-proxy-dev
+            packages: ./cmd/proxy
+            strip: false
+        - name: build client dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -checklinkname=1
+            output: ${target.dir}/usr/bin/pushprox-client-dev
+            packages: ./cmd/client
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            for bin in pushprox-proxy pushprox-client; do
+              runtime="${target.dir}/usr/bin/${bin}"
+              dev="${target.dir}/usr/bin/${bin}-dev"
+              test -x "$runtime"
+              test -x "$dev"
+
+              go version -m "$runtime" > "/tmp/${bin}-runtime-buildinfo.txt"
+              go version -m "$dev" > "/tmp/${bin}-dev-buildinfo.txt"
+
+              grep -q 'go1\.26\.' "/tmp/${bin}-runtime-buildinfo.txt"
+              grep -q 'go1\.26\.' "/tmp/${bin}-dev-buildinfo.txt"
+              grep -q 'github.com/rancher/pushprox' "/tmp/${bin}-runtime-buildinfo.txt"
+              grep -q 'CGO_ENABLED=0' "/tmp/${bin}-runtime-buildinfo.txt"
+              grep -q 'CGO_ENABLED=0' "/tmp/${bin}-dev-buildinfo.txt"
+              grep -F -q -- '-trimpath=true' "/tmp/${bin}-runtime-buildinfo.txt"
+              if grep -F -q -- '-trimpath=true' "/tmp/${bin}-dev-buildinfo.txt"; then
+                echo "dev binary must not be built with -trimpath" >&2
+                exit 1
+              fi
+
+              runtime_ldflags=$(grep -F -- '-ldflags=' "/tmp/${bin}-runtime-buildinfo.txt")
+              printf '%s\n' "$runtime_ldflags" | grep -Eq '(^|[[:space:]="])-s([[:space:]"]|$)'
+              printf '%s\n' "$runtime_ldflags" | grep -Eq '(^|[[:space:]="])-w([[:space:]"]|$)'
+
+              dev_ldflags=$(grep -F -- '-ldflags=' "/tmp/${bin}-dev-buildinfo.txt")
+              if printf '%s\n' "$dev_ldflags" | grep -Eq '(^|[[:space:]="])-w([[:space:]"]|$)'; then
+                echo "dev binary ldflags must not include -w" >&2
+                exit 1
+              fi
+              if printf '%s\n' "$dev_ldflags" | grep -Eq '(^|[[:space:]="])-s([[:space:]"]|$)'; then
+                echo "dev binary ldflags must not include -s" >&2
+                exit 1
+              fi
+
+              if grep -aq 'OpenSSL ' "$runtime"; then
+                echo "runtime binary must not carry an OpenSSL banner" >&2
+                exit 1
+              fi
+
+              if [ "false" = "true" ]; then
+                grep -aqF 'crypto/internal/fips140/v' "$runtime"
+                grep -aqF 'crypto/internal/fips140/v' "$dev"
+              else
+                if grep -aqF 'crypto/internal/fips140/v' "$runtime"; then
+                  echo "runtime binary must not link the Go FIPS module" >&2
+                  exit 1
+                fi
+              fi
+            done
+        - name: proxy binary sbom
+          uses: sbom@v1
+          with:
+            prefix: pushprox-proxy
+            source: ${target.dir}/usr/bin/pushprox-proxy
+        - name: client binary sbom
+          uses: sbom@v1
+          with:
+            prefix: pushprox-client
+            source: ${target.dir}/usr/bin/pushprox-client
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/rancher/pushprox
+            test -s "$src/LICENSE"
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+
+            source_sbom=/opt/docker/sbom/pushprox/.spdx.pushprox.json
+            test -s "$source_sbom"
+            grep -q 'pkg:golang/github.com/rancher/pushprox@0.1.11' "$source_sbom"
+
+            for bin in pushprox-proxy pushprox-client; do
+              sbom="/opt/docker/sbom/${bin}/.spdx.${bin}.json"
+              test -s "$sbom"
+              grep -q 'github.com/rancher/pushprox' "$sbom"
+              grep -q 'github.com/prometheus/client_golang' "$sbom"
+            done
+
+            for root in "${target.dir}" "${target.dir}/dev"; do
+              install -D -m 0644 "$src/LICENSE" "$root/usr/share/licenses/rancher-pushprox/LICENSE"
+              install -d "$root/opt/docker/sbom"
+              cp -a /opt/docker/sbom/pushprox "$root/opt/docker/sbom/"
+              test -s "$root/opt/docker/sbom/pushprox/.spdx.pushprox.json"
+              for bin in pushprox-proxy pushprox-client; do
+                cp -a "/opt/docker/sbom/${bin}" "$root/opt/docker/sbom/"
+                test -s "$root/opt/docker/sbom/${bin}/.spdx.${bin}.json"
+              done
+              test -s "$root/usr/share/licenses/rancher-pushprox/LICENSE"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: Rancher PushProx proxy and client for scraping targets behind NAT or firewalls
+            files:
+              - usr/bin/pushprox-proxy
+              - usr/bin/pushprox-client
+              - usr/share/licenses/rancher-pushprox/LICENSE
+              - opt/docker/sbom/pushprox
+              - opt/docker/sbom/pushprox-proxy
+              - opt/docker/sbom/pushprox-client
+            license: Apache-2.0
+            name: rancher-pushprox-0
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/pushprox-proxy
+                    source: usr/bin/pushprox-proxy-dev
+                  - path: usr/bin/pushprox-client
+                    source: usr/bin/pushprox-client-dev
+                  - path: usr/share/licenses/rancher-pushprox/LICENSE
+                    source: dev/usr/share/licenses/rancher-pushprox/LICENSE
+                  - path: opt/docker/sbom/pushprox
+                    source: dev/opt/docker/sbom/pushprox
+                  - path: opt/docker/sbom/pushprox-proxy
+                    source: dev/opt/docker/sbom/pushprox-proxy
+                  - path: opt/docker/sbom/pushprox-client
+                    source: dev/opt/docker/sbom/pushprox-client
+                name: rancher-pushprox-0-dev
+            url: https://github.com/rancher/PushProx
+            version: 0.1.11
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
