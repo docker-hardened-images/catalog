@@ -4,9 +4,9 @@ image: dhi.io/pkg-wiremock-gui
 variant: runtime
 tags:
   - 3.13.217
-  - 3.13.217-r2
+  - 3.13.217-r3
   - 3.13.217-debian13
-  - 3.13.217-r2-debian13
+  - 3.13.217-r3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,12 +16,16 @@ vars:
   COMMIT_SHA: b788db35f518ec29d66f691745f95404aaef9dd7
   GRADLE_REFERENCE: dhi/gradle:8.14.6-3-jdk17-debian13-dev@sha256:451a5a8dbd985eaeed684dd1409d387bc072e91456dde55434ea14cf9c34b80f
   PACKAGE_NAME: wiremock-gui
-  REL: "2"
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "3.13"
   SEMVER_MAJOR_VERSION: "3"
   SEMVER_VERSION: 3.13.217
   VERSION: 3.13.217
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
   builds:
@@ -71,12 +75,26 @@ contents:
           with:
             bumps: ${source.dir}/patch/npm-bumps.json
             npm-root: ${source.dir}/wiremock-gui/webapp/wiremock
+        - name: relocate handlebars ext helper imports
+          runs: |
+            set -eux -o pipefail
+
+            sed -i \
+              -e 's|^import com\.github\.jknack\.handlebars\.helper\.AssignHelper;|import com.github.jknack.handlebars.helper.ext.AssignHelper;|' \
+              -e 's|^import com\.github\.jknack\.handlebars\.helper\.NumberHelper;|import com.github.jknack.handlebars.helper.ext.NumberHelper;|' \
+              ${source.dir}/wiremock-gui/src/main/java/com/github/tomakehurst/wiremock/extension/responsetemplating/TemplateEngine.java
+
+            grep -q '^import com\.github\.jknack\.handlebars\.helper\.ext\.AssignHelper;' \
+              ${source.dir}/wiremock-gui/src/main/java/com/github/tomakehurst/wiremock/extension/responsetemplating/TemplateEngine.java
+            grep -q '^import com\.github\.jknack\.handlebars\.helper\.ext\.NumberHelper;' \
+              ${source.dir}/wiremock-gui/src/main/java/com/github/tomakehurst/wiremock/extension/responsetemplating/TemplateEngine.java
         - name: build
           privileged: true
           runs: |
             set -eux -o pipefail
 
-            gradle shadowJar --no-daemon --console=plain \
+            gradle --init-script ${source.dir}/dhi-runtime-deps.init.gradle \
+              shadowJar dhiCopyRuntimeDeps --no-daemon --console=plain \
               -x spotlessCheck -x spotlessJavaCheck -x spotlessJava
         - name: install production dependencies for sbom
           work-dir: ${source.dir}/wiremock-gui/webapp/wiremock
@@ -92,6 +110,12 @@ contents:
             extra-scanners: javascript-package-cataloger
             prefix: wiremock-gui-ui
             source: ${source.dir}/wiremock-gui/webapp/wiremock/node_modules
+        - name: runtime dependency jars sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: wiremock-gui-runtime-deps
+            source: ${source.dir}/wiremock-gui/build/dhi-runtime-deps
         - name: install
           runs: |
             set -eux -o pipefail
@@ -108,7 +132,7 @@ contents:
               - deb
             license: Apache-2.0
             name: wiremock-gui
-            rel: 2
+            rel: 3
             url: https://github.com/holomekc/wiremock
             version: 3.13.217
       paths:
@@ -117,6 +141,11 @@ contents:
           uid: 0
           gid: 0
           source: package/main/wiremock-gui/patch/npm-bumps.json
+        - type: file
+          path: ${source.dir}/dhi-runtime-deps.init.gradle
+          uid: 0
+          gid: 0
+          source: package/main/wiremock-gui/files/dhi-runtime-deps.init.gradle
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
