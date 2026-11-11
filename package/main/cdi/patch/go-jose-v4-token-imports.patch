@@ -5,7 +5,7 @@ CVE: CVE-2026-116585
 CVE: CVE-2026-116586
 CVE: CVE-2026-116587
 Base-Tree: git https://github.com/kubevirt/containerized-data-importer c8129be0728afa1a2c49b69b1c0847a42730a732
-Adaptation: Switch import paths to go-jose/v4, adjust jwt.ParseSigned and Serialize for the v4 API, and pin v4.1.6 via go/bump.
+Adaptation: Switch import paths to go-jose/v4, adjust Serialize for the v4 API, restrict jwt.ParseSigned to PS256 (the only algorithm upstream signs with, matching the pre-cutover cdi-apiserver patch), and pin v4.1.6 via go/bump.
 Verify: cmd `bash -c 'u=$(mktemp -d) && git clone -q --depth 1 --branch v1.66.1 https://github.com/kubevirt/containerized-data-importer.git "$u" && patch -p1 --dry-run -d "$u" < package/main/cdi/patch/go-jose-v4-token-imports.patch'` expect "checking file pkg/token/token.go"
 Forwarded: not-needed
 Drop-When: never: upstream v1.66.x still ships go-jose/v3 in pkg/token without equivalent v4.1.6+ migration
@@ -24,19 +24,16 @@ diff --git a/pkg/token/token.go b/pkg/token/token.go
  	"github.com/pkg/errors"
  
  	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-@@ -68,7 +68,10 @@ func NewValidator(issuer string, key *rsa.PublicKey, leeway time.Duration) Val
+@@ -68,7 +68,7 @@ func NewValidator(issuer string, key *rsa.PublicKey, leeway time.Duration) Val
  
  // Validate checks the token signature and returns the contents
  func (v *validator) Validate(token string) (*Payload, error) {
 -	tok, err := jwt.ParseSigned(token)
-+	tok, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{
-+		jose.PS256,
-+		jose.RS256,
-+	})
++	tok, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{jose.PS256})
  	if err != nil {
  		return nil, err
  	}
-@@ -125,5 +128,5 @@ func (g *generator) Generate(payload *Payload) (string, error) {
+@@ -125,5 +125,5 @@ func (g *generator) Generate(payload *Payload) (string, error) {
  			NotBefore: jwt.NewNumericDate(t),
  			Expiry:    jwt.NewNumericDate(t.Add(g.lifetime)),
  		}).
