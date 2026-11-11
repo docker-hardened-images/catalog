@@ -1,0 +1,171 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-aws-controllers-k8s-sns-controller
+variant: runtime
+tags:
+  - 1.13.0-alpine3.24
+  - 1.13.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2023-04-06"
+vars:
+  COMMIT_SHA: a1f0e5b19582a199ae3e6fbb071ced23b40d9655
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: aws-controllers-k8s-sns-controller-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.13"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.13.0
+  VERSION: 1.13.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: aws-controllers-k8s-sns-controller-1
+      work-dir: /go/src/github.com/aws-controllers-k8s/sns-controller
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/aws-controllers-k8s/sns-controller.git#v1.13.0
+            checksum: a1f0e5b19582a199ae3e6fbb071ced23b40d9655
+            path: /go/src/github.com/aws-controllers-k8s/sns-controller
+            spdx:
+              name: sns-controller
+              version: 1.13.0
+              packages:
+                - name: sns-controller
+                  purl: pkg:golang/github.com/aws-controllers-k8s/sns-controller@1.13.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            go test -count=1 ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.GitVersion=1.13.0
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.GitCommit=a1f0e5b19582a199ae3e6fbb071ced23b40d9655
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-sns-controller
+            packages: ./cmd/controller
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.GitVersion=1.13.0
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.GitCommit=a1f0e5b19582a199ae3e6fbb071ced23b40d9655
+              - -X github.com/aws-controllers-k8s/sns-controller/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-sns-controller-dev
+            packages: ./cmd/controller
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/bin/ack-sns-controller
+            devbin=${target.dir}/usr/bin/ack-sns-controller-dev
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qxF "$(printf '\tbuild\tCGO_ENABLED=0')" /tmp/buildinfo.txt
+              grep -qF "pkg/version.GitVersion=1.13.0" /tmp/buildinfo.txt
+              grep -qF "pkg/version.GitCommit=a1f0e5b19582a199ae3e6fbb071ced23b40d9655" /tmp/buildinfo.txt
+              if grep -qF "pkg/version.GitVersion=v" /tmp/buildinfo.txt; then
+                echo "$bin: GitVersion must not carry a v prefix" >&2
+                exit 1
+              fi
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' /tmp/buildinfo.txt
+              elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if go version -m "$devbin" | grep -E -- '-trimpath=true|-w( |"|$)'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/aws-controllers-k8s/sns-controller
+            test -s /opt/docker/sbom/sns-controller/.spdx.sns-controller.json
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+            grep -q 'Copyright 2019 Amazon.com' "$src/NOTICE"
+            test -s "$src/ATTRIBUTION.md"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/sns-controller "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/sns-controller "${target.dir}/opt/docker/sbom-dev/"
+            for f in LICENSE NOTICE ATTRIBUTION.md; do
+              install -D -m 0644 "$src/$f" "${target.dir}/usr/share/licenses/aws-controllers-k8s-sns-controller/$f"
+              install -D -m 0644 "$src/$f" "${target.dir}/usr/share/licenses/aws-controllers-k8s-sns-controller-dev/$f"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            description: AWS Controllers for Kubernetes (ACK) controller for Amazon SNS
+            files:
+              - usr/bin/ack-sns-controller
+              - opt/docker/sbom/sns-controller
+              - usr/share/licenses/aws-controllers-k8s-sns-controller/LICENSE
+              - usr/share/licenses/aws-controllers-k8s-sns-controller/NOTICE
+              - usr/share/licenses/aws-controllers-k8s-sns-controller/ATTRIBUTION.md
+            license: Apache-2.0
+            name: aws-controllers-k8s-sns-controller-1
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/ack-sns-controller
+                    source: usr/bin/ack-sns-controller-dev
+                  - path: opt/docker/sbom/sns-controller
+                    source: opt/docker/sbom-dev/sns-controller
+                  - path: usr/share/licenses/aws-controllers-k8s-sns-controller/LICENSE
+                    source: usr/share/licenses/aws-controllers-k8s-sns-controller-dev/LICENSE
+                  - path: usr/share/licenses/aws-controllers-k8s-sns-controller/NOTICE
+                    source: usr/share/licenses/aws-controllers-k8s-sns-controller-dev/NOTICE
+                  - path: usr/share/licenses/aws-controllers-k8s-sns-controller/ATTRIBUTION.md
+                    source: usr/share/licenses/aws-controllers-k8s-sns-controller-dev/ATTRIBUTION.md
+                name: aws-controllers-k8s-sns-controller-1-dev
+            url: https://github.com/aws-controllers-k8s/sns-controller
+            version: 1.13.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
