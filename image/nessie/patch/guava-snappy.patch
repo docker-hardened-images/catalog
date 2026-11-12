@@ -1,0 +1,36 @@
+Subject: Force guava 33.7.2-jre and snappy-java 1.1.10.9 for CVE remediation
+Description: Quarkus platform BOM resolution can still select guava <= 33.7.1 and
+  snappy-java <= 1.1.10.8 transitively in the Nessie Quarkus server module (also
+  CVE-2026-108106, CVE-2026-93451, CVE-2026-116590 on snappy-java). Add a Gradle
+  resolutionStrategy.force block so the fast-jar and SBOM reflect patched jars.
+Origin: DHI-internal (nessie CVE remediation)
+CVE: CVE-2026-102554
+Base-Tree: git https://github.com/projectnessie/nessie 261e936e2b72a130ebc5e3a10b8b1e9d55eb6872 servers/quarkus-server/build.gradle.kts
+Adaptation: Insert force block after publishingHelper once jackson, netty, reactor, opentelemetry, and postgresql force patches are applied.
+Regenerate: `root=$(git rev-parse --show-toplevel) && rm -rf /tmp/nessie-guava && git clone --depth 1 --branch nessie-0.109.0 https://github.com/projectnessie/nessie.git /tmp/nessie-guava && cd /tmp/nessie-guava && for p in jackson-core-2.22.3 netty-4.2.17 reactor-core-3.7.19 opentelemetry-1.62.0 postgresql-42.7.12; do patch -p1 -s < "$root/image/nessie/patch/${p}.patch"; done && git add -A && git -c user.email=regen@example.com -c user.name=regen commit -q --no-gpg-sign -m baseline && python3 -c 'from pathlib import Path; p=Path("servers/quarkus-server/build.gradle.kts"); t=p.read_text(); ins="// CVE-2026-102554, CVE-2026-108106, CVE-2026-93451, CVE-2026-116590: Quarkus BOM can resolve\n// guava <= 33.7.1 and snappy-java <= 1.1.10.8 transitively. Force fixed releases for fast-jar/SBOM.\nconfigurations.configureEach {\n  resolutionStrategy {\n    force(\n      \"com.google.guava:guava:33.7.2-jre\",\n      \"org.xerial.snappy:snappy-java:1.1.10.9\",\n    )\n  }\n}\n\n"; old="publishingHelper { mavenName = \"Nessie - Quarkus Server\" }\n\n"; p.write_text(t.replace(old, old+ins, 1))' && git diff -- servers/quarkus-server/build.gradle.kts | sed -E '/^index /d; s/^(@@[^@]*@@).*/\1/'`
+Forwarded: not-needed (DHI Gradle force overlay until upstream BOM pins fixed versions)
+Drop-When: dependency com.google.guava:guava >= 33.7.2-jre (and org.xerial.snappy:snappy-java >= 1.1.10.9)
+Verify: cmd `dhi def build --fast image/nessie/debian-13/0.yaml` expect BUILD SUCCESSFUL; cmd `dhi def sbom image/nessie/debian-13/0.yaml` expect guava 33.7.2-jre and snappy-java 1.1.10.9
+
+---
+diff --git a/servers/quarkus-server/build.gradle.kts b/servers/quarkus-server/build.gradle.kts
+--- a/servers/quarkus-server/build.gradle.kts
++++ b/servers/quarkus-server/build.gradle.kts
+@@ -30,6 +30,17 @@
+ 
+ publishingHelper { mavenName = "Nessie - Quarkus Server" }
+ 
++// CVE-2026-102554, CVE-2026-108106, CVE-2026-93451, CVE-2026-116590: Quarkus BOM can resolve
++// guava <= 33.7.1 and snappy-java <= 1.1.10.8 transitively. Force fixed releases for fast-jar/SBOM.
++configurations.configureEach {
++  resolutionStrategy {
++    force(
++      "com.google.guava:guava:33.7.2-jre",
++      "org.xerial.snappy:snappy-java:1.1.10.9",
++    )
++  }
++}
++
+ // CVE-2026-54291 (GHSA-j92g-9f8w-j867): pgjdbc SCRAM-SHA-256-PLUS channel binding downgrade,
+ // fixed in 42.7.12. The Quarkus platform BOM can still constrain pgjdbc to 42.7.11,
+ // so force the resolved jar to 42.7.12 so the fast-jar packaging and the SBOM/Scout scan
