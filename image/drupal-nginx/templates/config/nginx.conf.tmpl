@@ -1,0 +1,148 @@
+# Upstream compiles these modules into the nginx binary. The hardened image
+# installs them from the DHI nginx-stable module packages instead, so they are
+# loaded dynamically here. The directives they provide (brotli, upload_progress,
+# vhost_traffic_status) are unchanged.
+load_module                     modules/ngx_http_brotli_filter_module.so;
+load_module                     modules/ngx_http_brotli_static_module.so;
+load_module                     modules/ngx_http_uploadprogress_module.so;
+load_module                     modules/ngx_http_vhost_traffic_status_module.so;
+
+# The container runs as an unprivileged user, so nginx cannot switch users and
+# the `user` directive is only emitted when explicitly requested (dev variant).
+{{- if getenv "NGINX_USER" }}
+user                            {{ getenv "NGINX_USER" }};
+{{- end }}
+daemon                          off;
+pid                             {{ getenv "NGINX_PID_FILE" "/run/nginx/nginx.pid" }};
+worker_processes                {{ getenv "NGINX_WORKER_PROCESSES" "auto" }};
+error_log                       /proc/self/fd/2 {{ getenv "NGINX_ERROR_LOG_LEVEL" "error" }};
+
+events {
+    worker_connections          {{ getenv "NGINX_WORKER_CONNECTIONS" "1024" }};
+    multi_accept                {{ getenv "NGINX_MULTI_ACCEPT" "on" }};
+}
+
+http {
+    {{- if getenv "NGINX_METRICS_ENABLED" }}
+    vhost_traffic_status_zone;
+    {{- end }}
+
+    include                     /etc/nginx/mime.types;
+    default_type                application/octet-stream;
+
+    {{- if getenv "NGINX_LOG_FORMAT_OVERRIDE" }}
+    log_format                  custom '{{ getenv "NGINX_LOG_FORMAT_OVERRIDE" }}';
+    access_log                  /proc/self/fd/1 custom;
+    {{- else }}
+    access_log                  /proc/self/fd/1 combined;
+    {{- end }}
+
+    send_timeout                {{ getenv "NGINX_SEND_TIMEOUT" "60s" }};
+    sendfile                    {{ getenv "NGINX_SENDFILE" "on" }};
+    client_body_timeout         {{ getenv "NGINX_CLIENT_BODY_TIMEOUT" "60s" }};
+    client_header_timeout       {{ getenv "NGINX_CLIENT_HEADER_TIMEOUT" "60s" }};
+    client_max_body_size        {{ getenv "NGINX_CLIENT_MAX_BODY_SIZE" "32m" }};
+    client_body_buffer_size     {{ getenv "NGINX_CLIENT_BODY_BUFFER_SIZE" "16k" }};
+    client_header_buffer_size   {{ getenv "NGINX_CLIENT_HEADER_BUFFER_SIZE" "4k" }};
+    large_client_header_buffers {{ getenv "NGINX_LARGE_CLIENT_HEADER_BUFFERS" "8 16K" }};
+    keepalive_timeout           {{ getenv "NGINX_KEEPALIVE_TIMEOUT" "75s" }};
+    keepalive_requests          {{ getenv "NGINX_KEEPALIVE_REQUESTS" "100" }};
+    reset_timedout_connection   {{ getenv "NGINX_RESET_TIMEDOUT_CONNECTION" "off" }};
+    tcp_nodelay                 {{ getenv "NGINX_TCP_NODELAY" "on" }};
+    tcp_nopush                  {{ getenv "NGINX_TCP_NOPUSH" "on" }};
+    server_tokens               {{ getenv "NGINX_SERVER_TOKENS" "off" }};
+    underscores_in_headers      {{ getenv "NGINX_UNDERSCORES_IN_HEADERS" "off" }};
+
+    upload_progress             {{ getenv "NGINX_UPLOAD_PROGRESS" "uploads 1m" }};
+
+    brotli                      {{ getenv "NGINX_BROTLI" "on" }};
+    brotli_static               {{ getenv "NGINX_BROTLI_STATIC" "on" }};
+    brotli_comp_level           {{ getenv "NGINX_BROTLI_COMP_LEVEL" "1" }};
+    brotli_types                application/atom+xml
+                                application/geo+json
+                                application/javascript
+                                application/json
+                                application/ld+json
+                                application/manifest+json
+                                application/rdf+xml
+                                application/rss+xml
+                                application/vnd.ms-fontobject
+                                application/wasm
+                                application/x-font-opentype
+                                application/x-font-truetype
+                                application/x-font-ttf
+                                font/eot
+                                font/opentype
+                                font/otf
+                                image/bmp
+                                image/svg+xml
+                                image/vnd.microsoft.icon
+                                image/x-icon
+                                image/x-win-bitmap
+                                text/cache-manifest
+                                text/css
+                                text/javascript
+                                text/markdown
+                                text/plain
+                                text/x-component
+                                text/x-cross-domain-policy
+                                text/xml
+                                application/x-javascript
+                                application/x-web-app-manifest+json
+                                application/xhtml+xml
+                                application/xml
+                                application/xml+rss;
+
+    gzip                        {{ getenv "NGINX_GZIP" "on" }};
+    gzip_buffers                {{ getenv "NGINX_GZIP_BUFFERS" "16 8k" }};
+    gzip_comp_level             {{ getenv "NGINX_GZIP_COMP_LEVEL" "1" }};
+    gzip_http_version           {{ getenv "NGINX_GZIP_HTTP_VERSION" "1.1" }};
+    gzip_min_length             {{ getenv "NGINX_GZIP_MIN_LENGTH" "20" }};
+    gzip_vary                   {{ getenv "NGINX_GZIP_VARY" "on" }};
+    gzip_proxied                {{ getenv "NGINX_GZIP_PROXIED" "any" }};
+    gzip_disable                {{ getenv "NGINX_GZIP_DISABLE" "msie6" }};
+    gzip_types                  application/atom+xml
+                                application/geo+json
+                                application/javascript
+                                application/json
+                                application/ld+json
+                                application/manifest+json
+                                application/rdf+xml
+                                application/rss+xml
+                                application/vnd.ms-fontobject
+                                application/wasm
+                                application/x-web-app-manifest+json
+                                application/xhtml+xml
+                                application/xml
+                                font/otf
+                                image/bmp
+                                image/svg+xml
+                                text/cache-manifest
+                                text/calendar
+                                text/css
+                                text/javascript
+                                text/markdown
+                                text/plain
+                                text/vcard
+                                text/vnd.rim.location.xloc
+                                text/vtt
+                                text/x-component
+                                text/x-cross-domain-policy;
+
+    {{- if getenv "NGINX_SET_REAL_IP_FROM" }}
+    set_real_ip_from {{ getenv "NGINX_SET_REAL_IP_FROM" }};
+    {{- end }}
+
+    {{- if getenv "NGINX_SET_REAL_IPS_FROM" }}{{- range jsonArray (getenv "NGINX_SET_REAL_IPS_FROM") }}
+    set_real_ip_from {{ . }};
+    {{- end }}{{- end }}
+
+    real_ip_header {{ getenv "NGINX_REAL_IP_HEADER" "X-Real-IP" }};
+    real_ip_recursive {{ getenv "NGINX_REAL_IP_RECURSIVE" "off" }};
+
+    map $uri $no_slash_uri {
+        ~^/(?<no_slash>.*)$ $no_slash;
+    }
+
+    include {{ getenv "NGINX_CONF_INCLUDE" "conf.d/*.conf" }};
+}
