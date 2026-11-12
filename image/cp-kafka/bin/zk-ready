@@ -1,0 +1,26 @@
+#!/bin/bash
+# Replaces cub zk-ready: probes through the ZooKeeper client protocol, so
+# KAFKA_OPTS applies; ZOOKEEPER_SASL_ENABLED=FALSE keeps it out, as with cub.
+set -u
+
+connect="${1:?usage: zk-ready <connect-string> [timeout-seconds]}"
+wait="${2:-40}"
+
+# The broker creates the chroot itself, so probe the ensemble root.
+connect="${connect%%/*}"
+
+if [[ "${ZOOKEEPER_SASL_ENABLED:-}" == [Ff][Aa][Ll][Ss][Ee] ]]; then
+  unset KAFKA_OPTS
+fi
+
+deadline=$((SECONDS + wait))
+while (( SECONDS < deadline )); do
+  remaining=$((deadline - SECONDS))
+  if timeout "$(( remaining > 0 ? remaining : 1 ))" zookeeper-shell "$connect" ls / >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "zk-ready: no ZooKeeper server from '$1' answered within ${wait}s" >&2
+exit 1
