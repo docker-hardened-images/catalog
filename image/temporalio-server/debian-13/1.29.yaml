@@ -1,0 +1,365 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Temporal Server 1.29.x
+image: dhi.io/temporalio-server
+variant: runtime
+tags:
+  - "1.29"
+  - 1.29.7
+  - 1.29-debian
+  - 1.29-debian13
+  - 1.29.7-debian
+  - 1.29.7-debian13
+  - 1.29.7-cli-1.10.0
+  - 1.29.7-cli-1.10.0-debian
+  - 1.29.7-cli-1.10.0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "amd64" : "arm64" }'
+  CLI_COMMIT_SHA: eace324a13f6a9161af1e201e1ca45b67b50b620
+  CLI_VERSION: 1.10.0
+  COMMIT_SHA: 1f74f0c8e9935980d92a39069185671bbbba7c7e
+  DOCKERIZE_COMMIT_SHA: 079eb740a8fecb12b7705bfaa1abb06888c60c2e
+  DOCKERIZE_GOLANG_REFERENCE: dhi/golang:1.27.4-debian13-dev@sha256:5a6bc6ac718adb809e9a09408ce9bd3eb9f48602d3dc557e37eb3374c343b8de
+  DOCKERIZE_VERSION: 0.16.0
+  GOLANG_REFERENCE: dhi/golang:1.27.4-debian13-dev@sha256:5a6bc6ac718adb809e9a09408ce9bd3eb9f48602d3dc557e37eb3374c343b8de
+  SEMVER_MAJOR_MINOR_VERSION: "1.29"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.29.7
+  VERSION: 1.29.7
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - bash
+    - ca-certificates
+    - coreutils
+    - curl
+    - grep
+    - netcat-openbsd
+    - sed
+    - tzdata
+  builds:
+    - name: dockerize
+      work-dir: /go/src/github.com/jwilder/dockerize
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/jwilder/dockerize.git#v0.16.0
+            checksum: 079eb740a8fecb12b7705bfaa1abb06888c60c2e
+            path: /go/src/github.com/jwilder/dockerize
+            spdx:
+              name: dockerize
+              version: 0.16.0
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/jwilder/dockerize@v0.16.0
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/golang:1.27.4-debian13-dev@sha256:5a6bc6ac718adb809e9a09408ce9bd3eb9f48602d3dc557e37eb3374c343b8de
+            excludes:
+              - etc
+              - usr/lib/ssl
+              - var/lock
+              - var/run
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.29 only)
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/jwilder/dockerize
+          with:
+            deps: []
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.buildVersion=0.16.0
+            output: ${target.dir}/usr/local/bin/dockerize
+      outputs:
+        - source: ${target.dir}/usr/local/bin/dockerize
+          target: /usr/local/bin/dockerize
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/dockerize
+          target: /opt/docker/sbom/dockerize
+          uid: 0
+          gid: 0
+    - name: temporal-server
+      work-dir: /go/src/go.temporal.io/server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.29.7
+            checksum: 1f74f0c8e9935980d92a39069185671bbbba7c7e
+            path: /go/src/go.temporal.io/server
+            spdx:
+              name: temporalio-server
+              version: 1.29.7
+              packages:
+                - name: temporalio-server
+                  purl: pkg:golang/go.temporal.io/server@v1.29.7
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/golang:1.27.4-debian13-dev@sha256:5a6bc6ac718adb809e9a09408ce9bd3eb9f48602d3dc557e37eb3374c343b8de
+            excludes:
+              - etc
+              - usr/lib/ssl
+              - var/lock
+              - var/run
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch md5
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/no-md5.patch
+        - name: update go dependencies (1.29 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.56.0
+              - filippo.io/edwards25519@v1.1.1
+              - github.com/apache/thrift@v0.24.0
+              - github.com/go-jose/go-jose/v4@v4.1.9
+              - github.com/jackc/pgx/v5@v5.9.2
+              - github.com/klauspost/compress@v1.20.2
+              - go.opentelemetry.io/otel@v1.44.0
+              - go.opentelemetry.io/otel/sdk@v1.45.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
+              - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0
+            download: true
+        - name: unit test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "${target.fips}" = "true" ]; then
+              export GODEBUG=fips140=on
+            fi
+
+            echo "Running core temporal unit tests..."
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/log/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/config/...
+            go test -C /go/src/go.temporal.io/server -v -timeout=3m ./common/util/...
+        - name: build server
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-server
+            packages: ./cmd/server
+        - name: build tdbg
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/tdbg
+            packages: ./cmd/tools/tdbg
+        - name: build temporal-cassandra-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-cassandra-tool
+            packages: ./cmd/tools/cassandra
+        - name: build temporal-sql-tool
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal-sql-tool
+            packages: ./cmd/tools/sql
+      paths:
+        - type: file
+          path: /src/patch/no-md5.patch
+          uid: 0
+          gid: 0
+          source: image/temporalio-server/patch/no-md5.patch
+      outputs:
+        - source: ${target.dir}/usr/local/bin
+          target: /usr/local/bin
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporalio-server
+          target: /opt/docker/sbom/temporalio-server
+          uid: 0
+          gid: 0
+    - name: cli
+      work-dir: /go/src/github.com/temporalio/cli
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - ca-certificates
+        files:
+          - url: git+https://github.com/temporalio/cli.git#v1.10.0
+            checksum: eace324a13f6a9161af1e201e1ca45b67b50b620
+            path: /go/src/github.com/temporalio/cli
+            spdx:
+              name: temporal-cli
+              version: 1.10.0
+              packages:
+                - name: temporal-cli
+                  purl: pkg:golang/github.com/temporalio/cli@v1.10.0
+                  license: MIT
+            uid: 0
+            gid: 0
+        artifacts:
+          - name: dhi.io/golang:1.27.4-debian13-dev@sha256:5a6bc6ac718adb809e9a09408ce9bd3eb9f48602d3dc557e37eb3374c343b8de
+            excludes:
+              - etc
+              - usr/lib/ssl
+              - var/lock
+              - var/run
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.29 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/apache/thrift@v0.24.0
+              - github.com/go-jose/go-jose/v4@v4.1.9
+              - github.com/klauspost/compress@v1.20.2
+              - github.com/labstack/echo/v4@v4.16.3
+              - go.opentelemetry.io/otel@v1.45.0
+              - go.opentelemetry.io/otel/sdk@v1.45.0
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
+              - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
+              - go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0
+            download: true
+            replaces:
+              - go.opentelemetry.io/otel=go.opentelemetry.io/otel@v1.45.0
+              - go.opentelemetry.io/otel/log=go.opentelemetry.io/otel/log@v0.20.0
+              - go.opentelemetry.io/otel/metric=go.opentelemetry.io/otel/metric@v1.45.0
+              - go.opentelemetry.io/otel/sdk=go.opentelemetry.io/otel/sdk@v1.45.0
+              - go.opentelemetry.io/otel/sdk/metric=go.opentelemetry.io/otel/sdk/metric@v1.45.0
+              - go.opentelemetry.io/otel/trace=go.opentelemetry.io/otel/trace@v1.45.0
+        - name: build temporal CLI binary
+          uses: go/build@v1
+          with:
+            output: ${target.dir}/usr/local/bin/temporal
+            packages: ./cmd/temporal
+      outputs:
+        - source: ${target.dir}/usr/local/bin/temporal
+          target: /usr/local/bin/temporal
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/temporal-cli
+          target: /opt/docker/sbom/temporal-cli
+          uid: 0
+          gid: 0
+    - name: config-scripts
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - sed
+          - gawk
+          - diffutils
+          - grep
+        files:
+          - url: git+https://github.com/temporalio/temporal.git#v1.29.7
+            checksum: 1f74f0c8e9935980d92a39069185671bbbba7c7e
+            path: ${source.dir}/temporal
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/temporalio/docker-builds.git#main
+            path: ${source.dir}/docker-builds
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch entrypoint
+          uses: patch@v1
+          work-dir: ${source.dir}/docker-builds
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/entrypoint-getent_hostname.20.patch
+        - name: install config and scripts
+          shell: bash
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p '${target.dir}/etc/temporal/schema'
+            mkdir -p '${target.dir}/etc/temporal/config/dynamicconfig'
+
+            cp '${source.dir}/temporal/config/dynamicconfig/docker.yaml' '${target.dir}/etc/temporal/config/dynamicconfig/docker.yaml'
+            cp '${source.dir}/temporal/docker/config_template.yaml' '${target.dir}/etc/temporal/config/config_template.yaml'
+            cp -r '${source.dir}/temporal/schema' '${target.dir}/etc/temporal/'
+
+            cp '${source.dir}/docker-builds/docker/entrypoint.sh' '${target.dir}/etc/temporal/entrypoint.sh'
+            cp '${source.dir}/docker-builds/docker/start-temporal.sh' '${target.dir}/etc/temporal/start-temporal.sh'
+            cp '${source.dir}/docker-builds/docker/auto-setup.sh' '${target.dir}/etc/temporal/auto-setup.sh'
+
+            chmod +x '${target.dir}/etc/temporal/'*.sh
+      paths:
+        - type: file
+          path: /src/patch/entrypoint-getent_hostname.20.patch
+          uid: 0
+          gid: 0
+          source: image/temporalio-server/patch/entrypoint-getent_hostname.20.patch
+      outputs:
+        - source: ${target.dir}/etc/temporal
+          target: /etc/temporal
+          uid: 0
+          gid: 0
+accounts:
+  run-as: temporal
+  users:
+    - name: temporal
+      uid: 1000
+      gid: 1000
+  groups:
+    - name: temporal
+      gid: 1000
+      members:
+        - temporal
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /etc/temporal
+environment:
+  TEMPORAL_HOME: /etc/temporal
+paths:
+  - type: symlink
+    path: /usr/bin/nc
+    uid: 0
+    gid: 0
+    source: /usr/bin/nc.openbsd
+  - type: directory
+    path: /etc/temporal/config
+    uid: 1000
+    gid: 1000
+    mode: "0777"
+annotations:
+  org.opencontainers.image.description: Temporal Server - Workflow as Code to build and operate resilient applications
+  org.opencontainers.image.licenses: MIT
+entrypoint:
+  - /etc/temporal/entrypoint.sh
+ports:
+  - 6933/tcp
+  - 6934/tcp
+  - 6935/tcp
+  - 6939/tcp
+  - 7233/tcp
+  - 7234/tcp
+  - 7235/tcp
+  - 7239/tcp
