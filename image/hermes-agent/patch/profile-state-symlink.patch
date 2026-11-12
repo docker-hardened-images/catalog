@@ -1,0 +1,22 @@
+Subject: bind session authority to the profile-selected state database
+Origin: DHI-internal (transcript-only sandbox persistence)
+Base-Tree: git https://github.com/NousResearch/hermes-agent.git 3b421578588243f920886e6fe79a6faa87ea026e
+Description: Compare the opened database to the resolved exact home/state.db target so transcript-only symlinks work while foreign profile handles and differently named databases remain rejected. Preserve the unavailable-store and registry cleanup guards.
+Verify: cmd `dhi def test image/hermes-agent` expect TestNativeACPPersistedSessions passes exact-hook session/new, gateway restart and session/load, and rejects foreign database handles
+Forwarded: no (sandbox persistence integration)
+Drop-When: never: re-evaluate each release until upstream accepts the exact profile-selected state.db symlink while rejecting foreign handles; retain the native persisted-session regression
+
+--- a/gateway/run_runtime.py
++++ b/gateway/run_runtime.py
+@@ -47,7 +47,10 @@
+     with _profile_runtime_scope(home, hydrate_secrets=False):
+         if db is None:
+             raise RuntimeError(_store_open_failure(runner, home))
+-        if (await asyncio.to_thread(Path(db.db_path).resolve)).parent != home:
++        # A profile may deliberately persist state.db through a symlink. Bind to
++        # that exact selected file, while rejecting another profile's store handle.
++        expected = await asyncio.to_thread((home / 'state.db').resolve)
++        if (await asyncio.to_thread(Path(db.db_path).resolve)) != expected:
+             raise RuntimeError(f'session authority database does not belong to the reserved profile {home}')
+         registry.add(home, None, name=name)
+         try:
