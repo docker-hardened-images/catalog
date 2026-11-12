@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Dex 2.x
+image: dhi.io/dex
+variant: runtime
+tags:
+  - "2"
+  - "2.46"
+  - 2.46.1
+  - 2-debian
+  - 2-debian13
+  - 2.46-debian
+  - 2.46-debian13
+  - 2.46.1-debian
+  - 2.46.1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 75eb19238e10fc4750e7efb05a4031b254b04029
+  DEBIAN_VERSION: 2.46.1-2
+  FLAVORED_SUFFIX: ""
+  GOMPLATE_COMMIT_SHA: 6f33b7aa15255352e47771f535c6f258d266df24
+  GOMPLATE_VERSION: 5.3.1
+  SEMVER_MAJOR_MINOR_VERSION: "2.46"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.46.1
+  SUFFIX: ""
+  VERSION: 2.46.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gcc-14-base'
+    - '!libgcc-s1'
+    - base-files
+    - ca-certificates-bundle
+    - dex-docker-entrypoint=2.46.1-2
+    - dex=2.46.1-2
+    - libc6
+    - libsqlite3-0
+    - tzdata
+  files:
+    - url: https://raw.githubusercontent.com/dexidp/dex/75eb19238e10fc4750e7efb05a4031b254b04029/config.docker.yaml
+      path: /etc/dex/config.docker.yaml
+      uid: 65532
+      gid: 65532
+      mode: "0644"
+  builds:
+    - name: gomplate
+      work-dir: /go/src/github.com/hairyhenderson/gomplate
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26
+          - findutils
+          - mawk
+          - sed
+        files:
+          - url: git+https://github.com/hairyhenderson/gomplate.git#v5.3.1
+            checksum: 6f33b7aa15255352e47771f535c6f258d266df24
+            path: /go/src/github.com/hairyhenderson/gomplate
+            spdx:
+              name: gomplate
+              version: 5.3.1
+              packages:
+                - name: gomplate
+                  purl: pkg:golang/github.com/hairyhenderson/gomplate@5.3.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - golang.org/x/net@v0.62.0
+              - github.com/klauspost/compress@v1.20.2
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X github.com/hairyhenderson/gomplate/v4/version.GitCommit=6f33b7aa15255352e47771f535c6f258d266df24
+              - -X github.com/hairyhenderson/gomplate/v4/version.Version=5.3.1
+            output: ${target.dir}/usr/local/bin/gomplate
+            packages: ./cmd/gomplate
+      outputs:
+        - source: ${target.dir}/usr/local/bin/gomplate
+          target: /usr/local/bin/gomplate
+          uid: 0
+          gid: 0
+        - source: /opt/docker/sbom/gomplate
+          target: /opt/docker/sbom/gomplate
+          uid: 0
+          gid: 0
+    - name: dex static assets
+      work-dir: /go/src/github.com/dexidp/dex
+      contents:
+        packages:
+          - bash
+          - coreutils
+        files:
+          - url: git+https://github.com/dexidp/dex.git#v2.46.1
+            checksum: 75eb19238e10fc4750e7efb05a4031b254b04029
+            path: /go/src/github.com/dexidp/dex
+            spdx:
+              name: dex-web
+              version: 2.46.1
+              packages:
+                - name: dex
+                  purl: pkg:golang/github.com/dexidp/dex@2.46.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install web assets
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p '${target.dir}/srv/dex'
+            cp -a /go/src/github.com/dexidp/dex/web '${target.dir}/srv/dex/'
+      outputs:
+        - source: ${target.dir}/srv/dex/web
+          target: /srv/dex/web
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/dex
+    uid: 0
+    gid: 0
+    source: /usr/bin/dex
+  - type: symlink
+    path: /usr/local/bin/docker-entrypoint
+    uid: 0
+    gid: 0
+    source: /usr/bin/docker-entrypoint
+  - type: directory
+    path: /var/dex
+    uid: 65532
+    gid: 65532
+  - type: directory
+    path: /etc/dex
+    uid: 0
+    gid: 0
+annotations:
+  org.opencontainers.image.description: A minimal Dex image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - docker-entrypoint
+cmd:
+  - dex
+  - serve
+  - /etc/dex/config.docker.yaml
+ports:
+  - 5556/tcp
+  - 5558/tcp
