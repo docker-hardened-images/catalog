@@ -1,0 +1,52 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Ensure output is not buffered
+$stdout.sync = true
+$stderr.sync = true
+
+# Get this scripts own path, so we can require
+lib_path = File.dirname(File.expand_path($PROGRAM_NAME))
+app_path = '/srv/gitlab'
+
+# change to the application directory
+Dir.chdir(app_path)
+
+# Setup the use of Bundler installed gems
+require "#{app_path}/config/bundler_setup"
+
+# pull in our libraries
+require "#{lib_path}/lib/bypass_schema_version_check"
+require "#{lib_path}/lib/checks/postgresql"
+require "#{lib_path}/lib/checks/redis"
+require "#{lib_path}/lib/checks/clickhouse"
+require "#{lib_path}/lib/checks/topology_service"
+
+database_thread = Thread.new do
+  Checks::PostgreSQL.run
+end
+
+redis_thread = Thread.new do
+  Checks::Redis.run
+end
+
+clickhouse_thread = Thread.new do
+  Checks::ClickHouse.run
+end
+
+topology_service_thread = Thread.new do
+  Checks::TopologyService.run
+end
+
+[database_thread, redis_thread, clickhouse_thread, topology_service_thread].map(&:join)
+
+if redis_thread.value && database_thread.value && clickhouse_thread.value && topology_service_thread.value
+  Bundler.original_exec ARGV.join(' ') unless ARGV.empty?
+else
+  puts 'WARNING: Not all services were operational, with data migrations completed.'
+
+  # Output a message as to how to resolve this container failing.
+  puts 'If this container continues to fail, please see: https://docs.gitlab.com/charts/troubleshooting/index.html#application-containers-constantly-initializing'
+
+  exit 1
+end
