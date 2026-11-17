@@ -1,0 +1,134 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+name: .NET 11.x SDK
+image: dhi.io/pkg-dotnet11-sdk
+variant: runtime
+tags:
+  - 11-alpine3.24
+  - 11.0-alpine3.24
+  - 11.0.100-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x64" : "arm64" }'
+  PACKAGE_NAME: dotnet11-sdk
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "11.0"
+  SEMVER_MAJOR_VERSION: "11"
+  SEMVER_VERSION: 11.0.100
+  VERSION: 11.0.100
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: dotnet-sdk
+      work-dir: ${source.dir}
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - jq
+          - tar
+        files:
+          - url: https://raw.githubusercontent.com/dotnet/core/refs/heads/main/release-notes/11.0/releases.json
+            path: ${source.dir}/releases.json
+            uid: 0
+            gid: 0
+          - url: https://builds.dotnet.microsoft.com/dotnet/Sdk/11.0.100/dotnet-sdk-11.0.100-linux-musl-${ARCH}.tar.gz
+            path: ${source.dir}/dotnet-sdk.tar.gz
+            spdx:
+              name: dotnet-sdk
+              version: 11.0.100
+              packages:
+                - name: dotnet-sdk
+                  purl: pkg:dhi/microsoft/dotnet-sdk@11.0.100
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            hash="$(jq -r --arg version "11.0.100" --arg name "dotnet-sdk-linux-musl-${ARCH}.tar.gz" \
+              '.releases[] | .sdk as $sdk | select($sdk.version == $version) | $sdk.files[] | select(.name == $name) | .hash' \
+              "${source.dir}/releases.json" | head -n 1)"
+            test -n "${hash}"
+            echo "${hash}  ${source.dir}/dotnet-sdk.tar.gz" | sha512sum -c -
+        - name: install
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}/usr/lib/dotnet"
+            mkdir -p "${root}" "${target.dir}/usr/share/licenses/dotnet11-sdk"
+
+            tar -xzf "${source.dir}/dotnet-sdk.tar.gz" --no-same-owner -C "${root}" \
+              ./sdk ./sdk-manifests ./packs ./templates ./LICENSE.txt ./ThirdPartyNotices.txt
+
+            mv "${root}/LICENSE.txt" "${root}/ThirdPartyNotices.txt" \
+              "${target.dir}/usr/share/licenses/dotnet11-sdk/"
+
+            test -d "${root}/sdk/11.0.100"
+            test -d "${root}/packs/Microsoft.NETCore.App.Ref"
+            test -d "${root}/packs/Microsoft.AspNetCore.App.Ref"
+            test -d "${root}/packs/Microsoft.NETCore.App.Host.linux-musl-${ARCH}"
+            test -d "${root}/templates"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - aspnetcore11-runtime
+              - aspnetcore11-targeting-pack
+              - dotnet11-apphost-pack
+              - dotnet11-targeting-pack
+              - dotnet11-templates
+            description: The .NET 11 SDK
+            files:
+              - usr/lib/dotnet/sdk
+              - usr/lib/dotnet/sdk-manifests
+              - usr/share/licenses/dotnet11-sdk
+            formats:
+              - apk
+            license: MIT
+            name: dotnet11-sdk
+            rel: 0
+            subpackages:
+              - depends:
+                  - dotnet11-host
+                description: The .NET 11 templates
+                files:
+                  - usr/lib/dotnet/templates
+                name: dotnet11-templates
+              - description: The .NET 11 targeting pack
+                files:
+                  - usr/lib/dotnet/packs/Microsoft.NETCore.App.Ref
+                name: dotnet11-targeting-pack
+              - description: The ASP.NET Core 11 targeting pack
+                files:
+                  - usr/lib/dotnet/packs/Microsoft.AspNetCore.App.Ref
+                name: aspnetcore11-targeting-pack
+              - description: The .NET 11 apphost pack
+                files:
+                  - usr/lib/dotnet/packs/Microsoft.NETCore.App.Host.linux-musl-${ARCH}
+                name: dotnet11-apphost-pack
+            url: https://dotnet.microsoft.com
+            version: 11.0.100
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+annotations:
+  org.opencontainers.image.description: The .NET 11 SDK packages
+  org.opencontainers.image.licenses: MIT
