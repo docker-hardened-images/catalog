@@ -4,9 +4,9 @@ image: dhi.io/pkg-homepage
 variant: runtime
 tags:
   - 2.8.0
-  - 2.8.0-r1
+  - 2.8.0-r2
   - 2.8.0-debian13
-  - 2.8.0-r1-debian13
+  - 2.8.0-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,12 +16,18 @@ vars:
   COMMIT_SHA: 08a0c1df566464bfdb327f3fd8f1f5a058d56640
   DHI_TEST_DEB_EXPECTED_FILES: /usr/lib/homepage/server.js
   NODEJS_VERSION: 24.22.3-0
-  REL: "1"
+  PACKAGE_NAME: homepage-2
+  PACKAGE_REL: "0"
+  REL: "2"
   SEMVER_MAJOR_MINOR_VERSION: "2.8"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.8.0
   VERSION: 2.8.0
 contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
     - base-files
   builds:
@@ -42,6 +48,7 @@ contents:
           - coreutils
           - findutils
           - git
+          - grep
           - libc6
           - libstdc++6
           - mawk
@@ -50,7 +57,6 @@ contents:
           - npm
           - sed
           - yarn-classic
-          - yq
         files:
           - url: git+https://github.com/gethomepage/homepage.git#v2.8.0
             checksum: 08a0c1df566464bfdb327f3fd8f1f5a058d56640
@@ -80,35 +86,22 @@ contents:
                 mv "$f" "${dir}/${real}"\
               done\
             fi' docker-entrypoint.sh
-        - name: bump pnpm dependencies
+        - name: enable corepack pnpm
           privileged: true
           runs: |
             set -eux -o pipefail
 
             corepack enable
+            chmod +x /usr/lib/nodejs/corepack/dist/*.js
             corepack prepare pnpm@latest --activate
 
-            yq -Y -i '.overrides."gamedig>fast-xml-parser" = "5.7.0"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."postcss@8.4.31" = "8.5.23"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."tmp" = "0.2.7"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."ws" = "8.21.0"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."protobufjs" = "7.6.5"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."tar" = "7.5.21"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."js-yaml@3" = "3.15.1"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."js-yaml@4" = "4.3.2"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."nanoid" = "3.3.18"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."@protobufjs/utf8" = "1.1.1"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."systeminformation" = "5.33.16"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."sharp" = "0.35.5"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."follow-redirects" = "1.16.2"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."@grpc/grpc-js@>=1.14.0 <1.14.5" = "1.14.5"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."source-map-js" = "1.2.2"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."baseline-browser-mapping@>=2.0.0 <2.11.0" = "2.11.0"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."ip-address" = "10.7.4"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."http-cache-semantics" = "4.3.0"' pnpm-workspace.yaml
-            yq -Y -i '.overrides."undici" = "8.12.3"' pnpm-workspace.yaml
-
-            pnpm up next@16.4.1
+            pnpm install --prefer-offline --ignore-scripts
+        - name: bump pnpm dependencies
+          uses: pnpm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/pnpm-bumps.json
+            pnpm-root: ${source.dir}/homepage
         - name: build
           privileged: true
           runs: |
@@ -146,10 +139,38 @@ contents:
             formats:
               - deb
             license: GPL-3.0
-            name: homepage
-            rel: 1
+            name: homepage-2
+            rel: 0
             url: https://github.com/gethomepage/homepage
             version: 2.8.0
+        - name: publish legacy package name
+          uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: A highly customizable homepage (dashboard) for your server
+            disableGlobbing: true
+            files:
+              - usr/lib/homepage
+              - usr/bin/docker-entrypoint.sh
+            formats:
+              - deb
+            license: GPL-3.0
+            name: homepage
+            rel: 2
+            url: https://github.com/gethomepage/homepage
+            version: 2.8.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/pnpm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/homepage/patch/pnpm-bumps.json
+        - type: file
+          path: ${source.dir}/patch/pnpm-bumps-1.json
+          uid: 0
+          gid: 0
+          source: package/main/homepage/patch/pnpm-bumps-1.json
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
