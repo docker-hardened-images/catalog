@@ -1,0 +1,511 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-zabbix-web-nginx-pgsql
+variant: runtime
+tags:
+  - 6.0.49
+  - 6.0.49-r0
+  - 6.0.49-debian13
+  - 6.0.49-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-02-08"
+  end-of-life: "2027-02-28"
+vars:
+  COMMIT_SHA: a75547272e7ce75e13862b54eb6af85a9d2576ff
+  D3_VERSION: 7.8.5
+  JQUERY_UI_VERSION: 1.13.2
+  JQUERY_VERSION: 3.6.0
+  LEAFLET_MARKERCLUSTER_VERSION: 1.1.0
+  LEAFLET_VERSION: 1.7.0
+  NOTO_CJK_FONT_CHECKSUM: 68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5
+  NOTO_CJK_LICENSE_CHECKSUM: 6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2
+  NOTO_CJK_VERSION: Sans2.004
+  PACKAGE_NAME: zabbix-web-nginx-pgsql-6.0
+  PHP_EXT_PACKAGE_NAME: zabbix-web-nginx-pgsql-6.0-php-ext
+  PHP_INI_DIR: /etc/php-8.3
+  PHP_MAJOR_MINOR: "8.3"
+  PHP_SRC_ASC_CHECKSUM: 0789337d83e18389ad5dafa58e0df70560d88f369fbcc9f8fd6ae3723b082772
+  PHP_SRC_CHECKSUM: dd54693aa334c5c4d72e9aee96b082c2473750a18a6c1d105789c93a3b1692fd
+  PHP_SRC_VERSION: 8.3.36
+  PHP_VERSION: 8.3.36-0
+  POSTGRESQL_CLIENT_APK: postgresql17-client
+  QRCODEJS_VERSION: 11d1bdb
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "6.0"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.0.49
+  SYMFONY_YAML_COMMIT_SHA: 8ff81e554b0d78653a146b35e344e0a022d7e838
+  SYMFONY_YAML_VERSION: 5.4.56
+  VERSION: 6.0.49
+  ZABBIX_LICENSE: GPL-2.0-or-later
+  ZABBIX_SRC_CHECKSUM: 0222e88a8a2c44a99a986bc6cb795133a332d54ba8c327b2bc6494a17d161f6b
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: zabbix-web-nginx-pgsql-6.0-php-ext
+      work-dir: ${source.dir}
+      shell: bash
+      contents:
+        packages:
+          - autoconf
+          - bash
+          - build-essential
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - libfreetype-dev
+          - libjpeg62-turbo-dev
+          - libldap-dev
+          - libpcre2-dev
+          - libpng-dev
+          - libpq-dev
+          - libwebp-dev
+          - make
+          - php-8.3-dev=8.3.36-0
+          - php-8.3=8.3.36-0
+          - pkg-config
+          - sed
+          - tar
+          - xz-utils
+          - zlib1g-dev
+        files:
+          - url: https://www.php.net/distributions/php-8.3.36.tar.xz.asc
+            checksum: sha256:0789337d83e18389ad5dafa58e0df70560d88f369fbcc9f8fd6ae3723b082772
+            path: ${source.dir}/php-8.3.36.tar.xz.asc
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.3.36.tar.xz
+            checksum: sha256:dd54693aa334c5c4d72e9aee96b082c2473750a18a6c1d105789c93a3b1692fd
+            path: ${source.dir}/php-8.3.36.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php-8.3.36.tar.xz
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/php-8.3.36.tar.xz
+            keys: ${source.dir}/keyring.asc
+            signature: ${source.dir}/php-8.3.36.tar.xz.asc
+        - name: extract php source
+          runs: |
+            set -eux -o pipefail
+
+            test "$(php-config --version)" = "8.3.36"
+
+            mkdir php-src
+            tar -xf "php-8.3.36.tar.xz" -C php-src --strip-components=1
+
+            grep -qF '#define GD_VERSION_STRING "2.0.35"' php-src/ext/gd/libgd/gd.h
+            grep -qF 'Boutell.Com' php-src/ext/gd/libgd/gd.h
+            echo "7586d794d062a2a4a16513d95358aecaee4450e2062f7e64ce5ce63ac7212fd6  php-src/ext/bcmath/libbcmath/LICENSE" | sha256sum -c
+            echo "005f4b6b0141d1bd11d371bbf7d4f67947f85a4906b7f5465f942204cf918ba3  libgd-COPYING" | sha256sum -c
+        - name: build php extensions
+          runs: |
+            set -eux -o pipefail
+
+            multiarch="$(gcc -dumpmachine)"
+
+            build_ext() {
+              local ext=$1
+              shift
+              pushd "php-src/ext/$ext"
+              phpize
+              ./configure --with-libdir="lib/${multiarch}" "$@"
+              make -j"$(nproc)"
+              make install
+              popd
+            }
+
+            build_ext bcmath
+            build_ext gd --with-freetype --with-jpeg --with-webp
+            build_ext gettext
+            build_ext ldap
+            build_ext pgsql
+            build_ext sockets
+        - name: stage extension payload
+          runs: |
+            set -eux -o pipefail
+
+            pkg_ext_dir="usr/lib/zabbix-web-nginx-pgsql-6.0-php-ext"
+            ext_dir="$(php-config --extension-dir)"
+            install -d "${target.dir}/${pkg_ext_dir}" "${target.dir}/etc/php-8.3/conf.d"
+            for ext in bcmath gd gettext ldap pgsql sockets; do
+              install -m 0644 "${ext_dir}/${ext}.so" "${target.dir}/${pkg_ext_dir}/"
+              printf 'extension=/%s/%s.so\n' "${pkg_ext_dir}" "${ext}" \
+                >> "${target.dir}/etc/php-8.3/conf.d/zabbix-web-nginx-pgsql-6.0-php-ext.ini"
+            done
+
+            doc_dir="${target.dir}/usr/share/doc/zabbix-web-nginx-pgsql-6.0-php-ext"
+            install -d "${doc_dir}"
+            install -m 0644 php-src/LICENSE "${doc_dir}/LICENSE"
+            install -m 0644 php-src/ext/bcmath/libbcmath/LICENSE "${doc_dir}/libbcmath-LICENSE"
+            install -m 0644 libgd-COPYING "${doc_dir}/libgd-COPYING"
+            sed -n '/^\/\*/,/\*\//p' php-src/ext/gd/libgd/gd.h > "${doc_dir}/libgd-gd.h-NOTICE"
+            grep -qF 'Boutell.Com' "${doc_dir}/libgd-gd.h-NOTICE"
+        - uses: spdx@v1
+          with:
+            license: PHP-3.01
+            name: php
+            purl: pkg:generic/php@8.3.36
+            version: 8.3.36
+        - uses: spdx@v1
+          with:
+            license: LGPL-2.1-or-later
+            name: libbcmath
+            purl: pkg:generic/php@8.3.36
+            version: 8.3.36
+        - uses: spdx@v1
+          with:
+            license: GD
+            name: php-bundled-libgd
+            purl: pkg:generic/php@8.3.36
+            version: 8.3.36
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom/zabbix-web-nginx-pgsql-6.0-php-ext"
+            for entry in php libbcmath php-bundled-libgd; do
+              cp -a "/opt/docker/sbom/${entry}" "${target.dir}/opt/docker/sbom/zabbix-web-nginx-pgsql-6.0-php-ext/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - php-8.3
+              - libc6
+              - libfreetype6
+              - libjpeg62-turbo
+              - libldap2
+              - libpng16-16t64
+              - libpq5
+              - libwebp7
+              - zlib1g
+            description: PHP extensions the Zabbix frontend requires (bcmath, gd, gettext, ldap, pgsql, sockets)
+            files:
+              - usr/lib/zabbix-web-nginx-pgsql-6.0-php-ext
+              - /etc/php-8.3/conf.d/zabbix-web-nginx-pgsql-6.0-php-ext.ini
+              - usr/share/doc/zabbix-web-nginx-pgsql-6.0-php-ext
+              - opt/docker/sbom/zabbix-web-nginx-pgsql-6.0-php-ext
+            formats:
+              - deb
+            license: PHP-3.01 AND GD AND LGPL-2.1-or-later
+            name: zabbix-web-nginx-pgsql-6.0-php-ext
+            rel: 0
+            url: https://www.php.net/
+            version: 6.0.49
+      paths:
+        - type: file
+          path: ${source.dir}/keyring.asc
+          uid: 0
+          gid: 0
+          source: package/main/zabbix-web-nginx-pgsql/key/php8.3.keyring.asc
+        - type: file
+          path: ${source.dir}/libgd-COPYING
+          uid: 0
+          gid: 0
+          source: package/main/zabbix-web-nginx-pgsql/debian-13/license/libgd-COPYING
+    - name: zabbix-web-nginx-pgsql-6.0
+      work-dir: ${source.dir}/zabbix-6.0.49
+      shell: bash
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - findutils
+          - grep
+          - gzip
+          - jq
+          - patch
+          - sed
+          - tar
+        files:
+          - url: https://cdn.zabbix.com/zabbix/sources/stable/6.0/zabbix-6.0.49.tar.gz
+            checksum: sha256:0222e88a8a2c44a99a986bc6cb795133a332d54ba8c327b2bc6494a17d161f6b
+            path: ${source.dir}/zabbix-6.0.49.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/zabbix/zabbix-docker.git#6.0.49
+            checksum: a75547272e7ce75e13862b54eb6af85a9d2576ff
+            path: ${source.dir}/zabbix-docker
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf
+            checksum: sha256:68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5
+            path: ${source.dir}/NotoSansCJKjp-Regular.otf
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/LICENSE
+            checksum: sha256:6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2
+            path: ${source.dir}/noto-cjk-LICENSE
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/symfony/yaml.git#v5.4.56
+            checksum: 8ff81e554b0d78653a146b35e344e0a022d7e838
+            path: ${source.dir}/symfony-yaml
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract zabbix-6.0.49
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf "zabbix-6.0.49.tar.gz"
+            test -d "zabbix-6.0.49/ui"
+        - name: use the Noto Sans CJK JP font
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/6.0/0001-ui-use-noto-cjk-font.patch
+        - name: declare the vendored symfony/yaml version
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/6.0/0002-ui-vendor-symfony-yaml.patch
+        - name: replace the vendored symfony/yaml
+          runs: |
+            set -eux -o pipefail
+
+            jq -e --arg v "v5.4.56" --arg r "8ff81e554b0d78653a146b35e344e0a022d7e838" \
+              '.packages[] | select(.name == "symfony/yaml") | .version == $v and .source.reference == $r' ui/composer.lock
+            jq -e --arg v "v5.4.56" --arg r "8ff81e554b0d78653a146b35e344e0a022d7e838" \
+              '.packages[] | select(.name == "symfony/yaml") | .version == $v and .source.reference == $r' ui/vendor/composer/installed.json
+            grep -qF "'pretty_version' => 'v5.4.56'" ui/vendor/composer/installed.php
+            grep -qF "'reference' => '8ff81e554b0d78653a146b35e344e0a022d7e838'" ui/vendor/composer/installed.php
+
+            test -f ui/vendor/symfony/yaml/Yaml.php
+            rm -r ui/vendor/symfony/yaml
+            mkdir ui/vendor/symfony/yaml
+            tar -C "${source.dir}/symfony-yaml" --exclude=./Tests --exclude=./phpunit.xml.dist --exclude='./.git*' -cf - . \
+              | tar -C ui/vendor/symfony/yaml -xf -
+            test -f ui/vendor/symfony/yaml/ParserState.php
+            grep -qF 'enterNestingLevel' ui/vendor/symfony/yaml/Parser.php
+            test -z "$(find ui/vendor/symfony/yaml -name 'Tests' -o -name '.git*' -o -name 'phpunit.xml.dist')"
+        - name: point php-fpm at the Zabbix pool
+          uses: patch@v1
+          work-dir: ${source.dir}/zabbix-docker
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/php-8.3/0001-php-fpm-include-path.patch
+        - name: clean frontend tree
+          runs: |
+            set -eux -o pipefail
+
+            test "$(grep -c "NotoSansCJKjp-Regular" ui/include/defines.inc.php)" -eq 2
+            if grep -q '\.ttf' ui/include/graphs.inc.php; then exit 1; fi
+
+            removed="ui/conf/zabbix.conf.php.example ui/conf/maintenance.inc.php ui/assets/fonts/DejaVuSans.ttf
+              ui/locale/add_new_language.sh ui/locale/make_mo.sh ui/locale/update_po.sh"
+            rm ${removed}
+            find ui/locale -name '*.po' | grep -q .
+            find ui/locale -name '*.po' -delete
+            for p in ${removed} ui/tests ui/conf/zabbix.conf.php; do
+              test ! -e "${p}"
+            done
+            test -z "$(find ui/locale -name '*.po' -o -name '*.sh')"
+            test -f ui/locale/en_US/LC_MESSAGES/frontend.pot
+
+            install -m 0644 "${source.dir}/NotoSansCJKjp-Regular.otf" ui/assets/fonts/NotoSansCJKjp-Regular.otf
+            if [ -e ui/assets/fonts/OFL.txt ]; then
+              cmp "${source.dir}/noto-cjk-LICENSE" ui/assets/fonts/OFL.txt
+            else
+              install -m 0644 "${source.dir}/noto-cjk-LICENSE" ui/assets/fonts/OFL.txt
+            fi
+        - name: check vendored javascript versions
+          runs: |
+            set -eux -o pipefail
+
+            web_json="${source.dir}/zabbix-docker/templates/sbom/web.json"
+            vendors=ui/js/vendors
+
+            grep -qF "jQuery JavaScript Library v3.6.0" "${vendors}/jQuery/jquery.js"
+            grep -qF "jQuery UI - v1.13.2" "${vendors}/jQueryUI/jquery-ui.js"
+            grep -qF "Leaflet 1.7.0," "${vendors}/Leaflet/leaflet.js"
+            jq -e --arg v "1.1.0" \
+              '.vendored[] | select(.name == "leaflet.markercluster") | .version == $v' "${web_json}"
+
+            expected="jquery jquery-ui leaflet leaflet.markercluster noto-cjk"
+            if [ "6.0" = "6.0" ]; then
+              test ! -e "${vendors}/D3"
+              test ! -e "${vendors}/qrcode"
+            else
+              grep -qF "d3js.org v7.8.5" "${vendors}/D3/d3.js"
+              jq -e --arg v "11d1bdb" \
+                '.vendored[] | select(.name == "qrcodejs") | .version == $v' "${web_json}"
+              expected="${expected} d3 qrcodejs"
+            fi
+            test "$(jq -r '.vendored[].name' "${web_json}" | sort | xargs)" = "$(printf '%s\n' ${expected} | sort | xargs)"
+        - name: stage frontend
+          runs: |
+            set -eux -o pipefail
+
+            www="${target.dir}/usr/share/zabbix"
+            install -d "${www}"
+            cp -R --no-preserve=mode,ownership ui/. "${www}/"
+            test -z "$(find "${www}" ! -type l -perm /022)"
+            find "${www}" -type d -empty -exec touch {}/.keep \;
+            ln -s /etc/zabbix/web/zabbix.conf.php "${www}/conf/zabbix.conf.php"
+            ln -s /etc/zabbix/web/maintenance.inc.php "${www}/conf/maintenance.inc.php"
+
+            out="$(mktemp -d)"
+            mkdir "${out}/web"
+            sh "${source.dir}/zabbix-docker/templates/sbom/sbom.sh" "${PWD}" "6.0.49" "${out}"
+            install -D -m 0644 "${out}/web/sbom/zabbix-frontend.cdx.json" \
+              "${target.dir}/usr/share/doc/zabbix/sbom/zabbix-frontend.cdx.json"
+
+            doc="${target.dir}/usr/share/doc/zabbix-web-nginx-pgsql-6.0"
+            install -D -m 0644 COPYING "${doc}/COPYING"
+            install -D -m 0644 "${source.dir}/zabbix-docker/LICENSE" "${doc}/zabbix-docker-LICENSE"
+            install -d "${doc}/licenses"
+            for license in ui/js/vendors/*/LICENSE; do
+              vendor="$(basename "$(dirname "${license}")")"
+              install -m 0644 "${license}" "${doc}/licenses/${vendor}-LICENSE"
+            done
+            install -m 0644 "${source.dir}/noto-cjk-LICENSE" "${doc}/licenses/noto-cjk-OFL.txt"
+        - name: stage configuration and entrypoint
+          work-dir: ${source.dir}/zabbix-docker
+          runs: |
+            set -eux -o pipefail
+
+            conf=Dockerfiles/web-nginx-pgsql/ubuntu/conf/etc
+            fpm="${conf}/php/8.3/fpm"
+
+            install -D -m 0644 templates/config/web/zabbix.conf.php "${target.dir}/etc/zabbix/web/zabbix.conf.php"
+            install -D -m 0644 templates/config/web/maintenance.inc.php "${target.dir}/etc/zabbix/web/maintenance.inc.php"
+            install -d "${target.dir}/etc/zabbix/web/certs"
+            touch "${target.dir}/etc/zabbix/web/certs/.keep"
+            install -m 0644 "${conf}/zabbix/nginx.conf" "${conf}/zabbix/nginx_ssl.conf" "${target.dir}/etc/zabbix/"
+            install -D -m 0644 "${conf}/nginx/nginx.conf" "${target.dir}/etc/nginx/nginx-zabbix.conf"
+            install -d "${target.dir}/etc/nginx/includes"
+            install -m 0644 "${conf}/nginx/includes/server-common.conf" "${conf}/nginx/includes/server-ssl.conf" \
+              "${target.dir}/etc/nginx/includes/"
+
+            grep -qx "include=/etc/php-8.3/php-fpm.d/zabbix.conf" "${fpm}/php-fpm.conf"
+            install -D -m 0644 "${fpm}/php-fpm.conf" "${target.dir}/etc/php-8.3/php-fpm-zabbix.conf"
+            install -D -m 0644 "${fpm}/pool.d/zabbix.conf" "${target.dir}/etc/php-8.3/php-fpm.d/zabbix.conf"
+
+            install -D -m 0755 templates/entrypoints/web-nginx-pgsql.sh "${target.dir}/usr/bin/docker-entrypoint.sh"
+            install -d "${target.dir}/usr/lib/docker-entrypoint"
+            install -m 0644 templates/entrypoints/lib/*.sh "${target.dir}/usr/lib/docker-entrypoint/"
+            test "$(find "${target.dir}/usr/lib/docker-entrypoint" -name '*.sh' | wc -l)" -eq 16
+        - uses: spdx@v1
+          with:
+            license: GPL-2.0-or-later
+            name: zabbix-frontend
+            purl: pkg:dhi/zabbix-frontend@6.0.49
+            version: 6.0.49
+        - uses: spdx@v1
+          with:
+            license: GPL-2.0-or-later
+            name: zabbix-docker
+            purl: pkg:dhi/zabbix-docker@6.0.49
+            version: 6.0.49
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: jquery
+            purl: pkg:npm/jquery@3.6.0
+            version: 3.6.0
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: jquery-ui
+            purl: pkg:npm/jquery-ui@1.13.2
+            version: 1.13.2
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: leaflet
+            purl: pkg:npm/leaflet@1.7.0
+            version: 1.7.0
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: leaflet.markercluster
+            purl: pkg:npm/leaflet.markercluster@1.1.0
+            version: 1.1.0
+        - uses: spdx@v1
+          with:
+            license: OFL-1.1
+            name: noto-cjk
+            purl: pkg:github/notofonts/noto-cjk@Sans2.004
+            version: Sans2.004
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            entries="zabbix-frontend zabbix-docker jquery jquery-ui leaflet leaflet.markercluster noto-cjk"
+            if [ "6.0" != "6.0" ]; then
+              entries="${entries} d3 qrcodejs"
+            fi
+            install -d "${target.dir}/opt/docker/sbom/zabbix-web-nginx-pgsql-6.0"
+            for entry in ${entries}; do
+              cp -a "/opt/docker/sbom/${entry}" "${target.dir}/opt/docker/sbom/zabbix-web-nginx-pgsql-6.0/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - postgresql17-client
+            deb:
+              depends:
+                - postgresql-client-17
+            depends:
+              - bash
+              - coreutils
+              - curl
+              - grep
+              - jq
+              - nginx-stable
+              - php-8.3-fpm
+              - sed
+            description: Zabbix web interface served by nginx and php-fpm with PostgreSQL support, with the zabbix-docker configuration and entrypoint
+            files:
+              - usr/share/zabbix
+              - etc/zabbix
+              - etc/nginx/nginx-zabbix.conf
+              - etc/nginx/includes
+              - /etc/php-8.3/php-fpm-zabbix.conf
+              - /etc/php-8.3/php-fpm.d/zabbix.conf
+              - mode: "0755"
+                path: usr/bin/docker-entrypoint.sh
+              - mode: "0644"
+                path: usr/lib/docker-entrypoint
+              - usr/share/doc/zabbix
+              - usr/share/doc/zabbix-web-nginx-pgsql-6.0
+              - opt/docker/sbom/zabbix-web-nginx-pgsql-6.0
+            formats:
+              - deb
+              - apk
+            license: GPL-2.0-or-later
+            name: zabbix-web-nginx-pgsql-6.0
+            rel: 0
+            url: https://www.zabbix.com/
+            version: 6.0.49
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/zabbix-web-nginx-pgsql/patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
