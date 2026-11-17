@@ -300,11 +300,19 @@ done
 test -e "${VENV}/bin/litellm"
 ln -sf ../lib/litellm/bin/litellm "${TARGET_DIR}/usr/bin/litellm"
 
-# The proxy runs prisma's migrations with the bundled node; expose it on the venv PATH.
-# Linked after the shebang rewrite above, which reads the first line of each bin entry.
+# nodejs-wheel-binaries pins the node it was built with (24.19.0 on PyPI, which has no
+# newer stable release), so its binary carries node CVEs that pip cannot fix. Replace
+# it with the tracked dhi.io nodejs-24 package; the wheel keeps supplying npm's tree.
+# The deb depends on nodejs-24, so /usr/bin/node exists at runtime.
 node_bin="${SITE_PACKAGES}/nodejs_wheel/bin/node"
-test -x "${node_bin}"
-ln -sfn "../${node_bin#"${VENV}/"}" "${VENV}/bin/node"
+test -f "${node_bin}"
+test -x /usr/bin/node
+ln -sfn /usr/bin/node "${node_bin}"
+test "$(readlink -f "${node_bin}")" = "$(readlink -f /usr/bin/node)"
+
+# The proxy runs prisma's migrations with this node; expose it on the venv PATH.
+# Linked after the shebang rewrite above, which reads the first line of each bin entry.
+ln -sfn /usr/bin/node "${VENV}/bin/node"
 test -x "${VENV}/bin/node"
 
 cat > "${TARGET_DIR}/usr/bin/supervisord" << 'EOF'
