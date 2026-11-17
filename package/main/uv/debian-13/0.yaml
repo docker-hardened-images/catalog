@@ -1,0 +1,159 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-uv
+variant: runtime
+tags:
+  - 0.13.8-1
+  - 0.13.8-1-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  AWS_LC_VERSION: 5.5.0
+  CARGO_VERSION: 1.97.1-0
+  COMMIT_SHA: 3d97a6aad5ad989c1b4fc89406d54f0dce370b72
+  DHI_REL: "1"
+  DHI_VERSION: 0.13.8-1
+  JEMALLOC_VERSION: 5.3.0
+  RUST_MAJOR_MINOR: "1.97"
+  RUSTC_VERSION: 1.97.1-0
+  VERSION: 0.13.8
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!base-files'
+  builds:
+    - name: uv.deb
+      work-dir: ${source.dir}/uv
+      contents:
+        packages:
+          - build-essential
+          - debhelper
+          - dh-shell-completions
+          - help2man
+          - pkgconf
+          - cargo-1.97=1.97.1-0
+          - rustc-1.97=1.97.1-0
+          - cargo-auditable
+          - libcurl4t64
+          - libsqlite3-0
+          - libssl3t64
+          - libstdc++6
+          - zlib1g
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - gawk
+          - grep
+          - sed
+          - libzstd-dev
+        files:
+          - url: git+https://github.com/astral-sh/uv.git#0.13.8
+            checksum: 3d97a6aad5ad989c1b4fc89406d54f0dce370b72
+            path: ${source.dir}/uv
+            spdx:
+              name: uv
+              version: 0.13.8
+              packages:
+                - name: uv
+                  purl: pkg:cargo/uv@0.13.8
+                  license: MIT OR Apache-2.0
+                - name: uv
+                  purl: pkg:pypi/uv@0.13.8
+                  license: MIT OR Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - runs: |
+            set -eux -o pipefail
+
+            ln -s ../debian .
+        - name: bump cargo dependencies
+          uses: cargo/bump@v1
+          with:
+            deps:
+              - memmap2@0.9.11
+              - event-listener@5.4.2
+              - zstd-safe@7.2.4@7.4.0
+              - zstd@0.13.3@0.13.4
+              - zstd-safe@8.0.0@8.2.0
+              - zstd@0.14.0@0.14.3
+              - zstd-sys@2.1.2
+              - tokio@1.53.3
+              - ctutils@0.4.4
+              - rustix@1.1.5@1.1.6
+              - quinn-proto@0.11.19
+              - quinn-udp@0.5.16
+        - name: fetch crates
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo fetch --locked
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            cargo test --locked --offline --workspace --lib --no-fail-fast --exclude uv-dev -- \
+              --skip test_locate_system_config_xdg_unix_permissions \
+              --skip find_python_propagates_virtualenv_metadata_errors \
+              --skip malformed_option \
+              --skip base_client::tests::test_redirect_ \
+              --skip retry::tests::unclassified_request_errors_respect_method \
+              --skip retry::tests::retried_status_codes \
+              --skip retry::tests::retry_logs_redact_signed_urls
+        - name: verify bundled library versions
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF "AWSLC_VERSION_NUMBER_STRING \"5.5.0\"" \
+              /root/.cargo/registry/src/*/aws-lc-sys-$(cargo pkgid aws-lc-sys | sed 's/.*[#@]//')/aws-lc/include/openssl/base.h
+            cargo pkgid tikv-jemalloc-sys | grep -qF "+5.3.0-"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0 AND BSD-3-Clause AND ISC AND MIT
+            name: aws-lc
+            purl: pkg:github/aws/aws-lc@v5.5.0
+            version: 5.5.0
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: jemalloc
+            purl: pkg:github/jemalloc/jemalloc@5.3.0
+            version: 5.3.0
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Bump memmap2 to 0.9.11 and event-listener to 5.4.2 for RUSTSEC-2026-0186 and RUSTSEC-2026-0221
+              - Bump tokio to 1.53.3 for RUSTSEC-2026-0386
+              - Bump zstd to 0.13.4 and 0.14.3, zstd-safe to 7.4.0 and 8.2.0, and zstd-sys to 2.1.2 for RUSTSEC-2026-0391, RUSTSEC-2026-0395 through RUSTSEC-2026-0406, and RUSTSEC-2026-0410
+              - Bump ctutils to 0.4.4 for RUSTSEC-2026-0003
+              - Bump rustix to 1.1.6 for RUSTSEC-2026-0486 (GHSA-jh2m-fhpj-3vr7)
+              - Bump quinn-proto to 0.11.19 and quinn-udp to 0.5.16 for RUSTSEC-2026-0523, RUSTSEC-2026-0524 and RUSTSEC-2026-0538
+              - Build jemalloc with 64 KiB pages on arm64, as upstream does
+              - Link the system libzstd
+            version: 0.13.8-1
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us
+      paths:
+        - type: directory
+          path: ${source.dir}/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/uv/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,200 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-uv
+variant: runtime
+tags:
+  - 0.13.8-alpine3.24
+  - 0.13.8-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  AWS_LC_VERSION: 5.5.0
+  CARGO_AUDITABLE_VERSION: 0.7.7
+  COMMIT_SHA: 3d97a6aad5ad989c1b4fc89406d54f0dce370b72
+  JEMALLOC_LG_PAGE: '#{ target.arch == "arm64" ? "16" : "12" }'
+  JEMALLOC_VERSION: 5.3.0
+  REL: "0"
+  RUST_AMD64_CHECKSUM: sha256:40dbea28193cf2b488cf3e4a89274ccfb60efa50883f19917a382f84fd05bdc4
+  RUST_ARM64_CHECKSUM: sha256:c5f45b5c6eb7f8fdb277c54c08402b7c931516740fbd4eccc26ba148f7cd5d57
+  RUST_CHECKSUM: '#{ target.arch == "amd64" ? "sha256:40dbea28193cf2b488cf3e4a89274ccfb60efa50883f19917a382f84fd05bdc4" : "sha256:c5f45b5c6eb7f8fdb277c54c08402b7c931516740fbd4eccc26ba148f7cd5d57" }'
+  RUST_VERSION: 1.97.1
+  SEMVER_MAJOR_MINOR_VERSION: "0.13"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.13.8
+  VERSION: 0.13.8
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: uv
+      work-dir: ${source.dir}/uv
+      environment:
+        CARGO_HOME: /root/.cargo
+        JEMALLOC_SYS_WITH_LG_PAGE: ${JEMALLOC_LG_PAGE}
+        RUSTFLAGS: -C target-feature=-crt-static
+        ZSTD_SYS_USE_PKG_CONFIG: "1"
+      contents:
+        packages:
+          - bash
+          - build-base
+          - busybox
+          - ca-certificates-bundle
+          - help2man
+          - pkgconf
+          - python3
+          - zstd-dev
+        files:
+          - url: git+https://github.com/astral-sh/uv.git#0.13.8
+            checksum: 3d97a6aad5ad989c1b4fc89406d54f0dce370b72
+            path: ${source.dir}/uv
+            spdx:
+              name: uv
+              version: 0.13.8
+              packages:
+                - name: uv
+                  purl: pkg:cargo/uv@0.13.8
+                  license: MIT OR Apache-2.0
+                - name: uv
+                  purl: pkg:pypi/uv@0.13.8
+                  license: MIT OR Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://static.rust-lang.org/dist/rust-1.97.1-${ARCH}-unknown-linux-musl.tar.gz
+            checksum: ${RUST_CHECKSUM}
+            path: ${source.dir}/rust
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install rust
+          work-dir: ${source.dir}/rust/rust-1.97.1-${ARCH}-unknown-linux-musl
+          runs: |
+            set -eux -o pipefail
+
+            ./install.sh
+        - name: install cargo-auditable
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo install cargo-auditable --version "0.7.7" --locked
+        - name: bump cargo dependencies
+          uses: cargo/bump@v1
+          with:
+            deps:
+              - memmap2@0.9.11
+              - event-listener@5.4.2
+              - zstd-safe@7.2.4@7.4.0
+              - zstd@0.13.3@0.13.4
+              - zstd-safe@8.0.0@8.2.0
+              - zstd@0.14.0@0.14.3
+              - zstd-sys@2.1.2
+              - tokio@1.53.3
+              - ctutils@0.4.4
+              - rustix@1.1.5@1.1.6
+              - quinn-proto@0.11.19
+              - quinn-udp@0.5.16
+        - name: fetch crates
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo fetch --locked
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            cargo test --locked --offline --workspace --lib --no-fail-fast --exclude uv-dev -- \
+              --skip test_locate_system_config_xdg_unix_permissions \
+              --skip find_python_propagates_virtualenv_metadata_errors \
+              --skip malformed_option \
+              --skip base_client::tests::test_redirect_ \
+              --skip retry::tests::unclassified_request_errors_respect_method \
+              --skip retry::tests::retried_status_codes \
+              --skip retry::tests::retry_logs_redact_signed_urls
+        - name: build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo auditable build --locked --release --package uv --bin uv --bin uvx
+
+            readelf -d target/release/uv > /tmp/uv-dynamic
+            grep -qF '[libzstd.so.1]' /tmp/uv-dynamic
+            if grep -F '(NEEDED)' /tmp/uv-dynamic | grep -vE '\[(libc\.musl-[a-z0-9_]+\.so\.1|libgcc_s\.so\.1|libzstd\.so\.1)\]'; then
+              exit 1
+            fi
+
+            install -D -m 755 target/release/uv "${target.dir}/usr/bin/uv"
+            install -D -m 755 target/release/uvx "${target.dir}/usr/bin/uvx"
+        - name: verify bundled library versions
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF "AWSLC_VERSION_NUMBER_STRING \"5.5.0\"" \
+              /root/.cargo/registry/src/*/aws-lc-sys-$(cargo pkgid aws-lc-sys | sed 's/.*[#@]//')/aws-lc/include/openssl/base.h
+            cargo pkgid tikv-jemalloc-sys | grep -qF "+5.3.0-"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0 AND BSD-3-Clause AND ISC AND MIT
+            name: aws-lc
+            purl: pkg:github/aws/aws-lc@v5.5.0
+            version: 5.5.0
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: jemalloc
+            purl: pkg:github/jemalloc/jemalloc@5.3.0
+            version: 5.3.0
+        - name: completions and man pages
+          runs: |
+            set -eux -o pipefail
+
+            share="${target.dir}/usr/share"
+            mkdir -p "$share/bash-completion/completions" "$share/fish/vendor_completions.d" \
+              "$share/zsh/site-functions" "$share/man/man1"
+
+            "${target.dir}/usr/bin/uv" generate-shell-completion bash > "$share/bash-completion/completions/uv"
+            "${target.dir}/usr/bin/uv" generate-shell-completion fish > "$share/fish/vendor_completions.d/uv.fish"
+            "${target.dir}/usr/bin/uv" generate-shell-completion zsh > "$share/zsh/site-functions/_uv"
+
+            help2man --no-info "${target.dir}/usr/bin/uv" > "$share/man/man1/uv.1"
+            help2man --no-info "${target.dir}/usr/bin/uvx" > "$share/man/man1/uvx.1"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libgcc
+              - musl
+              - zstd-libs
+            description: An extremely fast Python package and project manager, written in Rust
+            files:
+              - usr/bin/uv
+              - usr/bin/uvx
+              - usr/share/bash-completion/completions/uv
+              - usr/share/fish/vendor_completions.d/uv.fish
+              - usr/share/zsh/site-functions/_uv
+              - usr/share/man/man1/uv.1
+              - usr/share/man/man1/uvx.1
+            formats:
+              - apk
+            license: MIT OR Apache-2.0
+            name: uv
+            rel: 0
+            url: https://github.com/astral-sh/uv
+            version: 0.13.8
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
