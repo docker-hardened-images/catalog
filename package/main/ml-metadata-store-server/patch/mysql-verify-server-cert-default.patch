@@ -1,0 +1,27 @@
+Subject: Pass MLMD's verify_server_cert default to the MySQL connector explicitly
+Description: MLMD sets MYSQL_OPT_SSL_VERIFY_SERVER_CERT only when ssl_options is configured, so without it the connector's own default applies. Upstream's bundled MariaDB Connector/C 3.0.8 does not verify, matching MetadataStore's proto, where verify_server_cert is off unless set. The HSP mariadb-connector-c 3.4.6 on Alpine verifies by default and rejects the self-signed certificate MySQL 8 generates, so connections fail with "Certificate verification failure". Always passing the configured value (false unless ssl_options sets it) restores MLMD's documented behaviour on every connector; explicit ssl_options keep their meaning.
+Origin: DHI-internal (linking the HSP MariaDB connector instead of the bundled 3.0.8)
+Base-Tree: git https://github.com/google/ml-metadata 2890d8f9d30824c32e3a00ad3524bc94abfecdaa
+Forwarded: no (upstream builds with the bundled Connector/C 3.0.8, where the default already matches)
+Drop-When: never: upstream sets the option only inside ssl_options; re-check when mysql_metadata_source.cc passes it unconditionally
+Verify: cmd `go test ./image/ml-metadata-store-server/tests -run TestMySQLPersists -count=1` expect "ok"
+
+--- a/ml_metadata/metadata_store/mysql_metadata_source.cc
++++ b/ml_metadata/metadata_store/mysql_metadata_source.cc
+@@ -156,9 +156,14 @@
+                   ssl.ca().empty() ? nullptr : ssl.ca().c_str(),
+                   ssl.capath().empty() ? nullptr : ssl.capath().c_str(),
+                   ssl.cipher().empty() ? nullptr : ssl.cipher().c_str());
+-    my_bool verify_server_cert = ssl.verify_server_cert() ? 1 : 0;
+-    mysql_options(db_, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify_server_cert);
+   }
++  // verify_server_cert is off unless ssl_options sets it. Pass it explicitly:
++  // MariaDB Connector/C 3.4 verifies the server certificate by default.
++  my_bool verify_server_cert =
++      config_.has_ssl_options() && config_.ssl_options().verify_server_cert()
++          ? 1
++          : 0;
++  mysql_options(db_, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify_server_cert);
+ 
+   mysql_options(db_, MYSQL_DEFAULT_AUTH, "mysql_native_password");
+   // Connect to the MYSQL server.
