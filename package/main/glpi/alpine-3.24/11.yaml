@@ -1,0 +1,503 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-glpi
+variant: runtime
+tags:
+  - 11.0.13-apk-alpine3.24
+  - 11.0.13-r0-apk-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  APCU_SHA256: ca9c1820810a168786f8048a4c3f8c9e3fd941407ad1553259fb2e30b5f057bf
+  APCU_VERSION: 5.1.28
+  COMMIT_SHA: 3ef453e64856483fb86b8e59b69f4cdade69a2b2
+  COMPOSER_VERSION: 2.11.2-r0
+  GLPI_HOME: /usr/share/glpi
+  LIBZIP_SHA256: c40062022a1963c80573d48f6070792297cecd7c6bffe3aefcac0d8b9bee8913
+  LIBZIP_VERSION: 1.12.1
+  NODEJS_VERSION: 24.22.3-r0
+  NPM_VERSION: 11.21.2-r2
+  PACKAGE_NAME: glpi-11
+  PHP_EXT_DIR: /usr/lib/glpi/php-extensions
+  PHP_EXT_PACKAGE_NAME: glpi-11-php-ext
+  PHP_INI_DIR: /etc/php-8.5
+  PHP_MAJOR_MINOR: "8.5"
+  PHP_SRC_ASC_CHECKSUM: ee9317cb40874ee4f733298e3159197a39e602020f8229c16d1bedf1aaefd242
+  PHP_SRC_CHECKSUM: 08bc2eba2a588654ade1357174aa646b761556c862dda0678345ee29ed481209
+  PHP_SRC_VERSION: 8.5.12
+  PHP_VERSION: 8.5.12-r0
+  REDIS_SHA256: 0d5141f634bd1db6c1ddcda053d25ecf2c4fc1c395430d534fd3f8d51dd7f0b5
+  REDIS_VERSION: 6.3.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "11.0"
+  SEMVER_MAJOR_VERSION: "11"
+  SEMVER_VERSION: 11.0.13
+  VERSION: 11.0.13
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: glpi
+      work-dir: ${source.dir}/glpi
+      shell: bash
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - composer-2.11=2.11.2-r0
+          - coreutils
+          - findutils
+          - gettext
+          - git
+          - grep
+          - gzip
+          - nodejs-24=24.22.3-r0
+          - npm=11.21.2-r2
+          - patch
+          - php-8.5=8.5.12-r0
+          - sed
+          - tar
+          - unzip
+          - xz
+        files:
+          - url: git+https://github.com/glpi-project/glpi.git#11.0.13
+            checksum: 3ef453e64856483fb86b8e59b69f4cdade69a2b2
+            path: ${source.dir}/glpi
+            spdx:
+              name: glpi
+              version: 11.0.13
+              packages:
+                - name: glpi
+                  purl: pkg:composer/glpi/glpi@11.0.13
+                  license: GPL-3.0-or-later
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare build tree
+          runs: |
+            set -eux -o pipefail
+
+            grep -q "define('GLPI_VERSION', '11.0.13');" src/autoload/constants.php
+            test -d .git
+            rm -r .git
+            test ! -e .git
+            printf 'memory_limit = 512M\n' > "/etc/php-8.5/conf.d/zz-glpi-build.ini"
+            test "$(php -r 'echo ini_get("memory_limit");')" = "512M"
+        - name: install composer dependencies
+          privileged: true
+          environment:
+            COMPOSER_ALLOW_SUPERUSER: "1"
+            COMPOSER_HOME: /root/.composer
+          runs: |
+            set -eux -o pipefail
+
+            php /usr/bin/composer.phar install --ansi --no-interaction \
+              --ignore-platform-reqs --prefer-dist --no-progress
+            test -s vendor/autoload.php
+            test -s .composer.hash
+
+            grep -oE "VENDOR_DIR='[^']+' PATCH_FILE='[^']+'" composer.json \
+              | sed -E "s/VENDOR_DIR='([^']+)' PATCH_FILE='([^']+)'/\1 \2/" > "${source.dir}/vendor-patches.txt"
+            test "$(wc -l < "${source.dir}/vendor-patches.txt")" -eq "$(find tools/patches -maxdepth 1 -name '*.patch' | wc -l)"
+            while read -r dir file; do
+              patch --dry-run -R --fuzz=0 -f -p1 -d "$dir" < "$file"
+            done < "${source.dir}/vendor-patches.txt"
+        - name: npm dependencies sbom source
+          runs: |
+            set -eux -o pipefail
+
+            mkdir "${source.dir}/glpi-npm"
+            cp package.json package-lock.json "${source.dir}/glpi-npm/"
+        - name: npm dependencies sbom
+          uses: sbom@v1
+          with:
+            prefix: glpi-npm
+            source: ${source.dir}/glpi-npm
+        - name: build frontend
+          privileged: true
+          environment:
+            SCARF_ANALYTICS: "false"
+            npm_config_audit: "false"
+            npm_config_fund: "false"
+            npm_config_update_notifier: "false"
+          runs: |
+            set -eux -o pipefail
+
+            npm install --no-save
+            npm run-script build
+            test -d public/lib
+            test -d public/build
+        - name: compile locales
+          runs: |
+            set -eux -o pipefail
+
+            php bin/console tools:locales:compile --allow-superuser
+            test "$(find locales -name '*.mo' | wc -l)" -eq "$(find locales -name '*.po' | wc -l)"
+        - name: copy and minify assets
+          runs: |
+            set -eux -o pipefail
+
+            while IFS= read -r -d '' file; do
+              dest="public/${file}"
+              mkdir -p "$(dirname "$dest")"
+              cp -p "$file" "$dest"
+            done < <(find js -type f ! -path 'js/src/*' -print0)
+            test "$(sha256sum < js/common.js)" = "$(sha256sum < public/js/common.js)"
+
+            find public \( -iname '*.css' ! -iname '*.min.css' \) -exec sh -c \
+              'set -e; for f; do node_modules/.bin/csso "$f" --output "$(dirname "$f")/$(basename "$f" .css).min.css"; done' sh {} +
+            find public \( -iname '*.js' ! -iname '*.min.js' \) -exec sh -c \
+              'set -e; for f; do node_modules/.bin/terser "$f" --mangle --output "$(dirname "$f")/$(basename "$f" .js).min.js"; done' sh {} +
+
+            php bin/console build:compile_scss --allow-superuser
+        - name: remove development files
+          environment:
+            COMPOSER_ALLOW_SUPERUSER: "1"
+            COMPOSER_HOME: /root/.composer
+          runs: |
+            set -eux -o pipefail
+
+            php /usr/bin/composer.phar install --ansi --no-interaction \
+              --ignore-platform-reqs --no-dev --no-scripts
+            test ! -e vendor/phpunit
+            while read -r dir file; do
+              patch --dry-run -R --fuzz=0 -f -p1 -d "$dir" < "$file"
+            done < "${source.dir}/vendor-patches.txt"
+
+            mapfile -t dev_nodes < <(sed -n '/^dev_nodes=(/,/^)/p' tools/build_glpi.sh | sed -n 's/^ *"\(.*\)"$/\1/p')
+            test "${#dev_nodes[@]}" -ge 20
+
+            find . -mindepth 1 -depth -iname '.*' -exec rm -r {} +
+            test -z "$(find . -mindepth 1 -iname '.*' -print -quit)"
+
+            for node in "${dev_nodes[@]}"; do
+              if [ -e "$node" ]; then
+                rm -r "$node"
+              fi
+              test ! -e "$node"
+            done
+
+            find files/_cache -mindepth 1 -maxdepth 1 -exec rm -r {} +
+        - name: add downstream defaults
+          runs: |
+            set -eux -o pipefail
+
+            install -m 0644 "${source.dir}/downstream.php" inc/downstream.php
+            php -l inc/downstream.php
+            grep -q "define('GLPI_CONFIG_DIR', '/etc/glpi');" inc/downstream.php
+        - name: generate code manifest
+          runs: |
+            set -eux -o pipefail
+
+            php bin/console build:generate_code_manifest -a crc32c --allow-superuser
+            test "$(ls version)" = "11.0.13"
+            php -r '$m = json_decode(file_get_contents("version/11.0.13"), true, flags: JSON_THROW_ON_ERROR); exit(isset($m["files"]["inc/downstream.php"]) ? 0 : 1);'
+
+            find files -depth -mindepth 2 -exec rm -r {} +
+            test -z "$(find files -mindepth 2 -print -quit)"
+        - name: stage application
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/share/glpi"
+            cp -a . "${target.dir}/usr/share/glpi/"
+            chmod -R u+rwX,go+rX,go-w "${target.dir}/usr/share/glpi"
+            test -x "${target.dir}/usr/share/glpi/bin/console"
+            test -s "${target.dir}/usr/share/glpi/vendor/autoload.php"
+            test -s "${target.dir}/usr/share/glpi/inc/downstream.php"
+            test -d "${target.dir}/usr/share/glpi/public/lib"
+            test ! -e "${target.dir}/usr/share/glpi/node_modules"
+            test ! -e "${target.dir}/usr/share/glpi/composer.lock"
+            test ! -e "${target.dir}/usr/share/glpi/.git"
+        - name: composer dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: php-composer-installed-cataloger
+            prefix: glpi-composer
+            source: ${target.dir}/usr/share/glpi
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/glpi/.spdx.glpi.json
+            grep -q 'pkg:composer/glpi/glpi@11.0.13' /opt/docker/sbom/glpi/.spdx.glpi.json
+            test -s /opt/docker/sbom/glpi-composer/.spdx.glpi-composer.json
+            test -s /opt/docker/sbom/glpi-npm/.spdx.glpi-npm.json
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/glpi /opt/docker/sbom/glpi-composer /opt/docker/sbom/glpi-npm "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - php-8.5
+              - glpi-11-php-ext
+              - busybox
+            description: GLPI IT service management and asset management application
+            files:
+              - usr/share/glpi
+              - opt/docker/sbom
+            formats:
+              - apk
+            license: GPL-3.0-or-later
+            name: glpi-11
+            rel: 0
+            url: https://glpi-project.org
+            version: 11.0.13
+      paths:
+        - type: file
+          path: ${source.dir}/downstream.php
+          uid: 0
+          gid: 0
+          source: package/main/glpi/downstream.php
+    - name: glpi php extensions
+      work-dir: ${source.dir}
+      shell: bash
+      contents:
+        packages:
+          - autoconf
+          - bash
+          - build-base
+          - bzip2-dev
+          - cmake
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - gd-dev
+          - grep
+          - gzip
+          - libxml2-dev
+          - openldap-dev
+          - openssl-dev
+          - pcre2-dev
+          - php-8.5=8.5.12-r0
+          - php-8.5-dev=8.5.12-r0
+          - pkgconf
+          - sed
+          - tar
+          - xz
+          - zlib-dev
+        files:
+          - url: https://www.php.net/distributions/php-8.5.12.tar.xz.asc
+            checksum: sha256:ee9317cb40874ee4f733298e3159197a39e602020f8229c16d1bedf1aaefd242
+            path: ${source.dir}/php-8.5.12.tar.xz.asc
+            uid: 0
+            gid: 0
+          - url: https://www.php.net/distributions/php-8.5.12.tar.xz
+            checksum: sha256:08bc2eba2a588654ade1357174aa646b761556c862dda0678345ee29ed481209
+            path: ${source.dir}/php-8.5.12.tar.xz
+            spdx:
+              name: glpi-php-ext
+              version: 8.5.12
+              packages:
+                - name: php
+                  purl: pkg:generic/php@8.5.12
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+          - url: https://pecl.php.net/get/apcu-5.1.28.tgz
+            checksum: sha256:ca9c1820810a168786f8048a4c3f8c9e3fd941407ad1553259fb2e30b5f057bf
+            path: ${source.dir}/apcu.tgz
+            spdx:
+              name: glpi-php-ext-apcu
+              version: 5.1.28
+              packages:
+                - name: apcu
+                  purl: pkg:pecl/apcu@5.1.28
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+          - url: https://pecl.php.net/get/redis-6.3.0.tgz
+            checksum: sha256:0d5141f634bd1db6c1ddcda053d25ecf2c4fc1c395430d534fd3f8d51dd7f0b5
+            path: ${source.dir}/redis.tgz
+            spdx:
+              name: glpi-php-ext-redis
+              version: 6.3.0
+              packages:
+                - name: redis
+                  purl: pkg:pecl/redis@6.3.0
+                  license: PHP-3.01
+            uid: 0
+            gid: 0
+          - url: https://github.com/nih-at/libzip/releases/download/v1.12.1/libzip-1.12.1.tar.xz
+            checksum: sha256:c40062022a1963c80573d48f6070792297cecd7c6bffe3aefcac0d8b9bee8913
+            path: ${source.dir}/libzip.tar.xz
+            spdx:
+              name: glpi-php-ext-libzip
+              version: 1.12.1
+              packages:
+                - name: libzip
+                  purl: pkg:github/nih-at/libzip@1.12.1
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify php-8.5.12.tar.xz
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/php-8.5.12.tar.xz
+            keys: ${source.dir}/keyring.asc
+            signature: ${source.dir}/php-8.5.12.tar.xz.asc
+        - name: extract sources
+          runs: |
+            set -eux -o pipefail
+
+            test "$(php-config --version)" = "8.5.12"
+            mkdir php-src pecl-apcu pecl-redis libzip-src
+            tar xf "php-8.5.12.tar.xz" -C php-src --strip-components=1
+            tar xzf apcu.tgz -C pecl-apcu --strip-components=1
+            tar xzf redis.tgz -C pecl-redis --strip-components=1
+            tar xJf libzip.tar.xz -C libzip-src --strip-components=1
+        - name: build static libzip
+          runs: |
+            set -eux -o pipefail
+
+            cmake -S libzip-src -B libzip-build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="${source.dir}/libzip" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DENABLE_COMMONCRYPTO=OFF \
+              -DENABLE_GNUTLS=OFF \
+              -DENABLE_OPENSSL=ON \
+              -DENABLE_WINDOWS_CRYPTO=OFF \
+              -DENABLE_BZIP2=ON \
+              -DENABLE_LZMA=OFF \
+              -DENABLE_ZSTD=OFF \
+              -DBUILD_TOOLS=OFF \
+              -DBUILD_REGRESS=OFF \
+              -DBUILD_OSSFUZZ=OFF \
+              -DBUILD_EXAMPLES=OFF \
+              -DBUILD_DOC=OFF
+            cmake --build libzip-build --parallel "$(nproc)"
+            cmake --install libzip-build
+            test -s "${source.dir}/libzip/lib/libzip.a"
+            test "$(PKG_CONFIG_PATH="${source.dir}/libzip/lib/pkgconfig" pkg-config --modversion libzip)" = "1.12.1"
+        - name: build extensions
+          runs: |
+            set -eux -o pipefail
+
+            build_ext() {
+              local dir=$1
+              shift
+              cd "$dir"
+              phpize
+              ./configure "$@"
+              make -j"$(nproc)"
+              make install
+            }
+
+            export PKG_CONFIG_PATH="${source.dir}/libzip/lib/pkgconfig"
+            build_ext "${source.dir}/php-src/ext/bcmath"
+            build_ext "${source.dir}/php-src/ext/bz2"
+            build_ext "${source.dir}/php-src/ext/exif"
+            build_ext "${source.dir}/php-src/ext/gd" --with-external-gd
+            build_ext "${source.dir}/php-src/ext/ldap"
+            build_ext "${source.dir}/php-src/ext/mysqli"
+            build_ext "${source.dir}/php-src/ext/soap"
+            LIBZIP_CFLAGS="$(pkg-config --cflags libzip)" LIBZIP_LIBS="$(pkg-config --static --libs libzip)" \
+              build_ext "${source.dir}/php-src/ext/zip"
+            build_ext "${source.dir}/pecl-apcu"
+            build_ext "${source.dir}/pecl-redis"
+        - name: stage extensions
+          runs: |
+            set -eux -o pipefail
+
+            ext_dir="$(php-config --extension-dir)"
+            install -d "${target.dir}/usr/lib/glpi/php-extensions" "${target.dir}/etc/php-8.5/conf.d"
+            for ext in apcu bcmath bz2 exif gd ldap mysqli redis soap zip; do
+              install -m 0644 "${ext_dir}/${ext}.so" "${target.dir}/usr/lib/glpi/php-extensions/${ext}.so"
+              printf 'extension=%s/%s.so\n' "/usr/lib/glpi/php-extensions" "$ext" > "${target.dir}/etc/php-8.5/conf.d/20-glpi-${ext}.ini"
+            done
+            printf 'apc.enable=1\n' >> "${target.dir}/etc/php-8.5/conf.d/20-glpi-apcu.ini"
+
+            for ext in bcmath bz2 exif gd ldap mysqli soap; do
+              test "$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/${ext}.so" -r "echo phpversion('${ext}');")" = "8.5.12"
+            done
+            zip_version="$(sed -n 's/^#define PHP_ZIP_VERSION "\(.*\)"$/\1/p' php-src/ext/zip/php_zip.h)"
+            test -n "$zip_version"
+            test "$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/zip.so" -r "echo phpversion('zip');")" = "$zip_version"
+            test "$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/apcu.so" -r "echo phpversion('apcu');")" = "5.1.28"
+            test "$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/redis.so" -r "echo phpversion('redis');")" = "6.3.0"
+            test "$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/zip.so" -r 'echo ZipArchive::LIBZIP_VERSION;')" = "1.12.1"
+            gd_version="$(php -n -d "extension=${target.dir}/usr/lib/glpi/php-extensions/gd.so" -r 'echo gd_info()["GD Version"];')"
+            test -n "$gd_version"
+            if printf '%s' "$gd_version" | grep -qi bundled; then
+              exit 1
+            fi
+
+            for so in "${target.dir}/usr/lib/glpi/php-extensions"/*.so; do
+              readelf -d "$so" | sed -n 's/^.*(NEEDED).*\[\(.*\)\]$/\1/p' > needed.txt
+              cat needed.txt
+              test -s needed.txt
+              while read -r lib; do
+                test -e "/usr/lib/$lib" || test -e "/lib/$lib"
+              done < needed.txt
+              if grep -q libzip needed.txt; then
+                exit 1
+              fi
+              rm needed.txt
+            done
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            for doc in glpi-php-ext glpi-php-ext-apcu glpi-php-ext-redis glpi-php-ext-libzip; do
+              test -s "/opt/docker/sbom/${doc}/.spdx.${doc}.json"
+              cp -a "/opt/docker/sbom/${doc}" "${target.dir}/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - php-8.5
+              - libbz2
+              - libcrypto3
+              - libgd
+              - libldap
+              - libxml2
+              - zlib
+            description: PHP extensions GLPI requires that php-8.5 does not build (apcu, bcmath, bz2, exif, gd, ldap, mysqli, redis, soap, zip)
+            files:
+              - usr/lib/glpi/php-extensions
+              - etc/php-8.5/conf.d/20-glpi-apcu.ini
+              - etc/php-8.5/conf.d/20-glpi-bcmath.ini
+              - etc/php-8.5/conf.d/20-glpi-bz2.ini
+              - etc/php-8.5/conf.d/20-glpi-exif.ini
+              - etc/php-8.5/conf.d/20-glpi-gd.ini
+              - etc/php-8.5/conf.d/20-glpi-ldap.ini
+              - etc/php-8.5/conf.d/20-glpi-mysqli.ini
+              - etc/php-8.5/conf.d/20-glpi-redis.ini
+              - etc/php-8.5/conf.d/20-glpi-soap.ini
+              - etc/php-8.5/conf.d/20-glpi-zip.ini
+              - opt/docker/sbom
+            formats:
+              - apk
+            license: PHP-3.01 AND BSD-3-Clause
+            name: glpi-11-php-ext
+            rel: 0
+            url: https://glpi-project.org
+            version: 11.0.13
+      paths:
+        - type: file
+          path: ${source.dir}/keyring.asc
+          uid: 0
+          gid: 0
+          source: package/main/glpi/key/php8.5.keyring.asc
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
