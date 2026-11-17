@@ -1,0 +1,264 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-woodpecker-server
+variant: runtime
+tags:
+  - 3.20.1-alpine3.24
+  - 3.20.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-01-18"
+vars:
+  COMMIT_SHA: 3f1bb0bd0db28e410ad797034d75780116122c91
+  COREPACK_VERSION: 0.36.0-r0
+  GO_BUILD_TAGS: netgo,osusergo,grpcnotrace,sqlite,sqlite_unlock_notify,libsqlite3
+  GO_TEST_TAGS: test netgo osusergo grpcnotrace sqlite sqlite_unlock_notify libsqlite3
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  LICENSE_DIR: usr/share/licenses/woodpecker-server-3
+  NODEJS_VERSION: 26.13.1-r0
+  PACKAGE_NAME: woodpecker-server-3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.20"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.20.1
+  VERSION: 3.20.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: woodpecker-server-3
+      work-dir: /go/src/go.woodpecker-ci.org/woodpecker
+      environment:
+        GOFLAGS: -buildvcs=false
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - bash
+          - build-base
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - sqlite-dev
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - nodejs-26=26.13.1-r0
+          - corepack=0.36.0-r0
+        files:
+          - url: git+https://github.com/woodpecker-ci/woodpecker.git#v3.20.1
+            checksum: 3f1bb0bd0db28e410ad797034d75780116122c91
+            path: /go/src/go.woodpecker-ci.org/woodpecker
+            spdx:
+              name: woodpecker-server
+              version: 3.20.1
+              packages:
+                - name: woodpecker-server
+                  purl: pkg:golang/go.woodpecker-ci.org/woodpecker/v3@3.20.1
+                  license: Apache-2.0 AND BSD-3-Clause AND MIT AND CC-BY-3.0
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/go-gitea/gitea/v1.22.0/LICENSE
+            checksum: sha256:ed2f10a9d78b8c6c9ef33f1420d0eb266981891caf2f15d630553f02dc60d3ae
+            path: /go/src/gitea-license/LICENSE
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps: []
+            download: true
+        - name: build web ui
+          work-dir: /go/src/go.woodpecker-ci.org/woodpecker/web
+          privileged: true
+          environment:
+            COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          runs: |
+            set -eux -o pipefail
+
+            corepack pnpm install --frozen-lockfile
+            corepack pnpm build
+            test -s dist/index.html
+            ls dist/assets/*.js > /dev/null
+        - name: prune web dev dependencies
+          work-dir: /go/src/go.woodpecker-ci.org/woodpecker/web
+          privileged: true
+          environment:
+            CI: "true"
+            COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          runs: |
+            set -eux -o pipefail
+
+            corepack pnpm prune --prod
+            test -s dist/index.html
+        - name: web ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: woodpecker-server-web
+            source: /go/src/go.woodpecker-ci.org/woodpecker/web/node_modules
+        - name: source sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0 AND BSD-3-Clause AND MIT AND CC-BY-3.0
+            name: woodpecker-server
+            purl: pkg:golang/go.woodpecker-ci.org/woodpecker/v3@v3.20.1
+            version: 3.20.1
+        - name: stage sboms
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF '"pkg:golang/go.woodpecker-ci.org/woodpecker/v3@v3.20.1"' /opt/docker/sbom/woodpecker-server/.spdx.woodpecker-server.json
+            install -d "${target.dir}/opt/docker/sbom"
+            for sbom in woodpecker-server woodpecker-server-web; do
+              cp -a "/opt/docker/sbom/${sbom}" "${target.dir}/opt/docker/sbom/"
+              cp -a "/opt/docker/sbom/${sbom}" "${target.dir}/opt/docker/sbom/${sbom}-dev"
+            done
+        - name: generate openapi
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go generate ./cmd/server/openapi.go
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -tags 'test netgo osusergo grpcnotrace sqlite sqlite_unlock_notify libsqlite3' ./version/... ./server/web/... ./server/cron/... ./cmd/server/...
+            go test -p 1 -tags 'test netgo osusergo grpcnotrace sqlite sqlite_unlock_notify libsqlite3' -run TestMigrate ./server/store/...
+        - name: build woodpecker-server
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X go.woodpecker-ci.org/woodpecker/v3/version.Version=3.20.1
+            output: ${target.dir}/usr/bin/woodpecker-server
+            packages: ./cmd/server
+            tags: netgo,osusergo,grpcnotrace,sqlite,sqlite_unlock_notify,libsqlite3
+        - name: build woodpecker-server dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 1
+            fips: false
+            ldflags:
+              - -X go.woodpecker-ci.org/woodpecker/v3/version.Version=3.20.1
+            output: ${target.dir}/usr/bin/woodpecker-server-dev
+            packages: ./cmd/server
+            strip: false
+            tags: netgo,osusergo,grpcnotrace,sqlite,sqlite_unlock_notify,libsqlite3
+        - name: verify binaries
+          environment:
+            WANT_FIPS: "false"
+          runs: |
+            set -eux -o pipefail
+
+            for bin in woodpecker-server woodpecker-server-dev; do
+              path="${target.dir}/usr/bin/${bin}"
+              "${path}" --version | grep -qF '3.20.1'
+              go version -m "${path}" | grep -E '^[[:space:]]+build[[:space:]]+-tags=' | grep -q 'libsqlite3'
+              readelf -d "${path}" | grep -q 'NEEDED.*\[libsqlite3\.so\.0\]'
+              readelf --dyn-syms -W "${path}" | grep -E '[[:space:]]UND[[:space:]]+sqlite3_open_v2(@|$)'
+              readelf --dyn-syms -W "${path}" | grep -E '[[:space:]]UND[[:space:]]+sqlite3_unlock_notify(@|$)'
+              if [ "${WANT_FIPS}" = "true" ]; then
+                go version -m "${path}" | grep -E '^[[:space:]]+build[[:space:]]+GOFIPS140=v'
+              else
+                if go version -m "${path}" | grep -E '^[[:space:]]+build[[:space:]]+GOFIPS140=v'; then
+                  echo "non-FIPS ${bin} carries a GOFIPS140 setting" >&2
+                  exit 1
+                fi
+              fi
+            done
+
+            runtime_sections=$(readelf -S -W "${target.dir}/usr/bin/woodpecker-server")
+            if printf '%s\n' "${runtime_sections}" | grep -E '\.symtab|\.z?debug_info'; then
+              echo "runtime woodpecker-server is not stripped" >&2
+              exit 1
+            fi
+            dev_sections=$(readelf -S -W "${target.dir}/usr/bin/woodpecker-server-dev")
+            printf '%s\n' "${dev_sections}" | grep -q '\.symtab'
+            printf '%s\n' "${dev_sections}" | grep -qE '\.z?debug_info'
+        - name: install licenses
+          runs: |
+            set -eux -o pipefail
+
+            dir="${target.dir}/usr/share/licenses/woodpecker-server-3"
+            install -D -m 0644 LICENSE "${dir}/LICENSE"
+            grep -q 'Apache License' "${dir}/LICENSE"
+            install -D -m 0644 web/LICENSE "${dir}/LICENSE.web"
+            grep -q 'Georgiana Ionescu' "${dir}/LICENSE.web"
+            install -D -m 0644 server/logging/LICENSE "${dir}/LICENSE.server-logging"
+            grep -q 'BSD 3-Clause License' "${dir}/LICENSE.server-logging"
+            {
+              head -n 4 shared/optional/option.go
+              echo
+              cat /go/src/gitea-license/LICENSE
+            } > "${dir}/LICENSE.shared-optional"
+            chmod 0644 "${dir}/LICENSE.shared-optional"
+            grep -q 'Licensed under the MIT License' "${dir}/LICENSE.shared-optional"
+            grep -q 'Permission is hereby granted, free of charge' "${dir}/LICENSE.shared-optional"
+            install -D -m 0644 "${source.dir}/LICENSE.woodpecker-icon" "${dir}/LICENSE.woodpecker-icon"
+            grep -q 'Georgiana Ionescu' "${dir}/LICENSE.woodpecker-icon"
+            grep -q 'Creative Commons Attribution 3.0 Unported' "${dir}/LICENSE.woodpecker-icon"
+            cp -a "${dir}" "${dir}-dev"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - musl
+              - sqlite-libs
+              - tzdata
+              - ca-certificates-bundle
+            description: Woodpecker CI server
+            files:
+              - usr/bin/woodpecker-server
+              - usr/share/licenses/woodpecker-server-3
+              - opt/docker/sbom/woodpecker-server
+              - opt/docker/sbom/woodpecker-server-web
+            formats:
+              - apk
+            license: Apache-2.0 AND BSD-3-Clause AND MIT AND CC-BY-3.0
+            name: woodpecker-server-3
+            rel: 0
+            subpackages:
+              - depends:
+                  - musl
+                  - sqlite-libs
+                  - tzdata
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/woodpecker-server
+                    source: usr/bin/woodpecker-server-dev
+                  - path: usr/share/licenses/woodpecker-server-3
+                    source: usr/share/licenses/woodpecker-server-3-dev
+                  - path: opt/docker/sbom/woodpecker-server
+                    source: opt/docker/sbom/woodpecker-server-dev
+                  - path: opt/docker/sbom/woodpecker-server-web
+                    source: opt/docker/sbom/woodpecker-server-web-dev
+                name: woodpecker-server-3-dev
+            url: https://woodpecker-ci.org/
+            version: 3.20.1
+      paths:
+        - type: file
+          path: ${source.dir}/LICENSE.woodpecker-icon
+          uid: 0
+          gid: 0
+          source: package/main/woodpecker-server/LICENSE.woodpecker-icon
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
