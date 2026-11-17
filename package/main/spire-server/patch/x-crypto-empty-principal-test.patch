@@ -1,0 +1,26 @@
+Subject: Preserve the empty-principal SSH certificate fixture
+
+Origin: DHI-internal (dependency compatibility)
+Description: Sign with a temporary principal before restoring the empty-principal fixture.
+Base-Tree: git https://github.com/spiffe/spire.git 746331571d5563bb28bf1dc1c2cd04e1570453d8
+Verify: test pkg/common/plugin/sshpop/handshake_test.go::TestVerifyAttestationData
+Forwarded: no (upstream main retains the incompatible helper)
+Drop-When: never: supported SPIRE release sources are immutable and need this fixture with current x/crypto
+
+Recent x/crypto rejects signing certificates with no principals before SPIRE can exercise its own validation. The helper signs with a temporary principal, clears it afterward, and preserves the production rejection assertion.
+
+diff --git a/pkg/common/plugin/sshpop/handshake_test.go b/pkg/common/plugin/sshpop/handshake_test.go
+--- a/pkg/common/plugin/sshpop/handshake_test.go
++++ b/pkg/common/plugin/sshpop/handshake_test.go
+@@ -47,2 +47,9 @@ func newTest(t *testing.T, opts ...func(*ssh.Certificate)) *testParams {
+-	err = certificate.SignCert(rand.Reader, signer)
+-	require.NoError(t, err)
++	hasNoPrincipals := len(certificate.ValidPrincipals) == 0
++	if hasNoPrincipals {
++		certificate.ValidPrincipals = []string{"temporary-principal"}
++	}
++	err = certificate.SignCert(rand.Reader, signer)
++	require.NoError(t, err)
++	if hasNoPrincipals {
++		certificate.ValidPrincipals = nil
++	}

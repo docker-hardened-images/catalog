@@ -1,0 +1,86 @@
+#!/usr/bin/make -f
+
+DEB_CFLAGS := $(shell dpkg-buildflags --get CFLAGS)
+DEB_CPPFLAGS := $(shell dpkg-buildflags --get CPPFLAGS)
+DEB_LDFLAGS := $(shell dpkg-buildflags --get LDFLAGS)
+
+APR_PREFIX := /usr/lib/apr
+APU_PREFIX := /usr/lib/apr-util
+HTTPD_SYSCONFDIR := /etc/httpd
+HTTPD_LOCALSTATEDIR := /var/httpd
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cd apr && ./buildconf
+	cd apr && ./configure \
+		--prefix=$(APR_PREFIX) \
+		--enable-threads \
+		--enable-posix-shm \
+		--with-crypto \
+		--with-openssl=/usr
+
+override_dh_auto_build:
+	cd apr && make -j$$(nproc)
+	cd apr && make install
+	cd apr-util && ./buildconf --with-apr=$(CURDIR)/apr
+	cd apr-util && ./configure \
+		--prefix=$(APU_PREFIX) \
+		--with-apr=$(APR_PREFIX) \
+		--with-openssl=/usr \
+		--with-crypto
+	cd apr-util && make -j$$(nproc)
+	cd apr-util && make install
+	mkdir -p httpd/srclib
+	cp -r apr httpd/srclib/
+	cp -r apr-util httpd/srclib/
+	cd httpd && ./buildconf
+	cd httpd && ./configure \
+		--build=$(shell dpkg-architecture --query DEB_BUILD_GNU_TYPE) \
+		--prefix=/usr \
+		--sbindir=/usr/sbin \
+		--libdir=/usr/lib/httpd \
+		--sysconfdir=$(HTTPD_SYSCONFDIR) \
+		--localstatedir=$(HTTPD_LOCALSTATEDIR) \
+		--datadir=/usr/share/httpd \
+		--with-apr=$(APR_PREFIX) \
+		--with-apr-util=$(APU_PREFIX) \
+		--enable-mods-shared=most \
+		--enable-mpms-shared="event prefork worker" \
+		--with-mpm=event \
+		--enable-ssl \
+		--enable-proxy \
+		--enable-proxy-http \
+		--enable-rewrite \
+		--enable-deflate \
+		--enable-pie \
+		CFLAGS="-pipe $(DEB_CFLAGS)" \
+		CPPFLAGS="$(DEB_CPPFLAGS)" \
+		LDFLAGS="-Wl,--as-needed $(DEB_LDFLAGS)"
+	cd httpd && make -j$$(nproc)
+
+override_dh_auto_install:
+	cd httpd && make install DESTDIR=$(CURDIR)/debian/tmp
+	mkdir -p $(CURDIR)/debian/tmp/usr/lib
+	cp -a $(APR_PREFIX) $(CURDIR)/debian/tmp/usr/lib/
+	cp -a $(APU_PREFIX) $(CURDIR)/debian/tmp/usr/lib/
+	rm -rf $(CURDIR)/debian/tmp/usr/share/httpd/man
+	rm -rf $(CURDIR)/debian/tmp/usr/share/httpd/manual
+	rm -rf $(CURDIR)/debian/tmp/usr/include
+	rm -rf $(CURDIR)/debian/tmp/usr/man
+	sed -ri \
+		-e 's!^(\s*CustomLog)\s+\S+!\1 /proc/self/fd/1!g' \
+		-e 's!^(\s*ErrorLog)\s+\S+!\1 /proc/self/fd/2!g' \
+		-e 's!^(\s*TransferLog)\s+\S+!\1 /proc/self/fd/1!g' \
+		-e 's!^(\s*User)\s+daemon\s*$$!\1 www-data!g' \
+		-e 's!^(\s*Group)\s+daemon\s*$$!\1 www-data!g' \
+		$(CURDIR)/debian/tmp$(HTTPD_SYSCONFDIR)/httpd.conf \
+		$(CURDIR)/debian/tmp$(HTTPD_SYSCONFDIR)/extra/httpd-ssl.conf
+	sed -i 's/Listen 80/Listen 8080/' \
+		$(CURDIR)/debian/tmp$(HTTPD_SYSCONFDIR)/httpd.conf
+	mkdir -p $(CURDIR)/debian/tmp$(HTTPD_LOCALSTATEDIR)/logs
+	install -Dm755 $(CURDIR)/bin/httpd-foreground \
+		$(CURDIR)/debian/tmp/usr/sbin/httpd-foreground
+
+override_dh_auto_test:

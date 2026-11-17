@@ -1,0 +1,58 @@
+Subject: Handle every profile-selection batch in the segmentwriter test query helper
+Description: Busy ingest runs can exceed the default batch size and return
+ multiple selection responses. Reading only one batch fails the test and leaves
+ the bidi stream open during cleanup.
+Origin: DHI-internal
+Base-Tree: git https://github.com/grafana/pyroscope 2b49131fb821d9029514945bf13209c2917dede1
+Forwarded: no
+Verify: test pkg/segmentwriter/segment_test.go
+Drop-When: never: no upstream release contains the multi-batch test fix
+
+--- a/pkg/segmentwriter/segment_test.go
++++ b/pkg/segmentwriter/segment_test.go
+@@ -647,28 +647,25 @@ func (sw *sw) query(tc tenantClient, q *ingesterv1.SelectProfilesRequest) *profi
+ 	})
+ 	require.NoError(sw.t, err)
+ 
+-	resp, err := bidi.Receive()
+-	require.NoError(t, err)
+-	require.Nil(t, resp.Result)
+-	require.NotNilf(t, resp.SelectedProfiles, "res %+v", resp)
+-	require.NotEmpty(t, resp.SelectedProfiles.Fingerprints)
+-	require.NotEmpty(t, resp.SelectedProfiles.Profiles)
+-
+-	nProfiles := len(resp.SelectedProfiles.Profiles)
++	var resp *ingesterv1.MergeProfilesPprofResponse
++	for {
++		resp, err = bidi.Receive()
++		require.NoError(t, err)
++		require.Nil(t, resp.Result)
++		if resp.SelectedProfiles == nil {
++			break
++		}
++		require.NotEmpty(t, resp.SelectedProfiles.Fingerprints)
++		require.NotEmpty(t, resp.SelectedProfiles.Profiles)
+ 
+-	bools := make([]bool, nProfiles)
+-	for i := 0; i < nProfiles; i++ {
+-		bools[i] = true
++		bools := make([]bool, len(resp.SelectedProfiles.Profiles))
++		for i := range bools {
++			bools[i] = true
++		}
++		require.NoError(t, bidi.Send(&ingesterv1.MergeProfilesPprofRequest{
++			Profiles: bools,
++		}))
+ 	}
+-	require.NoError(t, bidi.Send(&ingesterv1.MergeProfilesPprofRequest{
+-		Profiles: bools,
+-	}))
+-
+-	// expect empty resp to signal it is finished
+-	resp, err = bidi.Receive()
+-	require.NoError(t, err)
+-	require.Nil(t, resp.Result)
+-	require.Nil(t, resp.SelectedProfiles)
+ 
+ 	resp, err = bidi.Receive()
+ 	require.NoError(t, err)

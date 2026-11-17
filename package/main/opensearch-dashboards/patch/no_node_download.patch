@@ -1,0 +1,110 @@
+From 171bf5dd397694dbb58d9fe6144d31e8e4ada21b Mon Sep 17 00:00:00 2001
+From: DHI <dhi@docker.com>
+Date: Sat, 11 Apr 2026 00:20:48 -0400
+Subject: [PATCH] Prevent Node.js download during build
+Upstream: https://github.com/opensearch-project/OpenSearch-Dashboards
+
+---
+ src/dev/build/build_distributables.ts               |  2 --
+ src/dev/build/tasks/create_archives_sources_task.ts | 10 ----------
+ src/dev/build/tasks/notice_file_task.ts             | 13 -------------
+ src/dev/notice/generate_build_notice_text.js        |  3 +--
+ 4 files changed, 1 insertion(+), 27 deletions(-)
+
+diff --git a/src/dev/build/build_distributables.ts b/src/dev/build/build_distributables.ts
+index 193ece29..0b950cde 100644
+--- a/src/dev/build/build_distributables.ts
++++ b/src/dev/build/build_distributables.ts
+@@ -64,8 +64,6 @@ export async function buildDistributables(log: ToolingLog, options: BuildOptions
+    */
+   await run(Tasks.VerifyEnv);
+   await run(Tasks.Clean);
+-  await run(options.downloadFreshNode ? Tasks.DownloadNodeBuilds : Tasks.VerifyExistingNodeBuilds);
+-  await run(Tasks.ExtractNodeBuilds);
+ 
+   /**
+    * run platform-generic build tasks
+diff --git a/src/dev/build/tasks/create_archives_sources_task.ts b/src/dev/build/tasks/create_archives_sources_task.ts
+index bf53c291..6c3847a8 100644
+--- a/src/dev/build/tasks/create_archives_sources_task.ts
++++ b/src/dev/build/tasks/create_archives_sources_task.ts
+@@ -29,7 +29,6 @@
+  */
+ 
+ import { scanCopy, Task } from '../lib';
+-import { getNodeDownloadInfo } from './nodejs';
+ 
+ export const CreateArchivesSources: Task = {
+   description: 'Creating platform-specific archive source directories',
+@@ -49,14 +48,6 @@ export const CreateArchivesSources: Task = {
+           'specific build directory'
+         );
+ 
+-        // copy node.js install
+-        await scanCopy({
+-          source: (await getNodeDownloadInfo(config, platform)).extractDir,
+-          destination: build.resolvePathForPlatform(platform, 'node'),
+-          log,
+-        });
+-
+-        log.debug('Node.js copied into', platform.getNodeArch(), 'specific build directory');
+       })
+     );
+   },
+diff --git a/src/dev/build/tasks/notice_file_task.ts b/src/dev/build/tasks/notice_file_task.ts
+index 08792b65..99e5d086 100644
+--- a/src/dev/build/tasks/notice_file_task.ts
++++ b/src/dev/build/tasks/notice_file_task.ts
+@@ -32,7 +32,6 @@ import { getInstalledPackages } from '../../npm';
+ import { LICENSE_OVERRIDES } from '../../license_checker';
+ 
+ import { write, Task } from '../lib';
+-import { getNodeDownloadInfo } from './nodejs';
+ import { generateNoticeFromSource, generateBuildNoticeText } from '../../notice';
+ 
+ export const CreateNoticeFile: Task = {
+@@ -57,21 +56,9 @@ export const CreateNoticeFile: Task = {
+ 
+     log.info('Generating build notice');
+ 
+-    const { extractDir: nodeDir, version: nodeVersion } = await getNodeDownloadInfo(
+-      config,
+-      config.hasSpecifiedPlatform()
+-        ? config.getPlatform(
+-            config.getTargetPlatforms()[0].getName(),
+-            config.getTargetPlatforms()[0].getArchitecture()
+-          )
+-        : config.getPlatform('linux', 'x64')
+-    );
+-
+     const notice = await generateBuildNoticeText({
+       noticeFromSource,
+       packages,
+-      nodeDir,
+-      nodeVersion,
+     });
+ 
+     log.info('Writing notice to NOTICE.txt');
+diff --git a/src/dev/notice/generate_build_notice_text.js b/src/dev/notice/generate_build_notice_text.js
+index b32e2009..c7985a7e 100644
+--- a/src/dev/notice/generate_build_notice_text.js
++++ b/src/dev/notice/generate_build_notice_text.js
+@@ -29,7 +29,6 @@
+  */
+ 
+ import { generatePackageNoticeText } from './generate_package_notice_text';
+-import { generateNodeNoticeText } from './generate_node_notice_text';
+ 
+ /**
+  *  When given a list of packages and the directory to the
+@@ -48,7 +47,7 @@ export async function generateBuildNoticeText(options = {}) {
+ 
+   const packageNotices = await Promise.all(packages.map(generatePackageNoticeText));
+ 
+-  return [noticeFromSource, ...packageNotices, generateNodeNoticeText(nodeDir, nodeVersion)].join(
++  return [noticeFromSource, ...packageNotices].join(
+     '\n---\n'
+   );
+ }
+-- 
+2.51.0

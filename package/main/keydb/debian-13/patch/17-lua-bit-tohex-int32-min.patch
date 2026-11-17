@@ -1,0 +1,38 @@
+Fix Lua bit.tohex stack overflow on INT32_MIN (CVE-2024-31449)
+
+bit.tohex(x, n) negates a negative digit count n to select uppercase
+output. When n is INT32_MIN the negation overflows and stays negative,
+so the (size_t)n cast passed to lua_pushlstring reads far past the
+8-byte stack buffer. Clamp INT32_MIN to INT32_MIN+1 before negating.
+
+Tracker: CVE-2024-31449
+Upstream patch: https://github.com/redis/redis/commit/1f7c148be2cbacf7d50aa461c58b871e87cc5ed9
+Adaptation: deps/lua/src/lua_bit.c is byte-identical to Redis 6.2 in KeyDB v6.3.4, so the C hunk applies verbatim. The tests/unit/scripting.tcl hunk was re-anchored: KeyDB (forked from Redis 6.2.6) lacks the "Attempt to modify a readonly table" test used as upstream context, so the new test is inserted before "Test an example script DECR_IF_GT" using the "Globals protection setting an undeclared global" test as context.
+
+diff --git a/deps/lua/src/lua_bit.c b/deps/lua/src/lua_bit.c
+--- a/deps/lua/src/lua_bit.c
++++ b/deps/lua/src/lua_bit.c
+@@ -131,6 +131,7 @@ static int bit_tohex(lua_State *L)
+   const char *hexdigits = "0123456789abcdef";
+   char buf[8];
+   int i;
++  if (n == INT32_MIN) n = INT32_MIN+1;
+   if (n < 0) { n = -n; hexdigits = "0123456789ABCDEF"; }
+   if (n > 8) n = 8;
+   for (i = (int)n; --i >= 0; ) { buf[i] = hexdigits[b & 15]; b >>= 4; }
+diff --git a/tests/unit/scripting.tcl b/tests/unit/scripting.tcl
+--- a/tests/unit/scripting.tcl
++++ b/tests/unit/scripting.tcl
+@@ -405,6 +405,12 @@ start_server {tags {"scripting"}} {
+         set e
+     } {*ERR*attempted to create global*}
+ 
++    test {lua bit.tohex bug} {
++        set res [r eval {return bit.tohex(65535, -2147483648)} 0]
++        r ping
++        set res
++    } {0000FFFF}
++
+     test {Test an example script DECR_IF_GT} {
+         set decr_if_gt {
+             local current

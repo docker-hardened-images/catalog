@@ -1,0 +1,106 @@
+Subject: Adapt gitlab-exporter Sidekiq probe for Sidekiq 7 / redis-client
+Origin: DHI-internal (Sidekiq 7 compatibility; upstream still pins 6.5.12)
+Description: DHI bumps Sidekiq to ~> 7.3 for the Sinatra 4 / Rack 3 CVE path.
+ Sidekiq 7 rejects assigning a ConnectionPool to config.redis, uses
+ redis-client (RedisClient::* errors, sentinel name required), and treats a
+ present :sentinels key as sentinel mode even when nil. Rewrite with_sidekiq,
+ redis_options, connected?, and probe_workers for that client API.
+Forwarded: https://gitlab.com/gitlab-org/ruby/gems/gitlab-exporter/-/issues/105
+Upstream source: https://gitlab.com/gitlab-org/ruby/gems/gitlab-exporter/-/blob/16.10.0/lib/gitlab_exporter/sidekiq.rb
+Base tree:
+ Package: gitlab-exporter
+ Tag: 16.10.0
+ Layout: repository root after git checkout of tag 16.10.0
+Files: lib/gitlab_exporter/sidekiq.rb
+
+--- a/lib/gitlab_exporter/sidekiq.rb
++++ b/lib/gitlab_exporter/sidekiq.rb
+@@ -29,12 +29,12 @@
+       PrometheusMetrics.describe("sidekiq_enqueued_jobs",
+                                  "Total number of jobs enqueued by class name. Only inspects the first #{PROBE_JOBS_LIMIT} jobs per queue.") # rubocop:disable Layout/LineLength
+ 
+-      def self.connection_pool
+-        @@connection_pool ||= Hash.new do |h, connection_hash| # rubocop:disable Style/ClassVars
+-          config = connection_hash.merge(pool_timeout: POOL_TIMEOUT, size: POOL_SIZE)
++      def self.last_redis_options
++        @last_redis_options
++      end
+ 
+-          h[connection_hash] = Sidekiq::RedisConnection.create(config)
+-        end
++      def self.last_redis_options=(options)
++        @last_redis_options = options
+       end
+ 
+       def initialize(metrics: PrometheusMetrics.new, logger: nil, **opts)
+@@ -135,7 +135,11 @@
+           worker_stats = Hash.new(0)
+ 
+           Sidekiq::Workers.new.map do |_pid, _tid, work|
+-            job_klass = work["payload"]["class"]
++            job_klass = if work.respond_to?(:job)
++                          work.job.klass
++                        else
++                          work["payload"]["class"]
++                        end
+ 
+             worker_stats[job_klass] += 1
+           end
+@@ -183,8 +187,16 @@
+ 
+       def with_sidekiq
+         SIDEKIQ_REDIS_LOCK.synchronize {
++          options = redis_options.merge(size: POOL_SIZE, pool_timeout: POOL_TIMEOUT)
+           Sidekiq.configure_client do |config|
+-            config.redis = self.class.connection_pool[redis_options]
++            # Sidekiq 7: config.redis= must be a Hash; Sidekiq builds the pool.
++            config.redis = options
++            # redis= merges into @redis_config and does not drop an existing
++            # pool, so clear it when the options change (or on first use).
++            if self.class.last_redis_options != options
++              config.instance_variable_set(:@redis, nil)
++              self.class.last_redis_options = options
++            end
+           end
+ 
+           return unless connected?
+@@ -196,10 +208,19 @@
+       def redis_options
+         options = {
+           url: @opts[:redis_url],
+-          sentinels: redis_sentinel_options,
+           connect_timeout: 1,
+           reconnect_attempts: 0
+         }
++        sentinels = redis_sentinel_options
++        if sentinels.is_a?(Array)
++          options[:sentinels] = sentinels
++          # redis-client (Sidekiq 7) requires the sentinel master name.
++          if @opts.key?(:redis_sentinel_master)
++            options[:name] = @opts[:redis_sentinel_master]
++          elsif @opts.key?(:redis_master_name)
++            options[:name] = @opts[:redis_master_name]
++          end
++        end
+ 
+         %i[username password].each do |credential|
+           options[credential] = @opts[:"redis_#{credential}"] if @opts.key?(:"redis_#{credential}")
+@@ -259,10 +280,15 @@
+         Sidekiq.redis do |conn|
+           @connected = (conn.ping == "PONG")
+         end
+-      rescue Redis::BaseConnectionError => e
++      rescue RedisClient::ConnectionError => e
+         @logger&.error "Error connecting to the Redis: #{e}"
+-        pool = self.class.connection_pool[redis_options]
+-        pool.reload(&:close)
++        begin
++          Sidekiq.redis_pool.reload(&:close)
++        rescue StandardError
++          nil
++        end
++        Sidekiq.default_configuration.instance_variable_set(:@redis, nil)
++        self.class.last_redis_options = nil
+         @connected = false
+       end
+     end

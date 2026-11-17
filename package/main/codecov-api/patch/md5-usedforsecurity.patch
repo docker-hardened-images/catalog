@@ -1,0 +1,65 @@
+Origin: DHI
+Description: Mark the non-security MD5 uses of the API as usedforsecurity=False.
+ The report storage path hash, the GraphQL hashedPath resolvers and the
+ gravatar/avatars.io avatar URLs use MD5 as a cheap obfuscation hash, not as a
+ security control. Under the OpenSSL FIPS provider hashlib.md5() raises
+ UnsupportedDigestmodError unless the call is marked usedforsecurity=False, so
+ these call sites fail on the -fips variants. usedforsecurity is accepted by
+ every Python this package builds against (3.9+); the digests are unchanged.
+Forwarded: not-yet
+Upstream: https://github.com/codecov/umbrella (tag self-hosted-26.7.6)
+diff --git a/apps/codecov-api/graphql_api/types/file/file.py b/apps/codecov-api/graphql_api/types/file/file.py
+index eccb9cf6f..59ee8516c 100644
+--- a/apps/codecov-api/graphql_api/types/file/file.py
++++ b/apps/codecov-api/graphql_api/types/file/file.py
+@@ -48,6 +48,6 @@ def resolve_totals(data, info):
+ def resolve_hashed_path(data, info):
+     path = data.get("path")
+     encoded_path = path.encode()
+-    md5_path = hashlib.md5(encoded_path)
++    md5_path = hashlib.md5(encoded_path, usedforsecurity=False)
+ 
+     return md5_path.hexdigest()
+diff --git a/apps/codecov-api/graphql_api/types/impacted_file/impacted_file.py b/apps/codecov-api/graphql_api/types/impacted_file/impacted_file.py
+index 956b709d3..9006d2d06 100644
+--- a/apps/codecov-api/graphql_api/types/impacted_file/impacted_file.py
++++ b/apps/codecov-api/graphql_api/types/impacted_file/impacted_file.py
+@@ -58,7 +58,7 @@ def resolve_change_coverage(impacted_file: ImpactedFile, info) -> float:
+ def resolve_hashed_path(impacted_file: ImpactedFile, info) -> str:
+     path = impacted_file.head_name
+     encoded_path = path.encode()
+-    md5_path = hashlib.md5(encoded_path)
++    md5_path = hashlib.md5(encoded_path, usedforsecurity=False)
+ 
+     return md5_path.hexdigest()
+ 
+diff --git a/libs/shared/shared/api_archive/archive.py b/libs/shared/shared/api_archive/archive.py
+index 68564698d..04efc454d 100644
+--- a/libs/shared/shared/api_archive/archive.py
++++ b/libs/shared/shared/api_archive/archive.py
+@@ -78,7 +78,7 @@ class ArchiveService:
+         Generates a hash key from repo specific information.
+         Provides slight obfuscation of data in minio storage
+         """
+-        _hash = md5()
++        _hash = md5(usedforsecurity=False)
+         hash_key = get_config("services", "minio", "hash_key", default="")
+         val = "".join(
+             map(
+diff --git a/libs/shared/shared/django_apps/codecov_auth/models.py b/libs/shared/shared/django_apps/codecov_auth/models.py
+index c7e3fa48a..3b4ac6da0 100644
+--- a/libs/shared/shared/django_apps/codecov_auth/models.py
++++ b/libs/shared/shared/django_apps/codecov_auth/models.py
+@@ -630,10 +630,10 @@ class Owner(ExportModelOperationsMixin("codecov_auth.owner"), models.Model):
+ 
+         # Codecov config
+         elif get_config("services", "gravatar") and self.email:
+-            return f"{GRAVATAR_BASE_URL}/avatar/{md5(self.email.lower().encode()).hexdigest()}?s={size}"
++            return f"{GRAVATAR_BASE_URL}/avatar/{md5(self.email.lower().encode(), usedforsecurity=False).hexdigest()}?s={size}"
+ 
+         elif get_config("services", "avatars.io") and self.email:
+-            return f"{AVATARIO_BASE_URL}/avatar/{md5(self.email.lower().encode()).hexdigest()}/{size}"
++            return f"{AVATARIO_BASE_URL}/avatar/{md5(self.email.lower().encode(), usedforsecurity=False).hexdigest()}/{size}"
+ 
+         elif self.ownerid:
+             return "{}/users/{}.png?size={}".format(

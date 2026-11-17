@@ -1,0 +1,265 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-crossplane-provider-aws-rds
+variant: runtime
+tags:
+  - 2.9.0-alpine3.24
+  - 2.9.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BINARY_LICENSE: Apache-2.0 AND MPL-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause AND ISC AND Unicode-DFS-2016
+  BUILD_ENTITLEMENT: ""
+  COMMIT_SHA: 735590c0d4c328ab3502127c07a5e7c229769733
+  CROSSPLANE_CLI_COMMIT_SHA: 1acb525095a4e43c9a765954efa66a47667a432b
+  CROSSPLANE_CLI_VERSION: v2.5.0
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: crossplane-provider-aws-rds-2
+  PACKAGE_SUFFIX: ""
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.0
+  UPSTREAM_CROSSPLANE_CLI_VERSION: v2.5.0
+  VERSION: 2.9.0
+  XPKG_DEPENDS_ON_PROVIDER: dhi.io/crossplane-provider-family-aws
+  XPKG_DEPENDS_ON_VERSION: '>=0.0.0-0'
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: crossplane-provider-aws-rds
+      work-dir: /go/src/github.com/upbound/provider-aws
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - kustomize
+          - yq-go
+        files:
+          - url: git+https://github.com/crossplane-contrib/provider-upjet-aws.git#v2.9.0
+            checksum: 735590c0d4c328ab3502127c07a5e7c229769733
+            path: /go/src/github.com/upbound/provider-aws
+            spdx:
+              name: crossplane-provider-aws-rds
+              version: 2.9.0
+              packages:
+                - name: provider-aws
+                  purl: pkg:golang/github.com/upbound/provider-aws/v2@2.9.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/crossplane/cli.git#v2.5.0
+            checksum: 1acb525095a4e43c9a765954efa66a47667a432b
+            path: /go/src/github.com/crossplane/cli
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: assert go toolchain is local
+          runs: |
+            set -eux -o pipefail
+
+            test "$(go env GOTOOLCHAIN)" = local
+        - name: update crossplane cli go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/crossplane/cli
+          with:
+            deps: []
+            download: true
+        - name: build crossplane cli
+          uses: go/build@v1
+          work-dir: /go/src/github.com/crossplane/cli
+          with:
+            ldflags:
+              - -s
+            output: /usr/local/bin/crossplane
+            packages: ./cmd/crossplane
+        - name: render package metadata
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/xpkg/pkg/crds /tmp/xpkg/root
+
+            go run "${source.dir}/render-package.go" \
+              package/crossplane.yaml.tmpl /tmp/xpkg/root/crossplane.yaml \
+              rds provider-aws-rds aws aws \
+              "dhi.io/crossplane-provider-family-aws" ">=0.0.0-0"
+            grep -q '^  name: provider-aws-rds$' /tmp/xpkg/root/crossplane.yaml
+            grep -q '^    pkg.crossplane.io/provider-family: provider-family-aws$' /tmp/xpkg/root/crossplane.yaml
+            grep -q '^    auth.upbound.io/group: aws.upbound.io$' /tmp/xpkg/root/crossplane.yaml
+            grep -qxF '    - provider: dhi.io/crossplane-provider-family-aws' /tmp/xpkg/root/crossplane.yaml
+            grep -qxF '      version: ">=0.0.0-0"' /tmp/xpkg/root/crossplane.yaml
+            test "$(grep -c 'provider:' /tmp/xpkg/root/crossplane.yaml)" -eq 1
+        - name: patch CRDs with kustomize
+          runs: |
+            set -eux -o pipefail
+
+            n=$(ls package/crds/rds.*.yaml | wc -l)
+            test "$n" -gt 0
+            for f in package/crds/rds.*.yaml; do
+              case "$(basename "$f")" in
+                rds.aws.upbound.io_*.yaml | rds.aws.m.upbound.io_*.yaml) ;;
+                *)
+                  echo "unexpected CRD file $f" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            echo "$n" > /tmp/xpkg/crd-count
+            cp package/crds/rds.*.yaml /tmp/xpkg/pkg/crds/
+            cp -R package/kustomize /tmp/xpkg/pkg/kustomize
+            test -x /tmp/xpkg/pkg/kustomize/plugin/providers.upbound.io/splittransformer/SplitTransformer
+
+            cd /tmp/xpkg/pkg/crds
+            kustomize create --autodetect
+            cd /tmp/xpkg/pkg
+
+            export YQ="$(command -v yq)"
+            test -n "$YQ"
+            XDG_CONFIG_HOME=/tmp/xpkg/pkg kustomize build --enable-alpha-plugins kustomize
+
+            rm crds/kustomization.yaml
+            test "$(ls crds/*.yaml | wc -l)" -eq "$n"
+            for f in crds/*.yaml; do
+              grep -q '^    strategy: Webhook$' "$f"
+              grep -q '^          path: /convert$' "$f"
+              cp "$f" /tmp/xpkg/root/
+            done
+        - name: build crossplane package
+          runs: |
+            set -eux -o pipefail
+
+            n=$(cat /tmp/xpkg/crd-count)
+            test "$n" -gt 0
+            test "$(ls /tmp/xpkg/root | wc -l)" -eq "$((n + 1))"
+            crossplane xpkg build --package-root /tmp/xpkg/root \
+              --examples-root /tmp/xpkg/no-examples -o /tmp/xpkg/rds.xpkg
+            cd /tmp/xpkg
+            crossplane xpkg extract --from-xpkg /tmp/xpkg/rds.xpkg -o /tmp/xpkg/package.yaml.gz
+            gunzip /tmp/xpkg/package.yaml.gz
+
+            pkg=/tmp/xpkg/package.yaml
+            test -s "$pkg"
+            test "$(grep -c '^kind: Provider$' "$pkg")" -eq 1
+            test "$(grep -c '^kind: CustomResourceDefinition$' "$pkg")" -eq "$n"
+            test "$(yq -N 'select(.kind == "CustomResourceDefinition") | .spec.group' "$pkg" | sort -u | tr '\n' ' ')" = "rds.aws.m.upbound.io rds.aws.upbound.io "
+            test "$(yq -N 'select(.kind == "Provider") | .spec.dependsOn | length' "$pkg")" = 1
+            test "$(yq -N 'select(.kind == "Provider") | .spec.dependsOn[0].provider' "$pkg")" = "dhi.io/crossplane-provider-family-aws"
+            test "$(yq -N 'select(.kind == "Provider") | .spec.dependsOn[0].version' "$pkg")" = ">=0.0.0-0"
+
+            mkdir -p "${target.dir}/usr/share/crossplane-provider-aws-rds"
+            cp "$pkg" "${target.dir}/usr/share/crossplane-provider-aws-rds/package.yaml"
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.58.0
+              - github.com/getkin/kin-openapi@v0.149.0
+        - uses: go/hermetic@v1
+        - name: test after bump
+          runs: |
+            set -eux -o pipefail
+
+            go test -count=1 ./config/diffutils/...
+        - name: build provider
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -s
+              - -X github.com/upbound/provider-aws/v2/internal/version.Version=v2.9.0
+            output: ${target.dir}/usr/bin/provider-aws-rds
+            packages: ./cmd/provider/rds
+        - name: assert fips module not linked
+          runs: |
+            set -eux -o pipefail
+
+            if grep -aqF 'crypto/internal/fips140/v' "${target.dir}/usr/bin/provider-aws-rds"; then
+              echo "the plain binary must not carry the FIPS module" >&2
+              exit 1
+            fi
+        - name: license gate
+          runs: |
+            set -eux -o pipefail
+
+            licdir="${target.dir}/usr/share/licenses/crossplane-provider-aws-rds-2"
+            go run "${source.dir}/license-gate.go" \
+              -binary "${target.dir}/usr/bin/provider-aws-rds" \
+              -project /go/src/github.com/upbound/provider-aws \
+              -out "$licdir" \
+              -license "Apache-2.0 AND MPL-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause AND ISC AND Unicode-DFS-2016"
+            test -s "$licdir/MODULES.txt"
+            test -s "$licdir/LICENSE"
+            test -s "$licdir/NOTICE"
+        - name: stage source sbom
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/crossplane-provider-aws-rds "${target.dir}/opt/docker/sbom/"
+        - name: stage xpkg license files
+          runs: |
+            set -eux -o pipefail
+
+            licdir="${target.dir}/usr/share/licenses/crossplane-provider-aws-rds-2-xpkg"
+            mkdir -p "$licdir"
+            cp /go/src/github.com/upbound/provider-aws/LICENSE "$licdir/LICENSE"
+            cp /go/src/github.com/upbound/provider-aws/NOTICE "$licdir/NOTICE"
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: crossplane-provider-aws-rds-2-fips
+            depends: ca-certificates-bundle
+            description: Crossplane provider for AWS, rds service provider (provider-aws-rds)
+            files:
+              - usr/bin/provider-aws-rds
+              - usr/share/licenses/crossplane-provider-aws-rds-2
+              - opt/docker/sbom/crossplane-provider-aws-rds
+            license: Apache-2.0 AND MPL-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause AND ISC AND Unicode-DFS-2016
+            name: crossplane-provider-aws-rds-2
+            rel: 0
+            url: https://github.com/crossplane-contrib/provider-upjet-aws
+            version: 2.9.0
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: crossplane-provider-aws-rds-2-xpkg-fips
+            description: Crossplane package metadata and CRDs for the AWS rds service provider (provider-aws-rds)
+            files:
+              - usr/share/crossplane-provider-aws-rds/package.yaml
+              - usr/share/licenses/crossplane-provider-aws-rds-2-xpkg
+            license: Apache-2.0
+            name: crossplane-provider-aws-rds-2-xpkg
+            rel: 0
+            url: https://github.com/crossplane-contrib/provider-upjet-aws
+            version: 2.9.0
+      paths:
+        - type: file
+          path: ${source.dir}/render-package.go
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/crossplane-provider-aws-rds/testdata/render-package.go
+        - type: file
+          path: ${source.dir}/license-gate.go
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/crossplane-provider-aws-rds/testdata/license-gate.go
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

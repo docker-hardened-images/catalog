@@ -1,0 +1,142 @@
+schemaVersion: '3'
+displayName: Google Antigravity
+description: Google's agent-first development platform, available as the agy terminal coding agent.
+kind: workload
+version: ${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - accounts.google.com:443
+          - oauth2.googleapis.com:443
+          - www.googleapis.com:443
+          - lh3.googleusercontent.com:443
+          - aicode.googleapis.com:443
+          - cloudcode-pa.googleapis.com:443
+          - daily-cloudcode-pa.googleapis.com:443
+          - generativelanguage.googleapis.com:443
+          - antigravity.google:443
+          - antigravity.google.com:443
+          - antigravity-unleash.goog:443
+          - play.googleapis.com:443
+          - safebrowsing.googleapis.com:443
+          - www.gstatic.com:443
+          - antigravity-cli-auto-updater-974169037036.us-central1.run.app:443
+          - storage.googleapis.com:443
+          - raw.githubusercontent.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Gemini API key for Antigravity's headless API-key mode
+    config:
+      service: google
+      phase: runtime
+      apiKey:
+        name: GEMINI_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: generativelanguage.googleapis.com
+            header: x-goog-api-key
+            format: '%s'
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        - command: |
+            set -e
+            cfg="$HOME/.gemini/antigravity-cli/settings.json"
+            mkdir -p "$(dirname "$cfg")"
+            [ -s "$cfg" ] || echo '{}' > "$cfg"
+            if [ "${SBX_CRED_GOOGLE_MODE:-none}" = apikey ]; then
+              jq '.modelProvider = "gemini"' "$cfg" > "$cfg.tmp"
+            else
+              jq 'del(.modelProvider)' "$cfg" > "$cfg.tmp"
+            fi
+            mv "$cfg.tmp" "$cfg"
+          user: '1000'
+          env:
+            - SBX_CRED_GOOGLE_MODE
+          description: Select Gemini API-key mode only when a Google credential is available
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            cfg="$HOME/.gemini/config/mcp_config.json"
+            mkdir -p "$(dirname "$cfg")"
+            [ -s "$cfg" ] || echo '{}' > "$cfg"
+            frag=/tmp/antigravity-mcp-gateway.json
+            cat > "$frag" <<EOF
+            {
+              "mcpServers": {
+                "mcp-gateway": {
+                  "serverUrl": "$MCP_GATEWAY_URL",
+                  "headers": {
+                    "Authorization": "Bearer $MCP_SENTINEL_TOKEN_NAME"
+                  }
+                }
+              }
+            }
+            EOF
+            jq -s '.[0] * .[1]' "$cfg" "$frag" > "$cfg.tmp"
+            mv "$cfg.tmp" "$cfg"
+            rm -f "$frag"
+          user: '1000'
+          env:
+            - MCP_GATEWAY_URL
+            - MCP_SENTINEL_TOKEN_NAME
+          description: Register the sandbox MCP gateway in Antigravity's user configuration
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        # Google Antigravity
+
+        This sandbox runs Google's Antigravity agent as `agy`. Authentication has two
+        modes and the sandbox picks between them for you: with a Google credential
+        bound, `GEMINI_API_KEY` carries a sentinel the egress proxy swaps for the real
+        key at Google's endpoints, and a startup hook sets `modelProvider: gemini` in
+        `~/.gemini/antigravity-cli/settings.json`. With nothing bound, that key is
+        removed and `agy` falls back to its interactive Google sign-in.
+
+        Egress is limited to Google's own hosts plus Antigravity's product and
+        update hosts, so an MCP server or a tool that reaches anywhere else will be
+        refused by the sandbox rather than by the agent.
+      directory: /home/agent
+    optional: true
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      content: |
+        # Google Antigravity
+
+        This sandbox runs Google's Antigravity agent as `agy`. Authentication has two
+        modes and the sandbox picks between them for you: with a Google credential
+        bound, `GEMINI_API_KEY` carries a sentinel the egress proxy swaps for the real
+        key at Google's endpoints, and a startup hook sets `modelProvider: gemini` in
+        `~/.gemini/antigravity-cli/settings.json`. With nothing bound, that key is
+        removed and `agy` falls back to its interactive Google sign-in.
+
+        Egress is limited to Google's own hosts plus Antigravity's product and
+        update hosts, so an MCP server or a tool that reaches anywhere else will be
+        refused by the sandbox rather than by the agent.
+      directory: /home/agent
+  - type: com.docker.sandbox/acp@1
+    config:
+      command:
+        - agy
+        - acp
+        - --dangerously-skip-permissions
+      agent: antigravity
+    optional: true
+licenses:
+  - LicenseRef-Proprietary
+args:
+  version:
+    required: true
+    buildArg: VERSION
+    pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    description: Antigravity CLI version asserted after installation
+provides:
+  - antigravity@${{ kit.args.version }}

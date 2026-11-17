@@ -1,0 +1,96 @@
+Skip gcc-defaults metapackages that cannot co-install with HSP gcc-14.
+
+Multilib, foreign cross, Go, D, Modula-2, hppa64, and GPU offload metapackages
+pin exact gcc-14-base versions from Debian main or depend on binaries omitted
+from the HSP gcc-14 build profile (host-triplet compilers only).
+Upstream source: https://salsa.debian.org/toolchain-team/gcc-defaults
+
+diff --git a/debian/rules b/debian/rules
+--- a/debian/rules
++++ b/debian/rules
+@@ -409,6 +409,9 @@
+     )
+ endif
+ 
++# DHI: HSP gcc-14 builds host-triplet compilers only; disable foreign cross metapackages.
++CROSS_ARCHS :=
++
+ ifeq ($(SOURCE),gcc-defaults)
+   with_native = yes
+ endif
+@@ -461,14 +464,12 @@
+   with_multiarch_lib := yes
+ endif
+ 
+-ifneq (,$(filter $(DEB_HOST_ARCH), $(multilib_archs)))
+-  with_multilib = yes
+-else
+-  no_packages += g++-multilib gfortran-multilib gobjc-multilib gobjc++-multilib gdc-multilib
+-endif
+-ifeq (,$(filter $(DEB_HOST_ARCH), $(go_multilib_archs)))
+-  no_packages += gccgo-multilib
+-endif
++# DHI: align gcc-defaults metapackages with the HSP gcc-14 build profile.
++no_packages += gcc-multilib g++-multilib gfortran-multilib gobjc-multilib gobjc++-multilib \
++  gdc-multilib gccgo-multilib gcc-hppa64-linux-gnu gcc-offload-nvptx gcc-offload-amdgcn \
++  gccgo gccgo$(NATIVE_SUFFIX) gccgo-for-host gccgo-for-build gccgo-doc gdc gdc$(NATIVE_SUFFIX) gdc-for-host gdc-for-build \
++  libgphobos-dev gm2 gm2$(NATIVE_SUFFIX) gm2-for-host gm2-for-build gm2-doc
++multilib_archs :=
+ 
+ ifeq ($(with_native),yes)
+   ifeq (,$(filter $(DEB_HOST_ARCH),$(go_archs)))
+@@ -752,7 +753,7 @@
+ 	    -e 's/NATIVE_ARCH/$(if $(filter yes,$(with_native)),$(a))/' \
+ 	    -e 's/@host_archs@/$(HOST_ARCHS_$(a))/g' \
+ 	    debian/control.cross.in \
+-	    $(if $(and $(filter yes,$(with_cross)),$(filter $(a),$(multilib_archs))), debian/control.cross-ml.in) \
++
+ 	    | awk '/^Package: gccgo-(arc|hppa|loongarch64|m68k|sh4)/ {skip=1} skip == 0 {print } /^$$/ && skip == 1 {skip=0}' \
+ 	    | awk '/^Package: gdc-(alpha|arc|m68k|sh4|sparc64)/ {skip=1} skip == 0 {print } /^$$/ && skip == 1 {skip=0}' \
+ 	    | awk '/^Package: gdc-multilib-sparc64/ {skip=1} skip == 0 {print } /^$$/ && skip == 1 {skip=0}' \
+@@ -1363,7 +1364,7 @@
+ #	dh_installdebconf
+ 	dh_installdocs -pcpp$(NATIVE_SUFFIX)
+ 	dh_installdocs -pcpp-for-host
+-	for p in `dh_listpackages -a $(nopkgs_native) -Ncpp$(NATIVE_SUFFIX) -Ncpp-for-host $(if $(filter yes,$(with_gfdl_docs)),-Ncpp-doc -Ngcc-doc -Ngfortran-doc -Ngccgo-doc) -Ngdc -Ngdc$(NATIVE_SUFFIX) -Ngdc-for-host -Nlibgphobos-dev`; do \
++	for p in `dh_listpackages -a $(nopkgs_native) -Ncpp$(NATIVE_SUFFIX) -Ncpp-for-host $(if $(filter yes,$(with_gfdl_docs)),-Ncpp-doc -Ngcc-doc -Ngfortran-doc $(if $(filter gccgo-doc,$(packages)),-Ngccgo-doc))`; do \
+ 	  case "$$p" in \
+ 	    *$(NATIVE_SUFFIX)) t=cpp$(NATIVE_SUFFIX) ;; \
+ 	    *-gnu*|*-kfreebsd*|gcc-hppa64-linux-gnu) continue;; \
+@@ -1378,9 +1379,7 @@
+ 
+ 	for p in \
+ 	  cpp$(NATIVE_SUFFIX) \
+-	  cpp-for-host \
+-	  $(if $(filter $(DEB_HOST_ARCH), $(d_archs)), gdc$(NATIVE_SUFFIX)) \
+-	  $(if $(filter $(DEB_HOST_ARCH), $(phobos_archs)), libgphobos-dev); \
++	  cpp-for-host; \
+ 	do \
+ 	  dh_installchangelogs -p$$p; \
+ 	  mv debian/$$p/usr/share/doc/$$p/changelog \
+@@ -1390,13 +1389,14 @@
+ 	    >> debian/$$p/usr/share/lintian/overrides/$$p; \
+ 	done
+ ifeq ($(with_gfdl_docs),yes)
+-	dh_installdocs -pcpp-doc -pgcc-doc -pgfortran-doc -pgccgo-doc
+-	dh_installchangelogs -pcpp-doc -pgcc-doc -pgfortran-doc -pgccgo-doc
+-	for i in cpp-doc gcc-doc gfortran-doc gccgo-doc; do \
++	dh_installdocs -pcpp-doc -pgcc-doc -pgfortran-doc $(if $(filter gccgo-doc,$(packages)),-pgccgo-doc)
++	dh_installchangelogs -pcpp-doc -pgcc-doc -pgfortran-doc $(if $(filter gccgo-doc,$(packages)),-pgccgo-doc)
++	for i in cpp-doc gcc-doc gfortran-doc $(if $(filter gccgo-doc,$(packages)),gccgo-doc); do \
+ 	  mv debian/$$i/usr/share/doc/$$i/changelog \
+ 	    debian/$$i/usr/share/doc/$$i/changelog.Debian; \
+ 	done
+ endif
++ifneq (,$(filter gm2-doc, $(packages)))
+ 	rm -rf debian/gm2-doc
+ 	dh_installdocs -pgm2-doc
+ 	dh_installchangelogs -pgm2-doc
+@@ -1408,6 +1408,7 @@
+ 	ln -sf gm2-$(PV_GM2).info.gz debian/gm2-doc/usr/share/info/gm2.info.gz
+ 	mkdir -p debian/gm2-doc/usr/share/doc/gcc-$(PV_GCC)-base/m2
+ 	ln -sf gm2-$(PV_GM2).html debian/gm2-doc/usr/share/doc/gcc-$(PV_GCC)-base/m2/gm2.html
++endif
+ 
+ ifneq (,$(filter gcc-hppa64-linux-gnu, $(packages)))
+ 	dh_installdocs -pgcc-hppa64-linux-gnu

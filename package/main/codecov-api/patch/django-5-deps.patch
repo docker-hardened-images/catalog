@@ -1,0 +1,611 @@
+Subject: Django 5.2.17 workspace for codecov-api dependency pins
+
+self-hosted-26.9.10 caps django<5.0.0; PyPI has no 4.2.x fix for the queued django advisories. Cherry-pick the Django 5.2 constraint, citext field replacement, and the codecov-api runtime compatibility slice from the upstream upgrade.
+
+Origin: backport, https://github.com/codecov/umbrella/commit/71e6ec2d84c6e6ae4184a1744e51c05a9ec5aee7
+Advisory: https://github.com/advisories/GHSA-6q48-6c7w-9gw2
+CVE: CVE-2026-15307
+CVE: CVE-2026-15830
+CVE: CVE-2026-53877
+CVE: CVE-2026-53878
+CVE: CVE-2026-48587
+CVE: CVE-2026-48588
+CVE: CVE-2026-6873
+CVE: CVE-2026-8404
+Base-Tree: git https://github.com/codecov/umbrella.git 1c2ed4e2accd4d57b65041281aa98f704c69171d
+Adaptation: Codecov API and shared-library slice of upstream PR #2245. Includes the dependency caps, CaseInsensitiveTextField, django-csp 4 settings, Redis admin lookup_allowed and positional Q filtering, datetime.UTC replacements, and the citext state migrations. Omits the worker cleanup change, uv.lock, AGENTS.md, and upstream tests: this package does not ship the worker, the build re-locks, and tests are not installed.
+Verify: cmd `bash -c 'cd "$(git rev-parse --show-toplevel)" && u=$(mktemp -d) && git clone -q --depth 1 --branch self-hosted-26.9.10 https://github.com/codecov/umbrella.git "$u" && patch -p1 --dry-run -d "$u" < package/main/codecov-api/patch/django-5-deps.patch'` expect "checking file pyproject.toml"
+Drop-When: upstream >= 27.0.0
+
+diff --git a/libs/shared/pyproject.toml b/libs/shared/pyproject.toml
+index 552ed19..6a48f89 100644
+--- a/libs/shared/pyproject.toml
++++ b/libs/shared/pyproject.toml
+@@ -14,7 +14,7 @@ dependencies = [
+     "django-model-utils>=4.5.1",
+     "django-postgres-extra>=2.0.8",
+     "django-prometheus>=2.3.1",
+-    "django>=4.2.30,<5.0.0",
++    "django>=5.2.17,<6.0.0",
+     "google-auth>=2.21.0",
+     "google-cloud-pubsub>=2.18.4",
+     "httpx>=0.23.0",
+diff --git a/libs/shared/shared/django_apps/codecov_auth/models.py b/libs/shared/shared/django_apps/codecov_auth/models.py
+index 51c14cd..8d1c7e6 100644
+--- a/libs/shared/shared/django_apps/codecov_auth/models.py
++++ b/libs/shared/shared/django_apps/codecov_auth/models.py
+@@ -7,7 +7,7 @@ from datetime import datetime
+ from hashlib import md5
+ from typing import Optional, Self
+ 
+-from django.contrib.postgres.fields import ArrayField, CITextField
++from django.contrib.postgres.fields import ArrayField
+ from django.contrib.sessions.models import Session as DjangoSession
+ from django.db import models
+ from django.db.models import Case, QuerySet, Sum, When
+@@ -30,6 +30,7 @@ from shared.django_apps.codecov_auth.helpers import get_gitlab_url
+ from shared.django_apps.codecov_auth.managers import OwnerManager
+ from shared.django_apps.core.managers import RepositoryManager
+ from shared.django_apps.core.models import DateTimeWithoutTZField, Repository
++from shared.django_apps.db_fields import CaseInsensitiveTextField
+ from shared.helpers.github_apps import is_configured
+ from shared.plan.constants import DEFAULT_FREE_PLAN, PlanName, TierName, TrialDaysAmount
+ 
+@@ -88,7 +89,7 @@ class User(ExportModelOperationsMixin("codecov_auth.user"), BaseCodecovModel):
+         MEMBER = "member"
+         ADMIN = "admin"
+ 
+-    email = CITextField(null=True)
++    email = CaseInsensitiveTextField(null=True)
+     name = models.TextField(null=True)
+     is_staff = models.BooleanField(null=True, default=False)
+     is_superuser = models.BooleanField(null=True, default=False)
+@@ -399,7 +400,7 @@ class Owner(ExportModelOperationsMixin("codecov_auth.owner"), models.Model):
+ 
+     ownerid = models.AutoField(primary_key=True)
+     service = models.TextField(choices=Service.choices)  # Really an ENUM in db
+-    username = CITextField(
++    username = CaseInsensitiveTextField(
+         unique=True, null=True
+     )  # No actual unique constraint on this in the DB
+     email = models.TextField(null=True)
+diff --git a/libs/shared/shared/django_apps/core/models.py b/libs/shared/shared/django_apps/core/models.py
+index 00965d8..6dbb4d1 100644
+--- a/libs/shared/shared/django_apps/core/models.py
++++ b/libs/shared/shared/django_apps/core/models.py
+@@ -4,7 +4,7 @@ import string
+ import uuid
+ from datetime import datetime
+ 
+-from django.contrib.postgres.fields import ArrayField, CITextField
++from django.contrib.postgres.fields import ArrayField
+ from django.contrib.postgres.indexes import GinIndex, OpClass
+ from django.db import models
+ from django.db.models.functions import Lower, Substr, Upper
+@@ -17,6 +17,7 @@ from model_utils import FieldTracker
+ from shared.django_apps.codecov.models import BaseCodecovModel
+ from shared.django_apps.core.encoders import ReportJSONEncoder
+ from shared.django_apps.core.managers import RepositoryManager
++from shared.django_apps.db_fields import CaseInsensitiveTextField
+ from shared.django_apps.utils.config import should_write_data_to_storage_config_check
+ from shared.django_apps.utils.model_utils import ArchiveField
+ from shared.reports.resources import Report
+@@ -96,7 +97,7 @@ class Repository(ExportModelOperationsMixin("core.repository"), models.Model):
+         F_SHARP = "f#"
+ 
+     repoid = models.AutoField(primary_key=True)
+-    name = CITextField()
++    name = CaseInsensitiveTextField()
+     author = models.ForeignKey(
+         "codecov_auth.Owner", db_column="ownerid", on_delete=models.CASCADE
+     )
+diff --git a/libs/shared/shared/django_apps/db_fields.py b/libs/shared/shared/django_apps/db_fields.py
+new file mode 100644
+index 0000000..33e5812
+--- /dev/null
++++ b/libs/shared/shared/django_apps/db_fields.py
+@@ -0,0 +1,48 @@
++from django.db import models
++from django.db.models import lookups
++
++
++class _CITextLookupMixin:
++    def process_lhs(self, compiler, connection, lhs=None):
++        sql, params = super().process_lhs(compiler, connection, lhs)
++        if connection.vendor == "postgresql":
++            return f"({sql})::citext", params
++        return sql, params
++
++
++class CaseInsensitiveTextField(models.TextField):
++    """Django 5+ TextField that keeps existing PostgreSQL citext columns."""
++
++    def db_type(self, connection):
++        if connection.vendor == "postgresql":
++            return "citext"
++        return super().db_type(connection)
++
++    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        return (
++            name,
++            "shared.django_apps.db_fields.CaseInsensitiveTextField",
++            args,
++            kwargs,
++        )
++
++
++@CaseInsensitiveTextField.register_lookup
++class CITextContains(_CITextLookupMixin, lookups.Contains):
++    pass
++
++
++@CaseInsensitiveTextField.register_lookup
++class CITextStartsWith(_CITextLookupMixin, lookups.StartsWith):
++    pass
++
++
++@CaseInsensitiveTextField.register_lookup
++class CITextEndsWith(_CITextLookupMixin, lookups.EndsWith):
++    pass
++
++
++@CaseInsensitiveTextField.register_lookup
++class CITextRegex(_CITextLookupMixin, lookups.Regex):
++    pass
+diff --git a/pyproject.toml b/pyproject.toml
+index ab60ffe..f826be0 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -28,7 +28,7 @@ shared = [
+     "django-model-utils>=4.5.1",
+     "django-postgres-extra>=2.0.8",
+     "django-prometheus>=2.3.1",
+-    "django>=4.2.30,<5.0.0",
++    "django>=5.2.17,<6.0.0",
+     "google-auth>=2.21.1",
+     "google-cloud-pubsub>=2.27.1",
+     "httpx>=0.23.1",
+@@ -67,12 +67,12 @@ codecov-api = [
+     "ariadne-django>=0.3.0",
+     "ariadne>=0.23.0",
+     "certifi>=2024.7.4",
+-    "django-autocomplete-light>=3.11.0",
++    "django-autocomplete-light>=5.0.0",
+     "django-cors-headers>=3.7.0",
+-    "django-csp==3.8.0",
++    "django-csp>=4.0,<5",
+     "django-cursor-pagination>=0.3.0",
+     "django-filter>=2.4.0",
+-    "djangorestframework>=3.15.2",
++    "djangorestframework>=3.17.2",
+     "drf-spectacular-sidecar>=2023.3.1",
+     "drf-spectacular>=0.26.2",
+     "gunicorn>=22.0.0",
+diff --git a/apps/codecov-api/codecov/settings_base.py b/apps/codecov-api/codecov/settings_base.py
+index 68f13620c0..b6b1f566b0 100644
+--- a/apps/codecov-api/codecov/settings_base.py
++++ b/apps/codecov-api/codecov/settings_base.py
+@@ -2,6 +2,7 @@
+ 
+ import sentry_sdk
+ from corsheaders.defaults import default_headers
++from csp.constants import NONE, SELF
+ from sentry_sdk.integrations.celery import CeleryIntegration
+ from sentry_sdk.integrations.django import DjangoIntegration
+ from sentry_sdk.integrations.httpx import HttpxIntegration
+@@ -29,6 +30,7 @@
+     "django.contrib.messages",
+     "django.contrib.staticfiles",
+     "django.contrib.postgres",
++    "csp",  # django-csp 4: register security system checks
+     "django_filters",
+     "drf_spectacular",
+     "drf_spectacular_sidecar",
+@@ -175,27 +177,29 @@
+ 
+ # The frame-ancestors directive restricts the URLs which can embed the resource using
+ # frame, iframe, object, or embed. This configuration denies doing so.
+-CSP_FRAME_ANCESTORS = "'none'"
+-
+-# Allows GraphQL Playground to render
+-CSP_DEFAULT_SRC = [
+-    "'self'",
+-    "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='",
+-    "'sha256-eKdXhLyOdPl2/gp1Ob116rCU2Ox54rseyz1MwCmzb6w='",
+-    "'sha256-a1pELtDJXf8fPX1YL2JiBM91RQBeIAswunzgwMEsvwA='",
+-    "'sha256-cNIcuS0BVLuBVP5rpfeFE42xHz7r5hMyf9YdfknWuCg='",
+-    "'sha256-bmwAzHxhO1mBINfkKkKPopyKEv4ppCHx/z84wQJ9nOY='",
+-    "'sha256-jQoC6QpIonlMBPFbUGlJFRJFFWbbijMl7Z8XqWrb46o='",
+-    "'sha256-8bfsSkoReSu+APs9CT6QDx2VMgtiw9/lrZLMZNUmhc0='",
+-    "'sha256-WoezM4J4TynepdEmsbDslXjZN6zQbvY3M0cX0ujGGUo='",
+-    "'sha256-OdsouMbSygCsanIn5RN0skp0SiM8rjt4PqX+YWPG3d0='",
+-    "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/static/js/middleware.js",
+-    "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/favicon.png",
+-    "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/static/css/index.css",
+-    "blob:",
+-]
+-
+-CSP_WORKER_SRC = ["'self'", "blob:"]
++# Allows GraphQL Playground to render (django-csp 4 dict-based config).
++CONTENT_SECURITY_POLICY = {
++    "DIRECTIVES": {
++        "frame-ancestors": [NONE],
++        "default-src": [
++            SELF,
++            "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='",
++            "'sha256-eKdXhLyOdPl2/gp1Ob116rCU2Ox54rseyz1MwCmzb6w='",
++            "'sha256-a1pELtDJXf8fPX1YL2JiBM91RQBeIAswunzgwMEsvwA='",
++            "'sha256-cNIcuS0BVLuBVP5rpfeFE42xHz7r5hMyf9YdfknWuCg='",
++            "'sha256-bmwAzHxhO1mBINfkKkKPopyKEv4ppCHx/z84wQJ9nOY='",
++            "'sha256-jQoC6QpIonlMBPFbUGlJFRJFFWbbijMl7Z8XqWrb46o='",
++            "'sha256-8bfsSkoReSu+APs9CT6QDx2VMgtiw9/lrZLMZNUmhc0='",
++            "'sha256-WoezM4J4TynepdEmsbDslXjZN6zQbvY3M0cX0ujGGUo='",
++            "'sha256-OdsouMbSygCsanIn5RN0skp0SiM8rjt4PqX+YWPG3d0='",
++            "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/static/js/middleware.js",
++            "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/favicon.png",
++            "https://cdn.jsdelivr.net/npm/graphql-playground-react/build/static/css/index.css",
++            "blob:",
++        ],
++        "worker-src": [SELF, "blob:"],
++    },
++}
+ 
+ # Internationalization
+ # https://docs.djangoproject.com/en/2.1/topics/i18n/
+diff --git a/apps/codecov-api/redis_admin/admin.py b/apps/codecov-api/redis_admin/admin.py
+index 9b8208fcd0..7560dd6ca4 100644
+--- a/apps/codecov-api/redis_admin/admin.py
++++ b/apps/codecov-api/redis_admin/admin.py
+@@ -549,6 +549,7 @@ def _parse_search_term(term: str) -> dict[str, str]:
+ 
+ @admin.register(RedisQueue)
+ class RedisQueueAdmin(admin.ModelAdmin):
++    show_facets = admin.ShowFacets.NEVER
+     list_display = (
+         "name",
+         "family",
+@@ -1148,6 +1149,7 @@ class RedisLockAdmin(admin.ModelAdmin):
+     URL-tampering against `RedisQueueAdmin` still can't reach them.
+     """
+ 
++    show_facets = admin.ShowFacets.NEVER
+     list_display = (
+         "name",
+         "family",
+@@ -1362,10 +1364,10 @@ def changeform_view(self, request, object_id=None, form_url="", extra_context=No
+     def save_model(self, request, obj, form, change):
+         raise RuntimeError("RedisQueueItem rows are read-only.")
+ 
+-    def lookup_allowed(self, lookup, value) -> bool:
++    def lookup_allowed(self, lookup, value, request=None) -> bool:
+         if lookup == "queue_name__exact":
+             return True
+-        return super().lookup_allowed(lookup, value)
++        return super().lookup_allowed(lookup, value, request)
+ 
+     def get_queryset(self, request: HttpRequest):
+         # Bypass ChangeList's automatic `.filter(**lookup_params)` plumbing so
+@@ -1557,6 +1559,7 @@ class CeleryBrokerQueueAdmin(admin.ModelAdmin):
+     actions that make sense for that scope.
+     """
+ 
++    show_facets = admin.ShowFacets.NEVER
+     summary_list_display = ("queue_name", "depth", "messages_link")
+     message_list_display = (
+         "index_in_queue",
+@@ -1623,7 +1626,7 @@ def has_delete_permission(self, request: HttpRequest, obj=None) -> bool:
+         # commit is superuser-only.
+         return bool(request.user and request.user.is_superuser)
+ 
+-    def lookup_allowed(self, lookup, value) -> bool:
++    def lookup_allowed(self, lookup, value, request=None) -> bool:
+         if lookup in (
+             "queue_name__exact",
+             "queue_name",
+@@ -1643,7 +1646,7 @@ def lookup_allowed(self, lookup, value) -> bool:
+             "pullid__exact",
+         ):
+             return True
+-        return super().lookup_allowed(lookup, value)
++        return super().lookup_allowed(lookup, value, request)
+ 
+     @staticmethod
+     def _is_summary_request(request: HttpRequest) -> bool:
+@@ -2534,6 +2537,7 @@ def queryset(self, request, queryset):
+ 
+ @admin.register(PublicBotUsage)
+ class PublicBotUsageAdmin(admin.ModelAdmin):
++    show_facets = admin.ShowFacets.NEVER
+     change_list_template = "admin/redis_admin/publicbotusage/change_list.html"
+     list_display = (
+         "bot",
+@@ -2805,6 +2809,7 @@ class UnackedQueueAdmin(admin.ModelAdmin):
+       individually.
+     """
+ 
++    show_facets = admin.ShowFacets.NEVER
+     summary_list_display = ("routing_key_summary", "depth", "messages_link")
+     message_list_display = (
+         "delivery_tag_short",
+@@ -2873,7 +2878,7 @@ def has_delete_permission(self, request: HttpRequest, obj=None) -> bool:
+         # `RedisQueueAdmin`).
+         return bool(request.user and request.user.is_superuser)
+ 
+-    def lookup_allowed(self, lookup, value) -> bool:
++    def lookup_allowed(self, lookup, value, request=None) -> bool:
+         if lookup in (
+             "routing_key__exact",
+             "routing_key",
+@@ -2897,7 +2902,7 @@ def lookup_allowed(self, lookup, value) -> bool:
+             "delivery_tag__exact",
+         ):
+             return True
+-        return super().lookup_allowed(lookup, value)
++        return super().lookup_allowed(lookup, value, request)
+ 
+     @staticmethod
+     def _is_summary_request(request: HttpRequest) -> bool:
+diff --git a/apps/codecov-api/redis_admin/filter_compat.py b/apps/codecov-api/redis_admin/filter_compat.py
+new file mode 100644
+index 0000000000..1e6d03f73c
+--- /dev/null
++++ b/apps/codecov-api/redis_admin/filter_compat.py
+@@ -0,0 +1,60 @@
++"""Compat helpers for Django 5 admin ChangeList → Redis querysets.
++
++Django 4.2 applied leftover changelist lookups as::
++
++    qs.filter(**remaining_lookup_params)
++
++Django 5.x always builds a ``Q`` object (including an empty ``Q()`` when
++nothing remains) and calls::
++
++    qs.filter(q_object)
++
++Redis-backed querysets historically only accepted kwargs. Translate simple
++positional ``Q`` trees into kwargs so admin changelists keep working.
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++from django.db.models import Q
++
++
++def kwargs_from_filter_args(args: tuple[Any, ...]) -> dict[str, Any]:
++    """Flatten positional ``filter(*args)`` Q objects into kwargs."""
++    if not args:
++        return {}
++    merged: dict[str, Any] = {}
++    for arg in args:
++        merged.update(_q_to_flat_kwargs(arg))
++    return merged
++
++
++def _q_to_flat_kwargs(q: Any) -> dict[str, Any]:
++    if not isinstance(q, Q):
++        raise NotImplementedError(
++            "Redis admin filter() only accepts Q objects as positional "
++            f"args, got {type(q)!r}"
++        )
++    if q.negated:
++        raise NotImplementedError(
++            "Redis admin filter() does not support negated Q objects"
++        )
++    if not q.children:
++        return {}
++    if q.connector == Q.OR and len(q.children) > 1:
++        raise NotImplementedError(
++            "Redis admin filter() does not support OR-combined Q objects"
++        )
++    out: dict[str, Any] = {}
++    for child in q.children:
++        if isinstance(child, Q):
++            out.update(_q_to_flat_kwargs(child))
++        elif isinstance(child, tuple) and len(child) == 2:
++            key, value = child
++            out[key] = value
++        else:
++            raise NotImplementedError(
++                f"Redis admin filter() cannot interpret Q child {child!r}"
++            )
++    return out
+diff --git a/apps/codecov-api/redis_admin/public_bot_usage_queryset.py b/apps/codecov-api/redis_admin/public_bot_usage_queryset.py
+index 3b83e20fcf..3aa1621c42 100644
+--- a/apps/codecov-api/redis_admin/public_bot_usage_queryset.py
++++ b/apps/codecov-api/redis_admin/public_bot_usage_queryset.py
+@@ -9,6 +9,8 @@
+ from shared.helpers.redis import get_redis_connection
+ from shared.rate_limits.public_bot import RepoUsageRow, list_repo_usage
+ 
++from .filter_compat import kwargs_from_filter_args
++
+ 
+ def _ordering_key(obj: Any, attr: str) -> tuple:
+     value = getattr(obj, attr, None)
+@@ -94,7 +96,11 @@ def _fetch_all(self) -> list[Any]:
+     def order_by(self, *fields: str) -> PublicBotUsageQuerySet:
+         return self._clone(ordering=fields or self._ordering)
+ 
+-    def filter(self, **kwargs: Any) -> PublicBotUsageQuerySet:
++    def filter(self, *args, **kwargs: Any) -> PublicBotUsageQuerySet:
++        # Django 5 ChangeList always calls filter(Q(...)) for remaining
++        # lookups (including an empty Q() when none remain).
++        if args:
++            kwargs = {**kwargs_from_filter_args(args), **kwargs}
+         bot_filter = kwargs.get("bot") or kwargs.get("bot__exact") or self.bot_filter
+         repo_filter = kwargs.get("repo__icontains") or self.repo_filter
+         return self._clone(bot_filter=bot_filter, repo_filter=repo_filter)
+diff --git a/apps/codecov-api/redis_admin/queryset.py b/apps/codecov-api/redis_admin/queryset.py
+index 70243548d1..bc476903b4 100644
+--- a/apps/codecov-api/redis_admin/queryset.py
++++ b/apps/codecov-api/redis_admin/queryset.py
+@@ -36,6 +36,7 @@
+ from .families import (
+     _resolve_celery_queue_names as _celery_queue_names,  # noqa: PLC2701
+ )
++from .filter_compat import kwargs_from_filter_args
+ 
+ _UNSET: Any = object()
+ 
+@@ -291,10 +292,10 @@ def _interpret_filter_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+         return new_filters
+ 
+     def filter(self, *args, **kwargs) -> RedisQueueQuerySet:
++        # Django 5 ChangeList always calls filter(Q(...)) for remaining
++        # lookups (including an empty Q() when none remain).
+         if args:
+-            raise NotImplementedError(
+-                "RedisQueueQuerySet.filter does not accept positional Q objects"
+-            )
++            kwargs = {**kwargs_from_filter_args(args), **kwargs}
+         if not kwargs:
+             return self._clone()
+         return self._clone(filters=self._interpret_filter_kwargs(kwargs))
+@@ -572,14 +573,18 @@ def using(self, alias) -> RedisItemQuerySet:
+ 
+     def filter(self, *args, **kwargs) -> RedisItemQuerySet:
+         kwargs = dict(kwargs)
++        # Django 5 ChangeList always calls filter(Q(...)) for remaining
++        # lookups (including an empty Q() when none remain).
++        if args:
++            kwargs = {**kwargs_from_filter_args(args), **kwargs}
+         new_queue_name = self.queue_name
+         for key in ("queue_name__exact", "queue_name"):
+             if key in kwargs:
+                 new_queue_name = kwargs.pop(key)
+-        if args or kwargs:
++        if kwargs:
+             raise NotImplementedError(
+                 "RedisItemQuerySet.filter only supports queue_name[/__exact] in M2; "
+-                f"got args={args!r}, kwargs={list(kwargs)!r}"
++                f"got kwargs={list(kwargs)!r}"
+             )
+         return self._clone(queue_name=new_queue_name)
+ 
+@@ -1332,10 +1337,10 @@ def _interpret_filter_kwargs(
+         return new_queue_name, new_filters
+ 
+     def filter(self, *args, **kwargs) -> CeleryBrokerQueueQuerySet:
++        # Django 5 ChangeList always calls filter(Q(...)) for remaining
++        # lookups (including an empty Q() when none remain).
+         if args:
+-            raise NotImplementedError(
+-                "CeleryBrokerQueueQuerySet.filter does not accept positional Q objects"
+-            )
++            kwargs = {**kwargs_from_filter_args(args), **kwargs}
+         new_queue_name, new_filters = self._interpret_filter_kwargs(kwargs)
+         return self._clone(queue_name=new_queue_name, filters=new_filters)
+ 
+@@ -2130,10 +2135,10 @@ def _interpret_filter_kwargs(
+         return new_routing_key, new_filters
+ 
+     def filter(self, *args, **kwargs) -> UnackedQueueQuerySet:
++        # Django 5 ChangeList always calls filter(Q(...)) for remaining
++        # lookups (including an empty Q() when none remain).
+         if args:
+-            raise NotImplementedError(
+-                "UnackedQueueQuerySet.filter does not accept positional Q objects"
+-            )
++            kwargs = {**kwargs_from_filter_args(args), **kwargs}
+         new_routing_key, new_filters = self._interpret_filter_kwargs(kwargs)
+         return self._clone(routing_key=new_routing_key, filters=new_filters)
+ 
+diff --git a/apps/codecov-api/timeseries/helpers.py b/apps/codecov-api/timeseries/helpers.py
+index 3a45739a5d..a3f0efe108 100644
+--- a/apps/codecov-api/timeseries/helpers.py
++++ b/apps/codecov-api/timeseries/helpers.py
+@@ -1,6 +1,6 @@
+ import math
+ from collections.abc import Iterable
+-from datetime import datetime, timedelta
++from datetime import UTC, datetime, timedelta
+ 
+ import sentry_sdk
+ from django.conf import settings
+@@ -179,7 +179,7 @@ def aligned_start_date(interval: Interval, date: datetime) -> datetime:
+     delta = interval_deltas[interval]
+ 
+     # TimescaleDB aligns time buckets starting on 2000-01-03)
+-    aligning_date = datetime(2000, 1, 3, tzinfo=timezone.utc)
++    aligning_date = datetime(2000, 1, 3, tzinfo=UTC)
+ 
+     # number of full intervals between aligning date and the given date
+     intervals_before = math.floor((date - aligning_date) / delta)
+@@ -201,7 +201,7 @@ def fill_sparse_measurements(
+     Those placeholder entries will have empty measurement values.
+     """
+     by_timestamp = {
+-        measurement["timestamp_bin"].replace(tzinfo=timezone.utc): measurement
++        measurement["timestamp_bin"].replace(tzinfo=UTC): measurement
+         for measurement in measurements
+     }
+     timestamps = sorted(by_timestamp.keys())
+diff --git a/libs/shared/shared/django_apps/codecov_auth/migrations/0081_case_insensitive_text_fields.py b/libs/shared/shared/django_apps/codecov_auth/migrations/0081_case_insensitive_text_fields.py
+new file mode 100644
+index 0000000000..ab2eb5f28f
+--- /dev/null
++++ b/libs/shared/shared/django_apps/codecov_auth/migrations/0081_case_insensitive_text_fields.py
+@@ -0,0 +1,31 @@
++from django.db import migrations
++
++import shared.django_apps.db_fields
++
++
++class Migration(migrations.Migration):
++    dependencies = [
++        ("codecov_auth", "0080_alter_owner_plan"),
++    ]
++
++    operations = [
++        migrations.SeparateDatabaseAndState(
++            database_operations=[],
++            state_operations=[
++                migrations.AlterField(
++                    model_name="user",
++                    name="email",
++                    field=shared.django_apps.db_fields.CaseInsensitiveTextField(
++                        null=True
++                    ),
++                ),
++                migrations.AlterField(
++                    model_name="owner",
++                    name="username",
++                    field=shared.django_apps.db_fields.CaseInsensitiveTextField(
++                        null=True, unique=True
++                    ),
++                ),
++            ],
++        ),
++    ]
+diff --git a/libs/shared/shared/django_apps/core/migrations/0088_repository_name_case_insensitive.py b/libs/shared/shared/django_apps/core/migrations/0088_repository_name_case_insensitive.py
+new file mode 100644
+index 0000000000..375f670250
+--- /dev/null
++++ b/libs/shared/shared/django_apps/core/migrations/0088_repository_name_case_insensitive.py
+@@ -0,0 +1,23 @@
++from django.db import migrations
++
++import shared.django_apps.db_fields
++
++
++class Migration(migrations.Migration):
++    dependencies = [
++        ("core", "0087_increment_version"),
++        ("codecov_auth", "0081_case_insensitive_text_fields"),
++    ]
++
++    operations = [
++        migrations.SeparateDatabaseAndState(
++            database_operations=[],
++            state_operations=[
++                migrations.AlterField(
++                    model_name="repository",
++                    name="name",
++                    field=shared.django_apps.db_fields.CaseInsensitiveTextField(),
++                ),
++            ],
++        ),
++    ]

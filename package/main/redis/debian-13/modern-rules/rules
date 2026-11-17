@@ -1,0 +1,50 @@
+#!/usr/bin/make -f
+
+-include debian/build-env.mk
+HAS_MODULES ?= false
+LLVM_VERSION ?= 19
+
+ifeq ($(HAS_MODULES),true)
+export PATH := /usr/lib/llvm-$(LLVM_VERSION)/bin:$(PATH)
+BUILD_FLAGS := BUILD_TLS=yes INSTALL_RUST_TOOLCHAIN=yes DISABLE_WERRORS=yes
+else
+BUILD_FLAGS := BUILD_TLS=yes DISABLE_WERRORS=yes
+endif
+
+%:
+	dh $@
+
+# Redis 8.10 builds and installs its bundled modules through `make deploy`, which
+# builds everything and copies it under DESTDIR$PREFIX. It must run in the install
+# step: dh_prep clears debian/tmp before dh_auto_install, so output staged during
+# the build step would be lost. The source tarball does not ship redis-full.conf;
+# `make deploy` only rewrites loadmodule paths in an existing one, so generate it
+# first (ASSUME_BUILT=1: the .so files do not exist yet).
+override_dh_auto_build:
+
+override_dh_auto_install:
+	$(MAKE) sync-redis-conf ASSUME_BUILT=1
+	$(MAKE) deploy $(BUILD_FLAGS) PREFIX=/usr DESTDIR=$(CURDIR)/debian/tmp -j$$(nproc)
+	install -d $(CURDIR)/debian/tmp/etc/redis
+	sed -i 's!$(CURDIR)/debian/tmp/usr/!/usr/!g' redis.conf redis-full.conf
+	cp redis.conf $(CURDIR)/debian/tmp/etc/redis/
+	cp redis-full.conf $(CURDIR)/debian/tmp/etc/redis/
+
+# dh_fixperms resets shared objects to 0644. Upstream installs the bundled modules
+# as 0755 (modules/common.mk and scripts/deploy.sh), and the consumer image ships
+# them 0755, so restore that mode after dh_fixperms.
+override_dh_fixperms:
+	dh_fixperms
+ifeq ($(HAS_MODULES),true)
+	chmod 0755 debian/*-server/usr/lib/redis/modules/*.so
+endif
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_dwz:
+
+override_dh_auto_test:
+	if grep -q '^test-unit:' src/Makefile; then $(MAKE) test-unit $(BUILD_FLAGS); fi
+
+override_dh_auto_clean:

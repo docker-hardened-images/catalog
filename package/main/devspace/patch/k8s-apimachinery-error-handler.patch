@@ -1,0 +1,51 @@
+Subject: Adapt DevSpace runtime error handler for k8s apimachinery v0.36 ErrorHandler API
+
+Origin: DHI-internal (Kubernetes client compatibility)
+Description: Match runtime.ErrorHandler signatures after apimachinery v0.36 added context and structured log fields.
+Base-Tree: git https://github.com/loft-sh/devspace.git 7f272dcf90653fa9b42bc4347f7f3f9a52b0e8b5
+Verify: test alpine-3.23/6.yaml
+Forwarded: not-needed (DevSpace 6.3.x still targets older apimachinery ErrorHandler shape)
+Drop-When: never: loft-sh/devspace v6.3.21 still overrides legacy runtime.ErrorHandler; drop after upstream releases apimachinery v0.36-compatible file_logger.go
+
+k8s.io/apimachinery v0.36 changed runtime.ErrorHandler to include context and log key-value parameters. DevSpace file logging overrides must compile when DHI replaces k8s modules while remediating buildkit CVEs on the pinned DevSpace release.
+
+diff --git a/pkg/util/log/file_logger.go b/pkg/util/log/file_logger.go
+--- a/pkg/util/log/file_logger.go
++++ b/pkg/util/log/file_logger.go
+@@ -1,6 +1,7 @@
+ package log
+ 
+ import (
++	"context"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+@@ -70,20 +71,20 @@ func OverrideRuntimeErrorHandler(discard bool) {
+ 	overrideOnce.Do(func() {
+ 		if discard {
+ 			if len(runtime.ErrorHandlers) > 0 {
+-				runtime.ErrorHandlers[0] = func(err error) {}
++				runtime.ErrorHandlers[0] = func(context.Context, error, string, ...interface{}) {}
+ 			} else {
+-				runtime.ErrorHandlers = []func(err error){
+-					func(err error) {},
++				runtime.ErrorHandlers = []runtime.ErrorHandler{
++					func(context.Context, error, string, ...interface{}) {},
+ 				}
+ 			}
+ 		} else {
+ 			errorLog := GetFileLogger("errors")
+ 			if len(runtime.ErrorHandlers) > 0 {
+-				runtime.ErrorHandlers[0] = func(err error) {
+-					errorLog.Errorf("Runtime error occurred: %s", err)
++				runtime.ErrorHandlers[0] = func(_ context.Context, err error, _ string, _ ...interface{}) {
++					errorLog.Errorf("Runtime error occurred: %s", err)
+ 				}
+ 			} else {
+-				runtime.ErrorHandlers = []func(err error){
+-					func(err error) {
++				runtime.ErrorHandlers = []runtime.ErrorHandler{
++					func(_ context.Context, err error, _ string, _ ...interface{}) {
+ 						errorLog.Errorf("Runtime error occurred: %s", err)
+ 					},
+ 				}

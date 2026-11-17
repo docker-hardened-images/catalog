@@ -1,0 +1,200 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Apache Kafka 4.4.x (dev)
+image: dhi.io/kafka
+variant: dev
+tags:
+  - 4-dev
+  - 4.4-dev
+  - 4.4.0-dev
+  - 4-debian-dev
+  - 4-debian13-dev
+  - 4.4-debian-dev
+  - 4.4-debian13-dev
+  - 4.4.0-debian-dev
+  - 4.4.0-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-10-06"
+vars:
+  JAVA_FIPS_SUFFIX: ""
+  JDK_MAJOR_VERSION: "21"
+  KAFKA_MAJOR_MINOR_VERSION: ${KAFKA_VERSION:([0-9]+.[0-9]+).*$}
+  KAFKA_MAJOR_VERSION: ${KAFKA_VERSION:([0-9]+).*$}
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.0
+  VERSION: 4.4.0-10
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - coreutils
+    - diffutils
+    - dpkg
+    - eclipse-temurin-21-jre
+    - eclipse-temurin-21-jre-oci-config
+    - findutils
+    - grep
+    - kafka-4.4=4.4.0-10
+    - libc-bin
+    - mawk
+    - netbase
+    - perl-base
+    - sed
+    - tzdata
+    - util-linux
+  builds:
+    - name: kafka-config
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - sed
+          - kafka-4.4=4.4.0-10
+      pipeline:
+        - name: stage writable config
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/kafka
+            cp -a /usr/share/kafka/config ${target.dir}/opt/kafka/config
+
+            sed -i \
+              -e 's|^advertised\.listeners=PLAINTEXT://localhost:9092|advertised.listeners=PLAINTEXT://:9092|' \
+              ${target.dir}/opt/kafka/config/server.properties
+
+            chown -Rh 65532:65532 ${target.dir}/opt/kafka/config
+            chmod -R 755 ${target.dir}/opt/kafka/config
+      outputs:
+        - source: ${target.dir}/opt/kafka
+          target: /opt/kafka
+          uid: 0
+          gid: 0
+    - name: locale
+      contents:
+        packages:
+          - bash
+          - locales
+          - coreutils
+          - gzip
+      pipeline:
+        - name: install locales
+          runs: |
+            set -eux -o pipefail
+
+            ln -s /etc/locale.alias /usr/share/locale/locale.alias
+
+            echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+            locale-gen en_US.UTF-8
+      outputs:
+        - source: /usr/share/locale
+          target: /usr/share/locale
+          uid: 0
+          gid: 0
+        - source: /usr/lib/locale
+          target: /usr/lib/locale
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: kafka
+      uid: 65532
+      gid: 65532
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: kafka
+      gid: 65532
+      members:
+        - kafka
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /opt/kafka
+environment:
+  DEBIAN_FRONTEND: noninteractive
+  JAVA_HOME: /usr/lib/jvm/temurin-21
+  KAFKA_LOG4J_OPTS: -Dkafka.logs.dir=/opt/kafka/logs/ -Dlog4j2.configurationFile=file:/opt/kafka/config/log4j2.yaml
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US:en
+  LC_ALL: en_US.UTF-8
+  LOG_DIR: /opt/kafka/logs
+paths:
+  - type: symlink
+    path: /opt/kafka/bin
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/bin
+  - type: symlink
+    path: /opt/kafka/libs
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/libs
+  - type: symlink
+    path: /opt/kafka/licenses
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/licenses
+  - type: symlink
+    path: /opt/kafka/site-docs
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/site-docs
+  - type: symlink
+    path: /opt/kafka/LICENSE
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/LICENSE
+  - type: symlink
+    path: /opt/kafka/NOTICE
+    uid: 0
+    gid: 0
+    source: /usr/share/kafka/NOTICE
+  - type: directory
+    path: /opt/kafka/logs
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /tmp/kraft-combined-logs
+    uid: 65532
+    gid: 65532
+    mode: "0775"
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    uid: 0
+    gid: 0
+    mode: "0755"
+    source: image/kafka/bin/docker-entrypoint.sh
+annotations:
+  org.opencontainers.image.description: A minimal Kafka image
+  org.opencontainers.image.licenses: Apache-2.0
+entrypoint:
+  - /usr/local/bin/docker-entrypoint.sh
+ports:
+  - 9092/tcp

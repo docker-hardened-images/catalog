@@ -1,0 +1,191 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-keydb
+variant: runtime
+tags:
+  - 6.3.4-0
+  - 6.3.4-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7e7e5e57d25fe246a8201f0acf5e7363c0bf1e14
+  DHI_REL: "0"
+  DHI_VERSION: 6.3.4-0
+  PACKAGE_NAME: keydb-6.3
+  ROCKSDB_COMMIT_SHA: 444b3f4845dd01b0d127c4b420fdd3b50ad56682
+  ROCKSDB_VERSION: 7.9.2
+  SEMVER_MAJOR_MINOR: "6.3"
+  VERSION: 6.3.4
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: keydb deb
+      work-dir: ${source.dir}/keydb
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - debhelper
+          - dpkg-dev
+          - gnu-which
+          - grep
+          - libbz2-dev
+          - libcurl4-openssl-dev
+          - liblz4-dev
+          - libsnappy-dev
+          - libssl-dev
+          - libzstd-dev
+          - pkg-config
+          - procps
+          - tcl
+          - uuid-dev
+          - zlib1g-dev
+        files:
+          - url: git+https://github.com/Snapchat/KeyDB.git#v6.3.4
+            checksum: 7e7e5e57d25fe246a8201f0acf5e7363c0bf1e14
+            path: ${source.dir}/keydb
+            spdx:
+              name: keydb
+              version: 6.3.4
+              packages:
+                - name: keydb
+                  purl: pkg:github/snapchat/keydb@6.3.4
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: patch rocksdb for gcc 13
+          uses: patch@v1
+          work-dir: ${source.dir}/keydb/deps/rocksdb
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/rocksdb-gcc13-cstdint.patch
+        - name: backport redis security fixes
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/10-lua-sandbox-hardening.patch
+              - ${source.dir}/patch/13-cve-2022-36021-stringmatchlen-exponential.patch
+              - ${source.dir}/patch/15-lua-cjson-cmsgpack-overflow.patch
+              - ${source.dir}/patch/16-unix-socket-listen-before-chmod.patch
+              - ${source.dir}/patch/17-lua-bit-tohex-int32-min.patch
+              - ${source.dir}/patch/18-cve-2024-31228-pattern-matching-abuse.patch
+              - ${source.dir}/patch/19-lua-gc-use-after-free.patch
+              - ${source.dir}/patch/20-unauth-client-obuf-limit.patch
+              - ${source.dir}/patch/21-cve-2025-32023-hll-sparse-oob.patch
+              - ${source.dir}/patch/22-cve-2025-48367-accept-retry.patch
+              - ${source.dir}/patch/23-cve-2025-49844-lua-parser-uaf.patch
+              - ${source.dir}/patch/24-cve-2025-46818-lua-deprecated-api.patch
+              - ${source.dir}/patch/25-lua-lexer-oob-read.patch
+              - ${source.dir}/patch/26-lua-unpack-getnum-overflow.patch
+              - ${source.dir}/patch/27-cve-2026-25243-restore-payload-validation.patch
+              - ${source.dir}/patch/28-hyperloglog-murmurhash-overflow.patch
+              - ${source.dir}/patch/29-tls-pending-list-uaf.patch
+              - ${source.dir}/patch/30-stream-shared-nack-restore.patch
+              - ${source.dir}/patch/31-sort-acl-store-key.patch
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            arch="$(uname -m)"
+            if [ "$arch" = aarch64 ]; then
+              jemallocFlags="--build=aarch64-linux-gnu --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-linux-gnu --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' deps/Makefile
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' deps/Makefile
+            grep -F "cd jemalloc && ./configure $jemallocFlags " deps/Makefile
+        - name: patch config
+          runs: |
+            set -eux -o pipefail
+
+            printf '\ninclude /etc/keydb/conf.d/local.conf\n' >> keydb.conf
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: jemalloc
+            purl: pkg:generic/jemalloc@5.2.1
+            version: 5.2.1
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: lua
+            purl: pkg:generic/lua@5.1.5
+            version: 5.1.5
+        - uses: spdx@v1
+          with:
+            license: BSD-3-Clause
+            name: hiredis
+            purl: pkg:github/redis/hiredis@1.0.0
+            version: 1.0.0
+        - uses: spdx@v1
+          with:
+            license: BSD-2-Clause
+            name: hdr_histogram
+            purl: pkg:github/HdrHistogram/HdrHistogram_c@0.11.0
+            version: 0.11.0
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0 OR GPL-2.0-only
+            name: rocksdb
+            purl: pkg:github/facebook/rocksdb@7.9.2
+            version: 7.9.2
+        - name: prepare debian packaging
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s/@PKG@/keydb-6.3/g" debian/control.in debian/changelog
+            mv debian/control.in debian/control
+            mv debian/server.install "debian/keydb-6.3-server.install"
+            mv debian/tools.install "debian/keydb-6.3-tools.install"
+            mv debian/sentinel.install "debian/keydb-6.3-sentinel.install"
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Fix CVE-2022-24735, CVE-2022-24736 (Lua sandbox hardening from Redis 6.2.7)
+              - Fix CVE-2022-24834 (Lua cjson and cmsgpack integer overflows)
+              - Fix CVE-2022-36021 (exponential-time pattern matching)
+              - Fix CVE-2023-45145 (Unix socket listen before chmod)
+              - Fix CVE-2024-31228 (unbounded pattern matching recursion)
+              - Fix CVE-2024-31449 (Lua bit.tohex stack overflow)
+              - Fix CVE-2024-46981 (Lua garbage collector use-after-free)
+              - Fix CVE-2025-21605 (unbounded output buffers for unauthenticated clients)
+              - Fix CVE-2025-32023 (HyperLogLog sparse representation out-of-bounds write)
+              - Fix CVE-2025-48367 (accept loop stops on a failed connection)
+              - Fix CVE-2025-49844 (Lua parser use-after-free)
+              - Fix CVE-2025-46817 (Lua unpack integer overflow)
+              - Fix CVE-2025-46818 (Lua scripts could run in another user's context via writable basic-type metatables)
+              - Fix CVE-2025-46819 (Lua lexer out-of-bounds read)
+              - Fix CVE-2026-25243 (invalid memory access on crafted RESTORE payloads)
+              - Backport the HyperLogLog MurmurHash64A overflow and TLS pending-list use-after-free fixes from Redis 6.2
+              - Backport the Redis 6.2.23 stream RESTORE shared-NACK use-after-free fix
+              - Backport the Redis 6.2.24 SORT STORE ACL key-check fix
+            version: 6.3.4-0
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/keydb/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/keydb/debian-13/debian
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/keydb/debian-13/patch
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,202 @@
+#! /bin/bash
+# Copyright (c) NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the nvidia-gdrcopy-driver and ocp_dtk_entrypoint scripts in
+# nvcr.io/nvidia/cloud-native/gdrdrv: the kernel headers come from the NVIDIA
+# driver container's rootfs instead of apt, and each built gdrdrv.ko is kept on
+# the node for a restart that finds no headers.
+
+set -eu
+
+NVIDIA_DRIVER_ROOT=${NVIDIA_DRIVER_ROOT:-"/run/nvidia/driver"}
+KERNEL_VERSION=$(uname -r)
+DRIVER_TOOLKIT_SHARED_DIR=/mnt/shared-nvidia-driver-toolkit
+GDRDRV_SRC_DIR=$(ls -d /usr/src/gdrdrv-*)
+# On the node's /run: kept across container restarts, cleared by a reboot.
+MODULE_CACHE_DIR=/run/nvidia/gdrdrv-module-cache/${KERNEL_VERSION}
+
+_unload_driver() {
+    local gdrdrv_refs=0
+
+    if [ -f /sys/module/gdrdrv/refcnt ]; then
+        gdrdrv_refs=$(< /sys/module/gdrdrv/refcnt)
+    fi
+
+    if [ ${gdrdrv_refs} -gt 0 ]; then
+        # run lsmod to debug module usage
+        lsmod | grep gdrdrv
+        echo "Could not unload gdrdrv kernel module, module is in use" >&2
+        return 1
+    fi
+
+    rmmod gdrdrv
+    return 0
+}
+
+_build() {
+    echo "Finding NVIDIA driver source"
+    nvidia_src_dir=$(find ${NVIDIA_DRIVER_ROOT}/usr/src/nvidia-* -name "nv-p2p.c" -printf '%h\n' -quit 2>/dev/null || true)
+    if [ -z "${nvidia_src_dir}" ]; then
+        echo "Failed to find NVIDIA driver source, exiting."
+        return 1
+    fi
+    export NVIDIA_SRC_DIR=$nvidia_src_dir
+
+    kdir=${NVIDIA_DRIVER_ROOT}/usr/src/linux-headers-${KERNEL_VERSION}
+    kept=${MODULE_CACHE_DIR}/gdrdrv-${GDRDRV_SRC_DIR##*-}-nvidia-$(cat /sys/module/nvidia/version 2>/dev/null || true).ko
+    if [ ! -f ${kdir}/Makefile ]; then
+        # A driver container restarted with the NVIDIA module loaded installs no headers.
+        if [ -f ${kept} ]; then
+            echo "No kernel headers for ${KERNEL_VERSION}, using ${kept}"
+            cp ${kept} ${GDRDRV_SRC_DIR}/gdrdrv.ko
+            return 0
+        fi
+        echo "Failed to find kernel headers at ${kdir}, exiting."
+        return 1
+    fi
+    mkdir -p /lib/modules/${KERNEL_VERSION}
+    ln -sfn ${kdir} /lib/modules/${KERNEL_VERSION}/build
+
+    make_args=""
+    kcc=$(sed -n 's/^CC[[:space:]]*=[[:space:]]*\$(CROSS_COMPILE)//p' ${kdir}/Makefile | head -n 1)
+    if [ -n "${kcc}" ] && ! command -v ${kcc} > /dev/null; then
+        echo "The kernel was built with ${kcc}, building with gcc $(gcc -dumpversion)"
+        make_args="CC=gcc HOSTCC=gcc"
+    fi
+
+    echo "Building gdrdrv kernel module"
+    cd ${GDRDRV_SRC_DIR}
+    make CONF_SCRIPT_DIR=scripts KVER=${KERNEL_VERSION} ${make_args}
+
+    # Renamed into place, so a restart never reads a partial file.
+    mkdir -p ${MODULE_CACHE_DIR} && cp gdrdrv.ko ${kept}.tmp && rm -f ${MODULE_CACHE_DIR}/*.ko && mv ${kept}.tmp ${kept} ||
+        echo "Could not keep a copy of gdrdrv.ko in ${MODULE_CACHE_DIR}"
+}
+
+_load() {
+    if [ -d /sys/module/gdrdrv ]; then
+        echo "gdrdrv already loaded; preserving currently-loaded module across restart (fast-path)."
+        return 0
+    fi
+
+    insmod ${GDRDRV_SRC_DIR}/gdrdrv.ko dbg_enabled=0 info_enabled=0 use_persistent_mapping=1
+}
+
+_create_device_node() {
+    major=$(fgrep gdrdrv /proc/devices | cut -b 1-4)
+    echo "INFO: driver major is $major"
+
+    # mknod fails if a stale node remains after container restart.
+    rm -f ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv
+    mknod ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv c $major 0
+    chmod a+w+r ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv
+}
+
+_shutdown() {
+    _unload_driver && rm ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv
+}
+
+_wait_for_signal() {
+    echo "Done, now waiting for signal"
+    sleep infinity &
+    trap "echo 'Caught signal'; _shutdown && { kill $!; exit 0; }" HUP INT QUIT PIPE TERM
+    trap - EXIT
+    while true; do wait $! || continue; done
+    exit 0
+}
+
+install() {
+    echo "Unloading gdrdrv kernel module"
+    _unload_driver || [ -d /sys/module/gdrdrv ]
+
+    echo "Removing gdrdrv device node"
+    if [ -e ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv ]; then
+        rm ${NVIDIA_DRIVER_ROOT}/dev/gdrdrv
+    fi
+
+    _build
+
+    echo "Loading gdrdrv kernel module"
+    _load
+
+    echo "Creating gdrdrv device node"
+    _create_device_node
+
+    _wait_for_signal
+}
+
+gdrcopy-ctr-run-with-dtk() {
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/dir_prepared" ]]; do
+        echo "$(date) Waiting for driver container to prepare the shared dir ..."
+        sleep 10
+    done
+
+    # The Driver Toolkit runs `make driver` in the upstream source layout.
+    mkdir -p $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/src/gdrdrv $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/scripts
+    cp -r ${GDRDRV_SRC_DIR}/. $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/src/gdrdrv
+    cp -r ${GDRDRV_SRC_DIR}/scripts/. $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/scripts
+    printf 'driver:\n\tcd src/gdrdrv && $(MAKE) $(MAKE_PARAMS)\n' > $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/Makefile
+
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/driver_build_started" ]]; do
+        echo "$(date) Waiting for openshift-driver-toolkit-ctr container to start ..."
+        sleep 15
+    done
+
+    echo "$(date) openshift-driver-toolkit-ctr started."
+
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/gdrcopy_built" ]]; do
+        echo "$(date) Waiting for openshift-driver-toolkit-ctr container to build the gdrdrv.ko kernel object ..."
+        sleep 15
+    done
+
+    until [ -d /run/nvidia/driver/usr/src ] && lsmod | grep nvidia; do
+        echo "Waiting for nvidia driver to be loaded and rootfs to be mounted ..."
+        sleep 5
+    done
+
+    cp -v $DRIVER_TOOLKIT_SHARED_DIR/gdrcopy/src/gdrdrv/gdrdrv.ko ${GDRDRV_SRC_DIR}/gdrdrv.ko
+    echo "Unloading any existing gdrdrv kernel module"
+    _unload_driver || true
+
+    echo "Loading gdrdrv kernel module"
+    _load
+
+    echo "Creating gdrdrv device node"
+    _create_device_node
+
+    _wait_for_signal
+}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $0 COMMAND
+
+Commands:
+  install - install the gdrcopy kernel-mode driver and create the gdrdrv device node
+  gdrcopy-ctr-run-with-dtk - entrypoint for gdrcopy-ctr container
+EOF
+    exit 1
+}
+
+if [ $# -eq 0 ]; then
+    usage
+fi
+command=$1; shift
+case "${command}" in
+    install|gdrcopy-ctr-run-with-dtk) ;;
+    *) usage ;;
+esac
+
+$command

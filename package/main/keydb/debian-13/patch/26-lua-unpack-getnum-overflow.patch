@@ -1,0 +1,98 @@
+Lua: fix unpack() integer overflow and luaH_getnum out-of-bounds read (CVE-2025-46817)
+
+luaB_unpack computed the result count as e - i + 1 in a signed int; a range
+such as unpack(t, -2, 2147483647) overflowed to a small positive n, passed the
+stack check, and then looped pushing far more values than reserved. luaH_getnum
+compared (unsigned)(key-1) against sizearray, so a negative key wrapped to a
+huge unsigned value and could index t->array out of bounds. The fix counts the
+range in unsigned arithmetic, rejects n >= INT_MAX, and uses the plain signed
+bounds check 1 <= key <= sizearray.
+
+Tracker: CVE-2025-46817
+Upstream patch: https://github.com/redis/redis/commit/229af5a62d4d24dd76486855197c3d08c13fe4d4
+Adaptation: same paths (deps/lua/src is plain C and unchanged in KeyDB); the ltable.c hunk is anchored one line earlier because KeyDB's Lua lacks the readonly-table field initialiser. Upstream tests/unit/scripting.tcl regression test carried unchanged.
+
+diff --git a/deps/lua/src/lbaselib.c b/deps/lua/src/lbaselib.c
+--- a/deps/lua/src/lbaselib.c
++++ b/deps/lua/src/lbaselib.c
+@@ -340,13 +340,14 @@ static int luaB_assert (lua_State *L) {
+ 
+ 
+ static int luaB_unpack (lua_State *L) {
+-  int i, e, n;
++  int i, e;
++  unsigned int n;
+   luaL_checktype(L, 1, LUA_TTABLE);
+   i = luaL_optint(L, 2, 1);
+   e = luaL_opt(L, luaL_checkint, 3, luaL_getn(L, 1));
+   if (i > e) return 0;  /* empty range */
+-  n = e - i + 1;  /* number of elements */
+-  if (n <= 0 || !lua_checkstack(L, n))  /* n <= 0 means arith. overflow */
++  n = (unsigned int)e - (unsigned int)i;  /* number of elements minus 1 */
++  if (n >= INT_MAX || !lua_checkstack(L, ++n))
+     return luaL_error(L, "too many results to unpack");
+   lua_rawgeti(L, 1, i);  /* push arg[i] (avoiding overflow problems) */
+   while (i++ < e)  /* push arg[i + 1...e] */
+diff --git a/deps/lua/src/ltable.c b/deps/lua/src/ltable.c
+--- a/deps/lua/src/ltable.c
++++ b/deps/lua/src/ltable.c
+@@ -433,8 +433,7 @@ static TValue *newkey (lua_State *L, Table *t, const TValue *key) {
+ ** search function for integers
+ */
+ const TValue *luaH_getnum (Table *t, int key) {
+-  /* (1 <= key && key <= t->sizearray) */
+-  if (cast(unsigned int, key-1) < cast(unsigned int, t->sizearray))
++  if (1 <= key && key <= t->sizearray)
+     return &t->array[key-1];
+   else {
+     lua_Number nk = cast_num(key);
+diff --git a/tests/unit/scripting.tcl b/tests/unit/scripting.tcl
+index faed729..5b2f94c 100644
+--- a/tests/unit/scripting.tcl
++++ b/tests/unit/scripting.tcl
+@@ -241,6 +241,45 @@ start_server {tags {"scripting"}} {
+         set e
+     } {*against a key*}
+ 
++    test {EVAL - Test table unpack with invalid indexes} {
++        catch {r eval { return {unpack({1,2,3}, -2, 2147483647)} } 0} e
++        assert_match {*too many results to unpack*} $e
++        catch {r eval { return {unpack({1,2,3}, 0, 2147483647)} } 0} e
++        assert_match {*too many results to unpack*} $e
++        catch {r eval { return {unpack({1,2,3}, -2147483648, -2)} } 0} e
++        assert_match {*too many results to unpack*} $e
++        set res [r eval { return {unpack({1,2,3}, -1, -2)} } 0]
++        assert_match {} $res
++        set res [r eval { return {unpack({1,2,3}, 1, -1)} } 0]
++        assert_match {} $res
++
++        # unpack with range -1 to 5, verify nil indexes
++        set res [r eval {
++             local function unpack_to_list(t, i, j)
++               local n, v = select('#', unpack(t, i, j)), {unpack(t, i, j)}
++               for i = 1, n do v[i] = v[i] or '_NIL_' end
++               v.n = n
++               return v
++             end
++
++            return unpack_to_list({1,2,3}, -1, 5)
++        } 0]
++        assert_match {_NIL_ _NIL_ 1 2 3 _NIL_ _NIL_} $res
++
++        # unpack with negative range, verify nil indexes
++        set res [r eval {
++             local function unpack_to_list(t, i, j)
++               local n, v = select('#', unpack(t, i, j)), {unpack(t, i, j)}
++               for i = 1, n do v[i] = v[i] or '_NIL_' end
++               v.n = n
++               return v
++             end
++
++            return unpack_to_list({1,2,3}, -2147483648, -2147483646)
++        } 0]
++        assert_match {_NIL_ _NIL_ _NIL_} $res
++    } {}
++
+     test {EVAL - JSON numeric decoding} {
+         # We must return the table as a string because otherwise
+         # Redis converts floats to ints and we get 0 and 1023 instead

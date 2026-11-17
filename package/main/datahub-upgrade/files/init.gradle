@@ -1,0 +1,80 @@
+// Avoid Docker Build Cloud Maven Central rate limits.
+//
+// (1) Add Google's CDN mirror of Maven Central everywhere Gradle resolves
+//     dependencies (project repos, buildscript repos, pluginManagement,
+//     dependencyResolutionManagement).
+// (2) Replace gradlePluginPortal() with an inline Maven repository that has
+//     metadataSources restricted to mavenPom() + artifact() only. The Plugin
+//     Portal redirects .module (Gradle Module Metadata) requests back to
+//     repo.maven.apache.org which 429s for our IPs. By declaring the portal
+//     inline with metadata restrictions baked in, the 429-triggering lookup
+//     never happens.
+// (3) DataHub 1.6+ uses dependencyResolutionManagement with
+//    RepositoriesMode.PREFER_PROJECT. Project repos must include LinkedIn
+//    Open Source and Confluent — pegasus artifacts are not on Maven Central.
+
+def GOOGLE_MAVEN_MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def PLUGIN_PORTAL = 'https://plugins.gradle.org/m2/'
+def CONFLUENT_MAVEN = 'https://packages.confluent.io/maven'
+def LINKEDIN_OPENSOURCE = 'https://linkedin.jfrog.io/artifactory/open-source'
+
+def configurePluginPortal = { repo ->
+    repo.name = 'GradlePluginPortalNoModule'
+    repo.url = PLUGIN_PORTAL
+    repo.metadataSources {
+        mavenPom()
+        artifact()
+        ignoreGradleMetadataRedirection()
+    }
+}
+
+def configureResolutionRepos = { repos ->
+    repos.mavenLocal()
+    repos.maven { it.name = 'GoogleMavenCentralMirror'; it.url = GOOGLE_MAVEN_MIRROR }
+    repos.maven { it.name = 'Confluent'; it.url = CONFLUENT_MAVEN }
+    repos.maven { it.name = 'LinkedInOpenSource'; it.url = LINKEDIN_OPENSOURCE }
+}
+
+allprojects {
+    buildscript {
+        repositories {
+            maven { it.name = 'GoogleMavenCentralMirror'; it.url = GOOGLE_MAVEN_MIRROR }
+            maven(configurePluginPortal)
+            maven { it.name = 'Confluent'; it.url = CONFLUENT_MAVEN }
+            maven { it.name = 'LinkedInOpenSource'; it.url = LINKEDIN_OPENSOURCE }
+        }
+    }
+    repositories {
+        configureResolutionRepos(delegate)
+    }
+
+    // Set UTF-8 encoding for Java compilation to handle Unicode characters
+    // in source files (em dashes, arrows, etc. in comments). Without this,
+    // javac defaults to the platform encoding (US-ASCII in the build
+    // environment) and fails on unmappable characters.
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement {
+        repositories {
+            maven { it.name = 'GoogleMavenCentralMirror'; it.url = GOOGLE_MAVEN_MIRROR }
+            maven(configurePluginPortal)
+        }
+    }
+}
+
+settingsEvaluated { settings ->
+    try {
+        settings.dependencyResolutionManagement {
+            repositories {
+                maven(configurePluginPortal)
+                configureResolutionRepos(delegate)
+            }
+        }
+    } catch (Throwable ignored) {
+        // dependencyResolutionManagement is Gradle 6.8+ only.
+    }
+}

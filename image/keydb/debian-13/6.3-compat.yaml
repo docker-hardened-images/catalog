@@ -1,0 +1,196 @@
+# syntax=dhi.io/build:2-debian13
+
+name: KeyDB 6.3.x (compat)
+image: dhi.io/keydb
+variant: runtime
+flavor: compat
+tags:
+  - 6-compat
+  - 6.3-compat
+  - 6.3.4-compat
+  - 6-debian-compat
+  - 6-debian13-compat
+  - 6.3-debian-compat
+  - 6.3-debian13-compat
+  - 6.3.4-debian-compat
+  - 6.3.4-debian13-compat
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-05-12"
+vars:
+  PACKAGE_NAME: keydb-6.3
+  SEMVER_MAJOR_MINOR_VERSION: "6.3"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.3.4
+  VERSION: 6.3.4-0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - coreutils
+    - findutils
+    - gosu
+    - grep
+    - hostname
+    - keydb-6.3-sentinel=6.3.4-0
+    - keydb-6.3-server=6.3.4-0
+    - keydb-6.3-tools=6.3.4-0
+    - libbz2-1.0
+    - libc6
+    - libcurl4t64
+    - libgcc-s1
+    - liblz4-1
+    - libsnappy1v5
+    - libssl3t64
+    - libstdc++6
+    - libuuid1
+    - libzstd1
+    - procps
+    - sed
+    - tini
+    - tzdata
+    - zlib1g
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /data
+paths:
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+    mode: "0755"
+  - type: symlink
+    path: /usr/local/bin/keydb-server
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-server
+  - type: symlink
+    path: /usr/local/bin/keydb-cli
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-cli
+  - type: symlink
+    path: /usr/local/bin/keydb-benchmark
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-benchmark
+  - type: symlink
+    path: /usr/local/bin/keydb-check-rdb
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-check-rdb
+  - type: symlink
+    path: /usr/local/bin/keydb-check-aof
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-check-aof
+  - type: symlink
+    path: /usr/local/bin/keydb-sentinel
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-sentinel
+  - type: symlink
+    path: /usr/local/bin/keydb-diagnostic-tool
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-diagnostic-tool
+  - type: symlink
+    path: /usr/local/bin/redis-cli
+    uid: 0
+    gid: 0
+    source: /usr/bin/keydb-cli
+  - type: symlink
+    path: /etc/keydb/redis.conf
+    uid: 0
+    gid: 0
+    source: /etc/keydb/keydb.conf
+  - type: file
+    path: /etc/keydb/conf.d/local.conf
+    content: |
+      bind * -::*
+      protected-mode no
+      dir /data
+      enable-motd no
+    uid: 0
+    gid: 0
+    mode: "0644"
+  - type: directory
+    path: /data
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: directory
+    path: /flash
+    uid: 65532
+    gid: 65532
+    mode: "0770"
+  - type: file
+    path: /usr/local/bin/docker-entrypoint.sh
+    content: |
+      #!/bin/sh
+      set -e
+
+      # first arg is `-f` or `--some-option`
+      if [ "${1#-}" != "$1" ]; then
+        set -- /etc/keydb/keydb.conf "$@"
+      fi
+
+      # first arg is `something.conf`
+      if [ "${1%.conf}" != "$1" ]; then
+        set -- keydb-server "$@"
+      fi
+
+      # if KEYDB_PASSWORD is set, add it to the arguments
+      if [ -n "${KEYDB_PASSWORD:-}" ]; then
+        set -- "$@" --requirepass "${KEYDB_PASSWORD}"
+      fi
+
+      # allow the container to be started with `--user`
+      if [ "$1" = "keydb-server" ] && [ "$(id -u)" = "0" ]; then
+        find . \! -user nonroot -exec chown nonroot '{}' +
+        exec gosu nonroot "$0" "$@"
+      fi
+
+      exec "$@"
+    uid: 0
+    gid: 0
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal KeyDB image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+  - /usr/local/bin/docker-entrypoint.sh
+cmd:
+  - keydb-server
+  - /etc/keydb/keydb.conf
+ports:
+  - 6379/tcp

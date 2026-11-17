@@ -1,0 +1,144 @@
+schemaVersion: '3'
+displayName: Cursor
+description: Cursor coding workload with native ACP, proxy-managed credentials, and workspace setup.
+sourceUrl: https://cursor.com
+version: ${{ kit.args.version }}
+kind: workload
+provides:
+  - cursor@${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api2.cursor.sh:443
+          - api3.cursor.sh:443
+          - repo42.cursor.sh:443
+          - cursor.com:443
+          - downloads.cursor.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Cursor API access (API key or Cursor OAuth)
+    config:
+      service: cursor
+      phase: runtime
+      apiKey:
+        name: CURSOR_API_KEY
+        inject:
+          - domain: api2.cursor.sh
+            header: Authorization
+            format: Bearer %s
+          - domain: api3.cursor.sh
+            header: Authorization
+            format: Bearer %s
+          - domain: repo42.cursor.sh
+            header: Authorization
+            format: Bearer %s
+          - domain: cursor.com
+            header: Authorization
+            format: Bearer %s
+      oauth:
+        tokenEndpoint:
+          host: api2.cursor.sh
+          path: /auth/poll
+        resourceHosts:
+          - api2.cursor.sh
+          - api3.cursor.sh
+          - repo42.cursor.sh
+          - cursor.com
+        sentinels:
+          accessToken: cursor-oat-proxy-managed
+          refreshToken: cursor-ort-proxy-managed
+        responseFields:
+          accessToken: accessToken
+          refreshToken: refreshToken
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: mkdir -p /home/agent/.cursor && chown agent:agent /home/agent/.cursor
+          user: '0'
+          description: Ensure .cursor is owned by agent before seeds run
+        - command: |
+            [ -n "$WORKSPACE_DIR" ] || { echo "WORKSPACE_DIR unset; skipping Cursor workspace pre-trust" >&2; exit 0; }
+            ws="$WORKSPACE_DIR"
+            slug=$(printf '%s' "$ws" | LC_ALL=C tr -c 'A-Za-z0-9' '-' | tr -s '-' | sed 's/^-//; s/-$//')
+            dir="/home/agent/.cursor/projects/$slug"
+            mkdir -p "$dir"
+            esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g')
+            [ -f "$dir/.workspace-trusted" ] || printf '{"trustedAt":"%s","workspacePath":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$esc" > "$dir/.workspace-trusted"
+          user: agent
+          env:
+            - WORKSPACE_DIR
+          description: Pre-trust the workspace for the interactive TUI
+      files:
+        - path: /home/agent/.cursor/cli-config.json
+          content: '{"network": {"useHttp1ForAgent": true}}'
+          overwrite: false
+          description: Seed HTTP/1.1+SSE for agent connections
+  - type: com.docker.sandbox/agent-sessions@1
+    config:
+      prompt:
+        - -p
+        - --trust
+        - '{{.Prompt}}'
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    config:
+      prompt:
+        - --
+        - '{{.Prompt}}'
+      continue:
+        - --continue
+      resume:
+        - --resume
+        - '{{.SessionID}}'
+      sessionPicker:
+        - --resume
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.cursor/skills
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent/workspace
+      content: |
+        # Cursor
+
+        This sandbox runs the Cursor agent CLI. Credentials are proxy-managed: an
+        API key or Cursor OAuth arrives as sentinels, and the workspace is
+        pre-trusted so the TUI skips its trust prompt.
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent/workspace
+      content: |
+        # Cursor
+
+        This sandbox runs the Cursor agent CLI. Credentials are proxy-managed: an
+        API key or Cursor OAuth arrives as sentinels, and the workspace is
+        pre-trusted so the TUI skips its trust prompt.
+  - type: com.docker.sandbox/dockerd@1
+    optional: true
+  - type: com.docker.sandbox/acp@1
+    optional: true
+    config:
+      agent: cursor
+      command:
+        - cursor-acp
+        - cursor-agent
+        - --force
+        - acp
+licenses:
+  - LicenseRef-Proprietary
+args:
+  version:
+    required: true
+    pattern: ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7,40}$
+    description: Cursor release the image carries
+    buildArg: VERSION

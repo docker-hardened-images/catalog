@@ -1,0 +1,161 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-beyla
+variant: runtime
+tags:
+  - 3.42.0-alpine3.23
+  - 3.42.0-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-02-11"
+vars:
+  COMMIT_SHA: 70b1a981edd77257f96025bf9f16c1cf8c6f5f7a
+  GOLANG_VERSION: 1.26.11-r1
+  OBI_COMMIT_SHA: 5abaf031651c103a31dfb67b129361917efaf969
+  PACKAGE_NAME: beyla-3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "3.42"
+  SEMVER_MAJOR_VERSION: "3"
+  SEMVER_VERSION: 3.42.0
+  VERSION: 3.42.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: beyla-3
+      work-dir: /go/src/github.com/grafana/beyla
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - clang
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+          - llvm
+          - make
+        files:
+          - url: git+https://github.com/grafana/beyla.git#v3.42.0
+            checksum: 70b1a981edd77257f96025bf9f16c1cf8c6f5f7a
+            path: /go/src/github.com/grafana/beyla
+            spdx:
+              name: beyla
+              version: 3.42.0
+              packages:
+                - name: beyla
+                  purl: pkg:golang/github.com/grafana/beyla/v3@3.42.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/grafana/opentelemetry-ebpf-instrumentation.git#5abaf031651c103a31dfb67b129361917efaf969
+            checksum: 5abaf031651c103a31dfb67b129361917efaf969
+            path: /go/src/obi-src
+            spdx:
+              name: opentelemetry-ebpf-instrumentation
+              version: 5abaf031651c103a31dfb67b129361917efaf969
+              packages:
+                - name: opentelemetry-ebpf-instrumentation
+                  purl: pkg:golang/go.opentelemetry.io/obi@5abaf031651c103a31dfb67b129361917efaf969
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stage OBI source into the go.mod replace path
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf .obi-src
+            cp -a /go/src/obi-src .obi-src
+        - name: bump dependencies to fix CVEs (3 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/mod@v0.41.0
+              - golang.org/x/net@v0.62.0
+              - github.com/go-viper/mapstructure/v2@v2.5.0
+              - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
+            download: true
+            tidy: true
+        - name: generate Beyla eBPF bindings
+          runs: |
+            set -eux -o pipefail
+
+            if [ ! -x /usr/bin/clang ]; then
+              for clang_bin in /usr/bin/clang-[0-9]*; do
+                [ -x "$clang_bin" ] || continue
+                ln -s "${clang_bin##*/}" /usr/bin/clang
+                break
+              done
+            fi
+            command -v clang
+
+            go build -mod=mod -o /tmp/bpf2go github.com/cilium/ebpf/cmd/bpf2go
+            BPF_CLANG=clang \
+              BPF_CFLAGS="-O2 -g -Wunaligned-access -Wpacked -Wpadded -Wall -Werror" \
+              BPF2GO=/tmp/bpf2go \
+              OBI_BPF_INCLUDE="$(cd .obi-src && pwd)/bpf" \
+              GOOS=linux \
+              go generate ./pkg/internal/ebpf/surveywatcher
+        - name: re-vendor and verify the bumped tree builds
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+            CGO_ENABLED=0 go test -mod=vendor -run '^$' ./pkg/...
+        - name: build beyla
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            extra-args: -mod=vendor
+            fips: false
+            ldflags:
+              - -X github.com/grafana/beyla/v3/pkg/buildinfo.Version=v3.42.0
+              - -X github.com/grafana/beyla/v3/pkg/buildinfo.Revision=70b1a981edd77257f96025bf9f16c1cf8c6f5f7a
+              - -X go.opentelemetry.io/obi/pkg/buildinfo.Version=3.42.0
+              - -X go.opentelemetry.io/obi/pkg/buildinfo.Revision=5abaf031651c103a31dfb67b129361917efaf969
+            output: ${target.dir}/usr/bin/beyla
+            packages: ./cmd/beyla
+        - name: build beyla dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            extra-args: -mod=vendor
+            fips: false
+            ldflags:
+              - -X github.com/grafana/beyla/v3/pkg/buildinfo.Version=v3.42.0
+              - -X github.com/grafana/beyla/v3/pkg/buildinfo.Revision=70b1a981edd77257f96025bf9f16c1cf8c6f5f7a
+              - -X go.opentelemetry.io/obi/pkg/buildinfo.Version=3.42.0
+              - -X go.opentelemetry.io/obi/pkg/buildinfo.Revision=5abaf031651c103a31dfb67b129361917efaf969
+            output: ${target.dir}/usr/bin/beyla-dev
+            packages: ./cmd/beyla
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: eBPF-based autoinstrumentation of web applications and network metrics
+            files:
+              - usr/bin/beyla
+            license: Apache-2.0
+            name: beyla-3
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/beyla
+                    source: usr/bin/beyla-dev
+                name: beyla-3-dev
+            url: https://github.com/grafana/beyla
+            version: 3.42.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,168 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-keda
+variant: runtime
+tags:
+  - 2.20.2-alpine3.24
+  - 2.20.2-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-01"
+vars:
+  APK_REL: "8"
+  COMMIT_SHA: 68a5b5028f35b22d50597c69819ab32c4e92f21a
+  DEB_EPOCH_PREFIX: '1:'
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: keda-2.20
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "2.20"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.20.2
+  UPSTREAM_VERSION: 2.20.2
+  VERSION: 1:2.20.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: keda-2.20
+      work-dir: /go/src/github.com/kedacore/keda
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/kedacore/keda.git#v2.20.2
+            checksum: 68a5b5028f35b22d50597c69819ab32c4e92f21a
+            path: /go/src/github.com/kedacore/keda
+            spdx:
+              name: keda
+              version: 2.20.2
+              packages:
+                - name: keda
+                  purl: pkg:golang/github.com/kedacore/keda/v2@2.20.2
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: remove vendor directory
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf vendor
+        - name: patch prometheus promql parser API
+          uses: patch@v1
+          work-dir: /go/src/github.com/kedacore/keda
+          with:
+            options: -p1
+            patch: /go/src/github.com/kedacore/keda/patch/prometheus-promql-parser.patch
+        - name: update go dependencies (2.20 cve pins)
+          uses: go/bump@v1
+          with:
+            deps:
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - github.com/andybalholm/brotli@v1.2.7
+              - github.com/klauspost/compress@v1.20.2
+              - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
+            download: true
+            replaces:
+              - go.etcd.io/etcd/api/v3=go.etcd.io/etcd/api/v3@v3.6.14
+              - go.etcd.io/etcd/client/pkg/v3=go.etcd.io/etcd/client/pkg/v3@v3.6.14
+              - go.etcd.io/etcd/client/v3=go.etcd.io/etcd/client/v3@v3.6.14
+              - github.com/prometheus/prometheus=github.com/prometheus/prometheus@v0.311.3
+              - github.com/prometheus/common=github.com/prometheus/common@v0.67.5
+              - google.golang.org/grpc=google.golang.org/grpc@v1.83.2
+        - name: update go dependencies (2.20 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/rabbitmq/amqp091-go@v1.14.0
+              - github.com/valyala/fasthttp@v1.70.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+            download: true
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/kedacore/keda/v2/version.GitCommit=68a5b5028f35b22d50597c69819ab32c4e92f21a
+              - -X=github.com/kedacore/keda/v2/version.Version=2.20.2
+            output: ${target.dir}/usr/bin/keda
+            packages: ./cmd/operator/main.go
+            tidy: true
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/kedacore/keda/v2/version.GitCommit=68a5b5028f35b22d50597c69819ab32c4e92f21a
+              - -X=github.com/kedacore/keda/v2/version.Version=2.20.2
+            output: ${target.dir}/usr/bin/keda-dev
+            packages: ./cmd/operator/main.go
+            strip: false
+            tidy: true
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes Event-driven Autoscaling (KEDA)
+            files:
+              - usr/bin/keda
+            formats:
+              - apk
+            license: Apache-2.0
+            name: keda-2.20
+            rel: 8
+            subpackages:
+              - files:
+                  - path: usr/bin/keda
+                    source: usr/bin/keda-dev
+                name: keda-2.20-dev
+            url: https://github.com/kedacore/keda
+            version: 2.20.2
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes Event-driven Autoscaling (KEDA)
+            files:
+              - usr/bin/keda
+            formats:
+              - deb
+            license: Apache-2.0
+            name: keda-2.20
+            rel: 1
+            subpackages:
+              - files:
+                  - path: usr/bin/keda
+                    source: usr/bin/keda-dev
+                name: keda-2.20-dev
+            url: https://github.com/kedacore/keda
+            version: 1:2.20.2
+      paths:
+        - type: file
+          path: /go/src/github.com/kedacore/keda/patch/prometheus-promql-parser.patch
+          uid: 0
+          gid: 0
+          source: package/main/keda/patch/prometheus-promql-parser.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

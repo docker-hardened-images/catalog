@@ -1,0 +1,192 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-apollo-mcp-server
+variant: runtime
+tags:
+  - 2.1.0-6
+  - 2.1.0-6-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-10-06"
+vars:
+  COMMIT_SHA: beba1c63e4be128ae8bc8d4ad24a931ae3e8194f
+  DHI_REL: "6"
+  DHI_VERSION: 2.1.0-6
+  PACKAGE_NAME: apollo-mcp-server-2
+  SEMVER_MAJOR_MINOR_VERSION: "2.1"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.1.0
+  VERSION: 2.1.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: apollo-mcp-server
+      work-dir: ${source.dir}/apollo-mcp-server-pkg
+      caches:
+        - path: /root/.cargo
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - build-essential
+          - cargo-1.97
+          - cargo-auditable
+          - rustc-1.97
+          - ca-certificates
+          - coreutils
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - libssl-dev
+          - perl
+          - pkg-config
+          - sed
+        files:
+          - url: git+https://github.com/apollographql/apollo-mcp-server.git#v2.1.0
+            checksum: beba1c63e4be128ae8bc8d4ad24a931ae3e8194f
+            path: ${source.dir}/apollo-mcp-server-src
+            spdx:
+              name: apollo-mcp-server
+              version: 2.1.0
+              packages:
+                - name: apollo-mcp-server
+                  purl: pkg:cargo/apollo-mcp-server@2.1.0
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump vulnerable crates
+          uses: cargo/bump@v1
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          with:
+            bumps: ${source.dir}/cargo-bumps.json
+        - name: patch tantivy and jsonwebtoken
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            cargo fetch
+            tantivy_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name 'tantivy-0.26.2' | head -1)"
+            test -n "${tantivy_src}"
+            cp -a "${tantivy_src}" "${source.dir}/tantivy-patched"
+            sed -i '/\[dependencies\.lru\]/,/^\[/{s/^version = "0.16.3"/version = "0.18.2"/}' \
+              "${source.dir}/tantivy-patched/Cargo.toml"
+            sed -i '/\[dependencies\.zstd\]/,/^\[/{s/^version = "0.13"/version = "0.14"/}' \
+              "${source.dir}/tantivy-patched/Cargo.toml"
+            sstable_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name 'tantivy-sstable-0.7.0' | head -1)"
+            test -n "${sstable_src}"
+            cp -a "${sstable_src}" "${source.dir}/tantivy-sstable-patched"
+            sed -i '/\[dependencies\.zstd\]/,/^\[/{s/^version = "0.13"/version = "0.14"/}' \
+              "${source.dir}/tantivy-sstable-patched/Cargo.toml"
+            sed -i '/\[dependencies\.sstable\]/,/^\[/{s|^version = "0.7"|path = "'"${source.dir}"'/tantivy-sstable-patched"|}' \
+              "${source.dir}/tantivy-patched/Cargo.toml"
+            columnar_src="$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -type d -name 'tantivy-columnar-0.7.0' | head -1)"
+            test -n "${columnar_src}"
+            cp -a "${columnar_src}" "${source.dir}/tantivy-columnar-patched"
+            sed -i '/\[dependencies\.sstable\]/,/^\[/{s|^version = "0.7"|path = "'"${source.dir}"'/tantivy-sstable-patched"|}' \
+              "${source.dir}/tantivy-columnar-patched/Cargo.toml"
+            sed -i '/\[dependencies\.columnar\]/,/^\[/{s|^version = "0.7"|path = "'"${source.dir}"'/tantivy-columnar-patched"|}' \
+              "${source.dir}/tantivy-patched/Cargo.toml"
+            sed -i \
+              's|tantivy = "0.26.2"|tantivy = { path = "'"${source.dir}"'/tantivy-patched" }|' \
+              crates/apollo-schema-index/Cargo.toml
+            cargo update --package tantivy
+
+            jsonwebtoken_manifest=crates/apollo-mcp-server/Cargo.toml
+            sed -i 's|features = \["rust_crypto"\]|features = ["aws_lc_rs"]|' \
+              "${jsonwebtoken_manifest}"
+            grep -Fq 'jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }' "${jsonwebtoken_manifest}"
+            sed -i 's|^jwks = "0.5.3"$|jwks = { version = "0.5.3", default-features = false, features = ["aws_lc_rs"] }|' \
+              "${jsonwebtoken_manifest}"
+            grep -Fq 'jwks = { version = "0.5.3", default-features = false, features = ["aws_lc_rs"] }' "${jsonwebtoken_manifest}"
+            cargo update --package jsonwebtoken
+        - name: floor zstd crates
+          uses: cargo/bump@v1
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          with:
+            deps:
+              - zstd@0.14.3
+              - zstd-safe@8.2.0
+              - zstd-sys@2.1.2+zstd.1.5.7
+        - name: build
+          work-dir: ${source.dir}/apollo-mcp-server-src
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export OPENSSL_NO_VENDOR=1
+            export CARGO_PROFILE_RELEASE_STRIP=symbols
+
+            cargo auditable build --release --locked \
+              --package apollo-mcp-server --bin apollo-mcp-server
+
+            ldd target/release/apollo-mcp-server | grep -q 'libssl\.so\.3'
+
+            install -D -m 0755 target/release/apollo-mcp-server \
+              '${source.dir}/apollo-mcp-server-pkg/payload/usr/bin/apollo-mcp-server'
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: apollo-mcp-server-cargo
+            source: ${source.dir}/apollo-mcp-server-src
+        - name: prepare debian metadata
+          runs: |
+            set -eux -o pipefail
+
+            cd "${source.dir}/apollo-mcp-server-pkg"
+            sed -i "s/@MAJOR@/2/g" debian/control.in debian/changelog debian/apollo-mcp-server.install
+            mv debian/control.in debian/control
+            mv debian/apollo-mcp-server.install "debian/apollo-mcp-server-2.install"
+            chmod -x "debian/apollo-mcp-server-2.install"
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - Bump anyhow, crossbeam-epoch, h2, memmap2, openssl, quinn-proto, rand, rustls, rustls-webpki and thin-vec to their advisory-fixed releases.
+              - Bump aws-lc-rs to at least 1.17.3, carrying aws-lc-sys past the advisories affecting 0.37.1. rustls-webpki 0.103.16 requires aws-lc-rs ^1.18, so the lock resolves a newer 1.x.
+              - Link the system OpenSSL rather than upstream's vendored copy, so OpenSSL fixes reach consumers as a libssl3t64 update.
+              - Raise axum-otel-metrics to 0.14.1 so the build no longer carries the opentelemetry_sdk 0.30 line affected by CVE-2026-48504.
+              - Bump tokio, zstd, zstd-safe, and zstd-sys for RUSTSEC-2026-0386, RUSTSEC-2026-0391, RUSTSEC-2026-0395 through RUSTSEC-2026-0406, and RUSTSEC-2026-0410. The tantivy update may resolve the zstd crates past those floors.
+              - Bump rustix 1.1.3 to 1.1.6 for GHSA-jh2m-fhpj-3vr7.
+              - Route jsonwebtoken and jwks through aws_lc_rs (jwks default-features off) so the lock no longer carries crypto-bigint 0.5.5 (RUSTSEC-2026-0387).
+              - Bump quinn-proto to 0.11.19 and rustls-webpki to 0.103.16, including when the lock already moved to 0.11.15 or 0.103.13 after rand or rustls updates.
+              - Bump quinn-udp to 0.5.16 for GHSA-6pp4-4cxf-xf88.
+              - Bump webpki-root-certs to 1.0.10 for CVE-2026-111943 (distinct from the rustls-webpki line).
+              - Bump rmcp and rmcp-macros to 3.9.0 for GHSA-4432-vg92-fqh6, GHSA-c9f9-cp8h-jcj5 and GHSA-5p52-q7pq-9fq2.
+              - Path-patch tantivy 0.26.2 and tantivy-sstable 0.7.0 so lru and zstd dependency floors accept advisory-fixed releases.
+            version: 2.1.0-6
+        - uses: dpkg/build@v1
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: file
+          path: ${source.dir}/cargo-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/apollo-mcp-server/debian-13/patch/cargo-bumps.json
+        - type: directory
+          path: ${source.dir}/apollo-mcp-server-pkg/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/apollo-mcp-server/debian-13/debian
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,141 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-apm-server
+variant: runtime
+tags:
+  - 9.5.6-alpine3.24
+  - 9.5.6-r1-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-04"
+vars:
+  COMMIT_SHA: fd15152574299d30d4a5fb356051ba2977d6dccd
+  DEFAULT_TAGS: grpcnotrace,pebblegozstd,nooteloutput
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  PACKAGE_NAME: apm-server-9.5
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "9.5"
+  SEMVER_MAJOR_VERSION: "9"
+  SEMVER_VERSION: 9.5.6
+  VERSION: 9.5.6
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: apm-server-9.5
+      work-dir: /go/src/github.com/elastic/apm-server
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - mawk
+          - sed
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/elastic/apm-server#v9.5.6
+            checksum: fd15152574299d30d4a5fb356051ba2977d6dccd
+            path: /go/src/github.com/elastic/apm-server
+            spdx:
+              name: apm-server
+              version: 9.5.6
+              packages:
+                - name: apm-server
+                  purl: pkg:golang/github.com/elastic/apm-server@9.5.6
+                  license: Elastic-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - name: test internal version
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -count=1 -timeout 20m ./internal/version
+        - name: build apm-server
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+            output: ${target.dir}/usr/bin/apm-server
+            packages: ./x-pack/apm-server
+            tags: grpcnotrace,pebblegozstd,nooteloutput
+        - name: build apm-server dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/elastic/apm-server/internal/version.qualifier=
+            output: ${target.dir}/usr/bin/apm-server-dev
+            packages: ./x-pack/apm-server
+            strip: false
+            tags: grpcnotrace,pebblegozstd,nooteloutput
+        - name: install apm-server data
+          runs: |
+            set -eux -o pipefail
+
+            root=/go/src/github.com/elastic/apm-server
+            share="${target.dir}/usr/share/apm-server"
+            mkdir -p "${share}/licenses"
+            if [ "false" = "true" ]; then
+              install -m 0644 "${root}/apm-server-fips.yml" "${share}/apm-server.yml"
+              install -m 0644 "${root}/NOTICE-fips.txt" "${share}/licenses/NOTICE.txt"
+            else
+              install -m 0644 "${root}/apm-server.yml" "${share}/apm-server.yml"
+              install -m 0644 "${root}/NOTICE.txt" "${share}/licenses/NOTICE.txt"
+            fi
+            install -m 0644 "${root}/licenses/ELASTIC-LICENSE-2.0.txt" "${share}/licenses/ELASTIC-LICENSE-2.0.txt"
+            sed -i 's/127.0.0.1:8200/0.0.0.0:8200/' "${share}/apm-server.yml"
+            grep -q '0.0.0.0:8200' "${share}/apm-server.yml"
+            sed -i 's/localhost:9200/elasticsearch:9200/' "${share}/apm-server.yml"
+            grep -q 'elasticsearch:9200' "${share}/apm-server.yml"
+            ln -sf ../../bin/apm-server "${share}/apm-server"
+            cp -a "${share}" "${target.dir}/usr/share/apm-server-dev"
+        - uses: dhi/build-pkg:0
+          with:
+            description: APM Server receives data from Elastic APM agents
+            files:
+              - usr/bin/apm-server
+              - usr/share/apm-server
+            license: Elastic-2.0
+            name: apm-server-9.5
+            rel: 1
+            subpackages:
+              - description: APM Server development package
+                files:
+                  - path: usr/bin/apm-server
+                    source: usr/bin/apm-server-dev
+                  - path: usr/share/apm-server
+                    source: usr/share/apm-server-dev
+                name: apm-server-9.5-dev
+            url: https://github.com/elastic/apm-server
+            version: 9.5.6
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

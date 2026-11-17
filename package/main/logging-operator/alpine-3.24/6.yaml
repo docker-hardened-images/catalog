@@ -1,0 +1,125 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-logging-operator
+variant: runtime
+tags:
+  - 6.9.0-alpine3.24
+  - 6.9.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 1e3fd1216c8700effc1d92b295273575ad6b1824
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: logging-operator-6
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "6.9"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.9.0
+  VERSION: 6.9.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: logging-operator-6
+      work-dir: /go/src/github.com/kube-logging/logging-operator
+      environment:
+        GOFLAGS: -buildvcs=false
+      contents:
+        packages:
+          - busybox
+          - ca-certificates-bundle
+          - git
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/kube-logging/logging-operator.git#6.9.0
+            checksum: 1e3fd1216c8700effc1d92b295273575ad6b1824
+            path: /go/src/github.com/kube-logging/logging-operator
+            spdx:
+              name: logging-operator
+              version: 6.9.0
+              packages:
+                - name: logging-operator
+                  purl: pkg:golang/github.com/kube-logging/logging-operator@6.9.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build in module mode with versioned sdk modules
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm go.work
+
+            ts=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)
+            rev=$(git rev-parse --short=12 HEAD)
+            for module in pkg/sdk pkg/sdk/logging/model/syslogng/config; do
+              path=github.com/kube-logging/logging-operator/$module
+              go mod edit -replace "$path=$path@v0.0.0-$ts-$rev"
+              go mod download "$path@v0.0.0-$ts-$rev"
+            done
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+        - uses: go/hermetic@v1
+        - name: test
+          privileged: true
+          environment:
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./pkg/resources/... ./pkg/webhook/...
+
+            (cd pkg/sdk && CGO_ENABLED=0 go test ./extensions/... ./logging/model/... ./logging/plugins/...)
+            (cd pkg/sdk/logging/model/syslogng/config && CGO_ENABLED=0 go test ./...)
+        - name: build logging-operator
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kube-logging/logging-operator/pkg/sdk/logging/api/v1beta1.Version=6.9.0
+            output: ${target.dir}/usr/bin/logging-operator
+        - name: build logging-operator dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kube-logging/logging-operator/pkg/sdk/logging/api/v1beta1.Version=6.9.0
+            output: ${target.dir}/usr/bin/logging-operator-dev
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubernetes operator that deploys and manages Fluent Bit, Fluentd and syslog-ng logging pipelines
+            files:
+              - usr/bin/logging-operator
+            license: Apache-2.0
+            name: logging-operator-6
+            rel: 0
+            subpackages:
+              - description: logging-operator binary without strip (dev)
+                files:
+                  - path: usr/bin/logging-operator
+                    source: usr/bin/logging-operator-dev
+                name: logging-operator-6-dev
+            url: https://kube-logging.dev
+            version: 6.9.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

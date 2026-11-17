@@ -1,0 +1,294 @@
+schemaVersion: "3"
+displayName: Codex
+description: OpenAI's Codex CLI on Docker Hardened Images
+kind: workload
+args:
+  version:
+    required: true
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: Codex CLI release the image carries
+    buildArg: VERSION
+  model:
+    default: ""
+    pattern: '^[A-Za-z0-9._-]*$'
+    description: Codex model to use (config.toml `model`); empty keeps the CLI default
+    env: CODEX_MODEL
+  reasoningEffort:
+    default: ""
+    pattern: '^(none|minimal|low|medium|high|xhigh|max|ultra|persistent)?$'
+    description: Reasoning effort (config.toml `model_reasoning_effort`); empty keeps the CLI default
+    env: CODEX_REASONING_EFFORT
+version: ${{ kit.args.version }}
+provides: ["codex@${{ kit.args.version }}"]
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.openai.com:443
+          - openai.com:443
+          - auth.openai.com:443
+          - chatgpt.com:443
+          - files.openai.com:443
+          - releases.openai.com:443
+          - api.github.com:443
+          - github.com:443
+          - release-assets.githubusercontent.com:443
+          - codeload.github.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenAI API access (API key or ChatGPT OAuth)
+    config:
+      service: openai
+      phase: runtime
+      apiKey:
+        name: OPENAI_API_KEY
+        proxyManaged: true
+        inject:
+          - {domain: api.openai.com, header: Authorization, format: "Bearer %s"}
+          - {domain: openai.com, header: Authorization, format: "Bearer %s"}
+      oauth:
+        tokenEndpoint: {host: auth.openai.com, path: /oauth/token}
+        resourceHosts:
+          - chatgpt.com
+        sentinels:
+          accessToken: oai-oat01-proxy-managed
+          refreshToken: oai-ort01-proxy-managed
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -e
+            mkdir -p /home/agent/.codex /home/agent/.agents
+            MODE="${SBX_CRED_OPENAI_MODE:-none}"
+            cat > /home/agent/.codex/config.toml << 'EOF'
+            approval_policy = "never"
+            sandbox_mode = "danger-full-access"
+            mcp_oauth_credentials_store = "file"
+            # Turn-complete hook for the desktop app (see /usr/local/bin/sbx-codex-hook):
+            # raises the desktop notification and forwards the session's model,
+            # effort, token usage and git state read from this thread's rollout
+            # file. `notify` is top-level and needs no hook trust; Codex spawns
+            # it fire-and-forget with the event JSON as the last argument, and
+            # the script is a silent no-op when no desktop server is loaded.
+            notify = ["/usr/local/bin/sbx-codex-hook", "codex"]
+            EOF
+            # Model selection from the create-phase args. These are
+            # top-level keys, so they must land here, before the
+            # model_providers and projects tables below would capture
+            # them. The args' patterns admit no quote or backslash, so
+            # the expanded value is safe inside the TOML string.
+            model='${{ kit.args.model }}'
+            effort='${{ kit.args.reasoningEffort }}'
+            [ -z "$model" ] || printf 'model = "%s"\n' "$model" >> /home/agent/.codex/config.toml
+            [ -z "$effort" ] || printf 'model_reasoning_effort = "%s"\n' "$effort" >> /home/agent/.codex/config.toml
+            case "$MODE" in
+              oauth|apikey)
+                cat >> /home/agent/.codex/config.toml << 'EOF'
+            forced_login_method = "api"
+            EOF
+                ;;
+            esac
+            if [ "$MODE" = oauth ]; then
+              cat >> /home/agent/.codex/config.toml << 'EOF'
+
+            model_provider = "sandboxd"
+
+            [model_providers.sandboxd]
+            name = "Sandbox Proxy"
+            base_url = "https://chatgpt.com/backend-api/codex"
+            experimental_bearer_token = "oai-oat01-proxy-managed"
+            requires_openai_auth = false
+            EOF
+            fi
+            # Trust the workspace for launches outside the entrypoint too.
+            # Keep this after all top-level config keys: the projects
+            # table would otherwise capture settings like model_provider.
+            ws="${WORKSPACE_DIR:-/home/agent/workspace}"
+            esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g')
+            cat >> /home/agent/.codex/config.toml <<EOF
+
+            [projects."$esc"]
+            trust_level = "trusted"
+            EOF
+            case "$MODE" in
+              oauth|apikey)
+                cat > /home/agent/.codex/auth.json << 'EOF'
+            {
+              "OPENAI_API_KEY": "proxy-managed"
+            }
+            EOF
+                ;;
+              *)
+                rm -f /home/agent/.codex/auth.json
+                ;;
+            esac
+          user: agent
+          env: [SBX_CRED_OPENAI_MODE, WORKSPACE_DIR]
+          description: Seed Codex config/auth from SBX_CRED_OPENAI_MODE
+      startup:
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            cfg="$HOME/.codex/config.toml"
+            touch "$cfg"
+            grep -q "^\[mcp_servers.mcp-gateway\]" "$cfg" && exit 0
+            esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+            url=$(esc "$MCP_GATEWAY_URL")
+            auth=$(esc "$MCP_SENTINEL_TOKEN_NAME")
+            # Codex's grammar for a streamable HTTP server: the transport
+            # is implied by `url` (a `command` would make it stdio; there
+            # is no `type` key), and static headers go in `http_headers`.
+            # A `[...headers]` sub-table is not read, so the gateway
+            # would be reached without its bearer token and codex would
+            # warn about both keys at startup.
+            cat >> "$cfg" <<EOF
+
+            [mcp_servers.mcp-gateway]
+            url = "$url"
+            http_headers = { Authorization = "Bearer $auth" }
+            EOF
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway in ~/.codex/config.toml
+        - command: |
+            dir="${XDG_RUNTIME_DIR:-/run/user/1000}"
+            sock="$dir/${WAYLAND_DISPLAY:-wayland-0}"
+            bridge=/usr/local/bin/clipboard-bridge
+            [ -x "$bridge" ] || exit 0
+            for _ in 1 2 3 4 5; do
+              [ -S "$sock" ] && exit 0
+              sleep 1
+            done
+            install -d -o 1000 -g 1000 -m 0700 "$dir"
+            XDG_RUNTIME_DIR="$dir" WAYLAND_DISPLAY="${sock##*/}" \
+              setpriv --reuid=1000 --regid=1000 --init-groups \
+              sh -c 'exec setsid "$0" </dev/null >/tmp/clipboard-bridge.log 2>&1' "$bridge" &
+          user: "0"
+          background: true
+          env: [XDG_RUNTIME_DIR, WAYLAND_DISPLAY]
+          description: Relaunch the clipboard bridge codex reads images through
+  - type: com.docker.sandbox/agent-sessions@1
+    config:
+      prompt: ["exec", "--", "{{.Prompt}}"]
+      resume: ["resume", "{{.SessionID}}"]
+      continue: ["resume", "--last"]
+      list:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          tmp=$(mktemp -d)
+          mkfifo "$tmp/in" "$tmp/out"
+          codex app-server <"$tmp/in" >"$tmp/out" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || :; wait "$pid" 2>/dev/null || :; rm -rf "$tmp"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          exec 3>"$tmp/in" 4<"$tmp/out"
+
+          id=0
+          rpc() {
+            id=$((id + 1))
+            jq -nc --argjson id "$id" --arg method "$1" --argjson params "$2" \
+              '{id: $id, method: $method, params: $params}' >&3
+            while IFS= read -r response <&4; do
+              if printf '%s\n' "$response" |
+                jq -e --argjson id "$id" '.id == $id' >/dev/null; then
+                printf '%s\n' "$response" | jq -e \
+                  'if has("error") then error(.error | tostring) else has("result") end' >/dev/null
+                return
+              fi
+            done
+            echo 'Codex exited before responding' >&2
+            exit 1
+          }
+
+          rpc initialize '{"clientInfo":{"name":"session_list","version":"1.0"}}'
+          printf '%s\n' '{"method":"initialized","params":{}}' >&3
+          : >"$tmp/sessions"
+
+          # Match Codex's user-facing resume picker, including exec and
+          # app-server sessions. Sub-agent and unknown threads stay out.
+          for archived in false true; do
+            cursor=null
+            while :; do
+              params=$(jq -nc --argjson cursor "$cursor" --argjson archived "$archived" '
+                {
+                  limit: 100, cursor: $cursor, archived: $archived,
+                  sourceKinds: ["cli", "vscode", "exec", "appServer"]
+                }')
+              rpc thread/list "$params"
+              printf '%s\n' "$response" | jq -c --argjson archived "$archived" \
+                '.result.data[] + {archived: $archived}' >>"$tmp/sessions"
+              cursor=$(printf '%s\n' "$response" | jq -c '.result.nextCursor')
+              [ "$cursor" != null ] || break
+            done
+          done
+
+          # Each page is ordered, but active and archived pages must be
+          # sorted together before emitting the v1 ID-only result.
+          jq -r -s '
+            unique_by(.id)
+            | sort_by(.updatedAt // 0)
+            | reverse
+            | .[].id' "$tmp/sessions"
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    config:
+      prompt: ["--", "{{.Prompt}}"]
+      continue: ["resume", "--last"]
+      resume: ["resume", "{{.SessionID}}"]
+      sessionPicker: ["resume"]
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.agents/skills
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config: &agent-context
+      filename: AGENTS.md
+      directory: /home/agent/.codex
+      content: |
+        ## Codex CLI
+
+        The Codex CLI is installed at `/usr/local/bin/codex`. Launch is `codex` in dangerous-bypass mode; the image entrypoint
+        starts it. Run `codex` for an interactive session, or `codex exec "<prompt>"` for a one-shot run.
+
+        Codex's own approval gate and filesystem sandbox are turned off in `~/.codex/config.toml` (`approval_policy = "never"`,
+        `sandbox_mode = "danger-full-access"`). That is deliberate: the container is the sandbox, and an approval prompt nobody
+        can answer just deadlocks a non-interactive session.
+
+        Authentication is proxy-mediated. Depending on what the host has bound, either `~/.codex/auth.json` holds the literal
+        string `proxy-managed` and the sandbox proxy substitutes the real OpenAI API key on requests to `api.openai.com`, or
+        Codex is pointed at a ChatGPT-backed model provider whose bearer token is a sentinel the proxy swaps at request time.
+        Either way there is no real credential in this container. With nothing bound, `codex` will ask you to log in.
+
+        Skills are read from `~/.agents/skills`, the cross-agent tree the host's shared skills store mounts into.
+
+        ## Installing Packages
+
+        The image ships a small toolset: shell and CLI tools, git, gh, Docker, and Python 3.14 with pip and uv. Install
+        anything else with `sudo apt-get update && sudo apt-get install -y <package>`; `sudo` needs no password. Two apt
+        repositories are configured and reachable through the sandbox proxy: Debian trixie (`deb.debian.org`) and Docker
+        Hardened Images (`dhi.io/deb/debian/main`). The DHI repository carries versioned toolchains such as `golang-1.26`
+        and `nodejs-24`; Debian supplies the rest, for example `default-jdk-headless`. `apt-cache search <term>` lists what
+        is available. Building Python packages from source needs `build-essential` first.
+
+        ## Environment Persistence
+
+        Every bash the image starts sources `/etc/sandbox-persistent.sh`: through `BASH_ENV` for non-interactive shells and
+        `/etc/profile.d` for login shells, so that includes each command Codex runs. Any `export` statements you append to
+        this file will be available in all subsequent commands.
+
+        **NEVER add shell completion scripts to `/etc/sandbox-persistent.sh`** (for example `$NVM_DIR/bash_completion`). They
+        rely on variables (`COMP_WORDS`, `COMP_CWORD`, `COMPREPLY`) that only exist during tab completion; sourced before
+        every command, they break bash so that commands silently produce no output. Add only the main initialization
+        scripts, such as `$NVM_DIR/nvm.sh`. If the shell is already broken, remove the completion lines from the file and
+        restart the Codex session.
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config: *agent-context

@@ -1,0 +1,27 @@
+Fix Lua garbage collector use-after-free on scripting reset (CVE-2024-46981)
+
+SCRIPT FLUSH (and the reset on FLUSHALL/DEBUG RELOAD paths) tears the Lua VM
+down with lua_close(). Lua runs pending __gc finalizers during close while its
+GC state still references objects that user scripts can have arranged to be
+freed early, giving a use-after-free that an authenticated client can steer
+into remote code execution. Running a full collection (LUA_GCCOLLECT) before
+lua_close() resets the GC state so nothing reachable from destructor callbacks
+is freed prematurely.
+
+Tracker: CVE-2024-46981
+Upstream patch: https://github.com/redis/redis/commit/ca0a9ab822dcd6d6ec6e2b6dd3a7d7b0dd8fc912
+Adaptation: src/scripting.c renamed to src/scripting.cpp in KeyDB; the global
+server struct is reached through g_pserver-> instead of server. in KeyDB, so
+the inserted lua_gc() call uses g_pserver->lua. Fix logic unchanged.
+
+diff --git a/src/scripting.cpp b/src/scripting.cpp
+--- a/src/scripting.cpp
++++ b/src/scripting.cpp
+@@ -1330,6 +1330,7 @@ void scriptingRelease(int async) {
+     else
+         dictRelease(g_pserver->lua_scripts);
+     g_pserver->lua_scripts_mem = 0;
++    lua_gc(g_pserver->lua, LUA_GCCOLLECT, 0);
+     lua_close(g_pserver->lua);
+ }
+ 

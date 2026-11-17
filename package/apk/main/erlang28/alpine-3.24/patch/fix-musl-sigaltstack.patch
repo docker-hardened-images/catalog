@@ -1,0 +1,71 @@
+From 3a945871764498a17f24415032f08f9f97167448 Mon Sep 17 00:00:00 2001
+From: Sverker Eriksson <sverker@erlang.org>
+Date: Mon, 22 Jun 2026 18:06:39 +0200
+Subject: [PATCH] erts: Respect Linux kernel's AT_MINSIGSTKSZ for alternate
+ signal stack
+
+On Linux, the kernel may report a minimum signal stack size larger than
+the compile-time SIGSTKSZ (e.g. on AVX-512 / AMX CPUs). musl keeps
+SIGSTKSZ a static 8192, so sigaltstack() can fail with ENOMEM. Take the
+max of SIGSTKSZ and getauxval(AT_MINSIGSTKSZ) when available.
+
+Upstream commit: 3a945871764498a17f24415032f08f9f97167448 (maint)
+Fixes: https://github.com/erlang/otp/issues/11248
+Not yet included in a released OTP-28 patch tag as of 28.5.0.3.
+---
+ erts/emulator/sys/unix/sys_signal_stack.c | 25 +++++++++++------------
+ 1 file changed, 12 insertions(+), 13 deletions(-)
+
+diff --git a/erts/emulator/sys/unix/sys_signal_stack.c b/erts/emulator/sys/unix/sys_signal_stack.c
+index 431311e94fba..69084884e9a7 100644
+--- a/erts/emulator/sys/unix/sys_signal_stack.c
++++ b/erts/emulator/sys/unix/sys_signal_stack.c
+@@ -74,6 +74,9 @@
+ #include <signal.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#if defined(__linux__)
++#  include <sys/auxv.h>
++#endif
+ 
+ #include "sys.h"
+ #include "erl_alloc.h"
+@@ -88,29 +91,25 @@
+ #endif
+ 
+ /*
+- * Set alternate signal stack for the invoking thread.
++ * Set up alternate signal stack for an Erlang process scheduler thread.
+  */
+-static void sys_sigaltstack(void *ss_sp) {
++void sys_thread_init_signal_stack(void) {
+     stack_t ss;
+ 
+-    ss.ss_sp = ss_sp;
+-    ss.ss_flags = 0;
++#if defined(__linux__) && defined(AT_MINSIGSTKSZ)
++    ss.ss_size = (size_t) getauxval(AT_MINSIGSTKSZ);
++    ss.ss_size = MAX(ss.ss_size, SIGSTKSZ);
++#else
+     ss.ss_size = SIGSTKSZ;
++#endif
++    ss.ss_sp = malloc(ss.ss_size);  // Never freed
++    ss.ss_flags = 0;
+ 
+     if (sigaltstack(&ss, NULL) < 0) {
+         ERTS_INTERNAL_ERROR("Failed to set alternate signal stack");
+     }
+ }
+ 
+-/*
+- * Set up alternate signal stack for an Erlang process scheduler thread.
+- */
+-void sys_thread_init_signal_stack(void) {
+-    /* This will never be freed. */
+-    char *stack = malloc(SIGSTKSZ);
+-    sys_sigaltstack(stack);
+-}
+-
+ /*
+  * 1. Set up alternate signal stack for the main thread.
+  * 2. Add SA_ONSTACK to existing user-defined signal handlers.

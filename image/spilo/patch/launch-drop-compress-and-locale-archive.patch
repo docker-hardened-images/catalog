@@ -1,0 +1,43 @@
+Drop the COMPRESS self-extraction block and the ubuntu-18.04 locale-archive
+selection from launch.sh, and guard the arbitrary-uid passwd rewrite on
+/etc/passwd being writable. This image is never built with COMPRESS=true, the
+glibc-2.27 locale archive cannot be reproduced on a Debian 13 base (the
+locales package provides the archive), and /etc/passwd ships root-owned.
+Upstream source: https://github.com/zalando/spilo/blob/4.1-p2/postgres-appliance/launch.sh
+diff --git a/postgres-appliance/launch.sh b/postgres-appliance/launch.sh
+index 07f1747..10e3259 100755
+--- a/postgres-appliance/launch.sh
++++ b/postgres-appliance/launch.sh
+@@ -1,16 +1,5 @@
+ #!/bin/sh
+ 
+-if [ -f /a.tar.xz ]; then
+-    echo "decompressing spilo image..."
+-    if tar xpJf /a.tar.xz -C / > /dev/null 2>&1; then
+-        rm /a.tar.xz
+-        ln -snf dash /bin/sh
+-    else
+-        echo "failed to decompress spilo image"
+-        exit 1
+-    fi
+-fi
+-
+ if [ "$1" = "init" ]; then
+     exec /usr/bin/dumb-init -c --rewrite 1:0 -- /bin/sh /launch.sh
+ fi
+@@ -18,14 +7,8 @@ fi
+ sysctl -w vm.dirty_background_bytes=67108864 > /dev/null 2>&1
+ sysctl -w vm.dirty_bytes=134217728 > /dev/null 2>&1
+ 
+-if [ "$USE_OLD_LOCALES" = "true" ]; then
+-    ln -snf /usr/lib/locale/locale-archive.18 /run/locale-archive
+-else
+-    ln -snf /usr/lib/locale/locale-archive.22 /run/locale-archive
+-fi
+-
+ mkdir -p "$PGLOG" "$PGDATA" "$RW_DIR/postgresql" "$RW_DIR/tmp" "$RW_DIR/certs"
+-if [ "$(id -u)" -ne 0 ]; then
++if [ "$(id -u)" -ne 0 ] && [ -w /etc/passwd ]; then
+     sed -e "s/^postgres:x:[^:]*:[^:]*:/postgres:x:$(id -u):$(id -g):/" /etc/passwd > "$RW_DIR/tmp/passwd"
+     cat "$RW_DIR/tmp/passwd" > /etc/passwd
+     rm "$RW_DIR/tmp/passwd"

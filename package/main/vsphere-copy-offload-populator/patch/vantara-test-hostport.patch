@@ -1,0 +1,148 @@
+Split the httptest listener address into host and port in the vantara unit
+tests. The tests passed the joined host:port string as the host argument with
+an empty port, producing https://host:port:/ URLs that the Go 1.26 module
+baseline rejects during url parsing; the x/crypto bump raises the go directive
+to 1.26. Upstream still carries the joined form on main as of 2026-09-04:
+https://github.com/kubev2v/forklift/blob/main/cmd/vsphere-copy-offload-populator/internal/vantara/vantara-api_test.go
+
+diff --git a/cmd/vsphere-copy-offload-populator/internal/vantara/vantara-api_test.go b/cmd/vsphere-copy-offload-populator/internal/vantara/vantara-api_test.go
+index 276239b..7203e1a 100644
+--- a/cmd/vsphere-copy-offload-populator/internal/vantara/vantara-api_test.go
++++ b/cmd/vsphere-copy-offload-populator/internal/vantara/vantara-api_test.go
+@@ -3,6 +3,7 @@ package vantara
+ import (
+ 	"encoding/json"
+ 	"fmt"
++	"net"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"testing"
+@@ -10,6 +11,18 @@ import (
+ )
+ 
+ // TestNewBlockStorageAPI tests the constructor
++
++// splitTestAddr splits the httptest listener address into host and port so
++// the constructor receives them separately, as production callers do.
++func splitTestAddr(t *testing.T, addr string) (string, string) {
++	t.Helper()
++	host, port, err := net.SplitHostPort(addr)
++	if err != nil {
++		t.Fatalf("SplitHostPort(%q): %v", addr, err)
++	}
++	return host, port
++}
++
+ func TestNewBlockStorageAPI(t *testing.T) {
+ 	api := NewBlockStorageAPI("192.0.2.0", "8443", "storage123", "admin", "password")
+ 
+@@ -60,7 +73,8 @@ func TestConnectSuccess(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	// Override the base URL to use test server
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+@@ -99,7 +113,8 @@ func TestConnectReuseSession(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	// First connect
+@@ -141,7 +156,8 @@ func TestDisconnect(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	// Connect first
+@@ -195,7 +211,8 @@ func TestGetLdev(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	ldev, err := api.GetLdev("100")
+@@ -259,7 +276,8 @@ func TestAddPath(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	err := api.AddPath("100", "CL1-A", "1")
+@@ -312,7 +330,8 @@ func TestDeletePath(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	err := api.DeletePath("100", "CL1-A", "1", "0")
+@@ -355,7 +374,8 @@ func TestGetPortDetails(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	portDetails, err := api.GetPortDetails()
+@@ -391,7 +411,8 @@ func TestSessionExpiration(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	// Connect
+@@ -490,7 +511,8 @@ func TestHTTPErrorHandling(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "wrongpassword")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "wrongpassword")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	err := api.Connect()
+@@ -592,7 +614,8 @@ func TestCreateCloneLdev(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	err := api.CreateCloneLdev(wantGroup, wantPool, wantPvol, wantSvol, wantSpeed)
+@@ -650,7 +673,8 @@ func TestGetClonePairs(t *testing.T) {
+ 	}))
+ 	defer server.Close()
+ 
+-	api := NewBlockStorageAPI(server.Listener.Addr().String(), "", "storage123", "admin", "password")
++	host, port := splitTestAddr(t, server.Listener.Addr().String())
++	api := NewBlockStorageAPI(host, port, "storage123", "admin", "password")
+ 	api.BaseURL = server.URL + "/ConfigurationManager/v1"
+ 
+ 	resp, err := api.GetClonePairs(wantGroup, wantPvol)

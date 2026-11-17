@@ -1,0 +1,46 @@
+Subject: Bridge kubectl and client-go TerminalSizeQueue after k8s v0.36 decoupling
+
+Origin: DHI-internal (Kubernetes client compatibility)
+Description: Adapt term.MonitorSize output to remotecommand.TerminalSizeQueue after kubectl and client-go types diverged.
+Base-Tree: git https://github.com/loft-sh/devspace.git 7f272dcf90653fa9b42bc4347f7f3f9a52b0e8b5
+Verify: test alpine-3.23/6.yaml
+Forwarded: not-needed (DevSpace 6.3.x has not merged kubectl v0.36 terminal queue types)
+Drop-When: never: loft-sh/devspace v6.3.21 still assigns MonitorSize without a client-go bridge; drop after upstream merges kubectl v0.36 terminal queue adapter
+
+k8s.io/kubectl and k8s.io/client-go now expose distinct TerminalSizeQueue interfaces with identical method shapes. DevSpace pod exec must bridge MonitorSize output when DHI aligns Kubernetes module versions alongside the buildkit bump on DevSpace 6.3.21.
+
+diff --git a/pkg/devspace/kubectl/exec.go b/pkg/devspace/kubectl/exec.go
+--- a/pkg/devspace/kubectl/exec.go
++++ b/pkg/devspace/kubectl/exec.go
+@@ -25,6 +25,22 @@ const (
+ 	SubResourceAttach SubResource = "attach"
+ )
+ 
++type termTerminalSizeQueueAdapter struct {
++	inner term.TerminalSizeQueue
++}
++
++func (a *termTerminalSizeQueueAdapter) Next() *remotecommand.TerminalSize {
++	size := a.inner.Next()
++	if size == nil {
++		return nil
++	}
++	return &remotecommand.TerminalSize{
++		Width:  size.Width,
++		Height: size.Height,
++	}
++}
++
++
+ // execStreamWithTransport executes a kubectl exec with given transport round tripper and upgrader
+ func (client *client) execStreamWithTransport(ctx context.Context, options *ExecStreamOptions) error {
+ 	var (
+@@ -55,7 +71,7 @@ func (client *client) execStreamWithTransport(ctx context.Context, options *ExecS
+ 			tty = true
+ 			if t.Raw && options.TerminalSizeQueue == nil {
+ 				// this call spawns a goroutine to monitor/update the terminal size
+-				sizeQueue = t.MonitorSize(t.GetSize())
++				sizeQueue = &termTerminalSizeQueueAdapter{inner: t.MonitorSize(t.GetSize())}
+ 			} else if options.TerminalSizeQueue != nil {
+ 				sizeQueue = options.TerminalSizeQueue
+ 				t.Raw = true

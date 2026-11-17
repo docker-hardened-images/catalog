@@ -1,0 +1,55 @@
+Limit the output buffer of unauthenticated clients (CVE-2025-21605)
+
+An unauthenticated client can send commands without reading the NOAUTH
+error replies, growing the server-side output buffer without bound and
+exhausting memory. Redis 6.2.18 closes any client that still requires
+authentication once its pending output exceeds 1024 bytes.
+
+Tracker: CVE-2025-21605
+Upstream patch: https://github.com/redis/redis/commit/5e93f9cb9dbc3e7ac9bce36f2838156cbc5c9e62
+Adaptation: src/networking.c -> src/networking.cpp; context adapted to KeyDB's checkClientOutputBufferLimits (clientType variable instead of class). Logic identical. Upstream tests/unit/auth.tcl regression test carried unchanged.
+
+diff --git a/src/networking.cpp b/src/networking.cpp
+--- a/src/networking.cpp
++++ b/src/networking.cpp
+@@ -3864,6 +3864,11 @@ int checkClientOutputBufferLimits(client *c) {
+     int soft = 0, hard = 0;
+     unsigned long used_mem = getClientOutputBufferMemoryUsage(c);
+ 
++    /* For unauthenticated clients the output buffer is limited to prevent
++     * them from abusing it by not reading the replies */
++    if (used_mem > 1024 && authRequired(c))
++        return 1;
++
+     int clientType = getClientType(c);
+     /* For the purpose of output buffer limiting, masters are handled
+      * like normal clients. */
+diff --git a/tests/unit/auth.tcl b/tests/unit/auth.tcl
+index 5997707..2a730d7 100644
+--- a/tests/unit/auth.tcl
++++ b/tests/unit/auth.tcl
+@@ -40,6 +40,24 @@ start_server {tags {"auth"} overrides {requirepass foobar}} {
+         assert_match {*unauthenticated bulk length*} $e
+         $rr close
+     }
++
++    test {For unauthenticated clients output buffer is limited} {
++        set rr [redis [srv "host"] [srv "port"] 1 $::tls]
++        $rr SET x 5
++        catch {[$rr read]} e
++        assert_match {*NOAUTH Authentication required*} $e
++
++        # Fill the output buffer in a loop without reading it and make
++        # sure the client disconnected.
++        # Considering the socket eat some of the replies, we are testing
++        # that such client can't consume more than few MB's.
++        catch {
++            for {set j 0} {$j < 1000000} {incr j} {
++                    $rr SET x 5
++            }
++        } e
++        assert_match {I/O error reading reply} $e
++    }
+ }
+ 
+ start_server {tags {"auth_binary_password"}} {

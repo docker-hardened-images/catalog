@@ -1,0 +1,180 @@
+schemaVersion: '3'
+displayName: GitHub Copilot
+description: GitHub Copilot CLI, GitHub's agentic coding CLI.
+version: ${{ kit.args.version }}
+kind: workload
+args:
+  version:
+    required: true
+    pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    description: GitHub Copilot release carried by the image
+    buildArg: VERSION
+provides:
+  - copilot@${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.business.githubcopilot.com:443
+          - api.enterprise.githubcopilot.com:443
+          - api.github.com:443
+          - api.githubcopilot.com:443
+          - api.individual.githubcopilot.com:443
+          - copilot.github.com:443
+          - github.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: GitHub API access for git and gh
+    config:
+      service: github
+      phase: runtime
+      apiKey:
+        name: GH_TOKEN
+        inject:
+          - domain: api.github.com
+            header: Authorization
+            format: Bearer %s
+          - domain: github.com
+            header: Authorization
+            format: Bearer %s
+        proxyManaged: true
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Copilot request access, separable from the broader github token
+    config:
+      service: copilot
+      phase: runtime
+      apiKey:
+        name: COPILOT_GITHUB_TOKEN
+        inject:
+          - domain: api.business.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.enterprise.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.individual.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: copilot.github.com
+            header: Authorization
+            format: Bearer %s
+        proxyManaged: true
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: mkdir -p /home/agent/.copilot && chown agent:agent /home/agent/.copilot
+          user: '0'
+          description: Ensure .copilot is owned by agent before bind mounts and the config seed run
+        - command: |
+            set -e
+            cfg=/home/agent/.copilot/config.json
+            if [ -e "$cfg" ]; then exit 0; fi
+            if [ -z "$WORKSPACE_DIR" ]; then
+              echo "WORKSPACE_DIR unset; skipping Copilot trusted-folder seed" >&2
+              exit 0
+            fi
+            esc=$(printf '%s' "$WORKSPACE_DIR" | sed 's/\\/\\\\/g; s/"/\\"/g')
+            printf '{"trusted_folders": ["%s"]}\n' "$esc" > "$cfg"
+          user: agent
+          env:
+            - WORKSPACE_DIR
+          description: Copilot config with trusted workspace folder
+      startup:
+        - command:
+            - sh
+            - -c
+            - |
+              set -e
+              [ -n "$MCP_GATEWAY_URL" ] || exit 0
+              cfg="$HOME/.copilot/mcp-config.json"
+              dir=$(dirname "$cfg")
+              mkdir -p "$dir"
+              gateway=$(cat <<EOF
+              {
+                "mcpServers": {
+                  "mcp-gateway": {
+                    "type": "http",
+                    "url": "$MCP_GATEWAY_URL",
+                    "headers": {
+                      "Authorization": "Bearer $MCP_SENTINEL_TOKEN_NAME"
+                    },
+                    "tools": ["*"]
+                  }
+                }
+              }
+              EOF
+              )
+              # Two overlapping starts would read-modify-write the same file.
+              exec 9>>"$dir/.mcp-config.lock"
+              flock 9
+              # mv would nest the config inside a directory here and still exit 0.
+              if [ -e "$cfg" ] && [ ! -f "$cfg" ]; then
+                echo "mcp-config.json is not a regular file; leaving the MCP gateway unregistered" >&2
+                exit 0
+              fi
+              if ! merged=$({ if [ -s "$cfg" ]; then cat "$cfg"; else echo '{}'; fi; printf '%s\n' "$gateway"; } | jq -s '
+                  if length != 2 or (.[0] | type) != "object" or ((.[0].mcpServers // {}) | type) != "object" then
+                    error("mcp-config.json must hold one JSON object whose mcpServers is an object")
+                  else
+                    .[0] + {mcpServers: ((.[0].mcpServers // {}) + .[1].mcpServers)}
+                  end'); then
+                echo "mcp-config.json is not readable as JSON; leaving the MCP gateway unregistered" >&2
+                exit 0
+              fi
+              # The temp name is unpredictable, so a stale or crashed leftover is never installed.
+              tmp=$(mktemp "$dir/mcp-config.json.XXXXXX")
+              trap 'rm -f "$tmp"' EXIT
+              printf '%s\n' "$merged" > "$tmp"
+              mv -f "$tmp" "$cfg"
+          user: agent
+          env:
+            - MCP_GATEWAY_URL
+            - MCP_SENTINEL_TOKEN_NAME
+          description: Register the sandbox MCP gateway in ~/.copilot/mcp-config.json
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        GitHub Copilot is installed as `copilot`. Authentication and network access follow this Kit's capability declarations.
+    optional: true
+  - type: com.docker.sandbox/agent-context@2
+    config:
+      filename: AGENTS.md
+      content: |
+        GitHub Copilot is installed as `copilot`. Authentication and network access follow this Kit's capability declarations.
+    optional: true
+  - type: com.docker.sandbox/agent-sessions@1
+    config:
+      prompt:
+        - -p
+        - '{{.Prompt}}'
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    config:
+      prompt:
+        - -i
+        - '{{.Prompt}}'
+      continue:
+        - --continue
+      resume:
+        - --resume
+        - '{{.SessionID}}'
+      sessionPicker:
+        - --resume
+  - type: com.docker.sandbox/acp@1
+    optional: true
+    config:
+      agent: copilot
+      command:
+        - copilot
+        - --acp
+licenses:
+  - LicenseRef-Proprietary

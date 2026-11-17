@@ -1,0 +1,149 @@
+Subject: Adapt keel 0.22.4 call sites to the bumped client-go, slack-go, and distribution APIs
+
+Origin: DHI-internal (package/main/keel dependency bumps)
+Description: go/bump replaces raise k8s.io to 0.35.1 and helm.sh/helm/v3 to 3.20.2 (package/main/keel/*/.keel.inc.yaml), which moves distribution/v3 to the 3.1 line. That line moved the reference package to github.com/distribution/reference, client-go 0.35 gives DefaultWatchErrorHandler a context, and slack-go 0.23 replaces FileUploadParameters with UploadFileParameters. Those three call sites are the only source changes needed for the bumped modules to compile. slack-go 0.23 also rejects an upload whose FileSize is 0 before it sends a request, so the Slack call declares the reply's byte length.
+Base-Tree: git https://github.com/keel-hq/keel.git bc640168f020ab1dc89842938d1883886242a40b
+Adaptation: Hunks are against upstream 0.22.4 util/image/reference.go, internal/k8s/pods.go, and bot/slack/slack.go. The go.mod replace pins are not in this patch; go/bump sets them with replaces. Requires for the bumped modules are resolved by go/bump deps and tidy. bot/slack/dhi_upload_test.go is a new file in this patch: a stub-API regression for the long-reply upload path, including multibyte content. The pipeline runs it with go test after go/hermetic, so a zero-length upload fails the build.
+Verify: cmd `dhi def build package/main/keel/debian-13/0.yaml` expect go build ./cmd/keel succeeds, the bot/slack upload regression passes, and both leaves pass the package tests
+Forwarded: not-needed (DHI dependency bump; upstream 0.22.4 calls the older APIs)
+Drop-When: never: the three call sites follow the module APIs that go/bump pins; upstream 0.22.4 calls the older APIs and the patch stays until the pins move back
+
+diff -ruN orig/bot/slack/slack.go new/bot/slack/slack.go
+--- orig/bot/slack/slack.go
++++ new/bot/slack/slack.go
+@@ -308,11 +308,12 @@
+ 	}
+ 
+ 	// longer messages are getting uploaded as files
+-	f := slack.FileUploadParameters{
+-		Filename: "keel response",
+-		Content:  text,
+-		Filetype: "text",
+-		Channels: []string{channel},
++	f := slack.UploadFileParameters{
++		Filename:    "keel response",
++		FileSize:    len(text),
++		Content:     text,
++		SnippetType: "text",
++		Channel:     channel,
+ 	}
+ 
+ 	_, err := b.slackSocket.UploadFile(f)
+diff -ruN orig/internal/k8s/pods.go new/internal/k8s/pods.go
+--- orig/internal/k8s/pods.go
++++ new/internal/k8s/pods.go
+@@ -167,7 +167,7 @@
+ // relisting every pod in a loop.
+ func (c *PodCache) watchError(r *cache.Reflector, err error) {
+ 	if !apierrors.IsForbidden(err) {
+-		cache.DefaultWatchErrorHandler(r, err)
++		cache.DefaultWatchErrorHandler(context.Background(), r, err)
+ 		return
+ 	}
+ 	if c.disabled.Swap(true) {
+diff -ruN orig/util/image/reference.go new/util/image/reference.go
+--- orig/util/image/reference.go
++++ new/util/image/reference.go
+@@ -6,7 +6,7 @@
+ 	"strings"
+ 
+ 	// "github.com/docker/distribution/digest"
+-	"github.com/distribution/distribution/v3/reference"
++	"github.com/distribution/reference"
+ 	"github.com/opencontainers/go-digest"
+ )
+ 
+--- orig/bot/slack/dhi_upload_test.go	1970-01-01 00:00:00.000000000 +0000
++++ new/bot/slack/dhi_upload_test.go	1970-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,91 @@
++package slack
++
++import (
++	"bytes"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strconv"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/slack-go/slack"
++	"github.com/slack-go/slack/socketmode"
++)
++
++// TestRespondLongReplyUploadsByteLength drives Respond down the file-upload
++// branch against a stub Slack Web API. The reply is over 3000 bytes and holds
++// multibyte UTF-8, so the upload must declare its byte length. slack-go rejects
++// a zero length before any request is sent, and this test fails on that.
++func TestRespondLongReplyUploadsByteLength(t *testing.T) {
++	const channel = "C0KEELTEST"
++
++	text := strings.Repeat("keel réponse 世界 🚀\n", 200)
++	if len(text) < 3000 || len(text) == len([]rune(text)) {
++		t.Fatalf("test reply must exceed 3000 bytes and hold multibyte runes: %d bytes, %d runes",
++			len(text), len([]rune(text)))
++	}
++
++	var (
++		mu          sync.Mutex
++		steps       []string
++		declared    string
++		uploaded    []byte
++		completedOn string
++	)
++
++	var srv *httptest.Server
++	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		defer mu.Unlock()
++
++		steps = append(steps, r.URL.Path)
++		switch r.URL.Path {
++		case "/files.getUploadURLExternal":
++			_ = r.ParseForm()
++			declared = r.PostForm.Get("length")
++			_ = json.NewEncoder(w).Encode(map[string]any{
++				"ok":         true,
++				"upload_url": srv.URL + "/upload",
++				"file_id":    "F0KEELTEST",
++			})
++		case "/upload":
++			uploaded, _ = io.ReadAll(r.Body)
++			w.WriteHeader(http.StatusOK)
++		case "/files.completeUploadExternal":
++			_ = r.ParseForm()
++			completedOn = r.PostForm.Get("channel_id")
++			_ = json.NewEncoder(w).Encode(map[string]any{
++				"ok":    true,
++				"files": []map[string]string{{"id": "F0KEELTEST"}},
++			})
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer srv.Close()
++
++	api := slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/"))
++	b := &Bot{slackSocket: socketmode.New(api)}
++
++	b.Respond(text, channel)
++
++	mu.Lock()
++	defer mu.Unlock()
++
++	wantSteps := []string{"/files.getUploadURLExternal", "/upload", "/files.completeUploadExternal"}
++	if strings.Join(steps, " ") != strings.Join(wantSteps, " ") {
++		t.Fatalf("long reply must run all three upload steps, got %v", steps)
++	}
++	if want := strconv.Itoa(len(text)); declared != want {
++		t.Errorf("upload must declare the reply's byte length %s, got %q", want, declared)
++	}
++	if !bytes.Contains(uploaded, []byte(text)) {
++		t.Errorf("uploaded body must carry the multibyte reply unchanged")
++	}
++	if completedOn != channel {
++		t.Errorf("upload must share to channel %s, got %q", channel, completedOn)
++	}
++}

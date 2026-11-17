@@ -1,0 +1,99 @@
+Origin: DHI, adapting https://github.com/codecov/gazebo/tree/main/docker
+Description: Run the upstream start script on the hardened package layout.
+ The three [[ ]] tests become [ ] so the script runs under dash and busybox sh,
+ the nginx templates are read from /etc/codecov-frontend, the rendered nginx.conf
+ and the pid file land in /tmp because /etc/nginx and /run are root-owned in the
+ hardened image, nginx is started with the rendered file, mime.types is included
+ by its absolute path because nginx resolves a relative include against the
+ directory of the file given to -c, and extra server configuration is included
+ from /etc/codecov-frontend/conf.d because the Debian nginx package ships a
+ default server block under /etc/nginx/conf.d that would shadow the application.
+Forwarded: not-needed
+
+--- a/docker/start-nginx.sh
++++ b/docker/start-nginx.sh
+@@ -19,15 +19,15 @@
+   echo "Replacing ${SCHEME_BASE} for ${SCHEME} on ${API_BASE} and ${WEB_BASE}"
+   sed -i "s/${SCHEME_BASE}:\/\/${API_BASE}/${SCHEME}:\/\/${CODECOV_API_HOST}/g" /var/www/app/gazebo/assets/*.js
+   sed -i "s/${SCHEME_BASE}:\/\/${WEB_BASE}/${SCHEME}:\/\/${CODECOV_BASE_HOST}/g" /var/www/app/gazebo/assets/*.js
+-  if [[ -n "${GHE_BASE}" ]]; then
++  if [ -n "${GHE_BASE}" ]; then
+     echo "Replacing GHE ${GHE_SCHEME_BASE}://${GHE_BASE}"
+     sed -i -r "s/[a-zA-Z]+\.GHE_URL/\"${GHE_SCHEME_BASE}:\/\/${GHE_BASE}\"/g" /var/www/app/gazebo/assets/*.js
+   fi
+-  if [[ -n "${GLE_BASE}" ]]; then
++  if [ -n "${GLE_BASE}" ]; then
+     echo "Replacing GLE ${GLE_SCHEME_BASE}://${GLE_BASE}"
+     sed -i -r "s/[a-zA-Z]+\.GLE_URL/\"${GLE_SCHEME_BASE}:\/\/${GLE_BASE}\"/g" /var/www/app/gazebo/assets/*.js
+   fi
+-  if [[ -n "${BBS_BASE}" ]]; then
++  if [ -n "${BBS_BASE}" ]; then
+     echo "Replacing BBS ${BBS_SCHEME_BASE}://${BBS_BASE}"
+     sed -i -r "s/[a-zA-Z]+\.BBS_URL/\"${BBS_SCHEME_BASE}:\/\/${BBS_BASE}\"/g" /var/www/app/gazebo/assets/*.js
+   fi
+@@ -35,12 +35,12 @@
+   export DOLLAR='$'
+   if [ "$CODECOV_FRONTEND_IPV6_DISABLED" ]; then
+     echo 'Codecov frontend ipv6 disabled'
+-    envsubst < /etc/nginx/nginx-no-ipv6.conf.template > /etc/nginx/nginx.conf
++    envsubst < /etc/codecov-frontend/nginx-no-ipv6.conf.template > /tmp/nginx.conf
+   else
+-    envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
++    envsubst < /etc/codecov-frontend/nginx.conf.template > /tmp/nginx.conf
+   fi
+   echo "Codecov Frontend starting nginx"
+-  nginx -g 'daemon off;'
++  nginx -c /tmp/nginx.conf -g 'daemon off;'
+ else
+   exec "$@"
+ fi
+--- a/docker/nginx.conf
++++ b/docker/nginx.conf
+@@ -1,13 +1,13 @@
+ worker_processes 1;
+ error_log stderr warn;
+-pid /run/nginx.pid;
++pid /tmp/nginx.pid;
+ 
+ events {
+     worker_connections 1024;
+ }
+ 
+ http {
+-    include mime.types;
++    include /etc/nginx/mime.types;
+     default_type application/octet-stream;
+ 
+     # Define custom log format to include reponse times
+@@ -99,5 +99,5 @@
+     gzip_disable "msie6";
+ 
+     # Include other server configs
+-    include /etc/nginx/conf.d/*.conf;
++    include /etc/codecov-frontend/conf.d/*.conf;
+ }
+--- a/docker/nginx-no-ipv6.conf
++++ b/docker/nginx-no-ipv6.conf
+@@ -1,13 +1,13 @@
+ worker_processes 1;
+ error_log stderr warn;
+-pid /run/nginx.pid;
++pid /tmp/nginx.pid;
+ 
+ events {
+     worker_connections 1024;
+ }
+ 
+ http {
+-    include mime.types;
++    include /etc/nginx/mime.types;
+     default_type application/octet-stream;
+ 
+     # Define custom log format to include reponse times
+@@ -98,5 +98,5 @@
+     gzip_disable "msie6";
+ 
+     # Include other server configs
+-    include /etc/nginx/conf.d/*.conf;
++    include /etc/codecov-frontend/conf.d/*.conf;
+ }

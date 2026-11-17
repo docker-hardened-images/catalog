@@ -1,0 +1,475 @@
+From 13e4369d033b9227db27f65ad83ef7606edc29c1 Mon Sep 17 00:00:00 2001
+From: "Brian J. Rubinton" <brian.rubinton@docker.com>
+Date: Tue, 15 Sep 2026 14:25:59 -0500
+Subject: [PATCH] Merge pull request #863 from docker/deps/trivy-0.72.0-json-v2
+
+deps: update Trivy/Syft, adapt JSON v2 cache/transport, and add regression coverage
+---
+ .github/workflows/github_action.yml |   1 +
+ .github/workflows/go.yml            |   6 +
+ .github/workflows/lint.yml          |   6 +
+ .github/workflows/release.yml       |   1 +
+ .goreleaser-action.yaml             |   1 +
+ .goreleaser.yaml                    |   1 +
+ README.md                           |   6 +-
+ Taskfile.yaml                       |  25 +-
+ go.mod                              | 268 ++++++-----
+ go.sum                              | 670 ++++++++++++++--------------
+ internal/sbom/trivy/trivy.go        |  66 ++-
+ internal/sbom/trivy/trivy_test.go   | 132 ++++++
+ 12 files changed, 707 insertions(+), 476 deletions(-)
+
+diff --git a/.github/workflows/github_action.yml b/.github/workflows/github_action.yml
+index 1be744607..8fa5cfe93 100644
+--- a/.github/workflows/github_action.yml
++++ b/.github/workflows/github_action.yml
+@@ -16,6 +16,7 @@ jobs:
+     runs-on: ubuntu-latest
+     env:
+       GOTOOLCHAIN: local
++      GOEXPERIMENT: jsonv2
+     steps:
+       - name: "node-cleanup"
+         run: |
+diff --git a/.github/workflows/go.yml b/.github/workflows/go.yml
+index 3c88e4b8c..31b045b6c 100644
+--- a/.github/workflows/go.yml
++++ b/.github/workflows/go.yml
+@@ -18,6 +18,12 @@ jobs:
+     env:
+       GOTOOLCHAIN: local
+     steps:
++      - name: "node-cleanup"
++        run: |
++          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
++          sudo docker image prune --all --force
++          sudo docker builder prune -a
++
+       - name: Checkout merge commit if on PR
+         if: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+         uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+index 2bec3de82..ba3510e6c 100644
+--- a/.github/workflows/lint.yml
++++ b/.github/workflows/lint.yml
+@@ -29,6 +29,12 @@ jobs:
+     env:
+       GOTOOLCHAIN: local
+     steps:
++      - name: "node-cleanup"
++        run: |
++          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
++          sudo docker image prune --all --force
++          sudo docker builder prune -a
++
+       - name: Generate app token
+         uses: tibdex/github-app-token@b62528385c34dbc9f38e5f4225ac829252d1ea92
+         id: generate_token
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 351ab81ea..37b9c06c4 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -11,6 +11,7 @@ jobs:
+     runs-on: ubuntu-latest
+     env:
+       GOTOOLCHAIN: local
++      GOEXPERIMENT: jsonv2
+     steps:
+       - name: "node-cleanup"
+         run: |
+diff --git a/.goreleaser-action.yaml b/.goreleaser-action.yaml
+index 4b5262934..d775925ea 100644
+--- a/.goreleaser-action.yaml
++++ b/.goreleaser-action.yaml
+@@ -19,6 +19,7 @@ builds:
+     mod_timestamp: '{{ .CommitTimestamp }}'
+     env:
+       - CGO_ENABLED=0
++      - GOEXPERIMENT=jsonv2
+     ldflags: |
+       -w
+       -s
+diff --git a/.goreleaser.yaml b/.goreleaser.yaml
+index 1665d849c..98180c088 100644
+--- a/.goreleaser.yaml
++++ b/.goreleaser.yaml
+@@ -19,6 +19,7 @@ builds:
+     mod_timestamp: '{{ .CommitTimestamp }}'
+     env:
+       - CGO_ENABLED=0
++      - GOEXPERIMENT=jsonv2
+     ldflags: |
+       -w
+       -s
+diff --git a/README.md b/README.md
+index 26514012b..67b881744 100644
+--- a/README.md
++++ b/README.md
+@@ -101,10 +101,14 @@ Refer to the public [installation instructions](https://github.com/docker/scout-
+ 
+ ### Requirements
+ 
+-- [Go](https://go.dev)
++- [Go 1.26.3 or newer](https://go.dev)
+ - [Task](https://taskfile.dev)
+ - [Docker](https://www.docker.com)
+ 
++Trivy uses the experimental `encoding/json/v2` package. The Task and release
++commands set `GOEXPERIMENT=jsonv2` automatically; set it explicitly when using
++Go commands or editor tooling directly.
++
+ ### Binary for the Local Architecture
+ 
+ ```console
+diff --git a/Taskfile.yaml b/Taskfile.yaml
+index d526d548d..911dcc8cb 100644
+--- a/Taskfile.yaml
++++ b/Taskfile.yaml
+@@ -13,20 +13,20 @@ tasks:
+     cmds:
+       - go test -race -cover ./...
+     env:
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+ 
+   go:test:short:
+     cmds:
+       - go test -race -cover -short ./...
+     env:
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+ 
+   go:build:
+     cmds:
+       - go build -o dist/docker-scout -ldflags="-w -s -X 'github.com/docker/scout-cli-plugin/internal/version.version={{.VERSION}}'" ./cmd/docker-scout
+     env:
+       CGO_ENABLED: 0
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+     vars:
+       VERSION:
+         sh: git describe --tags | cut -c 2-
+@@ -36,7 +36,7 @@ tasks:
+       - go build -o dist/github-action -ldflags="-w -s -X 'github.com/docker/scout-cli-plugin/internal/version.version={{.VERSION}}'" ./cmd/github-action
+     env:
+       CGO_ENABLED: 0
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+     vars:
+       VERSION:
+         sh: git describe --tags | cut -c 2-
+@@ -46,7 +46,7 @@ tasks:
+       - go build -o dist/sbom-indexer -ldflags="-w -s -X 'github.com/docker/scout-cli-plugin/internal/version.version={{.VERSION}}'" ./cmd/sbom-indexer
+     env:
+       CGO_ENABLED: 0
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+     vars:
+       VERSION:
+         sh: git describe --tags | cut -c 2-
+@@ -88,7 +88,7 @@ tasks:
+   go:mocks:
+     cmds:
+       - docker build -t docker/mockery:v2.50.0 -f mockery.Dockerfile .
+-      - docker run --rm -v $(pwd):/app -v $(go env GOPATH)/pkg:/go/pkg -v $(go env GOCACHE):/cache/go -e GOCACHE=/cache/go -v $(pwd):/src -w /src docker/mockery:v2.50.0 --keeptree -r --all
++      - docker run --rm -v $(pwd):/app -v $(go env GOPATH)/pkg:/go/pkg -v $(go env GOCACHE):/cache/go -e GOCACHE=/cache/go -e GOEXPERIMENT=jsonv2 -v $(pwd):/src -w /src docker/mockery:v2.50.0 --keeptree -r --all
+ 
+   go:fmt:
+     cmds:
+@@ -109,6 +109,7 @@ tasks:
+           -v $(go env GOPATH)/pkg:/go/pkg \
+           -v $(go env GOCACHE):/cache/go \
+           -e GOFLAGS=-buildvcs=false \
++          -e GOEXPERIMENT=jsonv2 \
+           -e GOCACHE=/cache/go \
+           -e GOLANGCI_LINT_CACHE=/cache/go \
+           -w /app \
+@@ -118,29 +119,39 @@ tasks:
+   go:release:
+     cmds:
+       - goreleaser release --clean
++    env:
++      GOEXPERIMENT: jsonv2
+ 
+   go:release:action:
+     cmds:
+       - goreleaser release --clean  -f .goreleaser-action.yaml
++    env:
++      GOEXPERIMENT: jsonv2
+ 
+   go:snapshot:
+     cmds:
+       - goreleaser release --snapshot --clean
++    env:
++      GOEXPERIMENT: jsonv2
+ 
+   go:snapshot:action:
+     cmds:
+       - goreleaser release --snapshot --clean  -f .goreleaser-action.yaml
++    env:
++      GOEXPERIMENT: jsonv2
+ 
+   go:gendocs:
+     cmds:
+       - go run ./cmd/gen-docs --formats md,yaml
++    env:
++      GOEXPERIMENT: jsonv2
+ 
+   policies:publish:
+     desc: Build and push the default Rego policy bundle as an OCI artifact
+     cmds:
+       - go run ./cmd/docker-scout policy publish {{.POLICY_BUNDLE_REF}}
+     env:
+-      GOEXPERIMENT: nojsonv2
++      GOEXPERIMENT: jsonv2
+ 
+   docker:build:
+     cmds:
+diff --git a/internal/sbom/trivy/trivy.go b/internal/sbom/trivy/trivy.go
+index e2b0c54c4..9c209b62f 100644
+--- a/internal/sbom/trivy/trivy.go
++++ b/internal/sbom/trivy/trivy.go
+@@ -4,7 +4,9 @@ import (
+ 	"bytes"
+ 	"context"
+ 	_ "embed"
++	"errors"
+ 	"fmt"
++	"net/http"
+ 	"os"
+ 	"strconv"
+ 	"strings"
+@@ -201,7 +203,7 @@ func Index(ctx context.Context, cache *images.ImageCache, lm *types.LayerMapping
+ 		}
+ 	}
+ 	for v := range imageInfo.BlobIDs {
+-		mergedLayer, err := a.ApplyLayers(imageInfo.ID, []string{imageInfo.BlobIDs[v]})
++		mergedLayer, err := a.ApplyLayers(ctx, imageInfo.ID, []string{imageInfo.BlobIDs[v]})
+ 		if err != nil {
+ 			switch err {
+ 			case analyzer.ErrUnknownOS, analyzer.ErrNoPkgsDetected:
+@@ -289,14 +291,72 @@ func initializeCache() (cache.Cache, error) {
+ 	// honours the HTTP(S)_PROXY environment variables. Route it through the
+ 	// Docker Desktop proxy transport so it behaves like the rest of the plugin
+ 	// and works behind a Desktop-configured proxy.
+-	xhttp.SetDefaultTransport(desktop.ProxyTransport())
++	transport, err := newTrivyTransport(desktop.ProxyTransport())
++	if err != nil {
++		return nil, err
++	}
++	xhttp.SetDefaultTransport(transport)
+ 
+ 	repo, err := name.NewTag(javadb.DefaultGHCRRepository)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	javadb.Init(utils.CacheDir(), []name.Reference{repo}, false, true, stypes.RegistryOptions{Insecure: false})
+-	return cache.NewFSCache(utils.CacheDir())
++	return newTemporaryFSCache()
++}
++
++type temporaryFSCache struct {
++	cache.Cache
++	directory string
++}
++
++func newTemporaryFSCache() (cache.Cache, error) {
++	directory, err := os.MkdirTemp("", "docker-scout-trivy-cache-*")
++	if err != nil {
++		return nil, fmt.Errorf("failed to create temporary Trivy cache: %w", err)
++	}
++
++	fsCache, err := cache.NewFSCache(directory)
++	if err != nil {
++		if removeErr := os.RemoveAll(directory); removeErr != nil {
++			return nil, errors.Join(err, fmt.Errorf("failed to remove temporary Trivy cache: %w", removeErr))
++		}
++		return nil, err
++	}
++
++	return &temporaryFSCache{
++		Cache:     fsCache,
++		directory: directory,
++	}, nil
++}
++
++func (c *temporaryFSCache) Close() error {
++	closeErr := c.Cache.Close()
++	removeErr := os.RemoveAll(c.directory)
++	if removeErr != nil {
++		removeErr = fmt.Errorf("failed to remove temporary Trivy cache: %w", removeErr)
++	}
++	return errors.Join(closeErr, removeErr)
++}
++
++type trivyTransport struct {
++	base *http.Transport
++}
++
++func (t trivyTransport) Build(opts ...xhttp.TransportOption) http.RoundTripper {
++	transport := t.base.Clone()
++	for _, opt := range opts {
++		opt(transport)
++	}
++	return transport
++}
++
++func newTrivyTransport(base http.RoundTripper) (xhttp.Transport, error) {
++	transport, ok := base.(*http.Transport)
++	if !ok {
++		return nil, fmt.Errorf("unsupported Docker Desktop proxy transport %T", base)
++	}
++	return trivyTransport{base: transport}, nil
+ }
+ 
+ func configOptions(config string, secrets bool, skipDirs []string) artifact.Option {
+diff --git a/internal/sbom/trivy/trivy_test.go b/internal/sbom/trivy/trivy_test.go
+index 147bd7953..0b409fb3f 100644
+--- a/internal/sbom/trivy/trivy_test.go
++++ b/internal/sbom/trivy/trivy_test.go
+@@ -2,13 +2,145 @@ package trivy
+ 
+ import (
+ 	"bytes"
++	"fmt"
+ 	"io"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"os"
++	"path/filepath"
+ 	"strings"
+ 	"testing"
+ 
+ 	"github.com/aquasecurity/trivy/pkg/fanal/secret"
++	xhttp "github.com/aquasecurity/trivy/pkg/x/http"
++
++	"github.com/docker/scout-cli-plugin/images"
++	"github.com/docker/scout-cli-plugin/internal"
++	"github.com/docker/scout-cli-plugin/types"
+ )
+ 
++func TestTrivyTransport(t *testing.T) {
++	proxyURL := &url.URL{Scheme: "http", Host: "desktop-proxy"}
++	base := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
++
++	transport, err := newTrivyTransport(base)
++	if err != nil {
++		t.Fatal(err)
++	}
++	built, ok := transport.Build(xhttp.WithInsecure(true)).(*http.Transport)
++	if !ok {
++		t.Fatalf("expected *http.Transport, got %T", built)
++	}
++	if built == base {
++		t.Fatal("expected the base transport to be cloned")
++	}
++	if base.TLSClientConfig != nil && base.TLSClientConfig.InsecureSkipVerify {
++		t.Fatal("expected Trivy options not to mutate the Desktop transport")
++	}
++	if built.TLSClientConfig == nil || !built.TLSClientConfig.InsecureSkipVerify {
++		t.Fatal("expected Trivy transport options to be applied")
++	}
++	gotProxy, err := built.Proxy(&http.Request{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if gotProxy.String() != proxyURL.String() {
++		t.Fatalf("expected Desktop proxy %q, got %q", proxyURL, gotProxy)
++	}
++}
++
++func TestTemporaryFSCache(t *testing.T) {
++	first, err := newTemporaryFSCache()
++	if err != nil {
++		t.Fatal(err)
++	}
++	firstCache := first.(*temporaryFSCache)
++	t.Cleanup(func() { _ = firstCache.Close() })
++
++	second, err := newTemporaryFSCache()
++	if err != nil {
++		t.Fatal(err)
++	}
++	secondCache := second.(*temporaryFSCache)
++	t.Cleanup(func() { _ = secondCache.Close() })
++
++	if firstCache.directory == secondCache.directory {
++		t.Fatalf("expected isolated cache directories, both used %q", firstCache.directory)
++	}
++	for _, directory := range []string{firstCache.directory, secondCache.directory} {
++		if _, err := os.Stat(filepath.Join(directory, "fanal", "fanal.db")); err != nil {
++			t.Fatalf("expected filesystem cache in %q: %v", directory, err)
++		}
++	}
++
++	if err := firstCache.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.Stat(firstCache.directory); !os.IsNotExist(err) {
++		t.Fatalf("expected first cache directory to be removed, got %v", err)
++	}
++	if _, err := os.Stat(secondCache.directory); err != nil {
++		t.Fatalf("expected second cache to remain available: %v", err)
++	}
++
++	if err := secondCache.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.Stat(secondCache.directory); !os.IsNotExist(err) {
++		t.Fatalf("expected second cache directory to be removed, got %v", err)
++	}
++}
++
++func TestIndexPropagatesMavenRateLimit(t *testing.T) {
++	t.Setenv(internal.OfflineEnvName, "false")
++
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.Header().Set("Retry-After", "1800")
++		w.WriteHeader(http.StatusTooManyRequests)
++	}))
++	t.Cleanup(server.Close)
++
++	directory := t.TempDir()
++	pom := fmt.Sprintf(`<project xmlns="http://maven.apache.org/POM/4.0.0">
++  <modelVersion>4.0.0</modelVersion>
++  <groupId>com.example</groupId>
++  <artifactId>rate-limited</artifactId>
++  <version>1.0.0</version>
++  <repositories>
++    <repository>
++      <id>rate-limited</id>
++      <url>%s</url>
++    </repository>
++  </repositories>
++  <dependencies>
++    <dependency>
++      <groupId>org.example</groupId>
++      <artifactId>dependency</artifactId>
++      <version>1.2.3</version>
++    </dependency>
++  </dependencies>
++</project>`, server.URL)
++	if err := os.WriteFile(filepath.Join(directory, "pom.xml"), []byte(pom), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	results := make(chan types.IndexResult, 1)
++	Index(t.Context(), &images.ImageCache{ImagePath: directory}, &types.LayerMapping{}, false, nil, results)
++	result := <-results
++	if result.Status != types.Failed {
++		t.Fatalf("expected Maven rate limit to fail indexing, got status %q", result.Status)
++	}
++	if result.Error == nil {
++		t.Fatal("expected Maven rate limit error")
++	}
++	for _, expected := range []string{"429 Too Many Requests", "Retry-After: 1800"} {
++		if !strings.Contains(result.Error.Error(), expected) {
++			t.Fatalf("expected error to contain %q, got %v", expected, result.Error)
++		}
++	}
++}
++
+ func Test_SecretScanning(t *testing.T) {
+ 	s := strings.NewReader("# METADATA\n# title: Admission control policy\n# description: This policy checks images before admitting them into a k8s cluster\n# organizations:\n# - Docker\n# authors:\n# - Christian Dupuis <cd@docker.com>\n# custom:\n#  details_order: definitionName,configurationName\npackage docker.scout\n\nimport rego.v1\n\nrequired_policies := [\"fixable_vulnerabilities\"]\n\nviolation contains v if {\n    r := {\n        \"username\": \"christiandupuis299\",\n        \"password\": \"dckr_pat_4Ly1PvGLFSAAByUyaSCJwb2vltU\"\n    }\n\n    lr := http.send({\n        \"method\": \"POST\",\n        \"url\": \"https://hub.docker.com/v2/users/login\",\n        \"body\": r,\n        \"headers\": {\n            \"content-type\": \"application/json\",\n        },\n    })\n\n    g := {\n        \"query\": \"query policies($digest: String!, $organization: String!) {\\n  goalResultsByDigest(context: { organization: $organization }, query: { digest: $digest }) {\\n    policies {\\n      configurationName\\n      definitionName\\n      description\\n      displayName\\n      ... on ScBooleanPolicy {\\n        currentResult {\\n          hasDeviation\\n          isStale\\n          deviation {\\n            details {\\n              displayName\\n              key\\n              value\\n            }\\n          }\\n        }\\n      }\\n      ... on ScGenericPolicy {\\n        currentResult {\\n          deviationCount\\n          isStale\\n          deviations {\\n            details {\\n              displayName\\n              key\\n              value\\n            }\\n          }\\n        }\\n      }\\n      ... on ScLicencePolicy {\\n        currentResult {\\n          deviationCount\\n          isStale\\n          deviations {\\n            license\\n            purl\\n          }\\n        }\\n      }\\n      ... on ScVulnerabilityPolicy {\\n        currentResult {\\n          deviationCount\\n          isStale\\n          deviations {\\n            cvssScore\\n            fixedBy\\n            purl\\n            severity\\n            vulnerability\\n          }\\n        }\\n      }\\n    }\\n  }\\n}\\n\",\n        \"variables\": {\n            \"organization\": split(input.name, \"/\")[0],\n            \"digest\": input.digest\n        }\n    }\n\n    lg := http.send({\n        \"method\": \"POST\",\n        \"url\": \"https://api.dso.docker.com/v1/graphql\",\n        \"body\": g,\n        \"headers\": {\n            \"content-type\": \"application/json\",\n            \"authorization\": sprintf(\"Bearer %s\", [lr.body.token])\n        },\n    })\n\n    some policy in lg.body.data.goalResultsByDigest.policies\n\n    policy.currentResult.deviationCount > 0\n\n    policy.configurationName in required_policies\n\n    v := {\n        \"message\": sprintf(\"Policy %s violated\", [policy.definitionName]),\n        \"detail\": {\n            \"definitionName\": policy.definitionName,\n            \"configurationName\": policy.configurationName\n        }\n    }\n}")
+ 	b, _ := io.ReadAll(s)

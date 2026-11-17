@@ -1,0 +1,60 @@
+Subject: limit braces nesting depth
+
+Socket CLI 2.1.0 bundles braces 3.0.3. That release caps input length and does not cap nesting depth, so a deeply nested pattern crashes the parser. No npm release contains the depth guard.
+
+Origin: backport, https://github.com/micromatch/braces/commit/86074c6115b23609325537588006be0c7665ebf0
+CVE: CVE-2026-93687
+Base-Tree: git https://github.com/SocketDev/socket-cli.git 10189f65119e5ca84bf80e95f208cae83b405a3a
+Adaptation: Rebased the parse depth guard onto the pnpm patch file Socket CLI applies to braces 3.0.3. Omitted the upstream compile.js debug-log cleanup and new tests, which are not part of the bundled parser. Left the package version at 3.0.3.
+Verify: cmd `corepack pnpm exec node -e 'const {createRequire}=require("module");const r=createRequire(require.resolve("micromatch"));const b=r("braces");try{b("{".repeat(101)+"x"+"}".repeat(101));process.exit(1)}catch(e){if(!(e instanceof SyntaxError))throw e}console.log("depth guard verified")'` expect "depth guard verified"
+
+diff --git a/patches/braces@3.0.3.patch b/patches/braces@3.0.3.patch
+new file mode 100644
+index 0000000..91b438d
+--- /dev/null
++++ b/patches/braces@3.0.3.patch
+@@ -0,0 +1,44 @@
++diff --git a/lib/constants.js b/lib/constants.js
++index 2bb3b8840382c56700869b3a9e1f958fcce01efd..de35512facaf21f1e27de97dc66bd37d87c2d0f9 100644
++--- a/lib/constants.js
+++++ b/lib/constants.js
++@@ -2,6 +2,7 @@
++ 
++ module.exports = {
++   MAX_LENGTH: 10000,
+++  MAX_DEPTH: 100,
++ 
++   // Digits
++   CHAR_0: '0', /* 0 */
++diff --git a/lib/parse.js b/lib/parse.js
++index 3a6988e629f52aee6609dc5ec290a5e9ff47cecb..cb68a39251fbd492d8e7c9eaff38fcda6e702903 100644
++--- a/lib/parse.js
+++++ b/lib/parse.js
++@@ -8,6 +8,7 @@ const stringify = require('./stringify');
++ 
++ const {
++   MAX_LENGTH,
+++  MAX_DEPTH,
++   CHAR_BACKSLASH, /* \ */
++   CHAR_BACKTICK, /* ` */
++   CHAR_COMMA, /* , */
++@@ -39,6 +40,8 @@ const parse = (input, options = {}) => {
++     throw new SyntaxError(`Input length (${input.length}), exceeds max characters (${max})`);
++   }
++ 
+++  const maxDepth = typeof opts.maxDepth === 'number' ? Math.min(MAX_DEPTH, opts.maxDepth) : MAX_DEPTH;
+++
++   const ast = { type: 'root', input, nodes: [] };
++   const stack = [ast];
++   let block = ast;
++@@ -197,6 +200,10 @@ const parse = (input, options = {}) => {
++     if (value === CHAR_LEFT_CURLY_BRACE) {
++       depth++;
++ 
+++      if (depth > maxDepth) {
+++        throw new SyntaxError(`Pattern exceeds the maximum nesting depth (${maxDepth})`);
+++      }
+++
++       const dollar = prev.value && prev.value.slice(-1) === '$' || block.dollar === true;
++       const brace = {
++         type: 'brace',

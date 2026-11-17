@@ -1,0 +1,155 @@
+schemaVersion: '3'
+displayName: Devin
+description: Devin coding workload with sandbox sign-in, proxy-managed credentials, and MCP setup.
+sourceUrl: https://devin.ai
+kind: workload
+version: ${{ kit.args.version }}
+args:
+  version:
+    pattern: ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$
+    description: Devin CLI release to install
+    buildArg: VERSION
+    required: true
+provides:
+  - devin@${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - '*.devin.ai:443'
+          - api.devin.ai:443
+          - windsurf.com:443
+          - server.codeium.com:443
+          - unleash.codeium.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Devin account credential captured during in-sandbox login
+    config:
+      service: devin
+      phase: runtime
+      apiKey:
+        inject:
+          - domain: server.codeium.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.devin.ai
+            header: Authorization
+            format: Bearer %s
+      oauth:
+        tokenEndpoint:
+          host: api.devin.ai
+          path: /auth/cli/token
+        resourceHosts:
+          - server.codeium.com
+          - api.devin.ai
+        responseFields:
+          accessToken: token
+          refreshToken: token
+        passthrough: true
+        credentialFile:
+          path: ~/.local/share/devin/credentials.toml
+          format: toml
+          structure:
+            api_server_url: https://server.codeium.com
+            devin_webapp_host: app.devin.ai
+            devin_api_url: https://api.devin.ai
+            windsurf_api_key: '{{.PrimaryApiKey}}'
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      files:
+        - path: /home/agent/.config/devin/config.json
+          content: '{"auto_update": false}'
+          overwrite: false
+          description: Disable Devin background updates
+      startup:
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            mkdir -p "$HOME/.config/devin"
+            cat > "$HOME/.config/devin/mcp_config.json" <<EOF
+            {
+              "mcpServers": {
+                "mcp-gateway": {
+                  "url": "$MCP_GATEWAY_URL",
+                  "transport": "http",
+                  "headers": {
+                    "Authorization": "Bearer $MCP_SENTINEL_TOKEN_NAME"
+                  }
+                }
+              }
+            }
+            EOF
+          user: agent
+          env:
+            - MCP_GATEWAY_URL
+            - MCP_SENTINEL_TOKEN_NAME
+          description: Register the sandbox MCP gateway
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      content: |
+        # Devin
+
+        This sandbox runs Cognition's Devin CLI. Two things about it are not visible
+        from inside the session and are worth knowing before you debug something.
+
+        **`devin` is not the CLI.** It is an auth wrapper installed under that name;
+        the real binary is `devin-cli`. The wrapper checks authentication state, runs
+        Devin's manual token flow when there is none, and replaces any real key left
+        on disk with the proxy's placeholder before handing off. Invoke `devin-cli`
+        directly only if you mean to bypass that.
+
+        **The credential is proxy-held.** After sign-in, the durable key never sits in
+        the container in usable form: `~/.local/share/devin/credentials.toml` carries
+        a placeholder, and the sandbox's egress proxy substitutes the real key on
+        requests to Devin's and Codeium's hosts. Nothing reads it from an environment
+        variable, so there is no `DEVIN_*` key to set.
+
+        Background self-update is off (`~/.config/devin/config.json`), so the binary
+        will not change under a running session; `devin update` still works if you ask
+        for it. Egress is limited to Devin's and Codeium's hosts plus the base image's
+        apt sources — npm, GitHub and the crash-reporting ingest host are deliberately
+        unreachable.
+      directory: /home/agent
+    optional: true
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      content: |
+        # Devin
+
+        This sandbox runs Cognition's Devin CLI. Two things about it are not visible
+        from inside the session and are worth knowing before you debug something.
+
+        **`devin` is not the CLI.** It is an auth wrapper installed under that name;
+        the real binary is `devin-cli`. The wrapper checks authentication state, runs
+        Devin's manual token flow when there is none, and replaces any real key left
+        on disk with the proxy's placeholder before handing off. Invoke `devin-cli`
+        directly only if you mean to bypass that.
+
+        **The credential is proxy-held.** After sign-in, the durable key never sits in
+        the container in usable form: `~/.local/share/devin/credentials.toml` carries
+        a placeholder, and the sandbox's egress proxy substitutes the real key on
+        requests to Devin's and Codeium's hosts. Nothing reads it from an environment
+        variable, so there is no `DEVIN_*` key to set.
+
+        Background self-update is off (`~/.config/devin/config.json`), so the binary
+        will not change under a running session; `devin update` still works if you ask
+        for it. Egress is limited to Devin's and Codeium's hosts plus the base image's
+        apt sources — npm, GitHub and the crash-reporting ingest host are deliberately
+        unreachable.
+      directory: /home/agent
+  - type: com.docker.sandbox/acp@1
+    config:
+      command:
+        - devin-cli
+        - acp
+      agent: devin
+    optional: true
+licenses:
+  - LicenseRef-Proprietary

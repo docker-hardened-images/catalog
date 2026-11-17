@@ -1,0 +1,117 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-osm2pgsql
+variant: runtime
+tags:
+  - 2.1.1-ds-1-deb13u0-dhi0
+  - 2.1.1-ds-1-deb13u0-dhi0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DEBIAN_DEBIAN_CHECKSUM: sha256:dd49a637ca240a2ed4fcce4c7fb4ab7fe64588c13236ad2a28375cdebf2d2e52
+  DEBIAN_DEBIAN_FILENAME: osm2pgsql_2.1.1+ds-1.debian.tar.xz
+  DEBIAN_DEBIAN_URL: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds-1.debian.tar.xz
+  DEBIAN_DSC_CHECKSUM: sha256:e12c96d213bb4dbbe4bf1b76b3af467ace269a6e4896e60ee9dfa41d8fc4a7bd
+  DEBIAN_DSC_FILENAME: osm2pgsql_2.1.1+ds-1.dsc
+  DEBIAN_DSC_URL: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds-1.dsc
+  DEBIAN_FILENAME_VERSION: 2.1.1+ds-1
+  DEBIAN_ORIG_CHECKSUM: sha256:7827a4ca3605f30462ca0f7d39bdc9ddc2bc7df32ddd3ec3a7a7b250bd697a83
+  DEBIAN_ORIG_FILENAME: osm2pgsql_2.1.1+ds.orig.tar.xz
+  DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds.orig.tar.xz
+  DEBIAN_VERSION: 2.1.1+ds-1
+  DHI_REL: "0"
+  DHI_VERSION: 2.1.1+ds-1+deb13u0+dhi0
+  TAG_VERSION: 2.1.1-ds-1-deb13u0-dhi0
+  UPSTREAM_VERSION: 2.1.1+ds
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: osm2pgsql deb
+      work-dir: ${source.dir}/osm2pgsql
+      contents:
+        packages:
+          - architecture-properties
+          - build-essential
+          - cmake
+          - debhelper
+          - dh-python
+          - dpkg-dev
+          - libblas3
+          - libboost-dev
+          - libbz2-dev
+          - libcli11-dev
+          - libexpat1-dev
+          - liblapack3
+          - libopencv-dev
+          - libosmium2-dev
+          - libpotrace-dev
+          - libpq-dev
+          - libproj-dev
+          - zlib1g-dev
+          - liblua5.3-dev
+          - lua5.3
+          - nlohmann-json3-dev
+          - python3
+          - python3-argparse-manpage
+          - python3-psycopg2
+          - python3-pyosmium
+        files:
+          - url: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds-1.dsc
+            checksum: sha256:e12c96d213bb4dbbe4bf1b76b3af467ace269a6e4896e60ee9dfa41d8fc4a7bd
+            path: ${source.dir}/osm2pgsql_2.1.1+ds-1.dsc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds.orig.tar.xz
+            checksum: sha256:7827a4ca3605f30462ca0f7d39bdc9ddc2bc7df32ddd3ec3a7a7b250bd697a83
+            path: ${source.dir}/osm2pgsql_2.1.1+ds.orig.tar.xz
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/o/osm2pgsql/osm2pgsql_2.1.1+ds-1.debian.tar.xz
+            checksum: sha256:dd49a637ca240a2ed4fcce4c7fb4ab7fe64588c13236ad2a28375cdebf2d2e52
+            path: ${source.dir}/osm2pgsql_2.1.1+ds-1.debian.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: dpkg/source@v1
+          work-dir: ${source.dir}
+          with:
+            file: osm2pgsql_2.1.1+ds-1.dsc
+            path: osm2pgsql
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Rebuild
+            version: 2.1.1+ds-1+deb13u0+dhi0
+        - name: link blas and lapack sonames for the linker
+          runs: |
+            set -eux -o pipefail
+
+            multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+            test -f "/usr/lib/${multiarch}/blas/libblas.so.3"
+            test -f "/usr/lib/${multiarch}/lapack/liblapack.so.3"
+            ln -sf "/usr/lib/${multiarch}/blas/libblas.so.3" "/usr/lib/${multiarch}/libblas.so.3"
+            ln -sf "/usr/lib/${multiarch}/lapack/liblapack.so.3" "/usr/lib/${multiarch}/liblapack.so.3"
+            test -e "/usr/lib/${multiarch}/libblas.so.3"
+            test -e "/usr/lib/${multiarch}/liblapack.so.3"
+        - name: enable upstream NoDB tests and fail the build on failure
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/-DEXTERNAL_CLI11=ON$/-DEXTERNAL_CLI11=ON -DBUILD_TESTS=ON/' debian/rules
+            sed -i 's/^\tdh_auto_test || echo "Ignoring test failures"$/\tdh_auto_test -- ARGS="-L NoDB --output-on-failure"/' debian/rules
+            grep -q -- '-DBUILD_TESTS=ON' debian/rules
+            grep -q 'dh_auto_test -- ARGS="-L NoDB --output-on-failure"' debian/rules
+            ! grep -q 'Ignoring test failures' debian/rules
+        - uses: dpkg/build@v1
+          with:
+            args: -uc -us -d
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

@@ -1,0 +1,178 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-grafana-cloudmonitoring-datasource
+variant: runtime
+tags:
+  - 12.6.7-alpine3.24
+  - 12.6.7-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 6037051951b129e8e71bb848d7afbec1e89b1e41
+  GOLANG_VERSION: 1.27.4-r1
+  NODEJS_VERSION: 24.22.3-r0
+  NPM_VERSION: 11.21.2-r2
+  PACKAGE_NAME: grafana-cloudmonitoring-datasource-12
+  PLUGIN_ARCH: '#{ target.arch }'
+  PLUGIN_DIR: usr/share/grafana/data/plugins-bundled/stackdriver
+  PLUGIN_EXECUTABLE: gpx_grafana_cloudmonitoring_datasource
+  PLUGIN_ID: stackdriver
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "12.6"
+  SEMVER_MAJOR_VERSION: "12"
+  SEMVER_VERSION: 12.6.7
+  VERSION: 12.6.7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: grafana-cloudmonitoring-datasource-12
+      work-dir: /go/src/github.com/grafana/grafana-cloudmonitoring-datasource
+      caches:
+        - path: /root/.cache/go-build
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - jq
+          - mawk
+          - nodejs-24=24.22.3-r0
+          - npm=11.21.2-r2
+          - sed
+        files:
+          - url: git+https://github.com/grafana/grafana-cloudmonitoring-datasource.git#v12.6.7
+            checksum: 6037051951b129e8e71bb848d7afbec1e89b1e41
+            path: /go/src/github.com/grafana/grafana-cloudmonitoring-datasource
+            spdx:
+              name: grafana-cloudmonitoring-datasource
+              version: 12.6.7
+              packages:
+                - name: grafana-cloudmonitoring-datasource
+                  purl: pkg:golang/github.com/grafana/grafana-cloudmonitoring-datasource@12.6.7
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump frontend dependencies
+          uses: npm/bump@v1
+          work-dir: /go/src/github.com/grafana/grafana-cloudmonitoring-datasource
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: /go/src/github.com/grafana/grafana-cloudmonitoring-datasource
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+            download: true
+        - uses: go/hermetic@v1
+        - name: build frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export HUSKY=0
+            export NODE_OPTIONS=--max_old_space_size=4096
+
+            npm ci
+            NODE_ENV=production npm run build
+
+            test -f dist/module.js
+            test -f dist/plugin.json
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -short -count=1 ./pkg/...
+        - name: prune frontend dependencies
+          runs: |
+            set -eux -o pipefail
+
+            npm prune --omit=dev --ignore-scripts
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: grafana-cloudmonitoring-datasource-frontend
+            source: /go/src/github.com/grafana/grafana-cloudmonitoring-datasource/node_modules
+        - name: write build info flag
+          runs: |
+            set -eux -o pipefail
+
+            printf '%s' "-X 'github.com/grafana/grafana-plugin-sdk-go/build/buildinfo.buildInfoJSON={\\\"time\\\":$((SOURCE_DATE_EPOCH * 1000)),\\\"pluginID\\\":\\\"stackdriver\\\",\\\"version\\\":\\\"12.6.7\\\"}'" > /tmp/buildinfo.flag
+        - name: stage frontend
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/grafana/data/plugins-bundled/stackdriver"
+            cp -a dist/. "${target.dir}/usr/share/grafana/data/plugins-bundled/stackdriver/"
+
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/grafana-cloudmonitoring-datasource-frontend "${target.dir}/opt/docker/sbom/"
+        - name: build backend
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -X main.pluginID=stackdriver
+              - -X main.version=12.6.7
+              - $(cat /tmp/buildinfo.flag)
+            output: ${target.dir}/usr/share/grafana/data/plugins-bundled/stackdriver/gpx_grafana_cloudmonitoring_datasource_linux_${PLUGIN_ARCH}
+            packages: ./pkg
+            tags: arrow_json_stdlib
+        - name: verify payload
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/grafana/data/plugins-bundled/stackdriver"
+
+            find "$dest" -type d -exec chmod 0755 {} +
+            find "$dest" -type f -exec chmod 0644 {} +
+            chmod 0755 "$dest/gpx_grafana_cloudmonitoring_datasource_linux_${PLUGIN_ARCH}"
+
+            jq -e --arg id "stackdriver" --arg exe "gpx_grafana_cloudmonitoring_datasource" \
+              '.id == $id and .executable == $exe and .backend == true' "$dest/plugin.json"
+            test -f "$dest/module.js"
+            go version -m "$dest/gpx_grafana_cloudmonitoring_datasource_linux_${PLUGIN_ARCH}" | grep -F 'build'$'\t''CGO_ENABLED=0'
+            go version -m "$dest/gpx_grafana_cloudmonitoring_datasource_linux_${PLUGIN_ARCH}" | grep -F 'buildInfoJSON={\"time\":'
+        - uses: dhi/build-pkg:0
+          with:
+            description: Grafana Google Cloud Monitoring data source plugin
+            files:
+              - usr/share/grafana/data/plugins-bundled/stackdriver
+              - opt/docker/sbom/grafana-cloudmonitoring-datasource-frontend
+            license: AGPL-3.0
+            name: grafana-cloudmonitoring-datasource-12
+            rel: 0
+            url: https://github.com/grafana/grafana-cloudmonitoring-datasource
+            version: 12.6.7
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/grafana-cloudmonitoring-datasource/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

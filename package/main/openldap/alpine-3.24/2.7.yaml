@@ -1,0 +1,237 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-openldap-upstream
+variant: runtime
+tags:
+  - 2.7-alpine3.24
+  - 2.7.2-alpine3.24
+  - 2.7.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CHECKSUM: aad731aa22118ff327b9b4ddfc4b6f18ef9476586205da88a532e90940b523d2
+  LMDB_VERSION: 1.0.3
+  PACKAGE_NAME: openldap-2.7
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.7"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.7.2
+  SIGNATURE_CHECKSUM: 9c620abd08e9a49dd70e8f3332667c60ed5211541afd5b7257023b93f2c8cf8b
+  VERSION: 2.7.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: openldap
+      work-dir: ${source.dir}
+      contents:
+        packages:
+          - busybox
+          - argon2-dev
+          - build-base
+          - coreutils
+          - cyrus-sasl-dev
+          - groff
+          - libtool
+          - openssl-dev
+        files:
+          - url: https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.7.2.tgz
+            checksum: sha256:aad731aa22118ff327b9b4ddfc4b6f18ef9476586205da88a532e90940b523d2
+            path: ${source.dir}/openldap.tgz
+            spdx:
+              name: openldap
+              version: 2.7.2
+              packages:
+                - name: openldap
+                  purl: pkg:dhi/openldap@2.7.2
+                  license: OLDAP-2.8
+            uid: 0
+            gid: 0
+          - url: https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.7.2.tgz.asc
+            checksum: sha256:9c620abd08e9a49dd70e8f3332667c60ed5211541afd5b7257023b93f2c8cf8b
+            path: ${source.dir}/openldap.tgz.asc
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/openldap.tgz
+            keys: ${source.dir}/keys/openldap-release.asc
+            signature: ${source.dir}/openldap.tgz.asc
+        - name: build and install
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p openldap
+            tar -xzf openldap.tgz -C openldap --strip-components=1
+            cd openldap
+
+            CPPFLAGS='-DLDAPI_SOCK=\"/run/openldap/ldapi\"' ./configure \
+              --prefix=/usr \
+              --libdir=/usr/lib \
+              --libexecdir=/usr/lib \
+              --sysconfdir=/etc \
+              --localstatedir=/var/lib/openldap \
+              --enable-dynamic \
+              --enable-crypt \
+              --enable-spasswd \
+              --enable-slapd \
+              --enable-modules \
+              --enable-asyncmeta=mod \
+              --enable-dnssrv=mod \
+              --enable-ldap=mod \
+              --enable-mdb=mod \
+              --enable-meta=mod \
+              --enable-null=mod \
+              --enable-passwd=mod \
+              --enable-relay=mod \
+              --enable-sock=mod \
+              --enable-overlays=mod \
+              --enable-argon2 \
+              --with-argon2=libargon2 \
+              --with-tls=openssl \
+              --with-cyrus-sasl \
+              --with-systemd=no
+
+            make depend
+            make -j"$(nproc)"
+            make DESTDIR="${target.dir}" install
+
+            for module in passwd/sha2 passwd/pbkdf2; do
+              make -C contrib/slapd-modules/${module} prefix=/usr libexecdir=/usr/lib
+              make -C contrib/slapd-modules/${module} DESTDIR="${target.dir}" prefix=/usr libexecdir=/usr/lib install
+            done
+        - name: test
+          work-dir: ${source.dir}/openldap/tests
+          runs: |
+            set -eux -o pipefail
+
+            make
+            ./run -b mdb all
+        - name: fix slapd layout
+          work-dir: ${target.dir}
+          runs: |
+            set -eux -o pipefail
+
+            mv usr/lib/slapd usr/sbin/slapd
+            for tool in usr/sbin/slap*; do
+              [ "${tool}" = usr/sbin/slapd ] && continue
+              ln -sf slapd "${tool}"
+            done
+
+            rm usr/lib/openldap/*.la usr/lib/openldap/*.a
+            find usr/lib -type f -name '*.so.*' -exec strip --strip-unneeded {} +
+            grep -aqF "LMDB 1.0.3:" usr/lib/openldap/back_mdb.so.2.*
+            mkdir -p var/lib/openldap/openldap-data
+            touch var/lib/openldap/openldap-data/.keep
+
+            mkdir -p stage/libs stage/dev/lib
+            mv usr/lib/liblber.so.* usr/lib/libldap.so.* stage/libs/
+            mv usr/lib/liblber.so usr/lib/libldap.so usr/lib/pkgconfig stage/dev/lib/
+            mv usr/include stage/dev/include
+        - uses: spdx@v1
+          with:
+            license: OLDAP-2.8
+            name: lmdb
+            purl: pkg:github/lmdb/lmdb@LMDB_1.0.3
+            version: 1.0.3
+        - name: ship sbom
+          runs: |
+            set -eux -o pipefail
+
+            find /opt/docker/sbom -type f
+            mkdir -p ${target.dir}/opt/docker/sbom
+            cp -a /opt/docker/sbom/openldap /opt/docker/sbom/lmdb ${target.dir}/opt/docker/sbom/
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - openldap-2.7-libs
+                - argon2-libs
+                - libcrypto3
+                - libltdl
+                - libsasl
+                - libssl3
+                - '!openldap'
+                - '!openldap-2.6'
+              replaces:
+                - openldap
+            description: OpenLDAP standalone LDAP server (slapd), tools, backends and overlays
+            files:
+              - opt/docker/sbom/lmdb
+              - usr/sbin
+              - usr/lib/openldap
+              - etc/openldap/schema
+              - var/lib/openldap
+            formats:
+              - apk
+            license: OLDAP-2.8
+            name: openldap-2.7
+            rel: 0
+            subpackages:
+              - apk:
+                  depends:
+                    - libcrypto3
+                    - libsasl
+                    - libssl3
+                    - '!libldap'
+                    - '!openldap-2.6-libs'
+                  replaces:
+                    - libldap
+                files:
+                  - path: usr/lib
+                    source: stage/libs
+                  - path: etc/openldap/ldap.conf
+                  - path: opt/docker/sbom/openldap
+                name: openldap-2.7-libs
+              - apk:
+                  depends:
+                    - openldap-2.7-libs
+                    - libcrypto3
+                    - libsasl
+                    - libssl3
+                    - '!openldap-clients'
+                    - '!openldap-2.6-clients'
+                  replaces:
+                    - openldap-clients
+                files:
+                  - path: usr/bin
+                name: openldap-2.7-clients
+              - apk:
+                  depends:
+                    - openldap-2.7-libs
+                    - '!openldap-dev'
+                    - '!openldap-2.6-dev'
+                  replaces:
+                    - openldap-dev
+                files:
+                  - path: usr/include
+                    source: stage/dev/include
+                  - path: usr/lib
+                    source: stage/dev/lib
+                name: openldap-2.7-dev
+            url: https://www.openldap.org/
+            version: 2.7.2
+      paths:
+        - type: file
+          path: ${source.dir}/keys/openldap-release.asc
+          uid: 0
+          gid: 0
+          mode: "0444"
+          source: package/main/openldap/keys/openldap-release.asc
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

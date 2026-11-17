@@ -1,0 +1,122 @@
+{{- if getenv "NGINX_DISABLE_CACHING" }}
+expires -1;
+add_header Pragma "no-cache";
+add_header Cache-Control "no-store, no-cache, must-revalicate, post-check=0 pre-check=0";
+{{- end }}
+
+{{- if not (getenv "NGINX_NO_DEFAULT_HEADERS") }}
+add_header  X-XSS-Protection '1; mode=block';
+{{/* the next two headers are being set by drupal already */}}
+{{- if ne (printf "%.6s" (getenv "NGINX_VHOST_PRESET")) "drupal" }}
+add_header  X-Frame-Options SAMEORIGIN;
+add_header  X-Content-Type-Options nosniff;
+{{- end }}
+add_header  Content-Security-Policy "{{ getenv "NGINX_HEADERS_CONTENT_SECURITY_POLICY" "frame-ancestors 'none'" }}";
+{{- end }}
+
+location = /favicon.ico {
+    expires {{ getenv "NGINX_STATIC_EXPIRES" "1y" }};
+    try_files /favicon.ico @empty;
+    log_not_found off;
+    access_log {{ getenv "NGINX_STATIC_ACCESS_LOG" "off" }};
+}
+
+location ^~ /robots.txt {
+    allow all;
+    log_not_found off;
+    access_log {{ getenv "NGINX_STATIC_ACCESS_LOG" "off" }};
+}
+
+location ^~ /humans.txt {
+    allow all;
+    log_not_found off;
+    access_log {{ getenv "NGINX_STATIC_ACCESS_LOG" "off" }};
+}
+
+location ^~ /ads.txt {
+    allow all;
+    log_not_found off;
+    access_log {{ getenv "NGINX_STATIC_ACCESS_LOG" "off" }};
+}
+
+location ^~ /llms.txt {
+    allow all;
+    log_not_found off;
+    access_log {{ getenv "NGINX_STATIC_ACCESS_LOG" "off" }};
+}
+
+location @empty {
+    expires {{ getenv "NGINX_STATIC_EXPIRES" "1y" }};
+    empty_gif;
+}
+
+location ~* \.flv$ {
+    flv;
+}
+
+location ~* ^.+\.(?:m4a|mp4|mov)$ {
+    mp4;
+    mp4_buffer_size {{ getenv "NGINX_STATIC_MP4_BUFFER_SIZE" "1M" }};
+    mp4_max_buffer_size {{ getenv "NGINX_STATIC_MP4_MAX_BUFFER_SIZE" "5M" }};
+}
+
+location ~ ^/\.healthz$ {
+    access_log off;
+    return 204;
+}
+
+{{- if getenv "NGINX_STATUS_ENABLED" }}
+location = /.statusz {
+    stub_status;
+    allow 127.0.0.1;
+    {{- if getenv "NGINX_STATUS_ALLOW_FROM" }}
+    allow {{ getenv "NGINX_STATUS_ALLOW_FROM" }};
+    {{- end }}
+    deny all;
+}
+{{- end }}
+
+{{- if getenv "NGINX_METRICS_ENABLED" }}
+location = /.metricsz {
+    vhost_traffic_status_display;
+    vhost_traffic_status_display_format {{ getenv "NGINX_METRICS_FORMAT" "html" }};
+    allow 127.0.0.1;
+    {{- if getenv "NGINX_METRICS_ALLOW_FROM" }}
+    allow {{ getenv "NGINX_METRICS_ALLOW_FROM" }};
+    {{- end }}
+    deny all;
+}
+{{- end }}
+
+location ^~ /.well-known/ {
+    allow all;
+}
+
+{{- if not (getenv "NGINX_ALLOW_ACCESS_HIDDEN_FILES") }}
+location ~ /\. {
+    deny all;
+}
+{{- end }}
+
+location ~ /wodby\.yml {
+    deny all;
+}
+
+location ~ /Makefile {
+    deny all;
+}
+
+{{- if getenv "NGINX_HIDE_50x_ERRORS" }}
+error_page 500 502 503 504 /50x.html;
+location = /50x.html {
+    root   /usr/share/nginx/html;
+}
+{{- end }}
+
+{{- if getenv "NGINX_ERROR_403_URI" }}
+error_page 403 {{ getenv "NGINX_ERROR_403_URI" }};
+{{- end }}
+
+{{- if getenv "NGINX_ERROR_404_URI" }}
+error_page 404 {{ getenv "NGINX_ERROR_404_URI" }};
+{{- end }}

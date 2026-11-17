@@ -1,0 +1,262 @@
+#! /bin/bash
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modified from the nvidia-gds-driver and ocp_dtk_entrypoint scripts in
+# nvcr.io/nvidia/cloud-native/nvidia-fs: the kernel headers come from the NVIDIA
+# driver container's rootfs instead of apt, and each built nvidia-fs.ko is kept on
+# the node for a restart that finds no headers.
+
+set -eu
+
+KERNEL_VERSION=$(uname -r)
+NVIDIA_DRIVER_ROOT=${NVIDIA_DRIVER_ROOT:-"/run/nvidia/driver"}
+DRIVER_TOOLKIT_SHARED_DIR=/mnt/shared-nvidia-driver-toolkit
+NVIDIA_FS_SRC_DIR=$(ls -d /usr/src/nvidia-fs-*)
+# On the node's /run: kept across container restarts, cleared by a reboot.
+MODULE_CACHE_DIR=/run/nvidia/nvidia-fs-module-cache/${KERNEL_VERSION}
+
+_shutdown() {
+    if _unload_driver; then
+        echo "successfully unloaded nvidia-fs driver"
+        return 0
+    fi
+    return 1
+}
+
+# unload the kernel modules if they are currently loaded.
+_unload_driver() {
+    local rmmod_args=()
+    local nvidia_fs_refs=0
+
+    echo "Unloading nvidia-fs driver kernel modules..."
+    if [ -f /sys/module/nvidia_fs/refcnt ]; then
+        nvidia_fs_refs=$(< /sys/module/nvidia_fs/refcnt)
+        rmmod_args+=("nvidia-fs")
+    fi
+    if [ ${nvidia_fs_refs} -gt 0 ]; then
+        # run lsmod to debug module usage
+        lsmod | grep nvidia_fs
+        echo "Could not unload nvidia-fs driver kernel modules, driver is in use" >&2
+        return 1
+    fi
+
+    if [ ${#rmmod_args[@]} -gt 0 ]; then
+        rmmod ${rmmod_args[@]}
+    fi
+    return 0
+}
+
+_wait_for_nvidia_driver() {
+    echo "Waiting for NVIDIA P2P driver symbols to be available..."
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        # Check if nvidia_p2p symbols are exported in the kernel
+        if grep -q " nvidia_p2p_" /proc/kallsyms 2>/dev/null; then
+            echo "NVIDIA P2P driver symbols detected"
+            return 0
+        fi
+
+        sleep 5
+        attempt=$((attempt+1))
+    done
+
+    echo "ERROR: NVIDIA P2P driver symbols not available after waiting"
+    echo "Loaded nvidia modules:"
+    lsmod | grep nvidia || echo "  None"
+    return 1
+}
+
+_ensure_driver_root() {
+    echo "Ensuring ${NVIDIA_DRIVER_ROOT}/dev is writable..."
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        # Try to create a test file to verify write access
+        if touch "${NVIDIA_DRIVER_ROOT}/dev/.test" 2>/dev/null; then
+            rm -f "${NVIDIA_DRIVER_ROOT}/dev/.test"
+            echo "Driver root is ready and writable"
+            return 0
+        fi
+        sleep 5
+        attempt=$((attempt+1))
+    done
+
+    echo "ERROR: ${NVIDIA_DRIVER_ROOT}/dev is not writable after waiting"
+    return 1
+}
+
+_load_module() {
+    echo "Loading nvidia-fs..."
+
+    # Wait for NVIDIA driver dependencies to be ready
+    _wait_for_nvidia_driver || exit 1
+    _ensure_driver_root || exit 1
+
+    # Check if module is already loaded from a previous attempt
+    if [ -f /sys/module/nvidia_fs/refcnt ]; then
+        echo "nvidia-fs module already loaded, attempting to unload first..."
+        if ! _unload_driver; then
+            echo "ERROR: Cannot unload existing nvidia-fs module (in use)"
+            exit 1
+        fi
+    fi
+
+    cd ${NVIDIA_FS_SRC_DIR}
+    insmod nvidia-fs.ko
+    #make sure the mount DOESNOT have 'nodev' option
+    DRIVER=nvidia-fs
+
+    major=$(grep ${DRIVER} /proc/devices | cut -d ' ' -f 1)
+
+    if [[ -z "$major" ]] || [[ ! "$major" =~ ^-?[0-9]+$ ]]; then
+        echo "INFO: ${DRIVER} is not loaded"
+        exit 1
+    else
+    echo "INFO: ${DRIVER} driver major is $major"
+    fi
+
+    for i in {0..15}
+    do
+        rm -rf ${NVIDIA_DRIVER_ROOT}/dev/${DRIVER}$i
+        rm -rf /dev/${DRIVER}$i
+        mknod ${NVIDIA_DRIVER_ROOT}/dev/${DRIVER}$i c $major $i
+        chmod a+r+w ${NVIDIA_DRIVER_ROOT}/dev/${DRIVER}$i
+        ls -l ${NVIDIA_DRIVER_ROOT}/dev/${DRIVER}$i
+        ln -s ${NVIDIA_DRIVER_ROOT}/dev/${DRIVER}$i /dev/${DRIVER}$i
+    done
+}
+
+_build() {
+    kdir=${NVIDIA_DRIVER_ROOT}/usr/src/linux-headers-${KERNEL_VERSION}
+    kept=${MODULE_CACHE_DIR}/nvidia-fs-${NVIDIA_FS_SRC_DIR##*-}-nvidia-$(cat /sys/module/nvidia/version 2>/dev/null || true).ko
+    if [ ! -f ${kdir}/Makefile ]; then
+        # A driver container restarted with the NVIDIA module loaded installs no headers.
+        if [ -f ${kept} ]; then
+            echo "No kernel headers for ${KERNEL_VERSION}, using ${kept}"
+            cp ${kept} ${NVIDIA_FS_SRC_DIR}/nvidia-fs.ko
+            return 0
+        fi
+        echo "Failed to find kernel headers at ${kdir}, exiting."
+        return 1
+    fi
+    mkdir -p /lib/modules/${KERNEL_VERSION}
+    ln -sfn ${kdir} /lib/modules/${KERNEL_VERSION}/build
+
+    make_args=""
+    kcc=$(sed -n 's/^CC[[:space:]]*=[[:space:]]*\$(CROSS_COMPILE)//p' ${kdir}/Makefile | head -n 1)
+    if [ -n "${kcc}" ] && ! command -v ${kcc} > /dev/null; then
+        echo "The kernel was built with ${kcc}, building with gcc $(gcc -dumpversion)"
+        make_args="CC=gcc HOSTCC=gcc"
+    fi
+
+    # make nvidia driver sources accessible for building nvidia-fs
+    NVIDIA_DRIVER_VERSION=$(ls ${NVIDIA_DRIVER_ROOT}/usr/src | grep nvidia-.* | grep -v 'linux' | sed 's/nvidia-//g')
+    mkdir -p /usr/src/nvidia-$NVIDIA_DRIVER_VERSION
+    cp -r ${NVIDIA_DRIVER_ROOT}/usr/src/nvidia-$NVIDIA_DRIVER_VERSION /usr/src/
+    mkdir -p /lib/modules/$KERNEL_VERSION/updates
+    ln -s ${NVIDIA_DRIVER_ROOT}/lib/modules/$KERNEL_VERSION/kernel/drivers/video/ /lib/modules/$KERNEL_VERSION/updates/dkms
+
+    # Install nvidia-fs
+    cd ${NVIDIA_FS_SRC_DIR}
+    make ${make_args}
+
+    # Renamed into place, so a restart never reads a partial file.
+    mkdir -p ${MODULE_CACHE_DIR} && cp nvidia-fs.ko ${kept}.tmp && rm -f ${MODULE_CACHE_DIR}/*.ko && mv ${kept}.tmp ${kept} ||
+        echo "Could not keep a copy of nvidia-fs.ko in ${MODULE_CACHE_DIR}"
+}
+
+install() {
+    _build
+
+    # load the driver module
+    _load_module
+
+    echo "Done, now waiting for signal"
+    sleep infinity &
+    trap "echo 'Caught signal'; _shutdown && { kill $!; exit 0; }" HUP INT QUIT PIPE TERM
+    trap - EXIT
+    while true; do wait $! || continue; done
+    exit 0
+}
+
+nv-fs-ctr-run-with-dtk() {
+    if ! [ -d "${DRIVER_TOOLKIT_SHARED_DIR:-}" ]; then
+        echo "FATAL: DRIVER_TOOLKIT_SHARED_DIR env variable must be populated with a valid directory"
+        usage
+    fi
+
+    set -x
+
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/dir_prepared" ]]; do
+        echo "$(date) Waiting for driver container to prepare the shared dir ..."
+        sleep 10
+    done
+
+    # The Driver Toolkit runs `make -C <shared>/gds-nvidia-fs/src`, upstream's checkout layout.
+    mkdir -p "$DRIVER_TOOLKIT_SHARED_DIR/gds-nvidia-fs/src"
+    cp -r ${NVIDIA_FS_SRC_DIR}/. "$DRIVER_TOOLKIT_SHARED_DIR/gds-nvidia-fs/src"
+
+    set +x
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/driver_build_started" ]]; do
+        echo "$(date) Waiting for openshift-driver-toolkit-ctr container to start ..."
+        sleep 15
+    done
+
+    echo "$(date) openshift-driver-toolkit-ctr started."
+
+    while [[ ! -f "$DRIVER_TOOLKIT_SHARED_DIR/nvidia_fs_built" ]]; do
+        echo "$(date) Waiting for openshift-driver-toolkit-ctr container to build the nvidia-fs.ko kernel object ..."
+        sleep 15
+    done
+    set -x
+
+    SRC_SHARED=${DRIVER_TOOLKIT_SHARED_DIR}/gds-nvidia-fs/src
+
+    # Copy the modules to their standard location
+    cp -rv "${SRC_SHARED}"/nvidia-fs.ko ${NVIDIA_FS_SRC_DIR}/nvidia-fs.ko
+    _load_module
+
+    echo "Done, now waiting for signal"
+    sleep infinity &
+    trap "echo 'Caught signal'; _shutdown && { kill $!; exit 0; }" HUP INT QUIT PIPE TERM
+    trap - EXIT
+    while true; do wait $! || continue; done
+    exit 0
+}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $0 COMMAND [ARG...]
+
+Commands:
+  install
+  nv-fs-ctr-run-with-dtk    entrypoint for nvidia-fs-ctr container
+EOF
+    exit 1
+}
+
+if [ $# -eq 0 ]; then
+    usage
+fi
+command=$1; shift
+case "${command}" in
+    install|nv-fs-ctr-run-with-dtk) ;;
+    *) usage ;;
+esac
+
+$command

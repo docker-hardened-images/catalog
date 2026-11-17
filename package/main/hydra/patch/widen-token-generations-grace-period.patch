@@ -1,0 +1,47 @@
+Description: Widen the refresh-token grace period in the token generations subtests.
+
+The subtests refresh each token twice within a 1-second grace period. On a busy
+build machine the second refresh arrives late and hydra rejects it, so the period
+becomes 5 seconds.
+
+Origin: DHI-internal (test timing only)
+Base-Tree: git https://github.com/ory/hydra 0b84568fffccf151dc5e6c7955fdfb738555bf4b
+Verify: test oauth2/oauth2_auth_code_test.go::TestAuthCodeWithDefaultStrategy
+Drop-When: upstream >= 26.2.1 (once a release tag contains commit a2737a1e6c4ebdd7b68253289fdc9d92dc222b0e)
+Forwarded: not-needed (fixed upstream in https://github.com/ory/hydra/commit/a2737a1e6c4ebdd7b68253289fdc9d92dc222b0e)
+
+--- a/oauth2/oauth2_auth_code_test.go
++++ b/oauth2/oauth2_auth_code_test.go
+@@ -1452,8 +1452,8 @@
+ 					//
+ 					// Tokens for each generation are created in parallel to ensure we have no state leak anywhere.
+ 					t.Run("token generations", func(t *testing.T) {
+-						gracePeriod := time.Second
+-						aboveGracePeriod := 2 * time.Second
++						gracePeriod := 5 * time.Second
++						aboveGracePeriod := 6 * time.Second
+ 						reg.Config().MustSet(ctx, config.KeyRefreshTokenLifespan, "1m")
+ 						reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGracePeriod, gracePeriod)
+ 						reg.Config().Delete(ctx, config.KeyTokenHook)
+@@ -1501,10 +1501,10 @@
+ 						}
+ 
+ 						t.Run("re-using an old graceful refresh token invalidates all tokens", func(t *testing.T) {
+-							reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGracePeriod, "1s")
++							reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGracePeriod, gracePeriod)
+ 							reg.Config().MustSet(ctx, config.KeyRefreshTokenLifespan, "1m")
+ 							// This test only works if the refresh token lifespan is longer than the grace period.
+-							generations := createTokenGenerations(t, 4, time.Second*2)
++							generations := createTokenGenerations(t, 4, aboveGracePeriod)
+ 
+ 							generationIndex := rng.Intn(len(generations) - 1) // Exclude the last generation
+ 							tokenIndex := rng.Intn(len(generations[generationIndex]))
+@@ -1532,7 +1532,7 @@
+ 							reg.Config().MustSet(ctx, config.KeyRefreshTokenLifespan, "1m")
+ 							reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGraceReuseCount, 2)
+ 							t.Cleanup(func() {
+-								reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGracePeriod, "1s")
++								reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGracePeriod, gracePeriod)
+ 								reg.Config().MustSet(ctx, config.KeyRefreshTokenLifespan, "1m")
+ 								reg.Config().MustSet(ctx, config.KeyRefreshTokenRotationGraceReuseCount, 0)
+ 							})

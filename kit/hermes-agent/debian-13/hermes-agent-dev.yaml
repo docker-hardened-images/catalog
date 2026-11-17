@@ -1,0 +1,176 @@
+schemaVersion: '3'
+displayName: Hermes Agent
+description: Hermes Agent coding workload by Nous Research, with native ACP and multiple model providers.
+kind: workload
+version: ${{ kit.args.version }}
+args:
+  version:
+    pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    description: hermes-agent release to install, without the tag's leading "v"
+    buildArg: VERSION
+    required: true
+provides:
+  - hermes-agent@${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - deb.debian.org:80
+          - dhi.io:80
+          - openrouter.ai:443
+          - '*.openrouter.ai:443'
+          - api.openai.com:443
+          - api.anthropic.com:443
+          - platform.claude.com:443
+          - models.dev:443
+          - opencode.ai:443
+          - github.com:443
+          - api.github.com:443
+          - raw.githubusercontent.com:443
+          - api.githubcopilot.com:443
+          - api.individual.githubcopilot.com:443
+          - api.business.githubcopilot.com:443
+          - api.enterprise.githubcopilot.com:443
+          - copilot.github.com:443
+          - hermes-agent.nousresearch.com:443
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Anthropic API access (API key or claude.ai OAuth)
+    config:
+      service: anthropic
+      phase: runtime
+      apiKey:
+        name: ANTHROPIC_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.anthropic.com
+            header: x-api-key
+            format: '%s'
+      oauth:
+        tokenEndpoint:
+          host: platform.claude.com
+          path: /v1/oauth/token
+        resourceHosts:
+          - api.anthropic.com
+        sentinels:
+          accessToken: sk-ant-oat01-proxy-managed
+          refreshToken: sk-ant-ort01-proxy-managed
+        credentialFile:
+          path: ~/.claude/.credentials.json
+          structure:
+            claudeAiOauth:
+              accessToken: '{{.AccessToken}}'
+              refreshToken: '{{.RefreshToken}}'
+              expiresAt: '{{.ExpiresAt}}'
+              scopes: '{{.Scopes}}'
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenAI API access
+    config:
+      service: openai
+      phase: runtime
+      apiKey:
+        name: OPENAI_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.openai.com
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenRouter API access (200+ models)
+    config:
+      service: openrouter
+      phase: runtime
+      apiKey:
+        name: OPENROUTER_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: openrouter.ai
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: GitHub Copilot model access
+    config:
+      service: copilot
+      phase: runtime
+      apiKey:
+        name: COPILOT_GITHUB_TOKEN
+        proxyManaged: true
+        inject:
+          - domain: api.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.individual.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.business.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.enterprise.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: copilot.github.com
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        - command:
+            - sh
+            - /opt/hermes-agent/bin/hermes-credential-auth.sh
+          user: '1000'
+          env:
+            - HERMES_HOME
+            - SBX_CRED_ANTHROPIC_MODE
+            - SBX_CRED_OPENAI_MODE
+            - SBX_CRED_OPENROUTER_MODE
+            - SBX_CRED_COPILOT_MODE
+          description: Resolve which of the anthropic/openai/openrouter/copilot credentials are genuinely bound, record the result for the entrypoint and `sbx exec` shells, and pin the active provider in config.yaml (Anthropic, then OpenAI, then Copilot; OpenRouter or nothing bound keeps the image default)
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      directory: /home/agent
+      content: Hermes is installed at /usr/local/bin/hermes. Credentials are proxy-managed. Do not print or replace credential sentinels. Runtime package installation is disabled; the image includes the Anthropic and ACP extras.
+    optional: true
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent
+      content: Hermes is installed at /usr/local/bin/hermes. Credentials are proxy-managed. Do not print or replace credential sentinels. Runtime package installation is disabled; the image includes the Anthropic and ACP extras.
+  - type: com.docker.sandbox/agent-sessions@1
+    optional: true
+    config:
+      prompt:
+        - chat
+        - --oneshot
+        - --query={{.Prompt}}
+      continue:
+        - --continue
+      resume:
+        - --resume
+        - '{{.SessionID}}'
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    config:
+      prompt:
+        - chat
+        - --query={{.Prompt}}
+      continue:
+        - --continue
+      resume:
+        - --resume
+        - '{{.SessionID}}'
+  - type: com.docker.sandbox/acp@1
+    optional: true
+    config:
+      agent: hermes-agent
+      command:
+        - hermes
+        - acp
+licenses:
+  - MIT

@@ -1,0 +1,78 @@
+Subject: Revert "virtio_mmio: disable IRQ wake before free_irq"
+Origin: vendor, https://github.com/docker/nerdbox-internal/blob/d0a785911710372d8fc1e0a54ffc4e57255d33da/kernel/patches/6.12.114/0011-Revert-virtio_mmio-disable-IRQ-wake-before-free_irq.patch
+Base-Tree: git https://github.com/gregkh/linux 85d82e0d7c2dfd3e75d34f35b7ebbf41f45c9c4e
+Drop-When: never: carried for as long as 0012-Revert-virtio-mmio-Remove-virtqueue-list-from-mmio-d.patch, which reverts 8e360ffa4aa6, the commit that cba897b7da47 was built on
+
+From ec7b3047fa3855c68c72a223da7ee8678d6261c0 Mon Sep 17 00:00:00 2001
+From: Kaushik Gnanaskandan <kaushik.gnanaskandan@docker.com>
+Date: Sun, 1 Nov 2026 01:30:57 +0000
+Subject: [PATCH 11/12] Revert "virtio_mmio: disable IRQ wake before free_irq"
+
+This reverts commit cba897b7da47befe61cdc1be91186bb4c878a260
+(upstream d14d693adb055e98ca705822ba6daebc18602d9a).
+
+Stable took this commit into 6.12.112 together with 8e360ffa4aa6
+("virtio-mmio: Remove virtqueue list from mmio device"), which it is
+built on. The next patch reverts 8e360ffa4aa6 because it slows down
+every Firecracker snapshot restore, and this one has to come out first.
+
+Basically, what we give up is the disable_irq_wake() call in
+vm_del_vqs(). It only runs when the device tree marks the virtio-mmio IRQ
+as "wakeup-source".
+Firecracker never sets that property. On arm64 its virtio-mmio nodes
+carry only dma-coherent, compatible, reg, interrupts and
+interrupt-parent, and on x86 the devices come from the kernel command
+line with no device tree at all.
+
+Link: https://github.com/docker/nerdbox-internal/issues/460
+---
+ drivers/virtio/virtio_mmio.c | 16 +++-------------
+ 1 file changed, 3 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/virtio/virtio_mmio.c b/drivers/virtio/virtio_mmio.c
+index f420fb5..22fdc6b 100644
+--- a/drivers/virtio/virtio_mmio.c
++++ b/drivers/virtio/virtio_mmio.c
+@@ -87,9 +87,6 @@ struct virtio_mmio_device {
+ 
+ 	void __iomem *base;
+ 	unsigned long version;
+-
+-	/* True if enable_irq_wake() succeeded for the shared IRQ. */
+-	bool wake_irq_enabled;
+ };
+ 
+ /* Configuration interface */
+@@ -332,17 +329,11 @@ static void vm_del_vqs(struct virtio_device *vdev)
+ {
+ 	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vdev);
+ 	struct virtqueue *vq, *n;
+-	int irq = platform_get_irq(vm_dev->pdev, 0);
+ 
+ 	list_for_each_entry_safe(vq, n, &vdev->vqs, list)
+ 		vm_del_vq(vq);
+ 
+-	if (vm_dev->wake_irq_enabled) {
+-		disable_irq_wake(irq);
+-		vm_dev->wake_irq_enabled = false;
+-	}
+-
+-	free_irq(irq, vm_dev);
++	free_irq(platform_get_irq(vm_dev->pdev, 0), vm_dev);
+ }
+ 
+ static void vm_synchronize_cbs(struct virtio_device *vdev)
+@@ -469,9 +460,8 @@ static int vm_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
+ 	if (err)
+ 		return err;
+ 
+-	if (of_property_read_bool(vm_dev->pdev->dev.of_node, "wakeup-source") &&
+-	    !enable_irq_wake(irq))
+-		vm_dev->wake_irq_enabled = true;
++	if (of_property_read_bool(vm_dev->pdev->dev.of_node, "wakeup-source"))
++		enable_irq_wake(irq);
+ 
+ 	for (i = 0; i < nvqs; ++i) {
+ 		struct virtqueue_info *vqi = &vqs_info[i];
+-- 
+2.39.5

@@ -1,0 +1,39 @@
+Subject: Adapt DevSpace localregistry remote build for buildkit v0.31 session APIs
+
+Origin: DHI-internal (buildkit v0.31 API compatibility)
+Description: Wrap upload context as ReadCloser and supply Docker registry auth through AuthConfigProvider.
+Base-Tree: git https://github.com/loft-sh/devspace.git 7f272dcf90653fa9b42bc4347f7f3f9a52b0e8b5
+Verify: test alpine-3.23/6.yaml
+Forwarded: not-needed (DevSpace 6.3.x has not adopted buildkit v0.31 session auth yet)
+Drop-When: never: loft-sh/devspace v6.3.21 still uses pre-v0.31 session upload and auth APIs; drop after upstream adopts buildkit v0.31 RemoteBuild shapes
+
+buildkit v0.31 requires io.ReadCloser for upload contexts and DockerAuthProviderConfig instead of passing a Docker config file pointer. DevSpace remote registry builds must compile after DHI bumps moby/buildkit for CVE fixes on the 6.3 line.
+
+diff --git a/pkg/devspace/build/builder/localregistry/build.go b/pkg/devspace/build/builder/localregistry/build.go
+--- a/pkg/devspace/build/builder/localregistry/build.go
++++ b/pkg/devspace/build/builder/localregistry/build.go
+@@ -5,6 +5,8 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"net"
++
++	"github.com/docker/cli/cli/config/types"
+ 	"strings"
+ 	
+ 	"github.com/docker/docker/pkg/jsonmessage"
+@@ -51,9 +53,13 @@ func RemoteBuild(ctx devspacecontext.Context, podName, namespace string, buildCo
+ 		FrontendAttrs: map[string]string{
+ 			"filename": buildOptions.Dockerfile,
+ 			"target":   buildOptions.Target,
+-			"context":  up.Add(buildContext),
++			"context":  up.Add(io.NopCloser(buildContext)),
+ 		},
+-		Session: []session.Attachable{up, authprovider.NewDockerAuthProvider(dockerConfig)},
++		Session: []session.Attachable{up, authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
++			AuthConfigProvider: func(ctx context.Context, host string, _ []string, _ authprovider.ExpireCachedAuthCheck) (types.AuthConfig, error) {
++				return dockerConfig.GetAuthConfig(host)
++			},
++		})},
+ 		Exports: []buildkit.ExportEntry{
+ 			{
+ 				Type: buildkit.ExporterImage,

@@ -1,0 +1,140 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-armadillo
+variant: runtime
+tags:
+  - 1-14.2.3-dfsg-1-deb13u0-dhi0
+  - 1-14.2.3-dfsg-1-deb13u0-dhi0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DEBIAN_DEBIAN_CHECKSUM: sha256:a59595e86816a6bffcafbfbcb05f996fc0902b93414ac3644c3c9c5bfffbc31f
+  DEBIAN_DEBIAN_FILENAME: armadillo_14.2.3+dfsg-1.debian.tar.xz
+  DEBIAN_DEBIAN_URL: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg-1.debian.tar.xz
+  DEBIAN_DSC_CHECKSUM: sha256:de571171a4e6e70801bf7bbe03bb7101857c1f911495f4af102a18067b7a48f3
+  DEBIAN_DSC_FILENAME: armadillo_14.2.3+dfsg-1.dsc
+  DEBIAN_DSC_URL: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg-1.dsc
+  DEBIAN_FILENAME_VERSION: 14.2.3+dfsg-1
+  DEBIAN_ORIG_CHECKSUM: sha256:b72af8eee653af4da6d0d1eafdc02860905154b733b28da2547a7fc32c33437a
+  DEBIAN_ORIG_FILENAME: armadillo_14.2.3+dfsg.orig.tar.xz
+  DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg.orig.tar.xz
+  DEBIAN_VERSION: 1:14.2.3+dfsg-1
+  DHI_REL: "0"
+  DHI_VERSION: 1:14.2.3+dfsg-1+deb13u0+dhi0
+  TAG_VERSION: 1-14.2.3-dfsg-1-deb13u0-dhi0
+  UPSTREAM_VERSION: 14.2.3+dfsg
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: armadillo deb
+      work-dir: ${source.dir}/armadillo
+      contents:
+        packages:
+          - build-essential
+          - cmake
+          - debhelper
+          - dpkg-dev
+          - libarpack2-dev
+          - libblas-dev
+          - liblapack-dev
+          - libsuperlu-dev
+          - quilt
+        files:
+          - url: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg-1.dsc
+            checksum: sha256:de571171a4e6e70801bf7bbe03bb7101857c1f911495f4af102a18067b7a48f3
+            path: ${source.dir}/armadillo_14.2.3+dfsg-1.dsc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg.orig.tar.xz
+            checksum: sha256:b72af8eee653af4da6d0d1eafdc02860905154b733b28da2547a7fc32c33437a
+            path: ${source.dir}/armadillo_14.2.3+dfsg.orig.tar.xz
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/a/armadillo/armadillo_14.2.3+dfsg-1.debian.tar.xz
+            checksum: sha256:a59595e86816a6bffcafbfbcb05f996fc0902b93414ac3644c3c9c5bfffbc31f
+            path: ${source.dir}/armadillo_14.2.3+dfsg-1.debian.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: dpkg/source@v1
+          work-dir: ${source.dir}
+          with:
+            file: armadillo_14.2.3+dfsg-1.dsc
+            path: armadillo
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Rebuild
+            version: 1:14.2.3+dfsg-1+deb13u0+dhi0
+        - name: wire BLAS/LAPACK dev selectors (DHI installer skips alternatives postinst)
+          runs: |
+            set -eux -o pipefail
+
+            multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+            update-alternatives --install "/usr/lib/${multiarch}/libblas.so" "libblas.so-${multiarch}" "/usr/lib/${multiarch}/blas/libblas.so" 10
+            update-alternatives --install "/usr/lib/${multiarch}/liblapack.so" "liblapack.so-${multiarch}" "/usr/lib/${multiarch}/lapack/liblapack.so" 10
+            update-alternatives --install "/usr/lib/${multiarch}/libblas.so.3" "libblas.so.3-${multiarch}" "/usr/lib/${multiarch}/blas/libblas.so.3" 10
+            update-alternatives --install "/usr/lib/${multiarch}/liblapack.so.3" "liblapack.so.3-${multiarch}" "/usr/lib/${multiarch}/lapack/liblapack.so.3" 10
+            test -e "/usr/lib/${multiarch}/libblas.so"
+            test -e "/usr/lib/${multiarch}/liblapack.so"
+            test -e "/usr/lib/${multiarch}/libblas.so.3"
+            test -e "/usr/lib/${multiarch}/liblapack.so.3"
+        - name: copy source for upstream test suites
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /tmp/armadillo-check
+            cp -a armadillo /tmp/armadillo-check
+        - name: upstream tests1 CTest smoke test
+          work-dir: /tmp/armadillo-check
+          runs: |
+            set -eux -o pipefail
+
+            cmake -D INSTALL_LIB_DIR=lib . > configure.log 2>&1
+            make -j"$(nproc)" > make.log 2>&1
+            ctest --output-on-failure > ctest.log 2>&1 || {
+              tail -n 60 ctest.log
+              exit 1
+            }
+            tail -n 3 ctest.log
+            grep -q "100% tests passed, 0 tests failed out of 1" ctest.log
+        - name: upstream tests2 Catch suite
+          work-dir: /tmp/armadillo-check/tests2
+          runs: |
+            set -eux -o pipefail
+
+            make -j"$(nproc)" > make.log 2>&1
+            LD_LIBRARY_PATH=/tmp/armadillo-check ./main \
+              "~fn_eigs_gen_odd_sigma_test" \
+              "~fn_eigs_gen_even_sigma_test" \
+              "~fn_eigs_gen_even_sigma_opts_test" \
+              "~fn_eigs_gen_odd_float_sigma_test" \
+              "~fn_eigs_gen_even_float_sigma_test" \
+              "~fn_eigs_gen_even_float_sigma_opts_test" \
+              "~fn_eigs_gen_odd_complex_float_sigma_test" \
+              "~fn_eigs_gen_even_complex_float_sigma_test" \
+              "~fn_eigs_gen_even_complex_float_sigma_opts_test" \
+              "~eigs_gen_odd_complex_sigma_test" \
+              "~fn_eigs_gen_even_complex_sigma_test" \
+              "~fn_eigs_gen_even_complex_sigma_opts_test" \
+              "~fn_eigs_sigma_test" > check.log 2>&1 || {
+              tail -n 80 check.log
+              exit 1
+            }
+            tail -n 3 check.log
+            grep -q "All tests passed" check.log
+            grep -q "in 368 test cases" check.log
+        - uses: dpkg/build@v1
+          with:
+            args: -uc -us -d
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

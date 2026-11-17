@@ -1,0 +1,286 @@
+schemaVersion: "3"
+displayName: Claude Code
+description: Anthropic's Claude Code agent on Docker Hardened Images
+licenses: ['SEE LICENSE IN https://github.com/anthropics/claude-code/blob/main/LICENSE.md']
+kind: workload
+args:
+  version:
+    required: true
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: Claude Code release the image carries
+    buildArg: VERSION
+  model:
+    default: ""
+    pattern: '^[A-Za-z0-9._-]*$'
+    description: Claude model to use (settings.json `model`); empty keeps the CLI default
+    env: CLAUDE_MODEL
+  reasoningEffort:
+    default: ""
+    enum: ["", low, medium, high, xhigh, max, auto]
+    description: Effort level (settings.json `effortLevel`); empty keeps the CLI default
+    env: CLAUDE_REASONING_EFFORT
+version: ${{ kit.args.version }}
+provides: ["claude@${{ kit.args.version }}"]
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.anthropic.com:443
+          - platform.claude.com:443
+          - downloads.claude.ai:443
+          - claude.com:443
+          - mcp-proxy.anthropic.com:443
+          - bridge.claudeusercontent.com:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    name: Anthropic access
+    optional: true
+    description: Anthropic API access (API key or claude.ai OAuth)
+    config:
+      service: anthropic
+      phase: runtime
+      apiKey:
+        inject:
+          - {domain: api.anthropic.com, header: x-api-key, format: "%s"}
+          - {domain: mcp-proxy.anthropic.com, header: x-api-key, format: "%s"}
+      oauth:
+        tokenEndpoint: {host: platform.claude.com, path: /v1/oauth/token}
+        sentinels:
+          accessToken: sk-ant-oat01-proxy-managed
+          refreshToken: sk-ant-ort01-proxy-managed
+        credentialFile:
+          path: ~/.claude/.credentials.json
+          structure:
+            claudeAiOauth:
+              accessToken: "{{.AccessToken}}"
+              refreshToken: "{{.RefreshToken}}"
+              expiresAt: "{{.ExpiresAt}}"
+              scopes: "{{.Scopes}}"
+            primaryApiKey: "{{.PrimaryApiKey}}"
+  - type: com.docker.sandbox/agent-sessions@1
+    description: Drive claude sessions programmatically
+    config:
+      prompt: ["-p", "--", "{{.Prompt}}"]
+      continue: ["--continue"]
+      resume: ["--resume", "{{.SessionID}}"]
+      list: ["python3", "/opt/claude-sessions/interactive-sessions.py"]
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    description: Open claude's terminal UI on a chosen session
+    config:
+      prompt: ["--", "{{.Prompt}}"]
+      continue: ["--continue"]
+      resume: ["--resume", "{{.SessionID}}"]
+      sessionPicker: ["--resume"]
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -e
+            ws="${WORKSPACE_DIR:-/}"
+            esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g')
+            projects="\"/\": { \"hasTrustDialogAccepted\": true }"
+            [ "$ws" = "/" ] || projects="$projects, \"$esc\": { \"hasTrustDialogAccepted\": true }"
+            printf '%s\n' "{
+              \"bypassPermissionsModeAccepted\": true,
+              \"hasCompletedOnboarding\": true,
+              \"hasSeenAutoDefaultNudge\": true,
+              \"projects\": { $projects }
+            }" > /home/agent/.claude.json
+            chown agent:agent /home/agent/.claude.json
+          user: "0"
+          env: [WORKSPACE_DIR]
+          description: Seed Claude bypass/trust flags (root; overwrites image-shipped file)
+        - command: mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
+          user: "0"
+          description: Ensure ~/.claude is agent-owned before settings seed
+        - command: |
+            set -e
+            HELPER=''
+            if [ "${SBX_CRED_ANTHROPIC_MODE:-none}" != none ]; then
+              HELPER='  "apiKeyHelper": "echo proxy-managed",
+            '
+            fi
+            # Model selection from the create-phase args. The args'
+            # patterns admit no quote or backslash, so the expanded
+            # value is safe inside the JSON string. effortLevel accepts
+            # low/medium/high/xhigh; max and auto persist only through
+            # CLAUDE_CODE_EFFORT_LEVEL (settings.json rejects them).
+            model='${{ kit.args.model }}'
+            effort='${{ kit.args.reasoningEffort }}'
+            MODEL=''
+            EFFORT=''
+            ENV_BLOCK=''
+            [ -z "$model" ] || MODEL="  \"model\": \"$model\",
+            "
+            case "$effort" in
+              '') ;;
+              max|auto)
+                ENV_BLOCK="  \"env\": { \"CLAUDE_CODE_EFFORT_LEVEL\": \"$effort\" },
+            "
+                ;;
+              *)
+                EFFORT="  \"effortLevel\": \"$effort\",
+            "
+                ;;
+            esac
+            # Lifecycle hooks for the desktop app (see /usr/local/bin/sbx-claude-hook):
+            # Stop and StopFailure report a finished turn, Notification the
+            # moments Claude waits on the user, UserPromptSubmit the prompt
+            # that names the conversation (Claude Code lists sessions by id
+            # only). The script never fails, never writes stdout and runs
+            # async, so a session without the desktop app sees no delay and
+            # no hook error.
+            HOOK='{ "type": "command", "command": "/usr/local/bin/sbx-claude-hook claude", "timeout": 10, "async": true }'
+            HOOKS="  \"hooks\": {
+                \"Stop\": [ { \"hooks\": [ $HOOK ] } ],
+                \"StopFailure\": [ { \"hooks\": [ $HOOK ] } ],
+                \"UserPromptSubmit\": [ { \"hooks\": [ $HOOK ] } ],
+                \"Notification\": [ { \"matcher\": \"permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input\", \"hooks\": [ $HOOK ] } ]
+              },
+            "
+            # The statusLine command is the only place Claude Code exposes
+            # the live session (model, context window, cost, lines changed);
+            # sbx-agent-hook forwards it to the desktop app's status bar and prints
+            # nothing, so no status line is drawn in the terminal. A mixin that
+            # sets its own statusLine (e.g. claude-sbx-statusline) replaces
+            # this one and the app's session view goes quiet for that sandbox.
+            STATUSLINE="  \"statusLine\": { \"type\": \"command\", \"command\": \"/usr/local/bin/sbx-claude-hook claude-status\" },
+            "
+            printf '%s' "{
+              \"themeId\": 1,
+              \"alwaysThinkingEnabled\": true,
+            ${HELPER}${MODEL}${EFFORT}${ENV_BLOCK}${HOOKS}${STATUSLINE}  \"permissions\": { \"defaultMode\": \"bypassPermissions\" },
+              \"bypassPermissionsModeAccepted\": true,
+              \"skipDangerousModePermissionPrompt\": true
+            }
+            " > /home/agent/.claude/settings.json
+          user: agent
+          env: [SBX_CRED_ANTHROPIC_MODE]
+          description: Seed Claude settings.json from the surfaced auth mode
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            export PATH="$HOME/.local/bin:$HOME/.claude/local:$PATH"
+            claude mcp add mcp-gateway "$MCP_GATEWAY_URL" \
+              --transport http \
+              --scope user \
+              --header "Authorization: Bearer $MCP_SENTINEL_TOKEN_NAME" || true
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway (install-time, race-free)
+      startup:
+        - command: [sh, -c, "command -v apt-get > /dev/null 2>&1 && (apt-get update -qq -y > /dev/null 2>&1 || true)"]
+          user: "0"
+          background: true
+          description: Update apt package cache in background
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            export PATH="$HOME/.local/bin:$HOME/.claude/local:$PATH"
+            claude mcp add mcp-gateway "$MCP_GATEWAY_URL" \
+              --transport http \
+              --scope user \
+              --header "Authorization: Bearer $MCP_SENTINEL_TOKEN_NAME" || true
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway (startup fallback)
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.claude/skills
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config: &agent-context
+      filename: CLAUDE.md
+      directory: /home/agent/.claude
+      content: |
+        ## Claude Code
+
+        Claude Code is installed at `~/.local/bin/claude` by Anthropic's native installer. Launch is
+        `claude --dangerously-skip-permissions`; the image entrypoint starts it. Run `claude` for an interactive session, or
+        `claude -p "<prompt>"` for a one-shot run.
+
+        Claude Code's permission prompts are turned off in `~/.claude/settings.json`
+        (`permissions.defaultMode = "bypassPermissions"`). That is deliberate: the container is the sandbox, and a prompt
+        nobody can answer just deadlocks a non-interactive session.
+
+        Authentication is proxy-mediated. Depending on what the host has bound, either the `apiKeyHelper` in
+        `~/.claude/settings.json` returns the literal string `proxy-managed` and the sandbox proxy substitutes the real
+        Anthropic API key on requests to `api.anthropic.com`, or `~/.claude/.credentials.json` holds claude.ai OAuth tokens
+        that are sentinels the proxy swaps at request time. Either way there is no real credential in this container. With
+        nothing bound, `claude` will ask you to `/login`.
+
+        Skills are read from `~/.claude/skills`, where the host's shared skills store mounts.
+
+        ## Installing Packages
+
+        The image ships a small toolset: shell and CLI tools, git, gh, Docker, and Python 3.14 with pip and uv. Install
+        anything else with `sudo apt-get update && sudo apt-get install -y <package>`; `sudo` needs no password. Two apt
+        repositories are configured and reachable through the sandbox proxy: Debian trixie (`deb.debian.org`) and Docker
+        Hardened Images (`dhi.io/deb/debian/main`). The DHI repository carries versioned toolchains such as `golang-1.26`
+        and `nodejs-24`; Debian supplies the rest, for example `default-jdk-headless`. `apt-cache search <term>` lists what
+        is available. Building Python packages from source needs `build-essential` first.
+
+        ## Environment Persistence
+
+        The `CLAUDE_ENV_FILE` environment variable is set to `/etc/sandbox-persistent.sh`.
+
+        According to [Claude Code Documentation](https://code.claude.com/docs/en/settings#bash-tool-behavior):
+
+        > **CLAUDE_ENV_FILE**
+        >
+        > If set, this file will be sourced before each Bash command execution. This allows environment variables to persist
+        > across multiple Bash tool invocations.
+
+        This means `/etc/sandbox-persistent.sh` is sourced before every Bash tool call you make. Any `export` statements you
+        append to this file will be available in all subsequent commands without needing a login shell.
+
+        ### Shell Completions Must NOT Be in CLAUDE_ENV_FILE
+
+        **NEVER add shell completion scripts to `/etc/sandbox-persistent.sh`.**
+
+        `CLAUDE_ENV_FILE` is sourced **before every single bash command execution**, not just during shell initialization.
+        Completion scripts rely on special variables (`COMP_WORDS`, `COMP_CWORD`, `COMPREPLY`) that only exist during
+        tab-completion contexts.
+
+        #### WRONG - Will Break Bash
+
+        ```bash
+        # DO NOT ADD THESE TO /etc/sandbox-persistent.sh
+        [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+        [[ -s "$SDKMAN_DIR/etc/bash_completion.sh" ]] && source "$SDKMAN_DIR/etc/bash_completion.sh"
+        ```
+
+        #### CORRECT - Only Load Core Functionality
+
+        ```bash
+        # ONLY add the main initialization scripts
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+        export SDKMAN_DIR="$HOME/.sdkman"
+        [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+        ```
+
+        #### Symptoms of Broken Shell
+
+        When completion scripts are incorrectly added:
+
+        - All bash commands return no output (silent failure)
+        - `echo`, `pwd`, and other basic commands produce no results
+        - The bash tool becomes completely unusable
+
+        #### Solution
+
+        If you accidentally added completion scripts and broke the shell:
+
+        1. Remove the completion line(s) from `/etc/sandbox-persistent.sh`
+        1. Exit and restart the Claude Code session
+        1. Verify with `echo "test"` that bash works again
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config: *agent-context

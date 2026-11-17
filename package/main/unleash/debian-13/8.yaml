@@ -1,0 +1,181 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-unleash
+variant: runtime
+tags:
+  - 8.3.1
+  - 8.3.1-r2
+  - 8.3.1-debian13
+  - 8.3.1-r2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-09"
+vars:
+  COMMIT_SHA: 51aaeb62a63a1753b7ce7d3b3b4e8a5aef89f4b4
+  PACKAGE_NAME: unleash-8
+  REL: "2"
+  SEMVER_MAJOR_MINOR_VERSION: "8.3"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.3.1
+  VERSION: 8.3.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: unleash
+      work-dir: ${source.dir}/unleash
+      caches:
+        - path: /root/.local/share/pnpm/store
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - base-files
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - libc6
+          - libstdc++6
+          - mawk
+          - nodejs-24
+          - node-corepack
+          - npm
+          - sed
+          - yarn-classic
+          - yq-go
+        files:
+          - url: git+https://github.com/Unleash/unleash.git#v8.3.1
+            checksum: 51aaeb62a63a1753b7ce7d3b3b4e8a5aef89f4b4
+            path: ${source.dir}/unleash
+            spdx:
+              name: unleash
+              version: 8.3.1
+              packages:
+                - name: unleash
+                  purl: pkg:npm/unleash-server@8.3.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare pnpm for bump
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            chmod +x /usr/lib/nodejs/corepack/dist/*.js
+            pnpm install --no-frozen-lockfile --ignore-scripts
+        - name: bump pnpm dependencies
+          uses: pnpm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/pnpm-bumps.json
+            pnpm-root: ${source.dir}/unleash
+        - name: allow recent override releases
+          runs: |
+            set -eux -o pipefail
+
+            yq -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + [
+              "nodemailer@10.1.4",
+              "js-yaml@4.3.2",
+              "nanoid@3.3.18",
+              "brace-expansion@2.1.7",
+              "body-parser@1.20.9",
+              "compression@1.8.2",
+              "fast-uri@3.1.9",
+              "joi@18.3.1",
+              "ip-address@10.7.4",
+              "proxy-addr@2.0.8",
+              "source-map-js@1.2.2",
+              "http-cache-semantics@4.3.0",
+              "follow-redirects@1.16.2",
+              "re2js@2.8.7",
+              "sanitize-html@2.18.1",
+              "qs@6.16.1",
+              "minimatch@11.0.1",
+              "glob@14.0.2"
+            ])' pnpm-workspace.yaml
+        - name: install and build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            pnpm install --no-frozen-lockfile --ignore-scripts
+            pnpm prepare:backend
+            pnpm local:package
+            pnpm build:frontend:if-needed
+        - name: reorganize build
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p build/frontend
+            mv frontend/build build/frontend/build
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-8-frontend
+            source: ${source.dir}/unleash/frontend/node_modules
+        - name: production dependencies
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            CI=true pnpm prune --prod --ignore-scripts
+        - name: backend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: unleash-8-backend
+            source: ${source.dir}/unleash/node_modules
+        - name: copy app files
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib/unleash-8"
+
+            cp -r build/dist "${target.dir}/usr/lib/unleash-8/"
+            cp -r build/frontend "${target.dir}/usr/lib/unleash-8/"
+            cp build/package.json "${target.dir}/usr/lib/unleash-8/"
+            cp -r node_modules "${target.dir}/usr/lib/unleash-8/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - nodejs-24
+            description: Unleash, an open-source feature flag management platform
+            files:
+              - usr/lib/unleash-8
+            formats:
+              - deb
+            license: Apache-2.0
+            name: unleash-8
+            rel: 2
+            url: https://github.com/Unleash/unleash
+            version: 8.3.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/pnpm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/unleash/patch/pnpm-bumps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

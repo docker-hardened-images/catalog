@@ -1,0 +1,214 @@
+# syntax=dhi.io/build:2-debian13
+
+name: JupyterHub K8s Singleuser Sample 4.x (compat)
+image: dhi.io/jupyterhub-k8s-singleuser-sample
+variant: runtime
+flavor: compat
+tags:
+  - 4-compat
+  - 4.4-compat
+  - 4.4.5-compat
+  - 4-debian-compat
+  - 4-debian13-compat
+  - 4.4-debian-compat
+  - 4.4-debian13-compat
+  - 4.4.5-debian-compat
+  - 4.4.5-debian13-compat
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-08-10"
+vars:
+  COMMIT_SHA: 954429bca81391cffe24203004704f3c333422ab
+  JUPYTERLAB_VERSION: 4.6.5
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.5
+  VERSION: 4.4.5
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+    - bash
+    - ca-certificates-bundle
+    - git
+    - libffi8
+    - libstdc++6
+    - python-3.14
+    - python-3.14-dev
+    - python3-pip
+    - python3-setuptools
+    - python3-wheel
+    - tini
+    - tzdata
+  builds:
+    - name: jupyterhub-k8s-singleuser-sample
+      work-dir: ${source.dir}/zero-to-jupyterhub-k8s/images/singleuser-sample
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - libffi-dev
+          - libssl-dev
+          - libstdc++6
+          - python-3.14
+          - python-3.14-dev
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - sed
+          - zlib1g-dev
+        files:
+          - url: https://registry.npmjs.org/moment/-/moment-2.31.0.tgz
+            checksum: sha256:efddf549c13aa7cf270f573d9c464978ab0810c0652673ae6af1189bb56ab3f8
+            path: ${source.dir}/moment-2.31.0.tgz
+            spdx:
+              name: moment
+              version: 2.31.0
+              packages:
+                - name: moment
+                  purl: pkg:npm/moment@2.31.0
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jupyterhub/zero-to-jupyterhub-k8s.git#4.4.5
+            checksum: 954429bca81391cffe24203004704f3c333422ab
+            path: ${source.dir}/zero-to-jupyterhub-k8s
+            spdx:
+              name: zero-to-jupyterhub-k8s
+              version: 4.4.5
+              packages:
+                - name: zero-to-jupyterhub-k8s
+                  purl: pkg:github/jupyterhub/zero-to-jupyterhub-k8s@4.4.5
+                  license: BSD-3-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: create virtual environment
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            mkdir -p /opt/singleuser
+            python3 -m venv "$VENV"
+        - name: install singleuser requirements
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            "$VENV/bin/python3" -m pip install --upgrade pip setuptools wheel
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              -r requirements.txt
+        - name: upgrade security-patched packages
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            "$VENV/bin/python3" -m pip install --no-cache-dir \
+              "certifi>=2026.10.19" \
+              "cryptography>=50.0.0" \
+              "jupyter_server>=2.20.0" \
+              "mistune>=3.3.0" \
+              "msgpack>=1.2.3" \
+              "oauthlib>=4.0.0" \
+              "setuptools>=84.1.0" \
+              "tornado>=6.6"
+            "$VENV/bin/python3" -m pip install --no-cache-dir --upgrade pip
+        - name: upgrade moment static assets
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            MOMENT_TARBALL="${source.dir}/moment-2.31.0.tgz"
+            test -f "${MOMENT_TARBALL}"
+
+            moment_dirs=0
+            while IFS= read -r -d '' MOMENT_COMPONENT; do
+              moment_dirs=$((moment_dirs + 1))
+              rm -rf "${MOMENT_COMPONENT}"
+              mkdir -p "${MOMENT_COMPONENT}"
+              "${VENV}/bin/python3" -c "import shutil, tarfile, tempfile; from pathlib import Path; archive, dest = Path('${MOMENT_TARBALL}'), Path('${MOMENT_COMPONENT}'); tmp = tempfile.mkdtemp(); tf = tarfile.open(archive, 'r:gz'); tf.extractall(tmp); tf.close(); shutil.copytree(Path(tmp) / 'package', dest, dirs_exist_ok=True); shutil.rmtree(tmp)"
+            done < <(find "${VENV}" -path '*/components/moment' -type d -print0)
+            test "${moment_dirs}" -gt 0
+        - name: clean python cache and tests
+          runs: |
+            set -eux -o pipefail
+
+            VENV=/opt/singleuser/.venv
+            find "$VENV" \
+              \( -type d -a \( -name test -o -name tests -o -name __pycache__ \) \) \
+              -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+              -exec rm -rf '{}' + || true
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger,javascript-package-cataloger
+            prefix: jupyterhub-k8s-singleuser-sample-python
+            source: /opt/singleuser/.venv
+      outputs:
+        - source: /opt/singleuser
+          target: /opt/singleuser
+          uid: 0
+          gid: 0
+          mode: "0755"
+        - source: /opt/docker/sbom
+          target: /opt/docker/sbom
+          uid: 0
+          gid: 0
+accounts:
+  run-as: nonroot
+  users:
+    - name: nonroot
+      uid: 65532
+      gid: 65532
+  groups:
+    - name: nonroot
+      gid: 65532
+      members:
+        - nonroot
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /home/jovyan
+environment:
+  JUPYTERLAB_VERSION: 4.6.5
+  PATH: /opt/singleuser/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONUNBUFFERED: "1"
+paths:
+  - type: directory
+    path: /home/nonroot
+    uid: 65532
+    gid: 65532
+    mode: "0755"
+annotations:
+  org.opencontainers.image.description: A minimal jupyterhub-k8s-singleuser-sample image
+  org.opencontainers.image.licenses: BSD-3-Clause
+entrypoint:
+  - /usr/bin/tini
+  - --
+cmd:
+  - jupyter
+  - lab
+  - --ip
+  - 0.0.0.0
+ports:
+  - 8888/tcp

@@ -1,0 +1,149 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-opentelemetry-autoinstrumentation-python
+variant: runtime
+tags:
+  - 0.66b2
+  - 0.66b2-r2
+  - 0.66b2-debian13
+  - 0.66b2-r2-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  OPERATOR_COMMIT: 1f6bc7c98375e91642c4ed3673a3a1660cc5a154
+  PACKAGE_NAME: opentelemetry-autoinstrumentation-python-0
+  PIP_VERSION: 26.3-0
+  PY_ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  PYTHON_MINOR: "3.15"
+  PYTHON_VERSION: 3.15.2-6
+  REL: "2"
+  REQUIREMENTS_SHA256: 818fa4e88a9fd77d067103076d483f6f9231a98c2bde14acda5841778b2f73e0
+  UPSTREAM_PYTHON_MINOR: "3.15"
+  VERSION: 0.66b2
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: opentelemetry-autoinstrumentation-python
+      work-dir: ${source.dir}
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - grep
+          - sed
+          - python-3.15=3.15.2-6
+          - python-3.15-minimal=3.15.2-6
+          - libpython-3.15=3.15.2-6
+          - libpython-3.15-minimal=3.15.2-6
+          - libpython-3.15-stdlib=3.15.2-6
+          - python3-pip-whl=26.3-0
+          - python3-setuptools-whl
+          - libbz2-1.0
+          - libc6
+          - libcrypt1
+          - libdb5.3t64
+          - libexpat1
+          - libffi8
+          - libgdbm-compat4t64
+          - libgdbm6
+          - liblzma5
+          - libncursesw6
+          - libreadline8t64
+          - libsqlite3-0
+          - libssl3t64
+          - libstdc++6
+          - libtinfo6
+          - libuuid1
+          - libzstd1
+          - zlib1g
+        files:
+          - url: https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/1f6bc7c98375e91642c4ed3673a3a1660cc5a154/autoinstrumentation/python/requirements.txt
+            checksum: sha256:818fa4e88a9fd77d067103076d483f6f9231a98c2bde14acda5841778b2f73e0
+            path: ${source.dir}/requirements.txt
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: build the glibc and musl trees
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}"
+            export VERSION="0.66b2" PYTHON_MINOR="3.15"
+            export UPSTREAM_PYTHON_MINOR="3.15"
+            export PY_ARCH="${PY_ARCH}" NATIVE_LIBC=glibc
+            bash "${source.dir}/build-trees.sh"
+        - name: sbom glibc tree
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: opentelemetry-autoinstrumentation-python-glibc
+            source: ${target.dir}/usr/lib/opentelemetry-autoinstrumentation-python/glibc
+        - name: sbom musl tree
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: opentelemetry-autoinstrumentation-python-musl
+            source: ${target.dir}/usr/lib/opentelemetry-autoinstrumentation-python/musl
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            for d in opentelemetry-autoinstrumentation-python-glibc opentelemetry-autoinstrumentation-python-musl; do
+              test -d "/opt/docker/sbom/$d"
+              cp -a "/opt/docker/sbom/$d" "${target.dir}/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.15
+            description: OpenTelemetry Python auto-instrumentation bundle for the operator init container (glibc and musl trees)
+            files:
+              - usr/lib/opentelemetry-autoinstrumentation-python
+              - opt/docker/sbom/opentelemetry-autoinstrumentation-python-glibc
+              - opt/docker/sbom/opentelemetry-autoinstrumentation-python-musl
+            formats:
+              - deb
+            license: Apache-2.0
+            name: opentelemetry-autoinstrumentation-python-0
+            rel: 2
+            url: https://github.com/open-telemetry/opentelemetry-operator/tree/main/autoinstrumentation/python
+            version: 0.66b2
+      paths:
+        - type: file
+          path: ${source.dir}/build-trees.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/opentelemetry-autoinstrumentation-python/build-trees.sh
+        - type: file
+          path: ${source.dir}/requirements-lock.txt
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-autoinstrumentation-python/requirements-lock.txt
+        - type: file
+          path: ${source.dir}/python-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-autoinstrumentation-python/patch/python-bumps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

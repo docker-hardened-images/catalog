@@ -1,0 +1,303 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-opentelemetry-autoinstrumentation-nodejs
+variant: runtime
+tags:
+  - 0.82.0
+  - 0.82.0-r0
+  - 0.82.0-debian13
+  - 0.82.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-04-05"
+vars:
+  NODEJS_VERSION: 26.13.0-0
+  NPM_VERSION: 11.21.2-1
+  OPERATOR_LICENSE_SHA256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+  OPERATOR_VERSION: 0.162.0
+  PACKAGE_JSON_SHA256: f2c4389df1a8234935c519fc02def66bcfa88e4e25e33cb4f6f3f14dd6f76037
+  PACKAGE_NAME: opentelemetry-autoinstrumentation-nodejs-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.82"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.82.0
+  VERSION: 0.82.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: opentelemetry-autoinstrumentation-nodejs
+      work-dir: ${source.dir}
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - grep
+          - jq
+          - libc6
+          - libgcc-s1
+          - libstdc++6
+          - nodejs-26=26.13.0-0
+          - npm=11.21.2-1
+          - sed
+        files:
+          - url: https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/v0.162.0/autoinstrumentation/nodejs/package.json
+            checksum: sha256:f2c4389df1a8234935c519fc02def66bcfa88e4e25e33cb4f6f3f14dd6f76037
+            path: ${source.dir}/package.json
+            spdx:
+              name: opentelemetry-autoinstrumentation-nodejs
+              version: 0.82.0
+              packages:
+                - name: opentelemetry-autoinstrumentation-nodejs
+                  purl: pkg:github/open-telemetry/opentelemetry-operator@v0.162.0#autoinstrumentation/nodejs
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+            mode: "0644"
+          - url: https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/v0.162.0/LICENSE
+            checksum: sha256:c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+            path: ${source.dir}/LICENSE
+            uid: 0
+            gid: 0
+            mode: "0644"
+      pipeline:
+        - name: check fetched inputs
+          runs: |
+            set -eux -o pipefail
+
+            test -s package.json
+            test -s LICENSE
+            test -s npm-bumps.json
+            test -s package-lock.json
+            test -s third-party-licenses.json
+
+            jq -e --arg v "0.82.0" \
+              '.dependencies["@opentelemetry/auto-instrumentations-node"] == $v' package.json > /dev/null
+            test "$(jq -cS '.dependencies' package.json)" = "$(jq -cS '.packages[""].dependencies' package-lock.json)"
+        - name: bump gaxios under gcp-metadata
+          uses: npm/bump@v2
+          privileged: true
+          environment:
+            DHI_NO_SFW: "true"
+            npm_config_ignore_scripts: "true"
+          with:
+            bumps: ${source.dir}/npm-bumps.json
+            npm-root: ${source.dir}
+        - name: install production dependencies
+          privileged: true
+          environment:
+            npm_config_ignore_scripts: "true"
+          runs: |
+            set -eux -o pipefail
+
+            npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+        - name: prune non-runtime files
+          runs: |
+            set -eux -o pipefail
+
+            test -d node_modules/node-domexception/.history
+            rm -rf node_modules/node-domexception/.history
+
+            for f in \
+              node_modules/@protobufjs/pool/.npmignore \
+              node_modules/extend/.editorconfig \
+              node_modules/extend/.eslintrc \
+              node_modules/extend/.jscs.json \
+              node_modules/extend/.travis.yml \
+              node_modules/pg-types/.travis.yml \
+              node_modules/require-directory/.jshintrc \
+              node_modules/require-directory/.npmignore \
+              node_modules/require-directory/.travis.yml \
+              node_modules/xtend/.jshintrc; do
+              test -f "$f"
+              rm -f "$f"
+            done
+        - name: assemble payload
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}/usr/lib/opentelemetry-autoinstrumentation-nodejs"
+            sdk="node_modules/@opentelemetry/auto-instrumentations-node"
+            licenses="${target.dir}/usr/share/licenses/opentelemetry-autoinstrumentation-nodejs"
+
+            mkdir -p "$root" "$licenses"
+
+            cp -a package.json node_modules "$root/"
+            cp -a "$sdk/dist/." "$root/"
+            cp "$root/register.cjs" "$root/autoinstrumentation.js"
+
+            cp LICENSE "$licenses/LICENSE"
+        - name: assert payload
+          runs: |
+            set -eux -o pipefail
+
+            root="${target.dir}/usr/lib/opentelemetry-autoinstrumentation-nodejs"
+
+            test "$(sha256sum "$root/register.cjs" | cut -d' ' -f1)" = "$(sha256sum "$root/autoinstrumentation.js" | cut -d' ' -f1)"
+            test "$(jq -r .version "$root/node_modules/@opentelemetry/auto-instrumentations-node/package.json")" = "0.82.0"
+            test -s "$root/node_modules/@opentelemetry/api/package.json"
+            test -z "$(find "$root" -name '*.node' -print -quit)"
+            test -z "$(find "$root" ! -perm -o+r -print -quit)"
+            test -z "$(find "$root" -path '*/node-domexception/.history' -print -quit)"
+            test -z "$(find "$root" \( -name .editorconfig -o -name .eslintrc -o -name .jscs.json -o -name .jshintrc -o -name .npmignore -o -name .travis.yml -o -name FUNDING.yml \) -print -quit)"
+        - name: production node_modules sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: opentelemetry-autoinstrumentation-nodejs-npm
+            source: ${source.dir}/node_modules
+        - name: merge sbom and verify inventory
+          runs: |
+            set -eux -o pipefail
+
+            root_sbom=/opt/docker/sbom/opentelemetry-autoinstrumentation-nodejs/.spdx.opentelemetry-autoinstrumentation-nodejs.json
+            npm_sbom=/opt/docker/sbom/opentelemetry-autoinstrumentation-nodejs-npm/.spdx.opentelemetry-autoinstrumentation-nodejs-npm.json
+            out_dir=/opt/docker/sbom/opentelemetry-autoinstrumentation-nodejs-0
+            merged="$out_dir/.spdx.opentelemetry-autoinstrumentation-nodejs-0.json"
+            test -s "$root_sbom"
+            test -s "$npm_sbom"
+
+            mkdir -p "$out_dir"
+            jq -s '.[0] as $a | .[1] as $b | $a | .packages = ((.packages // []) + ($b.packages // []))' \
+              "$root_sbom" "$npm_sbom" > "$merged"
+
+            lock=/tmp/otel-inv-lock.txt
+            roots=/tmp/otel-inv-roots.txt
+            nolicense=/tmp/otel-inv-nolicense.txt
+            sbom=/tmp/otel-inv-sbom.txt
+            unknown=/tmp/otel-inv-unknown.txt
+            stubs=/tmp/otel-inv-stubs.txt
+            dirs=/tmp/otel-inv-dirs.txt
+
+            jq -r '.packages | to_entries[] | select(.key != "")
+              | ((.value.name // (.key | split("node_modules/") | last)) + "@" + .value.version)' \
+              node_modules/.package-lock.json | sort -u > "$lock"
+
+            find node_modules -name package.json -print \
+              | sed 's#/package.json$##' \
+              | grep -E '(^|/)node_modules/(@[^/]+/)?[^/]+$' \
+              | sort > "$dirs"
+            test -s "$dirs"
+
+            : > "$roots"
+            : > "$nolicense"
+            while read -r dir; do
+              id=$(jq -r '.name + "@" + .version' "$dir/package.json")
+              echo "$id" >> "$roots"
+              license=$(jq -r '.license // "" | if type == "string" then . else "" end' "$dir/package.json")
+              test -n "$license"
+              test "$license" != "NOASSERTION"
+              if ! ls "$dir" | grep -qiE '^(licen[cs]e|copying|notice)'; then
+                echo "$id" >> "$nolicense"
+              fi
+            done < "$dirs"
+            sort -u "$roots" -o "$roots"
+            sort -u "$nolicense" -o "$nolicense"
+
+            jq -r '.packages[]?.externalRefs[]? | select(.referenceType == "purl") | .referenceLocator
+              | select(startswith("pkg:npm/") and endswith("@UNKNOWN"))' "$merged" \
+              | sed -e 's#^pkg:npm/##' -e 's#%40#@#g' | sort -u > "$unknown"
+            find node_modules -name package.json -print | while read -r f; do
+              jq -r 'select((.name? != null) and (.version? == null)) | .name + "@UNKNOWN"' "$f"
+            done | sort -u > "$stubs"
+            test -z "$(comm -3 "$stubs" "$unknown")"
+            jq '.packages |= map(select(([.externalRefs[]? | select(.referenceType == "purl") | .referenceLocator
+              | select(startswith("pkg:npm/") and endswith("@UNKNOWN"))] | length) == 0))' "$merged" > "$merged.tmp"
+            mv "$merged.tmp" "$merged"
+
+            jq -r '.packages[]?.externalRefs[]? | select(.referenceType == "purl") | .referenceLocator' "$merged" \
+              | grep '^pkg:npm/' \
+              | sed -e 's#^pkg:npm/##' -e 's#%40#@#g' -e 's#?.*$##' \
+              | sort -u > "$sbom"
+
+            test -z "$(comm -3 "$lock" "$roots")"
+            test -z "$(comm -3 "$lock" "$sbom")"
+
+            jq -r '.packages[]? | select(any(.externalRefs[]?; .referenceType == "purl" and (.referenceLocator | startswith("pkg:npm/"))))
+              | ((.externalRefs[] | select(.referenceType == "purl") | .referenceLocator) | sub("^pkg:npm/"; "") | gsub("%40"; "@") | sub("\\?.*$"; ""))
+              + "|" + (.licenseDeclared // "")' "$merged" | sort -u > /tmp/otel-inv-sbom-lic.txt
+            while read -r dir; do
+              jq -r '(.name + "@" + .version) + "|" + (.license // "")' "$dir/package.json"
+            done < "$dirs" | sort -u > /tmp/otel-inv-pkg-lic.txt
+            test -z "$(comm -3 /tmp/otel-inv-pkg-lic.txt /tmp/otel-inv-sbom-lic.txt)"
+            test -z "$(grep -E '\|(NOASSERTION)?$' /tmp/otel-inv-sbom-lic.txt)"
+
+            grep -qx "@opentelemetry/auto-instrumentations-node@0.82.0" "$sbom"
+            grep -qx "@opentelemetry/api@$(jq -r '.dependencies["@opentelemetry/api"]' package.json)" "$sbom"
+            test "$(grep -o 'pkg:github/open-telemetry/opentelemetry-operator@v[^"]*' "$merged" | wc -l)" = 1
+            ! grep -qF 'pkg:npm/%40opentelemetry/k8s-autoinstrumentation' "$merged"
+
+            jq -r '.roots[] | .name + "@" + .version' third-party-licenses.json | sort -u > /tmp/otel-inv-declared.txt
+            test -z "$(comm -3 /tmp/otel-inv-declared.txt "$nolicense")"
+            jq -c '.roots[]' third-party-licenses.json | while read -r entry; do
+              kind=$(printf '%s' "$entry" | jq -r .kind)
+              path=$(printf '%s' "$entry" | jq -r .path)
+              phrase=$(printf '%s' "$entry" | jq -r .phrase)
+              case "$kind" in
+                readme) grep -qF "$phrase" "$path" ;;
+                shipped-file) grep -qF "$phrase" "${target.dir}/$path" ;;
+                *)
+                  echo "unknown manifest kind: $kind" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            bundle_path=$(jq -r '.bundle.path' third-party-licenses.json)
+            grep -qF "$(jq -r '.bundle.phrase' third-party-licenses.json)" "${target.dir}/$bundle_path"
+
+            find node_modules -type f -iname 'NOTICE*' -print | while read -r f; do
+              d=$(dirname "$f")
+              test -f "$d/package.json"
+              jq -r '.name + "@" + .version' "$d/package.json"
+            done | sort -u > /tmp/otel-inv-notices.txt
+            jq -r '.["notice-roots"][]' third-party-licenses.json | sort -u > /tmp/otel-inv-notice-expect.txt
+            test -z "$(comm -3 /tmp/otel-inv-notice-expect.txt /tmp/otel-inv-notices.txt)"
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a "$out_dir" "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenTelemetry Node.js auto-instrumentation bundle for the OpenTelemetry Operator
+            files:
+              - usr/lib/opentelemetry-autoinstrumentation-nodejs
+              - usr/share/licenses/opentelemetry-autoinstrumentation-nodejs
+              - opt/docker/sbom/opentelemetry-autoinstrumentation-nodejs-0
+            license: Apache-2.0
+            name: opentelemetry-autoinstrumentation-nodejs-0
+            rel: 0
+            url: https://github.com/open-telemetry/opentelemetry-operator/tree/main/autoinstrumentation/nodejs
+            version: 0.82.0
+      paths:
+        - type: file
+          path: ${source.dir}/package-lock.json
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-autoinstrumentation-nodejs/files/package-lock.json
+        - type: file
+          path: ${source.dir}/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-autoinstrumentation-nodejs/files/npm-bumps.json
+        - type: file
+          path: ${source.dir}/third-party-licenses.json
+          uid: 0
+          gid: 0
+          source: package/main/opentelemetry-autoinstrumentation-nodejs/files/third-party-licenses.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

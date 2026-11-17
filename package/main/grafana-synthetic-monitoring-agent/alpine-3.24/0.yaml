@@ -1,0 +1,443 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-grafana-synthetic-monitoring-agent
+variant: runtime
+tags:
+  - 0.71.0-alpine3.24
+  - 0.71.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-06-24"
+vars:
+  COMMIT_SHA: 36029390c34f3ecf7443cc2f2335115bd0246f25
+  GOLANG_VERSION: 1.26.11-r1
+  K6_CORE_V1_VERSION: v1.8.3
+  K6_CORE_V2_VERSION: v2.4.0
+  K6_V1_COMMIT_SHA: da69b8da06fd8ccd0943bf8d110ea41f640f7be2
+  K6_V1_SEMVER: 1.1.20
+  K6_V1_VERSION: v1.1.20
+  K6_V2_COMMIT_SHA: a790d8ded6e913bf4597429eb3e0604f0905464e
+  K6_V2_SEMVER: 2.0.16
+  K6_V2_VERSION: v2.0.16
+  PACKAGE_NAME: grafana-synthetic-monitoring-agent-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.71"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.71.0
+  VERSION: 0.71.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: grafana-synthetic-monitoring-agent-0
+      work-dir: /go/src/github.com/grafana/synthetic-monitoring-agent
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - mawk
+          - sed
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/grafana/synthetic-monitoring-agent.git#v0.71.0
+            checksum: 36029390c34f3ecf7443cc2f2335115bd0246f25
+            path: /go/src/github.com/grafana/synthetic-monitoring-agent
+            spdx:
+              name: grafana-synthetic-monitoring-agent
+              version: 0.71.0
+              packages:
+                - name: grafana-synthetic-monitoring-agent
+                  purl: pkg:dhi/grafana-synthetic-monitoring-agent@0.71.0
+                  license: Apache-2.0 AND AGPL-3.0-only
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/grafana/xk6-sm.git#v1.1.20
+            checksum: da69b8da06fd8ccd0943bf8d110ea41f640f7be2
+            path: /go/src/xk6-sm-v1
+            spdx:
+              name: xk6-sm
+              version: 1.1.20
+              packages:
+                - name: xk6-sm
+                  purl: pkg:golang/github.com/grafana/xk6-sm@1.1.20
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/grafana/xk6-sm.git#v2.0.16
+            checksum: a790d8ded6e913bf4597429eb3e0604f0905464e
+            path: /go/src/xk6-sm-v2
+            spdx:
+              name: xk6-sm-v2
+              version: 2.0.16
+              packages:
+                - name: xk6-sm-v2
+                  purl: pkg:golang/github.com/grafana/xk6-sm/v2@2.0.16
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare output directories
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/usr/bin"
+            install -d "${target.dir}/usr/libexec/sm-k6"
+            install -d "${target.dir}/usr/libexec/sm-k6-dev"
+        - name: apply usage-report default patch
+          uses: patch@v1
+          work-dir: /go/src/github.com/grafana/synthetic-monitoring-agent
+          with:
+            options: -p1
+            patches:
+              - /go/src/patch/dhi-disable-usage-reports-default.patch
+        - name: write xk6 helper module v1
+          runs: |
+            set -eux -o pipefail
+
+            install -d /go/src/sm-k6-v1
+            cat > /go/src/sm-k6-v1/go.mod << 'EOF'
+            module k6
+
+            go 1.26.10
+
+            require (
+              github.com/grafana/xk6-sm v0.0.0
+              go.k6.io/k6 v1.8.3
+            )
+
+            replace github.com/grafana/xk6-sm => /go/src/xk6-sm-v1
+            EOF
+            cat > /go/src/sm-k6-v1/main.go << 'EOF'
+            package main
+
+            import (
+            	"go.k6.io/k6/cmd"
+
+            	_ "github.com/grafana/xk6-sm"
+            )
+
+            func main() {
+            	cmd.Execute()
+            }
+            EOF
+            grep -q -F "go.k6.io/k6 v1.8.3" /go/src/xk6-sm-v1/go.mod
+        - name: write xk6 helper module v2
+          runs: |
+            set -eux -o pipefail
+
+            install -d /go/src/sm-k6-v2
+            cat > /go/src/sm-k6-v2/go.mod << 'EOF'
+            module k6
+
+            go 1.26.10
+
+            require (
+              github.com/grafana/xk6-sm/v2 v2.0.0
+              go.k6.io/k6/v2 v2.4.0
+            )
+
+            replace github.com/grafana/xk6-sm/v2 => /go/src/xk6-sm-v2
+            EOF
+            cat > /go/src/sm-k6-v2/main.go << 'EOF'
+            package main
+
+            import (
+            	"go.k6.io/k6/v2/cmd"
+
+            	_ "github.com/grafana/xk6-sm/v2"
+            )
+
+            func main() {
+            	cmd.Execute()
+            }
+            EOF
+            grep -q -F "go.k6.io/k6/v2 v2.4.0" /go/src/xk6-sm-v2/go.mod
+        - name: update agent go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/grafana/synthetic-monitoring-agent
+          with:
+            deps: []
+            download: true
+        - name: update xk6-sm v1 helper dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/sm-k6-v1
+          with:
+            deps: []
+            download: true
+        - name: update xk6-sm v1 helper CVE dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/sm-k6-v1
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - name: update xk6-sm v2 helper dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/sm-k6-v2
+          with:
+            deps: []
+            download: true
+        - name: update xk6-sm v2 helper CVE dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/sm-k6-v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - name: update xk6-sm v1 test dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/xk6-sm-v1
+          with:
+            deps: []
+            download: true
+        - name: update xk6-sm v2 test dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/xk6-sm-v2
+          with:
+            deps: []
+            download: true
+        - name: test agent
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            GOMAXPROCS=1 CGO_ENABLED=0 go test -count=1 -p 1 -parallel=1 \
+              -skip '^(TestNewScript|TestSettingsToScript)$' ./...
+        - name: test xk6-sm v1
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            pkgs=$(go -C /go/src/xk6-sm-v1 list ./... | grep -v '/integration$')
+            CGO_ENABLED=0 go -C /go/src/xk6-sm-v1 test -count=1 $pkgs
+        - name: test xk6-sm v2
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            pkgs=$(go -C /go/src/xk6-sm-v2 list ./... | grep -v '/integration$')
+            CGO_ENABLED=0 go -C /go/src/xk6-sm-v2 test -count=1 $pkgs
+        - name: build agent
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/bin/synthetic-monitoring-agent
+            packages: ./cmd/synthetic-monitoring-agent
+        - name: build agent dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/bin/synthetic-monitoring-agent-dev
+            packages: ./cmd/synthetic-monitoring-agent
+            strip: false
+        - name: build k6 helper v1
+          uses: go/build@v1
+          work-dir: /go/src/sm-k6-v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/libexec/sm-k6/k6-v1
+            packages: .
+        - name: build k6 helper v1 dev
+          uses: go/build@v1
+          work-dir: /go/src/sm-k6-v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/libexec/sm-k6-dev/k6-v1
+            packages: .
+            strip: false
+        - name: build k6 helper v2
+          uses: go/build@v1
+          work-dir: /go/src/sm-k6-v2
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/libexec/sm-k6/k6-v2
+            packages: .
+        - name: build k6 helper v2 dev
+          uses: go/build@v1
+          work-dir: /go/src/sm-k6-v2
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/libexec/sm-k6-dev/k6-v2
+            packages: .
+            strip: false
+        - name: verify binaries and build flags
+          runs: |
+            set -eux -o pipefail
+
+            for bin in \
+              ${target.dir}/usr/bin/synthetic-monitoring-agent \
+              ${target.dir}/usr/libexec/sm-k6/k6-v1 \
+              ${target.dir}/usr/libexec/sm-k6/k6-v2; do
+              test -x "$bin"
+              go version -m "$bin" | grep -F 'CGO_ENABLED=0'
+              go version -m "$bin" | grep -F -- '-trimpath=true'
+              go version -m "$bin" | grep -F -- '-ldflags=-w'
+            done
+
+            for bin in \
+              ${target.dir}/usr/bin/synthetic-monitoring-agent-dev \
+              ${target.dir}/usr/libexec/sm-k6-dev/k6-v1 \
+              ${target.dir}/usr/libexec/sm-k6-dev/k6-v2; do
+              test -x "$bin"
+              go version -m "$bin" | grep -F 'CGO_ENABLED=0'
+              go version -m "$bin" | grep -F -- '-ldflags=-linkmode=internal'
+              if go version -m "$bin" | grep -q -- '-trimpath=true'; then
+                echo "dev binary must not be built with -trimpath" >&2
+                exit 1
+              fi
+            done
+
+            for bin in \
+              ${target.dir}/usr/bin/synthetic-monitoring-agent \
+              ${target.dir}/usr/libexec/sm-k6/k6-v1 \
+              ${target.dir}/usr/libexec/sm-k6/k6-v2; do
+              if [ "false" = "true" ]; then
+                go version -m "$bin" | grep -F 'GOFIPS140=v1.0.0'
+              else
+                if go version -m "$bin" | grep -q 'GOFIPS140='; then
+                  echo "non-FIPS binary must not carry GOFIPS140" >&2
+                  exit 1
+                fi
+              fi
+            done
+        - name: record agent sbom
+          uses: spdx@v1
+          with:
+            license: Apache-2.0 AND AGPL-3.0-only
+            name: grafana-synthetic-monitoring-agent-0
+            purl: pkg:dhi/grafana-synthetic-monitoring-agent@0.71.0
+            version: 0.71.0
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            sbom=/opt/docker/sbom/grafana-synthetic-monitoring-agent-0/.spdx.grafana-synthetic-monitoring-agent-0.json
+            test -s "$sbom"
+            grep -q -F 'pkg:dhi/grafana-synthetic-monitoring-agent@0.71.0' "$sbom"
+            if grep -q -F 'pkg:golang/github.com/grafana/synthetic-monitoring-agent@' "$sbom"; then
+              echo "SBOM must name the patched agent with the DHI PURL" >&2
+              exit 1
+            fi
+            grep -r -q -F 'pkg:golang/github.com/grafana/xk6-sm@1.1.20' /opt/docker/sbom
+            grep -r -q -F 'pkg:golang/github.com/grafana/xk6-sm/v2@2.0.16' /opt/docker/sbom
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/. "${target.dir}/opt/docker/sbom/"
+            test -s "${target.dir}/opt/docker/sbom/grafana-synthetic-monitoring-agent-0/.spdx.grafana-synthetic-monitoring-agent-0.json"
+            install -d "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/. "${target.dir}/opt/docker/sbom-dev/"
+            test -s "${target.dir}/opt/docker/sbom-dev/grafana-synthetic-monitoring-agent-0/.spdx.grafana-synthetic-monitoring-agent-0.json"
+        - name: stage licenses
+          runs: |
+            set -eux -o pipefail
+
+            lic="${target.dir}/usr/share/licenses/grafana-synthetic-monitoring-agent-0"
+            install -d "$lic"
+
+            agent=/go/src/github.com/grafana/synthetic-monitoring-agent/LICENSE
+            test -s "$agent"
+            grep -q 'Apache License' "$agent"
+            install -m644 "$agent" "$lic/LICENSE"
+
+            install -m644 /go/src/xk6-sm-v1/LICENSE.md "$lic/LICENSE-xk6-sm-v1.md"
+            install -m644 /go/src/xk6-sm-v2/LICENSE.md "$lic/LICENSE-xk6-sm-v2.md"
+
+            k6v1=$(go -C /go/src/sm-k6-v1 list -m -f '{{.Dir}}' go.k6.io/k6)
+            k6v2=$(go -C /go/src/sm-k6-v2 list -m -f '{{.Dir}}' go.k6.io/k6/v2)
+            install -m644 "$k6v1/LICENSE.md" "$lic/LICENSE-k6-v1.md"
+            install -m644 "$k6v2/LICENSE.md" "$lic/LICENSE-k6-v2.md"
+            test -s "$lic/LICENSE-k6-v2.md"
+
+            devlic="${target.dir}/usr/share/licenses/grafana-synthetic-monitoring-agent-0-dev"
+            install -d "$devlic"
+            cp -a "$lic/." "$devlic/"
+            test -s "$devlic/LICENSE-k6-v2.md"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: Grafana Synthetic Monitoring agent with xk6-sm k6 helpers
+            files:
+              - usr/bin/synthetic-monitoring-agent
+              - usr/libexec/sm-k6/k6-v1
+              - usr/libexec/sm-k6/k6-v2
+              - opt/docker/sbom/grafana-synthetic-monitoring-agent-0
+              - usr/share/licenses/grafana-synthetic-monitoring-agent-0
+              - opt/docker/sbom
+            license: Apache-2.0 AND AGPL-3.0-only
+            name: grafana-synthetic-monitoring-agent-0
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                description: Grafana Synthetic Monitoring agent and k6 helpers, unstripped (dev)
+                files:
+                  - path: usr/bin/synthetic-monitoring-agent
+                    source: usr/bin/synthetic-monitoring-agent-dev
+                  - path: usr/libexec/sm-k6/k6-v1
+                    source: usr/libexec/sm-k6-dev/k6-v1
+                  - path: usr/libexec/sm-k6/k6-v2
+                    source: usr/libexec/sm-k6-dev/k6-v2
+                  - path: opt/docker/sbom
+                    source: opt/docker/sbom-dev
+                  - path: usr/share/licenses/grafana-synthetic-monitoring-agent-0
+                    source: usr/share/licenses/grafana-synthetic-monitoring-agent-0-dev
+                name: grafana-synthetic-monitoring-agent-0-dev
+            url: https://github.com/grafana/synthetic-monitoring-agent
+            version: 0.71.0
+      paths:
+        - type: file
+          path: /go/src/patch/dhi-disable-usage-reports-default.patch
+          uid: 0
+          gid: 0
+          source: package/main/grafana-synthetic-monitoring-agent/alpine-3.24/patch/dhi-disable-usage-reports-default.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

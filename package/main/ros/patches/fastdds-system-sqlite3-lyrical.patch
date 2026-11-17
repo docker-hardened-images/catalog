@@ -1,0 +1,77 @@
+Subject: Fast-DDS: link the system SQLite instead of the bundled amalgamation
+Origin: vendor, https://sources.debian.org/src/fastdds/3.6.1+ds-1/debian/patches/0005-Use-system-sqlite3.patch
+Adaptation: the test-suite hunks are dropped, since the build sets BUILD_TESTING=OFF, and the remaining hunks are
+  regenerated against the pinned tree with their content unchanged
+Base-Tree: git https://github.com/eProsima/Fast-DDS.git 39303846fb8534ef69fa65f9fa4bcc9e6a7c995a
+Verify: cmd `readelf -d lib/libfastdds.so.3.6` expect "libsqlite3.so.0"
+Drop-When: never: Fast-DDS has no build option that links an external SQLite
+
+Fast-DDS compiles its own copy of the SQLite amalgamation (src/cpp/rtps/persistence/sqlite3.c, 3.47.2 at both sync
+tags) into the library, which no scanner sees and which misses the fixes the distribution's SQLite carries. This drops
+the amalgamation from the build, adds a find module for the system sqlite3 and links the library against it when
+SQLITE3_SUPPORT is on, and includes the system sqlite3.h.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -262,6 +262,7 @@ eprosima_find_thirdparty(TinyXML2 tinyxml2)
+ find_package(foonathan_memory REQUIRED)
+ message(STATUS "Found foonathan_memory: ${foonathan_memory_DIR}")
+ find_package(ThirdpartyBoost REQUIRED)
++find_package(sqlite3 REQUIRED)
+ 
+ if(ANDROID)
+     if((ANDROID_PLATFORM LESS_EQUAL 23) OR (ANDROID_NATIVE_API_LEVEL LESS_EQUAL 23))
+--- /dev/null
++++ b/cmake/modules/Findsqlite3.cmake
+@@ -0,0 +1,6 @@
++include(FindPackageHandleStandardArgs)
++
++find_file(sqlite3_INCLUDE_DIRS sqlite3.h)
++find_library(sqlite3_LIBRARIES sqlite3)
++
++find_package_handle_standard_args(sqlite3 DEFAULT_MSG sqlite3_INCLUDE_DIRS sqlite3_LIBRARIES)
+--- a/src/cpp/CMakeLists.txt
++++ b/src/cpp/CMakeLists.txt
+@@ -187,6 +187,10 @@ if (APPLE)
+     )
+ endif()
+ 
++if(SQLITE3_SUPPORT)
++    target_link_libraries(${PROJECT_NAME} PRIVATE ${sqlite3_LIBRARIES})
++endif()
++
+ if(MSVC OR MSVC_IDE)
+     # On installed binaries use manifest to specify dependencies
+     if(INSTALLER_PLATFORM AND OPENSSL_FOUND)
+--- a/src/cpp/rtps/persistence/SQLite3PersistenceService.cpp
++++ b/src/cpp/rtps/persistence/SQLite3PersistenceService.cpp
+@@ -22,7 +22,7 @@
+ #include <fastdds/dds/log/Log.hpp>
+ #include <fastdds/rtps/history/WriterHistory.hpp>
+ 
+-#include <rtps/persistence/sqlite3.h>
++#include <sqlite3.h>
+ 
+ #include <sstream>
+ 
+--- a/src/cpp/rtps/persistence/SQLite3PersistenceService.h
++++ b/src/cpp/rtps/persistence/SQLite3PersistenceService.h
+@@ -20,7 +20,7 @@
+ #define SQLITE3PERSISTENCESERVICE_H_
+ 
+ #include <rtps/persistence/PersistenceService.h>
+-#include <rtps/persistence/sqlite3.h>
++#include <sqlite3.h>
+ 
+ namespace eprosima {
+ namespace fastdds {
+--- a/src/cpp/source.cmake
++++ b/src/cpp/source.cmake
+@@ -316,7 +316,6 @@ endif()
+ #SQLITE3 persistence service sources
+ set(${PROJECT_NAME}_sqlite3_source_files
+     ${FASTDDS_SOURCE_DIR}/rtps/persistence/SQLite3PersistenceService.cpp
+-    ${FASTDDS_SOURCE_DIR}/rtps/persistence/sqlite3.c
+     )
+ 
+ if(SQLITE3_SUPPORT)

@@ -1,0 +1,84 @@
+commit 49b122083dfbfd097008cfa7454c18f252c78847
+Author: Laurent Goderre <laurent.goderre@docker.com>
+Date:   Fri Oct 9 15:22:49 2026 -0400
+
+    fix deploying drivers in newer Kubernetes versions
+    
+    in Kubernetes v1.34 the feature gate RecoverVolumeExpansionFailure is no longer present so the CSI resizer enters a CrashLoopBackOff. This inspects the feature gates before supporting it.
+    
+    Signed-off-by: Laurent Goderre <laurent.goderre@docker.com>
+
+diff --git a/go.mod b/go.mod
+index cd72b257..b67e00f7 100644
+--- a/go.mod
++++ b/go.mod
+@@ -11,6 +11,7 @@ require (
+ 	k8s.io/api v0.37.1
+ 	k8s.io/apimachinery v0.37.1
+ 	k8s.io/client-go v0.37.1
++	k8s.io/component-base v0.37.0
+ 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
+ 	sigs.k8s.io/controller-runtime v0.25.1
+ )
+@@ -98,7 +99,6 @@ require (
+ 	gopkg.in/inf.v0 v0.9.1 // indirect
+ 	k8s.io/apiextensions-apiserver v0.37.0 // indirect
+ 	k8s.io/apiserver v0.37.0 // indirect
+-	k8s.io/component-base v0.37.0 // indirect
+ 	k8s.io/klog/v2 v2.140.0 // indirect
+ 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
+ 	k8s.io/streaming v0.37.1 // indirect
+diff --git a/internal/utils/csi.go b/internal/utils/csi.go
+index cedf754c..4386a49f 100644
+--- a/internal/utils/csi.go
++++ b/internal/utils/csi.go
+@@ -18,9 +18,12 @@ package utils
+ 
+ import (
+ 	"fmt"
++	"maps"
++	"slices"
+ 	"strings"
+ 
+ 	corev1 "k8s.io/api/core/v1"
++	"k8s.io/component-base/featuregate"
+ 	"k8s.io/utils/ptr"
+ )
+ 
+@@ -43,6 +46,9 @@ const (
+ 	logRotateDirVolumeName = "log-rotate-dir"
+ )
+ 
++var featureGate = featuregate.NewFeatureGate()
++var knownFeatures = slices.Collect(maps.Keys(featureGate.GetAll()))
++
+ // Ceph CSI common volumes
+ var SocketDirVolume = corev1.Volume{
+ 	Name: "socket-dir",
+@@ -400,8 +406,8 @@ var PoolTimeContainerArg = "--polltime=60s"
+ var ExtraCreateMetadataContainerArg = "--extra-create-metadata=true"
+ var ExtraSingleWorkerThreadContainerArg = "--worker-threads=1"
+ var PreventVolumeModeConversionContainerArg = "--prevent-volume-mode-conversion=true"
+-var RecoverVolumeExpansionFailureContainerArg = "--feature-gates=RecoverVolumeExpansionFailure=true"
+-var EnableVolumeGroupSnapshotsContainerArg = "--feature-gates=CSIVolumeGroupSnapshot=true"
++var RecoverVolumeExpansionFailureContainerArg = getFeatureGate("RecoverVolumeExpansionFailure", "true")
++var EnableVolumeGroupSnapshotsContainerArg = getFeatureGate("CSIVolumeGroupSnapshot", "true")
+ var ForceCephKernelClientContainerArg = "--forcecephkernelclient=true"
+ var LogToStdErrContainerArg = "--logtostderr=false"
+ var AlsoLogToStdErrContainerArg = "--alsologtostderr=true"
+@@ -498,3 +504,15 @@ func GetExtraArgsForContainer(containerName string, extraArgs map[string][]strin
+ 	}
+ 	return extraArgs[containerName]
+ }
++
++func getFeatureGate(name, value string) string {
++	supportedFeatureGate := slices.ContainsFunc(knownFeatures, func(f featuregate.Feature) bool {
++		return string(f) == name
++	})
++
++	if supportedFeatureGate {
++		return fmt.Sprintf("--feature-gates=%s=%s", name, value)
++	}
++
++	return ""
++}

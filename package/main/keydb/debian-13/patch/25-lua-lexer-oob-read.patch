@@ -1,0 +1,183 @@
+Lua lexer: fix out-of-bounds read on long-bracket separators (CVE-2025-46819)
+
+The Lua 5.1 lexer counted the '=' characters of a long-bracket
+separator ('[==[' / ']==]') in an int and encoded the failure case as
+(-count) - 1; a separator longer than INT_MAX wrapped the count and let
+read_long_string() compute an out-of-range buffer offset (out-of-bounds
+read). luaX_setinput also left ls->t.token uninitialised, so an early
+lexer error could format a "near <garbage>" message from stale memory.
+skip_sep now returns a size_t (well-formed: count + 2; '[' alone: 1;
+unfinished '[=..': 0), read_long_string takes the same size_t, and
+ls->t.token is zeroed on setinput.
+
+Tracker: CVE-2025-46819
+Upstream patch: https://github.com/redis/redis/commit/ef22554057e50c67d0f8d0ede39483358356321f
+Adaptation: deps/lua/src/llex.c in KeyDB v6.3.4 is byte-identical to the Redis 6.2 parent, so the llex.c hunks are carried verbatim. The Tcl regression tests are ported too: tests/support/server.tcl uses $::tags because KeyDB's tags_acceptable has no local 'tags' copy; the "large-memory" gate in tests/test_helper.tcl is inserted after 'set ::dump_logs 0' (KeyDB has no ::singledb line); the new scripting.tcl stanza is appended at the end of the file since KeyDB lacks the lua-enable-deprecated-api stanza used as upstream context.
+
+diff --git a/deps/lua/src/llex.c b/deps/lua/src/llex.c
+--- a/deps/lua/src/llex.c
++++ b/deps/lua/src/llex.c
+@@ -138,6 +138,7 @@
+ 
+ 
+ void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source) {
++  ls->t.token = 0;
+   ls->decpoint = '.';
+   ls->L = L;
+   ls->lookahead.token = TK_EOS;  /* no look-ahead token */
+@@ -206,9 +207,13 @@
+     trydecpoint(ls, seminfo); /* try to update decimal point separator */
+ }
+ 
+-
+-static int skip_sep (LexState *ls) {
+-  int count = 0;
++/*
++** reads a sequence '[=*[' or ']=*]', leaving the last bracket.
++** If a sequence is well-formed, return its number of '='s + 2; otherwise,
++** return 1 if there is no '='s or 0 otherwise (an unfinished '[==...').
++*/
++static size_t skip_sep (LexState *ls) {
++  size_t count = 0;
+   int s = ls->current;
+   lua_assert(s == '[' || s == ']');
+   save_and_next(ls);
+@@ -216,11 +221,13 @@
+     save_and_next(ls);
+     count++;
+   }
+-  return (ls->current == s) ? count : (-count) - 1;
++   return (ls->current == s) ? count + 2
++          : (count == 0) ? 1
++          : 0;
+ }
+ 
+ 
+-static void read_long_string (LexState *ls, SemInfo *seminfo, int sep) {
++static void read_long_string (LexState *ls, SemInfo *seminfo, size_t sep) {
+   int cont = 0;
+   (void)(cont);  /* avoid warnings when `cont' is not used */
+   save_and_next(ls);  /* skip 2nd `[' */
+@@ -270,8 +277,8 @@
+     }
+   } endloop:
+   if (seminfo)
+-    seminfo->ts = luaX_newstring(ls, luaZ_buffer(ls->buff) + (2 + sep),
+-                                     luaZ_bufflen(ls->buff) - 2*(2 + sep));
++    seminfo->ts = luaX_newstring(ls, luaZ_buffer(ls->buff) + sep,
++                                     luaZ_bufflen(ls->buff) - 2 * sep);
+ }
+ 
+ 
+@@ -346,9 +353,9 @@
+         /* else is a comment */
+         next(ls);
+         if (ls->current == '[') {
+-          int sep = skip_sep(ls);
++          size_t sep = skip_sep(ls);
+           luaZ_resetbuffer(ls->buff);  /* `skip_sep' may dirty the buffer */
+-          if (sep >= 0) {
++          if (sep >= 2) {
+             read_long_string(ls, NULL, sep);  /* long comment */
+             luaZ_resetbuffer(ls->buff);
+             continue;
+@@ -360,13 +367,14 @@
+         continue;
+       }
+       case '[': {
+-        int sep = skip_sep(ls);
+-        if (sep >= 0) {
++        size_t sep = skip_sep(ls);
++        if (sep >= 2) {
+           read_long_string(ls, seminfo, sep);
+           return TK_STRING;
+         }
+-        else if (sep == -1) return '[';
+-        else luaX_lexerror(ls, "invalid long string delimiter", TK_STRING);
++        else if (sep == 0)  /* '[=...' missing second bracket */
++          luaX_lexerror(ls, "invalid long string delimiter", TK_STRING);
++        return '[';
+       }
+       case '=': {
+         next(ls);
+diff --git a/tests/support/server.tcl b/tests/support/server.tcl
+--- a/tests/support/server.tcl
++++ b/tests/support/server.tcl
+@@ -183,6 +183,11 @@
+         }
+     }
+ 
++    if {!$::large_memory && [lsearch $::tags "large-memory"] >= 0} {
++        set err "large memory flag not provided"
++        return 0
++    }
++
+     return 1
+ }
+ 
+diff --git a/tests/test_helper.tcl b/tests/test_helper.tcl
+--- a/tests/test_helper.tcl
++++ b/tests/test_helper.tcl
+@@ -127,6 +127,7 @@
+ set ::wait_server 0
+ set ::stop_on_failure 0
+ set ::dump_logs 0
++set ::large_memory 0
+ set ::loop 0
+ set ::endurance 0
+ set ::tlsdir "tests/tls"
+@@ -671,6 +672,8 @@
+     } elseif {$opt eq {--single}} {
+         lappend ::single_tests $arg
+         incr j
++    } elseif {$opt eq {--large-memory}} {
++        set ::large_memory 1
+     } elseif {$opt eq {--only}} {
+         lappend ::only_tests $arg
+         incr j
+diff --git a/tests/unit/scripting.tcl b/tests/unit/scripting.tcl
+--- a/tests/unit/scripting.tcl
++++ b/tests/unit/scripting.tcl
+@@ -983,3 +983,42 @@
+         assert_match {*Unknown Redis Lua debugger command*} $e
+     }
+ }
++
++# start a new server to test the large-memory tests
++start_server {tags {"scripting external:skip large-memory"}} {
++    test {EVAL - Test long escape sequences for strings} {
++        r eval {
++            -- Generate 1gb '==...==' separator
++            local s = string.rep('=', 1024 * 1024)
++            local t = {} for i=1,1024 do t[i] = s end
++            local sep = table.concat(t)
++            collectgarbage('collect')
++
++            local code = table.concat({'return [',sep,'[x]',sep,']'})
++            collectgarbage('collect')
++
++            -- Load the code and run it. Script will return the string length.
++            -- Escape sequence: [=....=[ to ]=...=] will be ignored
++            -- Actual string is a single character: 'x'. Script will return 1
++            local func = loadstring(code)
++            return #func()
++        } 0
++    } {1}
++
++    test {EVAL - Lua can parse string with too many new lines} {
++        # Create a long string consisting only of newline characters. When Lua
++        # fails to parse a string, it typically includes a snippet like
++        # "... near ..." in the error message to indicate the last recognizable
++        # token. In this test, since the input contains only newlines, there
++        # should be no identifiable token, so the error message should contain
++        # only the actual error, without a near clause.
++
++        r eval {
++           local s = string.rep('\n', 1024 * 1024)
++           local t = {} for i=1,2048 do t[#t+1] = s end
++           local lines = table.concat(t)
++           local fn, err = loadstring(lines)
++           return err
++        } 0
++    } {*chunk has too many lines}
++}

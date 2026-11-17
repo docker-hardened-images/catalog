@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-grafana-loki-datasource
+variant: runtime
+tags:
+  - 13.2.5-alpine3.24
+  - 13.2.5-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: e1c13be93b47207460dd12d2a61b6a56849d0612
+  GOLANG_VERSION: 1.27.4-r1
+  NODEJS_VERSION: 24.22.3-r0
+  NPM_VERSION: 11.21.2-r2
+  PACKAGE_NAME: grafana-loki-datasource-13
+  PLUGIN_ARCH: '#{ target.arch }'
+  PLUGIN_DIR: usr/share/grafana/data/plugins-bundled/loki
+  PLUGIN_EXECUTABLE: gpx_grafana-loki-datasource
+  PLUGIN_ID: loki
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "13.2"
+  SEMVER_MAJOR_VERSION: "13"
+  SEMVER_VERSION: 13.2.5
+  VERSION: 13.2.5
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: grafana-loki-datasource-13
+      work-dir: /go/src/github.com/grafana/grafana-loki-datasource
+      caches:
+        - path: /root/.cache/go-build
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - jq
+          - mawk
+          - nodejs-24=24.22.3-r0
+          - npm=11.21.2-r2
+          - sed
+        files:
+          - url: git+https://github.com/grafana/grafana-loki-datasource.git#v13.2.5
+            checksum: e1c13be93b47207460dd12d2a61b6a56849d0612
+            path: /go/src/github.com/grafana/grafana-loki-datasource
+            spdx:
+              name: grafana-loki-datasource
+              version: 13.2.5
+              packages:
+                - name: grafana-loki-datasource
+                  purl: pkg:golang/github.com/grafana/grafana-loki-datasource@13.2.5
+                  license: AGPL-3.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump frontend dependencies
+          uses: npm/bump@v1
+          work-dir: /go/src/github.com/grafana/grafana-loki-datasource
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            npm-root: /go/src/github.com/grafana/grafana-loki-datasource
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+              - github.com/klauspost/compress@v1.20.2
+            download: true
+        - uses: go/hermetic@v1
+        - name: build frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export HUSKY=0
+            export NODE_OPTIONS=--max_old_space_size=4096
+
+            npm ci
+            NODE_ENV=production npm run build
+
+            test -f dist/module.js
+            test -f dist/plugin.json
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -short -count=1 ./pkg/...
+        - name: prune frontend dependencies
+          runs: |
+            set -eux -o pipefail
+
+            npm prune --omit=dev --ignore-scripts
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: grafana-loki-datasource-frontend
+            source: /go/src/github.com/grafana/grafana-loki-datasource/node_modules
+        - name: write build info flag
+          runs: |
+            set -eux -o pipefail
+
+            printf '%s' "-X 'github.com/grafana/grafana-plugin-sdk-go/build/buildinfo.buildInfoJSON={\\\"time\\\":$((SOURCE_DATE_EPOCH * 1000)),\\\"pluginID\\\":\\\"loki\\\",\\\"version\\\":\\\"13.2.5\\\"}'" > /tmp/buildinfo.flag
+        - name: stage frontend
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/share/grafana/data/plugins-bundled/loki"
+            cp -a dist/. "${target.dir}/usr/share/grafana/data/plugins-bundled/loki/"
+
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/grafana-loki-datasource-frontend "${target.dir}/opt/docker/sbom/"
+        - name: build backend
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -X main.pluginID=loki
+              - -X main.version=13.2.5
+              - $(cat /tmp/buildinfo.flag)
+            output: ${target.dir}/usr/share/grafana/data/plugins-bundled/loki/gpx_grafana-loki-datasource_linux_${PLUGIN_ARCH}
+            packages: ./pkg
+            tags: arrow_json_stdlib
+        - name: verify payload
+          runs: |
+            set -eux -o pipefail
+
+            dest="${target.dir}/usr/share/grafana/data/plugins-bundled/loki"
+
+            find "$dest" -type d -exec chmod 0755 {} +
+            find "$dest" -type f -exec chmod 0644 {} +
+            chmod 0755 "$dest/gpx_grafana-loki-datasource_linux_${PLUGIN_ARCH}"
+
+            jq -e --arg id "loki" --arg exe "gpx_grafana-loki-datasource" \
+              '.id == $id and .executable == $exe and .backend == true' "$dest/plugin.json"
+            test -f "$dest/module.js"
+            go version -m "$dest/gpx_grafana-loki-datasource_linux_${PLUGIN_ARCH}" | grep -F 'build'$'\t''CGO_ENABLED=0'
+            go version -m "$dest/gpx_grafana-loki-datasource_linux_${PLUGIN_ARCH}" | grep -F 'buildInfoJSON={\"time\":'
+        - uses: dhi/build-pkg:0
+          with:
+            description: Grafana Loki data source plugin
+            files:
+              - usr/share/grafana/data/plugins-bundled/loki
+              - opt/docker/sbom/grafana-loki-datasource-frontend
+            license: AGPL-3.0
+            name: grafana-loki-datasource-13
+            rel: 0
+            url: https://github.com/grafana/grafana-loki-datasource
+            version: 13.2.5
+      paths:
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/grafana-loki-datasource/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

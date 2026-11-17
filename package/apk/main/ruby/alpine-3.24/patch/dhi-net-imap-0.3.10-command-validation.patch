@@ -1,0 +1,212 @@
+Subject: Backport net-imap 0.4 command checks onto 0.3.10
+
+Ruby 3.2 bundles net-imap 0.3.9. The 0.5.15 gem changes header field quoting, replaces MessageSet with SequenceSet, and deletes client_thread plus the BodyType structs. These checks keep the 0.3 calling convention and reject the command-smuggling inputs fixed on the 0.4 line.
+
+Origin: backport, https://github.com/ruby/net-imap/commit/bfdae2143caac77d506f5af93213d17b1f96bb30, https://github.com/ruby/net-imap/commit/bbd9eb7ecca506fa43b656368f7aebef8ac09182, https://github.com/ruby/net-imap/commit/a3c3d7f5baa4a4d84802e3227373f2a20b61ccc7, https://github.com/ruby/net-imap/commit/d2b23602e8617311900a9b3acf0c8d708b70bad4, https://github.com/ruby/net-imap/commit/6dd110bfda6b47da9c294791ef16911bd1f49033, https://github.com/ruby/net-imap/commit/892da94f5c6034028a3aabf27d5981bd41be249c, https://github.com/ruby/net-imap/commit/7449e180ad6d4211624b7e25138d0b17a86da0fc, https://github.com/ruby/net-imap/commit/7228b22b81a49198172fb111a343fef80236bbf5, https://github.com/ruby/net-imap/commit/2922a38fdaea440009c14642e00e39c5eec48582
+CVE: CVE-2026-42245
+CVE: CVE-2026-42257
+CVE: CVE-2026-42258
+CVE: CVE-2026-47240
+CVE: CVE-2026-47241
+CVE: CVE-2026-47242
+Base-Tree: git https://github.com/ruby/net-imap.git ec89812d3c986d6394d3bc0b93048e704aec6af9
+Adaptation: ResponseReader scans the latest line only, matching bfdae2143c, and does not keep the unreachable duplicate done? definition left in the 0.4.24 file. Symbol checks follow bbd9eb7ecca for atom specials and 2922a38fdae for the empty-flag rejection. STORE attr atoms, SETQUOTA Integer limits, RawData literal parsing, the trailing continuation rejection, and quoted-string NULL/CR/LF rejection follow the cited commits. The 0.4 CommandData class split is not imported, so MessageSet remains and RawData send_data is still one put_string after validation. Non-synchronizing "{n+}" markers inside RawData are rejected instead of the LITERAL+ and LITERAL- capability check in 7228b22b81, because 0.3 send_literal never writes them.
+Verify: cmd `patch -p1 --dry-run --forward --input dhi-net-imap-0.3.10-command-validation.patch` expect "checking file lib/net/imap/command_data.rb"
+
+diff --git a/lib/net/imap.rb b/lib/net/imap.rb
+index 812a2b7..4d76160 100644
+--- a/lib/net/imap.rb
++++ b/lib/net/imap.rb
+@@ -1464,11 +1464,11 @@ module Net
+     # [RFC2087[https://tools.ietf.org/html/rfc2087]].
+     def setquota(mailbox, quota)
+       if quota.nil?
+-        data = '()'
++        data = []
+       else
+-        data = '(STORAGE ' + quota.to_s + ')'
++        data = ["STORAGE", Integer(quota)]
+       end
+-      send_command("SETQUOTA", mailbox, RawData.new(data))
++      send_command("SETQUOTA", mailbox, data)
+     end
+
+     # Sends a {SETACL command [RFC4314 §3.1]}[https://www.rfc-editor.org/rfc/rfc4314#section-3.1]
+@@ -2399,7 +2399,7 @@ module Net
+
+     def store_internal(cmd, set, attr, flags)
+       if attr.instance_of?(String)
+-        attr = RawData.new(attr)
++        validate_atom!(attr)
+       end
+       synchronize do
+         @responses.delete("FETCH")
+diff --git a/lib/net/imap/command_data.rb b/lib/net/imap/command_data.rb
+index f163a6b..c82fb8a 100644
+--- a/lib/net/imap/command_data.rb
++++ b/lib/net/imap/command_data.rb
+@@ -25,6 +25,7 @@ module Net
+         end
+       when Time, Date, DateTime
+       when Symbol
++        validate_flag!(data)
+       else
+         data.validate
+       end
+@@ -67,6 +68,7 @@ module Net
+     end
+
+     def send_quoted_string(str)
++      reject_non_literal_bytes!(str)
+       put_string('"' + str.gsub(/["\\]/n, "\\\\\\&") + '"')
+     end
+
+@@ -109,15 +111,78 @@ module Net
+     def send_time_data(time) put_string Net::IMAP.encode_time(time) end
+
+     def send_symbol_data(symbol)
++      validate_flag!(symbol)
+       put_string("\\" + symbol.to_s)
+     end
+
++    # ruby/net-imap@bbd9eb7ecc and @2922a38fda. 0.3 always sends symbols as flags.
++    def validate_flag!(symbol)
++      name = symbol.to_s
++      if name.empty? || !name.ascii_only? || name.match?(/[(){ \x00-\x1f\x7f%*"\\\]]/n)
++        raise DataFormatError, "invalid flag: %p" % [symbol]
++      end
++      name
++    end
++
++    # ruby/net-imap@a3c3d7f5ba. STORE attr is an atom, not raw text.
++    def validate_atom!(str)
++      name = String(str)
++      if name.empty? || !name.ascii_only? || name.match?(/[(){ \x00-\x1f\x7f%*"\\\]]/n)
++        raise DataFormatError, "invalid atom: %p" % [str]
++      end
++      name
++    end
++
++    # ruby/net-imap@7449e180ad. Quoted text cannot carry NULL, CR, or LF.
++    def reject_non_literal_bytes!(str)
++      str = String(str)
++      if str.include?("\0") || /[\r\n]/.match?(str)
++        raise DataFormatError, "NULL, CR, and LF must be literal encoded"
++      end
++      str
++    end
++
+     class RawData # :nodoc:
+       def send_data(imap, tag)
+         imap.__send__(:put_string, @data)
+       end
+
++      # ruby/net-imap@6dd110bfda and @892da94f5c, adapted to 0.3's single string.
++      # Synchronizing literals stay allowed. A non-synchronizing "{n+}" marker
++      # is rejected: 0.3 never emits those, and a raw argument must not smuggle one.
+       def validate
++        rest = String(@data).b
++        while rest.match(/(~)?\{(0|[1-9]\d*)(\+)?}\r\n/n)
++          text, plus, bytesize, rest = $`, $3, Integer($2, 10), $'
++          if plus
++            raise DataFormatError, "RawData cannot contain a non-synchronizing literal"
++          end
++          reject_non_literal_text!(text)
++          if rest.bytesize < bytesize
++            raise DataFormatError, "Too few bytes in string for literal, " \
++              "expected: %s, remaining: %s" % [bytesize, rest.bytesize]
++          end
++          rest = rest.byteslice(bytesize, rest.bytesize - bytesize)
++        end
++        reject_non_literal_text!(rest)
++        if rest.rindex(/\{\d+\+?}\z/n)
++          raise DataFormatError, "RawData cannot end with literal continuation"
++        end
++      end
++
++      def reject_non_literal_text!(text)
++        return if text.nil? || text.empty?
++        sample = text.dup
++        unless sample.encoding == Encoding::US_ASCII || sample.encoding == Encoding::UTF_8
++          sample.force_encoding(sample.ascii_only? ? Encoding::US_ASCII : Encoding::UTF_8)
++        end
++        if !sample.valid_encoding?
++          raise DataFormatError, "invalid UTF-8 must be literal encoded"
++        elsif sample.include?("\0")
++          raise DataFormatError, "NULL byte must be binary literal encoded"
++        elsif /[\r\n]/.match?(sample)
++          raise DataFormatError, "CR and LF bytes must be literal encoded"
++        end
+       end
+
+       private
+@@ -148,12 +213,17 @@ module Net
+       end
+
+       def validate
++        str = String(@data)
++        if str.include?("\0") || /[\r\n]/.match?(str)
++          raise DataFormatError, "NULL, CR, and LF must be literal encoded"
++        end
+       end
+
+       private
+
+       def initialize(data)
+         @data = data
++        validate
+       end
+     end
+
+diff --git a/lib/net/imap/response_reader.rb b/lib/net/imap/response_reader.rb
+index fd7561f..96c93f9 100644
+--- a/lib/net/imap/response_reader.rb
++++ b/lib/net/imap/response_reader.rb
+@@ -8,6 +8,7 @@ module Net
+
+       def initialize(client, sock)
+         @client, @sock = client, sock
++        @buff = @literal_size = nil
+       end
+
+       def read_response_buffer
+@@ -15,13 +16,13 @@ module Net
+         catch :eof do
+           while true
+             read_line
+-            break unless (@literal_size = get_literal_size)
++            break unless literal_size
+             read_literal
+           end
+         end
+         buff
+       ensure
+-        @buff = nil
++        @buff = @literal_size = nil
+       end
+
+       private
+@@ -30,13 +31,20 @@ module Net
+
+       def bytes_read;       buff.bytesize                         end
+       def empty?;           buff.empty?                           end
+-      def done?;            line_done? && !get_literal_size       end
++      def done?;            line_done? && !literal_size           end
+       def line_done?;       buff.end_with?(CRLF)                  end
+-      def get_literal_size; /\{(\d+)\}\r\n\z/n =~ buff && $1.to_i end
++
++      # Scan only the line just read. Matching the accumulated buffer is
++      # quadratic in the number of literals (ruby/net-imap@bfdae2143c).
++      def get_literal_size(line)
++        line.end_with?("}\r\n") && line.rindex(/\{(\d+)\}\r\n\z/n) && $1.to_i
++      end
+
+       def read_line
+-        buff << (@sock.gets(CRLF, read_limit) or throw :eof)
++        line = (@sock.gets(CRLF, read_limit) or throw :eof)
++        buff << line
+         max_response_remaining! unless line_done?
++        @literal_size = get_literal_size(line)
+       end
+
+       def read_literal

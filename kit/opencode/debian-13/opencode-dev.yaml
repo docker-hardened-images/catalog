@@ -1,0 +1,314 @@
+schemaVersion: '3'
+displayName: OpenCode
+description: OpenCode coding workload with native ACP, proxy-managed provider credentials, and MCP setup.
+sourceUrl: https://github.com/anomalyco/opencode
+kind: workload
+args:
+  version:
+    required: true
+    pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    description: OpenCode release the image carries
+    buildArg: VERSION
+provides:
+  - opencode@${{ kit.args.version }}
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.anthropic.com:443
+          - claude.ai:443
+          - console.anthropic.com:443
+          - api.business.githubcopilot.com:443
+          - api.enterprise.githubcopilot.com:443
+          - api.github.com:443
+          - api.githubcopilot.com:443
+          - api.individual.githubcopilot.com:443
+          - copilot.github.com:443
+          - github.com:443
+          - '*.githubusercontent.com:443'
+          - raw.githubusercontent.com:443
+          - codeload.github.com:443
+          - aiplatform.googleapis.com:443
+          - generativelanguage.googleapis.com:443
+          - oauth2.googleapis.com:443
+          - vertexai.googleapis.com:443
+          - api.groq.com:443
+          - api.openai.com:443
+          - openai.com:443
+          - auth.openai.com:443
+          - chatgpt.com:443
+          - openrouter.ai:443
+          - api.x.ai:443
+          - registry.npmjs.org:443
+          - opencode.ai:443
+          - '*.opencode.ai:443'
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: GitHub and Copilot access
+    config:
+      service: github
+      phase: runtime
+      apiKey:
+        name: GITHUB_TOKEN
+        proxyManaged: true
+        inject:
+          - domain: api.business.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.enterprise.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.github.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: api.individual.githubcopilot.com
+            header: Authorization
+            format: Bearer %s
+          - domain: copilot.github.com
+            header: Authorization
+            format: Bearer %s
+          - domain: github.com
+            header: Authorization
+            format: Bearer %s
+          - domain: raw.githubusercontent.com
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Google AI API access
+    config:
+      service: google
+      phase: runtime
+      apiKey:
+        name: GOOGLE_GENERATIVE_AI_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: aiplatform.googleapis.com
+            header: x-goog-api-key
+            format: '%s'
+          - domain: generativelanguage.googleapis.com
+            header: x-goog-api-key
+            format: '%s'
+          - domain: oauth2.googleapis.com
+            header: x-goog-api-key
+            format: '%s'
+          - domain: vertexai.googleapis.com
+            header: x-goog-api-key
+            format: '%s'
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Groq API access
+    config:
+      service: groq
+      phase: runtime
+      apiKey:
+        name: GROQ_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.groq.com
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenAI API access (API key or ChatGPT OAuth)
+    config:
+      service: openai
+      phase: runtime
+      apiKey:
+        name: OPENAI_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.openai.com
+            header: Authorization
+            format: Bearer %s
+          - domain: openai.com
+            header: Authorization
+            format: Bearer %s
+      oauth:
+        tokenEndpoint:
+          host: auth.openai.com
+          path: /oauth/token
+        resourceHosts:
+          - chatgpt.com
+        sentinels:
+          accessToken: oai-oat01-proxy-managed
+          refreshToken: oai-ort01-proxy-managed
+        credentialFile:
+          path: ~/.local/share/opencode/auth.json
+          structure:
+            openai:
+              type: oauth
+              access: '{{.AccessToken}}'
+              refresh: '{{.RefreshToken}}'
+              expires: '{{.ExpiresAt}}'
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: Anthropic API access
+    config:
+      service: anthropic
+      phase: runtime
+      apiKey:
+        name: ANTHROPIC_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.anthropic.com
+            header: x-api-key
+            format: '%s'
+          - domain: claude.ai
+            header: x-api-key
+            format: '%s'
+          - domain: console.anthropic.com
+            header: x-api-key
+            format: '%s'
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: OpenRouter API access
+    config:
+      service: openrouter
+      phase: runtime
+      apiKey:
+        name: OPENROUTER_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: openrouter.ai
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: xAI API access
+    config:
+      service: xai
+      phase: runtime
+      apiKey:
+        name: XAI_API_KEY
+        proxyManaged: true
+        inject:
+          - domain: api.x.ai
+            header: Authorization
+            format: Bearer %s
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: mkdir -p /home/agent/.config/opencode && chown agent:agent /home/agent/.config /home/agent/.config/opencode
+          user: '0'
+          description: Ensure ~/.config/opencode is owned by agent
+      startup:
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            mkdir -p "$HOME/.config/opencode"
+            cfg="$HOME/.config/opencode/opencode.json"
+            frag=/tmp/sandbox-mcp-gateway.json
+            jq -n --arg url "$MCP_GATEWAY_URL" --arg auth "Bearer $MCP_SENTINEL_TOKEN_NAME" \
+              '{"$schema": "https://opencode.ai/config.json", mcp: {"mcp-gateway": {type: "remote", url: $url, enabled: true, headers: {Authorization: $auth}}}}' > "$frag"
+            [ -f "$cfg" ] || echo '{}' > "$cfg"
+            jq -s '.[0] * .[1]' "$cfg" "$frag" > "$cfg.tmp"
+            mv "$cfg.tmp" "$cfg"
+            rm -f "$frag"
+          user: agent
+          env:
+            - MCP_GATEWAY_URL
+            - MCP_SENTINEL_TOKEN_NAME
+          description: Register the sandbox MCP gateway by merging into opencode.json
+        - command:
+            - sh
+            - -c
+            - |
+              set -e
+              umask 077
+              # Local sandboxes always carry GH_TOKEN and say via the mode var whether a
+              # credential backs it; cloud sets GH_TOKEN only when one does and no mode var.
+              [ -n "${GH_TOKEN:-}" ] || exit 0
+              [ "${SBX_CRED_GITHUB_MODE:-}" != none ] || exit 0
+              auth="$HOME/.local/share/opencode/auth.json"
+              mkdir -p "$(dirname "$auth")"
+              # A canceled start can leave its seed running; retries must recheck auth.json after it finishes.
+              exec 9>>"$(dirname "$auth")/.copilot-seed.lock"
+              flock 9
+              # mv would nest the seed inside a directory here and still exit 0.
+              if [ -e "$auth" ] && [ ! -f "$auth" ]; then
+                echo "auth.json is not a regular file; leaving the GitHub Copilot provider unseeded" >&2
+                exit 0
+              fi
+              # Every start re-fires this seed. One pass keeps an entry that fits OpenCode's Oauth schema and still
+              # carries the token as refresh (so an exchanged access survives), leaves a malformed file alone, and re-seeds the rest.
+              if ! merged=$({ if [ -s "$auth" ]; then cat "$auth"; else echo '{}'; fi; } | jq -s --arg token "$GH_TOKEN" '
+                  if length != 1 or (.[0] | type) != "object" then error("auth.json must hold exactly one JSON object")
+                  elif (.[0]."github-copilot" | type == "object" and .type == "oauth" and .refresh == $token
+                        and (.access | type) == "string" and (.expires | type == "number" and . >= 0 and . == floor)
+                        and ((has("accountId") | not) or (.accountId | type) == "string")
+                        and ((has("enterpriseUrl") | not) or (.enterpriseUrl | type) == "string")) then empty
+                  else .[0] | ."github-copilot" = {type: "oauth", refresh: $token, access: $token, expires: 0} end'); then
+                echo "auth.json is not a single JSON object; leaving the GitHub Copilot provider unseeded" >&2
+                exit 0
+              fi
+              [ -n "$merged" ] || exit 0
+              # The temp name is unpredictable, so a stale or crashed leftover is never installed. The
+              # same uid owns this directory, so no write pattern here is a boundary against a co-resident process.
+              tmp=$(mktemp "$(dirname "$auth")/auth.json.XXXXXX")
+              trap 'rm -f "$tmp"' EXIT
+              printf '%s\n' "$merged" > "$tmp"
+              mv -f "$tmp" "$auth"
+          user: "agent"
+          env: [GH_TOKEN, SBX_CRED_GITHUB_MODE]
+          description: Seed OpenCode's GitHub Copilot provider from the GH_TOKEN sentinel
+  - type: com.docker.sandbox/agent-sessions@1
+    config:
+      prompt:
+        - run
+        - '{{.Prompt}}'
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    config:
+      prompt:
+        - --prompt={{.Prompt}}
+      continue:
+        - --continue
+      resume:
+        - --session
+        - '{{.SessionID}}'
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.config/opencode/skills
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent/.config/opencode
+      content: |
+        # OpenCode
+
+        This sandbox runs OpenCode, a multi-provider coding agent. Provider keys
+        are proxy-managed sentinels; ChatGPT-subscription OAuth renders into
+        ~/.local/share/opencode/auth.json for OpenCode's codex auth plugin.
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent/.config/opencode
+      content: |
+        # OpenCode
+
+        This sandbox runs OpenCode, a multi-provider coding agent. Provider keys
+        are proxy-managed sentinels; ChatGPT-subscription OAuth renders into
+        ~/.local/share/opencode/auth.json for OpenCode's codex auth plugin.
+  - type: com.docker.sandbox/dockerd@1
+    optional: true
+  - type: com.docker.sandbox/acp@1
+    optional: true
+    config:
+      agent: opencode
+      command:
+        - opencode
+        - acp
+licenses:
+  - MIT
+version: ${{ kit.args.version }}

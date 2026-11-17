@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+
+# valkey 9.1's gtest unit tests reuse the C CFLAGS to compile C++ sources, so drop
+# the C-only -Werror flag dpkg injects (invalid for the C++ compiler).
+export DEB_CFLAGS_MAINT_STRIP = -Werror=implicit-function-declaration
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) BUILD_TLS=yes -j$$(nproc)
+
+# valkey's `make install` ignores DESTDIR, so stage into debian/tmp via PREFIX.
+# USE_REDIS_SYMLINKS=no leaves the redis-* compatibility symlinks to the
+# debian/*.links files so each lands in the right binary package.
+override_dh_auto_install:
+	$(MAKE) install BUILD_TLS=yes USE_REDIS_SYMLINKS=no \
+		PREFIX=$(CURDIR)/debian/tmp/usr
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+# valkey builds with link-time optimization (-flto=auto), whose output dwz
+# cannot process; skip DWARF optimization.
+override_dh_dwz:
+
+# Run upstream's in-process test-unit where it exists (8.0 and later); the 7.2
+# line has no test-unit target. The 9.1 suite needs googletest/gmock, carried as
+# build deps.
+override_dh_auto_test:
+	if grep -q '^test-unit:' src/Makefile; then $(MAKE) test-unit BUILD_TLS=yes; fi
+
+# The source is a fresh checkout each build, so there is nothing to clean.
+override_dh_auto_clean:

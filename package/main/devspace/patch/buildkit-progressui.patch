@@ -1,0 +1,29 @@
+Subject: Adapt DevSpace localregistry printer for buildkit v0.31 progressui API
+
+Origin: DHI-internal (buildkit v0.31 API compatibility)
+Description: Replace removed DisplaySolveStatus with NewDisplay and UpdateFrom for local registry build progress output.
+Base-Tree: git https://github.com/loft-sh/devspace.git 7f272dcf90653fa9b42bc4347f7f3f9a52b0e8b5
+Verify: test alpine-3.23/6.yaml
+Forwarded: not-needed (DevSpace 6.3.x has not adopted buildkit v0.31 progress UI yet)
+Drop-When: never: loft-sh/devspace v6.3.21 still calls progressui.DisplaySolveStatus; drop after upstream merges buildkit v0.31 progressui wiring
+
+buildkit v0.31 removed progressui.DisplaySolveStatus in favor of NewDisplay and Display.UpdateFrom. DevSpace 6.3.21 still calls the old API when DHI pins buildkit through go/bump for CVE remediation on github.com/moby/buildkit.
+
+diff --git a/pkg/devspace/build/builder/localregistry/printer.go b/pkg/devspace/build/builder/localregistry/printer.go
+--- a/pkg/devspace/build/builder/localregistry/printer.go
++++ b/pkg/devspace/build/builder/localregistry/printer.go
+@@ -38,7 +38,13 @@ func NewPrinter(ctx context.Context, out io.Writer) (progresswriter.Writer, error
+ 	}
+ 	go func() {
+ 		// not using shared context to not disrupt display but let is finish reporting errors
+-		_, pw.err = progressui.DisplaySolveStatus(ctx, "", nil, out, statusCh)
++		disp, err := progressui.NewDisplay(out, progressui.AutoMode)
++		if err != nil {
++			pw.err = err
++			close(doneCh)
++			return
++		}
++		_, pw.err = disp.UpdateFrom(ctx, statusCh)
+ 		close(doneCh)
+ 	}()
+ 	return pw, nil

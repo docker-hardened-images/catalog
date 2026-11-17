@@ -1,0 +1,172 @@
+schemaVersion: "3"
+displayName: Pi
+description: Earendil Works' pi coding agent on Docker Hardened Images
+licenses: [MIT]
+kind: workload
+args:
+  version:
+    required: true
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: pi release the image carries
+    buildArg: VERSION
+  model:
+    default: ""
+    pattern: '^[A-Za-z0-9._/:-]*$'
+    description: pi model as provider/model or an Anthropic model ID; empty keeps the CLI default
+    env: PI_KIT_MODEL
+  thinkingLevel:
+    default: ""
+    enum: ["", "off", minimal, low, medium, high, xhigh, max]
+    description: Thinking level (settings.json `defaultThinkingLevel`); empty keeps pi's default of medium
+    env: PI_KIT_THINKING_LEVEL
+version: ${{ kit.args.version }}
+provides: ["pi@${{ kit.args.version }}"]
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          - api.anthropic.com:443
+          - platform.claude.com:443
+          - registry.npmjs.org:443
+          - pi.dev:443
+          - deb.debian.org:80
+          - dhi.io:80
+  - type: com.docker.sandbox/credential@1
+    name: Anthropic access
+    optional: true
+    description: Anthropic API access (API key or claude.ai OAuth)
+    config:
+      service: anthropic
+      phase: runtime
+      apiKey:
+        name: ANTHROPIC_API_KEY
+        proxyManaged: true
+        inject:
+          - {domain: api.anthropic.com, header: x-api-key, format: "%s"}
+      oauth:
+        tokenEndpoint: {host: platform.claude.com, path: /v1/oauth/token}
+        resourceHosts: [api.anthropic.com]
+        sentinels:
+          accessToken: sk-ant-oat01-proxy-managed
+          refreshToken: sk-ant-ort01-proxy-managed
+        credentialFile:
+          path: ~/.pi/agent/auth.json
+          structure:
+            anthropic:
+              type: oauth
+              access: "{{.AccessToken}}"
+              refresh: "{{.RefreshToken}}"
+              expires: "{{.ExpiresAt}}"
+  - type: com.docker.sandbox/agent-sessions@1
+    description: Drive pi sessions programmatically
+    config:
+      prompt: ["-p", "--", "{{.Prompt}}"]
+      continue: ["--continue"]
+      resume: ["--session", "{{.SessionID}}"]
+      list: [/opt/pi-sessions/list-sessions.sh]
+  - type: com.docker.sandbox/agent-interactive-sessions@1
+    optional: true
+    description: Open pi's terminal UI on a chosen session
+    config:
+      prompt: ["--", "{{.Prompt}}"]
+      continue: ["--continue"]
+      resume: ["--session", "{{.SessionID}}"]
+      sessionPicker: ["--resume"]
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: mkdir -p /home/agent/.pi/agent && chown agent:agent /home/agent/.pi /home/agent/.pi/agent
+          user: "0"
+          description: Ensure ~/.pi is agent-owned before the settings seed
+        - command: |
+            set -e
+            # The args' patterns admit no quote or backslash, so the expanded
+            # values are safe inside the JSON strings.
+            model='${{ kit.args.model }}'
+            thinking='${{ kit.args.thinkingLevel }}'
+            MODEL=''
+            THINKING=''
+            if [ -n "$model" ]; then
+              provider=anthropic
+              case "$model" in
+                */*) provider=${model%%/*}; model=${model#*/} ;;
+              esac
+              MODEL="  \"defaultProvider\": \"$provider\",
+              \"defaultModel\": \"$model\",
+            "
+            fi
+            [ -z "$thinking" ] || THINKING="  \"defaultThinkingLevel\": \"$thinking\",
+            "
+            mkdir -p /home/agent/.pi/agent
+            printf '%s' "{
+              \"\$schema\": \"https://pi.dev/schemas/settings.schema.json\",
+            ${MODEL}${THINKING}  \"defaultProjectTrust\": \"always\"
+            }
+            " > /home/agent/.pi/agent/settings.json
+          user: agent
+          description: Seed pi settings.json (project trust, model, thinking level)
+        - command: 'if [ -n "${HTTP_PROXY:-}" ]; then npm config set proxy="$HTTP_PROXY" https-proxy="${HTTPS_PROXY:-$HTTP_PROXY}"; fi'
+          user: agent
+          env: [HTTP_PROXY, HTTPS_PROXY]
+          description: Point npm at the sandbox proxy for pi's runtime package installs
+        - command: |
+            set -e
+            [ -n "$MCP_GATEWAY_URL" ] || exit 0
+            pi mcp add mcp-gateway \
+              --url "$MCP_GATEWAY_URL" \
+              --header "Authorization=Bearer $MCP_SENTINEL_TOKEN_NAME"
+          user: agent
+          env: [MCP_GATEWAY_URL, MCP_SENTINEL_TOKEN_NAME]
+          description: Register the sandbox MCP gateway (install-time, race-free)
+      startup:
+        - command: [sh, -c, "command -v apt-get > /dev/null 2>&1 && (apt-get update -qq -y > /dev/null 2>&1 || true)"]
+          user: "0"
+          background: true
+          description: Update apt package cache in background
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.agents/skills
+  - type: com.docker.sandbox/agent-context@1
+    optional: true
+    config: &agent-context
+      filename: AGENTS.md
+      directory: /home/agent/.pi/agent
+      content: |
+        ## Pi
+
+        pi is installed at `/usr/local/share/npm-global/bin/pi`, which is on `PATH`; the image entrypoint starts it. Run
+        `pi` for the interactive TUI, or `pi -p "<prompt>"` for a one-shot run. `pi --continue` resumes the most recent
+        session for this directory and `pi --resume` opens the session selector.
+
+        pi does not ask for approval before tool calls, so there is no permission mode to turn off. The one prompt it
+        would raise — project trust — is pre-answered in `~/.pi/agent/settings.json`
+        (`defaultProjectTrust: "always"`). That is deliberate: the container is the sandbox, and a prompt nobody can
+        answer just deadlocks a non-interactive session.
+
+        Authentication is proxy-mediated. `ANTHROPIC_API_KEY` in this container is a sentinel, not a key; the sandbox
+        proxy substitutes the real credential bound on the host on requests to `api.anthropic.com`. If the host's
+        credential is a Claude subscription (OAuth) login rather than an API key, it is materialized into
+        `~/.pi/agent/auth.json`, pi's native auth store, which pi prefers over the environment. Either way there is no
+        real credential in this container. Do not run `pi auth login` — it would try to complete a browser flow against
+        a host the sandbox does not allow, and write a real token over that file. Never print or reconfigure the
+        sentinel.
+
+        Skills are read from `~/.agents/skills`, where the host's shared skills store mounts. `pi install npm:<pkg>`
+        and `pi update` reach `registry.npmjs.org`, which is allowed; a package that pulls from anywhere else will be
+        refused by the sandbox's network policy. The `find` tool uses the `fd` binary this image carries, and `grep`
+        uses `rg`.
+
+        ## Installing Packages
+
+        The image ships a small toolset: shell and CLI tools, git, gh, Docker, and Node 24 with npm. Install anything
+        else with `sudo apt-get update && sudo apt-get install -y <package>`; `sudo` needs no password. Two apt
+        repositories are configured and reachable through the sandbox proxy: Debian trixie (`deb.debian.org`) and
+        Docker Hardened Images (`dhi.io/deb/debian/main`). The DHI repository carries versioned toolchains such as
+        `golang-1.26` and `python-3.14`; Debian supplies the rest, for example `default-jdk-headless`. `apt-cache
+        search <term>` lists what is available.
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config: *agent-context

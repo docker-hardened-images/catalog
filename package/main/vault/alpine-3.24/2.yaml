@@ -1,0 +1,253 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-vault
+variant: runtime
+tags:
+  - 2.2.2-alpine3.24
+  - 2.2.2-r4-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-04-13"
+vars:
+  COMMIT_SHA: c56e7e670bd8c79104c27b6c10138226538a6db2
+  COREPACK_VERSION: 0.36.0-r0
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  NODEJS_VERSION: 24.22.3-r0
+  NPM_VERSION: 11.21.2-r2
+  PACKAGE_NAME: vault
+  REL: "4"
+  SEMVER_MAJOR_MINOR_VERSION: "2.2"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.2.2
+  VERSION: 2.2.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: vault
+      work-dir: /go/src/github.com/hashicorp/vault
+      caches:
+        - path: /go/pkg/mod
+        - path: /root/.local/share/pnpm
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - binutils
+          - libcap-utils
+          - git
+          - make
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - corepack=0.36.0-r0
+          - nodejs-24=24.22.3-r0
+          - npm=11.21.2-r2
+        files:
+          - url: git+https://github.com/hashicorp/vault.git#v2.2.2
+            checksum: c56e7e670bd8c79104c27b6c10138226538a6db2
+            path: /go/src/github.com/hashicorp/vault
+            spdx:
+              name: vault
+              version: 2.2.2
+              packages:
+                - name: vault
+                  purl: pkg:golang/github.com/hashicorp/vault@2.2.2
+                  license: BUSL-1.1
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/image@v0.5.0
+              - golang.org/x/net@v0.62.0
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/apache/thrift@v0.24.0
+              - github.com/go-jose/go-jose/v3@v3.0.5
+              - github.com/go-jose/go-jose/v4@v4.1.9
+              - github.com/satori/go.uuid@v1.2.1-0.20181016170032-d91630c85102
+              - google.golang.org/grpc@v1.85.0
+              - github.com/andybalholm/brotli@v1.2.8
+              - github.com/klauspost/compress@v1.20.3
+            download: true
+        - name: bump pnpm UI dependencies
+          work-dir: /go/src/github.com/hashicorp/vault/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            node -e 'const fs = require("node:fs"); const path = "package.json"; const pkg = JSON.parse(fs.readFileSync(path)); pkg.devEngines.runtime.version = "^24.19.0"; pkg.devEngines.runtime.onFail = "warn"; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");'
+            corepack enable
+            corepack prepare pnpm@10.22.0 --activate
+
+            npm pkg set pnpm.overrides.execa=">=2.0.0"                   # GMS-2020-2 (CRITICAL)
+            npm pkg set pnpm.overrides.fast-uri=">=3.1.6"                # CVE-2026-76172, CVE-2026-75975, CVE-2026-75899, CVE-2026-18446, CVE-2026-16221, CVE-2026-13676 (HIGH)
+            npm pkg set pnpm.overrides."brace-expansion@1"="1.1.21"      # CVE-2026-13149, CVE-2026-69152, CVE-2026-14257, CVE-2026-102276, CVE-2026-102278, CVE-2026-102277 (HIGH/MEDIUM)
+            npm pkg set pnpm.overrides."brace-expansion@2"="2.1.7"       # CVE-2026-13149, CVE-2026-69152, CVE-2026-14257, CVE-2026-102276, CVE-2026-102278, CVE-2026-102277 (HIGH/MEDIUM)
+            npm pkg set pnpm.overrides."js-yaml@4"="4.3.2"               # GHSA-5p4m-2wfm-xmqj, CVE-2026-84375, CVE-2026-59869 (HIGH)
+            npm pkg set pnpm.overrides."js-yaml@5"="5.4.1"               # CVE-2026-73643, GHSA-r3ph-w7gj-g6xm (HIGH/MEDIUM)
+            npm pkg set pnpm.overrides.browserslist="4.28.7"             # CVE-2026-73089, CVE-2026-73088 (HIGH)
+            npm pkg set pnpm.overrides.immutable="5.1.8"                 # CVE-2026-59880, CVE-2026-59879 (HIGH)
+            npm pkg set pnpm.overrides.nanoid="3.3.18"                   # CVE-2026-67214, CVE-2026-67213 (HIGH)
+            npm pkg set pnpm.overrides.postcss="8.5.23"                  # CVE-2026-73646 (HIGH), CVE-2026-69153 (MEDIUM)
+            npm pkg set pnpm.overrides.fflate="0.4.9"                    # CVE-2026-45820 (MEDIUM)
+            npm pkg set pnpm.overrides.baseline-browser-mapping="2.11.0" # CVE-2026-45819 (MEDIUM)
+            npm pkg set pnpm.overrides."postcss-selector-parser"="7.1.6" # CVE-2026-104844 (MEDIUM), CVE-2026-9358 (LOW)
+            npm pkg set pnpm.overrides.handlebars="4.7.10"               # CVE-2026-106445, CVE-2026-106446, CVE-2026-106444 (CRITICAL/MEDIUM)
+            npm pkg set pnpm.overrides.dompurify="3.4.17"                # GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr, GHSA-6688-9rhm-gjv2, GHSA-c6gr-qvv4-5v3f, GHSA-p98j-92pf-mc4p (CRITICAL/HIGH/LOW)
+            npm pkg set pnpm.overrides."source-map-js"="1.2.2"           # CVE-2026-93749 (HIGH)
+            npm pkg set pnpm.overrides."@babel/core"="7.29.6"            # CVE-2026-49356 (LOW)
+            npm pkg set pnpm.overrides.uuid="11.1.1"                     # CVE-2026-41907 (MEDIUM)
+            npm pkg set pnpm.overrides."clean-css@3"="4.1.11"            # GHSA-wxhq-pm8v-cw75 (LOW)
+
+            pnpm install --lockfile-only --ignore-scripts
+        - name: build UI assets
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare pnpm@10.22.0 --activate
+            pnpm --version
+            make static-dist
+        - name: install production UI dependencies for SBOM
+          work-dir: /go/src/github.com/hashicorp/vault/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf node_modules
+            pnpm install --lockfile-only --ignore-scripts
+            pnpm install --prod --frozen-lockfile --ignore-scripts
+        - name: UI SBOM
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: vault-ui
+            source: /go/src/github.com/hashicorp/vault/ui
+        - name: stage UI SBOM
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/vault-ui "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/vault-ui "${target.dir}/opt/docker/sbom-dev/"
+            test -s "${target.dir}/opt/docker/sbom/vault-ui/.spdx.vault-ui.json"
+            test -s "${target.dir}/opt/docker/sbom-dev/vault-ui/.spdx.vault-ui.json"
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            unset VAULT_ADDR VAULT_TOKEN VAULT_DEV_ROOT_TOKEN_ID VAULT_ACC || true
+            GOMAXPROCS=1 CGO_ENABLED=0 go test -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+              -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|Logger_SetupLoggerWithInValidLogPathPermission|PubKeyFilesFlagSetKeybase|FetchKeybasePubkeys|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+              ./shamir \
+              ./internal/observability/event \
+              ./internalshared/... \
+              ./vault/diagnose \
+              ./builtin/logical/pki/parsing \
+              ./helper/fairshare \
+              ./helper/flag-kv \
+              ./helper/flag-slice \
+              ./helper/forwarding \
+              ./helper/hostutil \
+              ./helper/locking \
+              ./helper/monitor \
+              ./helper/parseip \
+              ./helper/policies \
+              ./helper/syncmap \
+              ./helper/testhelpers \
+              ./helper/versions
+
+            if [ "${target.fips}" = "true" ]; then
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'TestTransit_SignVerify_RSA_PSS' \
+                ./builtin/logical/transit
+            else
+              GOMAXPROCS=1 CGO_ENABLED=0 go test \
+                -tags=testonly -count=1 -p 1 -parallel=16 -timeout 30m \
+                -skip 'Test(AuditBroker_Register_MultipleFails|SyslogBackend_newSyslogBackend|NewSyslogSink|DSASignAndVerifyWithOpenSSL|DegenerateCertificate)' \
+                ./audit \
+                ./builtin/logical/totp \
+                ./builtin/logical/transit \
+                ./http \
+                ./helper/pkcs7 \
+                ./helper/storagepacker
+            fi
+        - name: build
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault/version.fullVersion=2.2.2
+              - -X github.com/hashicorp/vault/version.GitCommit=c56e7e670bd8c79104c27b6c10138226538a6db2
+              - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/vault
+            tags: vault,ui
+        - name: setcap
+          runs: |
+            set -eux -o pipefail
+
+            setcap cap_ipc_lock=+ep '${target.dir}/usr/bin/vault'
+        - name: build dev
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/vault/version.fullVersion=2.2.2
+              - -X github.com/hashicorp/vault/version.GitCommit=c56e7e670bd8c79104c27b6c10138226538a6db2
+              - -X github.com/hashicorp/vault/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/vault-dev
+            strip: false
+            tags: vault,ui
+        - uses: dhi/build-pkg:0
+          with:
+            description: Vault
+            files:
+              - usr/bin/vault
+              - opt/docker/sbom/vault-ui
+            license: BUSL-1.1
+            name: vault
+            rel: 4
+            subpackages:
+              - files:
+                  - path: usr/bin/vault
+                    source: usr/bin/vault-dev
+                  - path: opt/docker/sbom/vault-ui
+                    source: opt/docker/sbom-dev/vault-ui
+                name: vault-dev
+            url: https://github.com/hashicorp/vault
+            version: 2.2.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

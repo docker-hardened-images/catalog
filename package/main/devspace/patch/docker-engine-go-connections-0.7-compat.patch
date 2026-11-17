@@ -1,0 +1,65 @@
+# Subject: Adapt Docker Engine client to go-connections 0.7
+#
+# DevSpace vendors Docker Engine 28.3.3 while the containerd dependency now
+# resolves go-connections 0.7.0, which removed the deprecated DialPipe helper.
+# This applies Docker Engine's upstream change to call go-winio directly.
+#
+# Origin: upstream, https://github.com/moby/moby/commit/accbfde61e95e19cdddf2593707875b476679a8d
+# Base-Tree: git https://github.com/loft-sh/devspace.git 7f272dcf90653fa9b42bc4347f7f3f9a52b0e8b5
+# Verify: cmd `go build ./...` expect "exit 0"
+diff --git a/vendor/github.com/docker/docker/client/client.go b/vendor/github.com/docker/docker/client/client.go
+--- a/vendor/github.com/docker/docker/client/client.go
++++ b/vendor/github.com/docker/docker/client/client.go
+@@ -463,7 +463,9 @@ func (cli *Client) dialer() func(context.Context) (net.Conn, error) {
+ 		case "unix":
+ 			return net.Dial(cli.proto, cli.addr)
+ 		case "npipe":
+-			return sockets.DialPipe(cli.addr, 32*time.Second)
++			ctx, cancel := context.WithTimeout(ctx, 32*time.Second)
++			defer cancel()
++			return dialPipeContext(ctx, cli.addr)
+ 		default:
+ 			if tlsConfig := cli.tlsConfig(); tlsConfig != nil {
+ 				return tls.Dial(cli.proto, cli.addr, tlsConfig)
+diff --git a/vendor/github.com/docker/docker/client/client_unix.go b/vendor/github.com/docker/docker/client/client_unix.go
+--- a/vendor/github.com/docker/docker/client/client_unix.go
++++ b/vendor/github.com/docker/docker/client/client_unix.go
+@@ -2,6 +2,17 @@
+ 
+ package client
+ 
++import (
++	"context"
++	"net"
++	"syscall"
++)
++
+ // DefaultDockerHost defines OS-specific default host if the DOCKER_HOST
+ // (EnvOverrideHost) environment variable is unset or empty.
+ const DefaultDockerHost = "unix:///var/run/docker.sock"
++
++// dialPipeContext connects to a Windows named pipe. It is not supported on non-Windows.
++func dialPipeContext(_ context.Context, _ string) (net.Conn, error) {
++	return nil, syscall.EAFNOSUPPORT
++}
+diff --git a/vendor/github.com/docker/docker/client/client_windows.go b/vendor/github.com/docker/docker/client/client_windows.go
+--- a/vendor/github.com/docker/docker/client/client_windows.go
++++ b/vendor/github.com/docker/docker/client/client_windows.go
+@@ -1,5 +1,17 @@
+ package client
+ 
++import (
++	"context"
++	"net"
++
++	"github.com/Microsoft/go-winio"
++)
++
+ // DefaultDockerHost defines OS-specific default host if the DOCKER_HOST
+ // (EnvOverrideHost) environment variable is unset or empty.
+ const DefaultDockerHost = "npipe:////./pipe/docker_engine"
++
++// dialPipeContext connects to a Windows named pipe. It is not supported on non-Windows.
++func dialPipeContext(ctx context.Context, addr string) (net.Conn, error) {
++	return winio.DialPipeContext(ctx, addr)
++}

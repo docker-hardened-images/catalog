@@ -1,0 +1,77 @@
+DHI inline patch (cassandra 4.1): SnakeYAML 2.0 API migration
+
+SnakeYAML 2.0 made LoaderOptions / DumperOptions mandatory on its constructors
+(snakeyaml/snakeyaml#541 family). cassandra 4.x's Yaml() / SafeConstructor()
+call sites need updating so the dep bump in cassandra-4-mvn-dependencies.json
+(clears CVE-2022-1471 and the 2022-3875x series) compiles cleanly.
+
+Upstream Cassandra source: https://github.com/apache/cassandra/blob/cassandra-4.1.10/src/java/org/apache/cassandra/config/YamlConfigurationLoader.java
+Build wiring: image/cassandra/patch/cassandra-4-mvn-dependencies.json (DHI)
+
+diff --git a/src/java/org/apache/cassandra/config/YamlConfigurationLoader.java b/src/java/org/apache/cassandra/config/YamlConfigurationLoader.java
+--- a/src/java/org/apache/cassandra/config/YamlConfigurationLoader.java
++++ b/src/java/org/apache/cassandra/config/YamlConfigurationLoader.java
+@@ -217,13 +217,13 @@
+     public static <T> T fromMap(Map<String,Object> map, boolean shouldCheck, Class<T> klass)
+     {
+         SafeConstructor constructor = new YamlConfigurationLoader.CustomConstructor(klass, klass.getClassLoader());
+         Map<Class<?>, Map<String, Replacement>> replacements = getNameReplacements(Config.class);
+         verifyReplacements(replacements, map);
+         YamlConfigurationLoader.PropertiesChecker propertiesChecker = new YamlConfigurationLoader.PropertiesChecker(replacements);
+         constructor.setPropertyUtils(propertiesChecker);
+         Yaml yaml = new Yaml(constructor);
+         Node node = yaml.represent(map);
+-        constructor.setComposer(new Composer(null, null)
++        constructor.setComposer(new Composer(null, null, new LoaderOptions())
+         {
+             @Override
+             public Node getSingleNode()
+@@ -255,9 +255,9 @@
+         verifyReplacements(replacements, map);
+         YamlConfigurationLoader.PropertiesChecker propertiesChecker = new YamlConfigurationLoader.PropertiesChecker(replacements);
+         constructor.setPropertyUtils(propertiesChecker);
+         Yaml yaml = new Yaml(constructor);
+         Node node = yaml.represent(map);
+-        constructor.setComposer(new Composer(null, null)
++        constructor.setComposer(new Composer(null, null, new LoaderOptions())
+         {
+             @Override
+             public Node getSingleNode()
+@@ -277,7 +277,7 @@
+     {
+         CustomConstructor(Class<?> theRoot, ClassLoader classLoader)
+         {
+-            super(theRoot, classLoader);
++            super(theRoot, classLoader, new LoaderOptions());
+
+             TypeDescription seedDesc = new TypeDescription(ParameterizedClass.class);
+             seedDesc.putMapPropertyType("parameters", String.class, String.class);
+diff --git a/src/java/org/apache/cassandra/tools/JMXTool.java b/src/java/org/apache/cassandra/tools/JMXTool.java
+--- a/src/java/org/apache/cassandra/tools/JMXTool.java
++++ b/src/java/org/apache/cassandra/tools/JMXTool.java
+@@ -74,6 +74,8 @@
+ import org.yaml.snakeyaml.TypeDescription;
+ import org.yaml.snakeyaml.Yaml;
+ import org.yaml.snakeyaml.constructor.Constructor;
++import org.yaml.snakeyaml.DumperOptions;
++import org.yaml.snakeyaml.LoaderOptions;
+ import org.yaml.snakeyaml.nodes.MappingNode;
+ import org.yaml.snakeyaml.nodes.Node;
+ import org.yaml.snakeyaml.nodes.Tag;
+@@ -166,7 +168,7 @@
+             {
+                 void dump(OutputStream output, Map<String, Info> map) throws IOException
+                 {
+-                    Representer representer = new Representer();
++                    Representer representer = new Representer(new DumperOptions());
+                     representer.addClassTag(Info.class, Tag.MAP); // avoid the auto added tag
+                     Yaml yaml = new Yaml(representer);
+                     yaml.dump(map, new OutputStreamWriter(output));
+@@ -397,6 +399,7 @@
+
+             public CustomConstructor()
+             {
++                super(new LoaderOptions());
+                 this.rootTag = new Tag(ROOT);
+                 this.addTypeDescription(INFO_TYPE);
+             }

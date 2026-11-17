@@ -1,0 +1,31 @@
+Subject: Backport importlib.metadata entry_points compatibility for ceph-volume
+Origin: upstream, https://github.com/ceph/ceph/commit/8c78a22d2cf69892570f635735d9735169b64a75
+Description: Support both pre- and post-3.10 importlib.metadata entry_points APIs in
+ ceph-volume so plugins load on Debian 13 Python.
+Base-Tree: git https://github.com/ceph/ceph 9ec952b9f9668e9fa97e29a4c2b51e951674df2a path=src/ceph-volume/ceph_volume/main.py
+Verify: cmd `patch -p1 --dry-run -i package/main/ceph/patch/19-runtime-importlib-metadata-compat.patch` expect "checking file src/ceph-volume/ceph_volume/main.py"
+Forwarded: not-needed
+Drop-When: never: delete only after all supported Ceph 19 lines ship this upstream commit
+
+diff --git a/src/ceph-volume/ceph_volume/main.py b/src/ceph-volume/ceph_volume/main.py
+index f8eca65ec497..4f27f429e89e 100644
+--- a/src/ceph-volume/ceph_volume/main.py
++++ b/src/ceph-volume/ceph_volume/main.py
+@@ -11,8 +11,16 @@
+     from importlib.metadata import entry_points
+
+     def get_entry_points(group: str):  # type: ignore
+-        return entry_points().get(group, [])  # type: ignore
++        eps = entry_points()
++        if hasattr(eps, 'select'):
++            # New importlib.metadata uses .select()
++            return eps.select(group=group)
++        else:
++            # Fallback to older EntryPoints that returns dicts
++            return eps.get(group, [])  # type: ignore
++
+ except ImportError:
++    # Fallback to `pkg_resources` for older versions
+     from pkg_resources import iter_entry_points as entry_points  # type: ignore
+
+     def get_entry_points(group: str):  # type: ignore

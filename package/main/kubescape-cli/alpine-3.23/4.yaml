@@ -1,0 +1,151 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-kubescape-cli
+variant: runtime
+tags:
+  - 4.0.21-alpine3.23
+  - 4.0.21-r0-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 42df4e161a97a8a0f4e656d45bba3d60cffb08f7
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: kubescape-cli
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "4.0"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.0.21
+  VERSION: 4.0.21
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubescape-cli
+      work-dir: /go/src/github.com/kubescape/kubescape
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - git
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/kubescape/kubescape.git#v4.0.21
+            checksum: 42df4e161a97a8a0f4e656d45bba3d60cffb08f7
+            path: /go/src/github.com/kubescape/kubescape
+            uid: 65532
+            gid: 65532
+      pipeline:
+        - name: go dependencies (4 only)
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/image@v0.45.0
+              - golang.org/x/net@v0.62.0
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - github.com/cilium/ebpf@v0.22.0
+              - github.com/cloudflare/circl@v1.6.3
+              - github.com/hashicorp/go-getter@v1.8.6
+              - github.com/in-toto/in-toto-golang@v0.11.0
+              - github.com/moby/go-archive@v0.3.0
+              - github.com/moby/spdystream@v0.5.1
+              - github.com/anchore/syft@v1.42.3
+              - github.com/anchore/grype@v0.104.1
+              - github.com/andybalholm/brotli@v1.2.7
+              - github.com/sigstore/sigstore-go@v1.3.0
+              - github.com/moby/buildkit@v0.33.0
+              - github.com/aquasecurity/trivy@v0.72.0
+              - github.com/fvbommel/sortorder@v1.2.0
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - github.com/cilium/cilium@v1.19.5
+            download: true
+            replaces:
+              - github.com/chrismellard/docker-credential-acr-env=github.com/osscontainertools/docker-credential-acr@v0.8.0
+        - name: approve ACR credential helper replacement
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/approve-acr-credential-replacement.patch
+        - uses: go/hermetic@v1
+        - name: run tests
+          privileged: true
+          environment:
+            CGO_ENABLED: "0"
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            su -s /bin/bash nonroot -c 'cd /go/src/github.com/kubescape/kubescape && go test -p 1 -v ./... -skip TestApplyChanges_OnlyCountsSuccessfulWrites'
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s -w
+              - -X main.version=v4.0.21
+              - -X main.commit=42df4e161a97a8a0f4e656d45bba3d60cffb08f7
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/kubescape
+            packages: main.go
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s -w
+              - -X main.version=v4.0.21
+              - -X main.commit=42df4e161a97a8a0f4e656d45bba3d60cffb08f7
+              - -X main.date=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/kubescape-dev
+            packages: main.go
+            strip: false
+        - uses: dhi/build-pkg:0
+          with:
+            description: Kubescape CLI for Kubernetes security scanning
+            files:
+              - usr/bin/kubescape
+            license: Apache-2.0
+            name: kubescape-cli
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/kubescape
+                    source: usr/bin/kubescape-dev
+                name: kubescape-cli-dev
+            url: https://github.com/kubescape/kubescape
+            version: 4.0.21
+      paths:
+        - type: file
+          path: ${source.dir}/patch/approve-acr-credential-replacement.patch
+          uid: 0
+          gid: 0
+          source: package/main/kubescape-cli/patch/approve-acr-credential-replacement.patch
+      accounts:
+        root: true
+        run-as: root
+        users:
+          - name: nonroot
+            uid: 65532
+            gid: 65532
+        groups:
+          - name: nonroot
+            gid: 65532
+            members:
+              - nonroot
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

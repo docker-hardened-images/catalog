@@ -1,0 +1,199 @@
+Subject: Revert "virtio-mmio: Remove virtqueue list from mmio device"
+Origin: vendor, https://github.com/docker/nerdbox-internal/blob/d0a785911710372d8fc1e0a54ffc4e57255d33da/kernel/patches/6.12.114/0012-Revert-virtio-mmio-Remove-virtqueue-list-from-mmio-d.patch
+Base-Tree: git https://github.com/gregkh/linux 85d82e0d7c2dfd3e75d34f35b7ebbf41f45c9c4e
+Requires: 0011-Revert-virtio_mmio-disable-IRQ-wake-before-free_irq.patch
+Drop-When: never: no linux-stable release is known to bring snapshot restores back to their earlier latency; measure a 6.12.y bump without both reverts before dropping them
+
+From 3493313be7d39e1a8d0e38939a75eb2ef611cd09 Mon Sep 17 00:00:00 2001
+From: Kaushik Gnanaskandan <kaushik.gnanaskandan@docker.com>
+Date: Sun, 1 Nov 2026 01:30:57 +0000
+Subject: [PATCH 12/12] Revert "virtio-mmio: Remove virtqueue list from mmio
+ device"
+
+This reverts commit 8e360ffa4aa6cfc4c6853a66a767364562aeaa87
+(upstream 564a69ad90d15c782176e1a8c9e1c95661e1aed0).
+
+This commit came into 6.12.112, and since then every nerdbox snapshot
+restore is about 110 ms slower. After a restore, the guest accepts the
+shim's first vsock connection but never answers the ping on it. The
+shim waits out its 100 ms ping deadline, and the retry then works at
+once.
+
+It was bisected across the 850 commits between v6.12.111 and v6.12.112
+on arm64 Firecracker hosts, and this is the first slow one. Reverting it
+and cba897b7da47 on 6.12.114 brought the median TestRestoreLatency
+NewTask() time from 620 ms back to 524 ms.
+
+The likely reason, read from the code but not yet traced inside a guest:
+The old private queue list was built with list_add(), so vm_interrupt()
+walked the queues newest first, and for virtio-vsock that put the event
+queue first. vdev->vqs is in creation order, so the receive queue now
+comes first. When Firecracker's transport reset event and the shim's new
+connection land in the same interrupt, the connection is handled first
+and the reset then closes it. That close only happens inside the guest,
+so the host side keeps waiting instead of seeing an EOF.
+
+Drop this patch and the one before it once a 6.12.y release no longer
+shows the slowdown.
+
+Link: https://github.com/docker/nerdbox-internal/pull/447#issuecomment-6353320252
+Link: https://github.com/docker/nerdbox-internal/issues/460
+---
+ drivers/virtio/virtio_mmio.c | 52 +++++++++++++++++++++++++++++++++---
+ include/linux/virtio.h       |  2 +-
+ 2 files changed, 50 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/virtio/virtio_mmio.c b/drivers/virtio/virtio_mmio.c
+index 22fdc6b..b4422e8 100644
+--- a/drivers/virtio/virtio_mmio.c
++++ b/drivers/virtio/virtio_mmio.c
+@@ -65,6 +65,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
+ #include <linux/slab.h>
++#include <linux/spinlock.h>
+ #include <linux/virtio.h>
+ #include <linux/virtio_config.h>
+ #include <uapi/linux/virtio_mmio.h>
+@@ -87,8 +88,22 @@ struct virtio_mmio_device {
+ 
+ 	void __iomem *base;
+ 	unsigned long version;
++
++	/* a list of queues so we can dispatch IRQs */
++	spinlock_t lock;
++	struct list_head virtqueues;
++};
++
++struct virtio_mmio_vq_info {
++	/* the actual virtqueue */
++	struct virtqueue *vq;
++
++	/* the list node for the virtqueues list */
++	struct list_head node;
+ };
+ 
++
++
+ /* Configuration interface */
+ 
+ static u64 vm_get_features(struct virtio_device *vdev)
+@@ -285,8 +300,9 @@ static bool vm_notify_with_data(struct virtqueue *vq)
+ static irqreturn_t vm_interrupt(int irq, void *opaque)
+ {
+ 	struct virtio_mmio_device *vm_dev = opaque;
+-	struct virtqueue *vq;
++	struct virtio_mmio_vq_info *info;
+ 	unsigned long status;
++	unsigned long flags;
+ 	irqreturn_t ret = IRQ_NONE;
+ 
+ 	/* Read and acknowledge interrupts */
+@@ -299,8 +315,10 @@ static irqreturn_t vm_interrupt(int irq, void *opaque)
+ 	}
+ 
+ 	if (likely(status & VIRTIO_MMIO_INT_VRING)) {
+-		virtio_device_for_each_vq(&vm_dev->vdev, vq)
+-			ret |= vring_interrupt(irq, vq);
++		spin_lock_irqsave(&vm_dev->lock, flags);
++		list_for_each_entry(info, &vm_dev->virtqueues, node)
++			ret |= vring_interrupt(irq, info->vq);
++		spin_unlock_irqrestore(&vm_dev->lock, flags);
+ 	}
+ 
+ 	return ret;
+@@ -311,8 +329,14 @@ static irqreturn_t vm_interrupt(int irq, void *opaque)
+ static void vm_del_vq(struct virtqueue *vq)
+ {
+ 	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vq->vdev);
++	struct virtio_mmio_vq_info *info = vq->priv;
++	unsigned long flags;
+ 	unsigned int index = vq->index;
+ 
++	spin_lock_irqsave(&vm_dev->lock, flags);
++	list_del(&info->node);
++	spin_unlock_irqrestore(&vm_dev->lock, flags);
++
+ 	/* Select and deactivate the queue */
+ 	writel(index, vm_dev->base + VIRTIO_MMIO_QUEUE_SEL);
+ 	if (vm_dev->version == 1) {
+@@ -323,6 +347,8 @@ static void vm_del_vq(struct virtqueue *vq)
+ 	}
+ 
+ 	vring_del_virtqueue(vq);
++
++	kfree(info);
+ }
+ 
+ static void vm_del_vqs(struct virtio_device *vdev)
+@@ -349,7 +375,9 @@ static struct virtqueue *vm_setup_vq(struct virtio_device *vdev, unsigned int in
+ {
+ 	struct virtio_mmio_device *vm_dev = to_virtio_mmio_device(vdev);
+ 	bool (*notify)(struct virtqueue *vq);
++	struct virtio_mmio_vq_info *info;
+ 	struct virtqueue *vq;
++	unsigned long flags;
+ 	unsigned int num;
+ 	int err;
+ 
+@@ -371,6 +399,13 @@ static struct virtqueue *vm_setup_vq(struct virtio_device *vdev, unsigned int in
+ 		goto error_available;
+ 	}
+ 
++	/* Allocate and fill out our active queue description */
++	info = kmalloc(sizeof(*info), GFP_KERNEL);
++	if (!info) {
++		err = -ENOMEM;
++		goto error_kmalloc;
++	}
++
+ 	num = readl(vm_dev->base + VIRTIO_MMIO_QUEUE_NUM_MAX);
+ 	if (num == 0) {
+ 		err = -ENOENT;
+@@ -428,6 +463,13 @@ static struct virtqueue *vm_setup_vq(struct virtio_device *vdev, unsigned int in
+ 		writel(1, vm_dev->base + VIRTIO_MMIO_QUEUE_READY);
+ 	}
+ 
++	vq->priv = info;
++	info->vq = vq;
++
++	spin_lock_irqsave(&vm_dev->lock, flags);
++	list_add(&info->node, &vm_dev->virtqueues);
++	spin_unlock_irqrestore(&vm_dev->lock, flags);
++
+ 	return vq;
+ 
+ error_bad_pfn:
+@@ -439,6 +481,8 @@ static struct virtqueue *vm_setup_vq(struct virtio_device *vdev, unsigned int in
+ 		writel(0, vm_dev->base + VIRTIO_MMIO_QUEUE_READY);
+ 		WARN_ON(readl(vm_dev->base + VIRTIO_MMIO_QUEUE_READY));
+ 	}
++	kfree(info);
++error_kmalloc:
+ error_available:
+ 	return ERR_PTR(err);
+ }
+@@ -583,6 +627,8 @@ static int virtio_mmio_probe(struct platform_device *pdev)
+ 	vm_dev->vdev.dev.release = virtio_mmio_release_dev;
+ 	vm_dev->vdev.config = &virtio_mmio_config_ops;
+ 	vm_dev->pdev = pdev;
++	INIT_LIST_HEAD(&vm_dev->virtqueues);
++	spin_lock_init(&vm_dev->lock);
+ 
+ 	vm_dev->base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(vm_dev->base)) {
+diff --git a/include/linux/virtio.h b/include/linux/virtio.h
+index 3ad94d9..d791d47 100644
+--- a/include/linux/virtio.h
++++ b/include/linux/virtio.h
+@@ -184,7 +184,7 @@ void virtio_reset_device(struct virtio_device *dev);
+ size_t virtio_max_dma_size(const struct virtio_device *vdev);
+ 
+ #define virtio_device_for_each_vq(vdev, vq) \
+-	list_for_each_entry(vq, &(vdev)->vqs, list)
++	list_for_each_entry(vq, &vdev->vqs, list)
+ 
+ /**
+  * struct virtio_driver - operations for a virtio I/O driver
+-- 
+2.39.5

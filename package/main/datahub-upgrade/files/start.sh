@@ -1,0 +1,70 @@
+#!/bin/bash
+
+source /usr/lib/datahub/wait_for_deps.sh
+
+# Add default URI (http) scheme if needed
+if ! echo $NEO4J_HOST | grep -q "://" ; then
+    NEO4J_HOST="http://$NEO4J_HOST"
+fi
+
+if [[ ! -z $ELASTICSEARCH_USERNAME ]] && [[ -z $ELASTICSEARCH_AUTH_HEADER ]]; then
+  AUTH_TOKEN=$(echo -ne "$ELASTICSEARCH_USERNAME:$ELASTICSEARCH_PASSWORD" | base64 --wrap 0)
+  ELASTICSEARCH_AUTH_HEADER="Authorization:Basic $AUTH_TOKEN"
+fi
+
+# Add default header if needed
+if [[ -z $ELASTICSEARCH_AUTH_HEADER ]]; then
+  ELASTICSEARCH_AUTH_HEADER="Accept: */*"
+fi
+
+if [[ $ELASTICSEARCH_USE_SSL == true ]]; then
+  ELASTICSEARCH_PROTOCOL=https
+else
+  ELASTICSEARCH_PROTOCOL=http
+fi
+
+OTEL_AGENT=""
+if [[ $ENABLE_OTEL == true ]]; then
+  OTEL_AGENT="-javaagent:/usr/lib/datahub-upgrade/lib/opentelemetry-javaagent.jar "
+  if [ -z "${OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE}" ]; then
+    export OTEL_EXPORTER_OTLP_MAX_PAYLOAD_SIZE=4194304
+  fi
+  if [ -z "${OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE}" ]; then
+    export OTEL_EXPORTER_OTLP_HTTP_HTTP2_MAX_FRAME_SIZE=16777215
+  fi
+fi
+
+PROMETHEUS_AGENT=""
+if [[ $ENABLE_PROMETHEUS == true ]]; then
+  PROMETHEUS_AGENT="-javaagent:/usr/lib/datahub-upgrade/lib/jmx_prometheus_javaagent.jar=4318:/usr/share/datahub-gms/scripts/prometheus-config.yaml "
+fi
+
+export MANAGEMENT_SERVER_PORT="${MANAGEMENT_SERVER_PORT:-4319}"
+
+datahub_wait_begin
+
+if datahub_should_wait_elasticsearch; then
+  datahub_wait_http "$ELASTICSEARCH_PROTOCOL://$ELASTICSEARCH_HOST:$ELASTICSEARCH_PORT" "$ELASTICSEARCH_AUTH_HEADER"
+fi
+
+if [[ $SKIP_EBEAN_CHECK != true ]]; then
+  if [[ $ENTITY_SERVICE_IMPL == ebean ]] || [[ -z $ENTITY_SERVICE_IMPL ]]; then
+    datahub_wait_tcp "tcp://${EBEAN_DATASOURCE_HOST}"
+  fi
+fi
+
+if [[ $ENTITY_SERVICE_IMPL == cassandra ]] && [[ $SKIP_CASSANDRA_CHECK != true ]]; then
+  datahub_wait_tcp "tcp://${CASSANDRA_DATASOURCE_HOST}"
+fi
+
+# Neo4j is only required when graph reads/writes use Neo4j (not Elasticsearch or Postgres graph).
+if [[ $GRAPH_SERVICE_IMPL == neo4j ]] && [[ $SKIP_NEO4J_CHECK != true ]]; then
+  datahub_wait_endpoint "$NEO4J_HOST"
+fi
+
+exec java $JAVA_OPTS $JMX_OPTS \
+  $OTEL_AGENT \
+  $PROMETHEUS_AGENT \
+  -Dstats=unsecure \
+  -Dloader.path=/usr/lib/datahub-upgrade/lib \
+  -jar /usr/lib/datahub-upgrade/bin/datahub-upgrade.jar "$@"

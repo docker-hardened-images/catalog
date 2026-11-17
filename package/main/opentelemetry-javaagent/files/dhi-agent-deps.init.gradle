@@ -1,0 +1,76 @@
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+// Route Maven Central through the Google-hosted mirror, and keep the Gradle Plugin Portal.
+//
+// Resolving straight from repo.maven.apache.org returns HTTP 429 for shared builder IPs, which
+// kills the build at configuration time while resolving the Kotlin Gradle plugin. The catalog's
+// `gradle/mirror@v1` step is not usable here: it rewrites *every* maven repository URL to the
+// Cloudsmith mirror, including the Plugin Portal, and plugin marker artifacts such as
+// org.gradle.kotlin.kotlin-dsl.gradle.plugin are published only to the Portal. Every definition
+// using that step runs gradle-8; this build is on gradle-9.
+//
+// So follow image/opensearch/patch/overrides.gradle, the other gradle-9 build in the catalog:
+// rewrite only the repositories that actually are Maven Central, leaving the Portal untouched.
+def mavenCentralMirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+
+def mirrorMavenCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && (repo.url.toString() == "https://repo.maven.apache.org/maven2/"
+                || repo.url.toString() == "https://repo1.maven.org/maven2/")) {
+        repo.setUrl(mavenCentralMirror)
+    }
+}
+
+beforeSettings { settings ->
+    settings.pluginManagement.repositories.clear()
+    settings.pluginManagement.repositories.maven {
+        name = "GCS Maven Central mirror"
+        url = mavenCentralMirror
+    }
+    settings.pluginManagement.repositories.gradlePluginPortal()
+}
+
+settingsEvaluated { settings ->
+    settings.dependencyResolutionManagement.repositories.configureEach(mirrorMavenCentral)
+}
+
+allprojects {
+    buildscript.repositories.configureEach(mirrorMavenCentral)
+    buildscript.repositories.whenObjectAdded(mirrorMavenCentral)
+    repositories.configureEach(mirrorMavenCentral)
+    repositories.whenObjectAdded(mirrorMavenCentral)
+}
+
+// The published opentelemetry-javaagent.jar is a shaded fat jar: javaagent/build.gradle.kts
+// builds it from the bootstrapLibs / baseJavaagentLibs / javaagentLibs configurations via
+// ShadowJar, and both relocate tasks explicitly `exclude("META-INF/maven/**")`. That strips the
+// per-dependency pom.properties metadata Syft's java-archive cataloger relies on, so scanning the
+// fat jar alone reports only the agent itself and none of the ~40 third-party libraries it bundles
+// (byte-buddy, the jackson stack, the OpenTelemetry SDK and exporters, and so on) - which would
+// leave those libraries with no SBOM entry and no CVE coverage.
+//
+// This task copies the same dependency set, unshaded, into a plain directory so `sbom@v1` with
+// `extra-scanners: java-archive-cataloger` sees the real bundled libraries. The component filter
+// keeps only external module artifacts (group:name:version), dropping the local instrumentation
+// project jars, which carry no meaningful PURL.
+gradle.allprojects { project ->
+  if (project.path != ':javaagent') {
+    return
+  }
+
+  project.afterEvaluate {
+    project.tasks.register('dhiCopyAgentDeps', Copy) { task ->
+      ['bootstrapLibs', 'javaagentLibs'].each { name ->
+        task.from(project.configurations.getByName(name).incoming.artifactView { view ->
+          view.lenient = true
+          view.componentFilter { id -> id instanceof ModuleComponentIdentifier }
+        }.files) {
+          include '*.jar'
+        }
+      }
+
+      task.into(project.layout.buildDirectory.dir('dhi-agent-deps'))
+      task.duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
+  }
+}
