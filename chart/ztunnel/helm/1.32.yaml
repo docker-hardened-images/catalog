@@ -1,0 +1,95 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Istio ZTunnel Helm chart 1.32.x
+image: dhi.io/ztunnel-chart
+variant: helm
+tags:
+  - 1.32.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: 19cc19624069db78ce5c6940b7be94c540eecfb0
+  CHART_HELM_NAME: ztunnel-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_VERSION: 4.1.4-2
+  SEMVER_MAJOR_MINOR_VERSION: "1.32"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.32.0
+  VERSION: 1.32.0
+  ZTUNNEL_REFERENCE: dhi/ztunnel:1.32.0-debian13@sha256:b70aa413d2881982a64ac4aff6f28cdbc5f918e8f42004c5ce4047c56709a9c4
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: ztunnel
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - helm=4.1.4-2
+          - yq-go
+        files:
+          - url: git+https://github.com/istio/istio.git#1.32.0
+            checksum: 19cc19624069db78ce5c6940b7be94c540eecfb0
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/manifests/charts/ztunnel
+          with:
+            chart:
+              appRef: ztunnel
+              description: Docker Hardened Images Helm chart for ZTunnel
+              images:
+                - name: ztunnel
+                  ref: dhi/ztunnel:1.32.0-debian13@sha256:b70aa413d2881982a64ac4aff6f28cdbc5f918e8f42004c5ce4047c56709a9c4
+              name: ztunnel-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/istio/istio
+            cmd: prepare
+            registry: dhi.io
+        - name: update version
+          uses: yq/patch@v1
+          work-dir: ${source.dir}/helm-charts/manifests/charts/ztunnel
+          with:
+            file: Chart.yaml
+            patches:
+              - .version = "1.32.0"
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/manifests/charts/ztunnel
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          with:
+            chart: ${source.dir}/helm-charts/manifests/charts/ztunnel
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/manifests/charts
+          with:
+            chart: ztunnel
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          with:
+            chart: ${source.dir}/helm-charts/manifests/charts/ztunnel
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/ztunnel/config
