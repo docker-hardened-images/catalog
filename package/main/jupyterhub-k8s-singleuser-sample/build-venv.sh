@@ -63,6 +63,41 @@ while IFS= read -r -d '' UNDERSCORE_COMPONENT; do
 done < <(find "${VENV}" -path '*/components/underscore' -type d -print0)
 test "${underscore_dirs}" -gt 0
 
+# nbclassic vendors react 16.0.0 and react-dom 16.0.1 (CVE-2018-6341, fixed in 16.4.2); replace both with the matched 16.14.0 release tarballs.
+REACT_TARBALL="${SOURCE_DIR}/react-16.14.0.tgz"
+test -f "${REACT_TARBALL}"
+
+react_dirs=0
+while IFS= read -r -d '' REACT_COMPONENT; do
+  react_dirs=$((react_dirs + 1))
+  REACT_TMP="$(mktemp -d)"
+  "${PYTHON_BIN}" -c "import sys, tarfile; tarfile.open(sys.argv[1], 'r:gz').extractall(sys.argv[2], filter='data')" \
+    "${REACT_TARBALL}" "${REACT_TMP}"
+  rm -rf "${REACT_COMPONENT}"
+  mkdir -p "${REACT_COMPONENT}"
+  cp -a "${REACT_TMP}/package/." "${REACT_COMPONENT}/"
+  rm -rf "${REACT_TMP}"
+  grep -q '"version": "16.14.0"' "${REACT_COMPONENT}/package.json"
+done < <(find "${VENV}" -path '*/components/react' -type d -print0)
+test "${react_dirs}" -gt 0
+
+REACT_DOM_TARBALL="${SOURCE_DIR}/react-dom-16.14.0.tgz"
+test -f "${REACT_DOM_TARBALL}"
+
+react_dom_dirs=0
+while IFS= read -r -d '' REACT_DOM_COMPONENT; do
+  react_dom_dirs=$((react_dom_dirs + 1))
+  REACT_DOM_TMP="$(mktemp -d)"
+  "${PYTHON_BIN}" -c "import sys, tarfile; tarfile.open(sys.argv[1], 'r:gz').extractall(sys.argv[2], filter='data')" \
+    "${REACT_DOM_TARBALL}" "${REACT_DOM_TMP}"
+  rm -rf "${REACT_DOM_COMPONENT}"
+  mkdir -p "${REACT_DOM_COMPONENT}"
+  cp -a "${REACT_DOM_TMP}/package/." "${REACT_DOM_COMPONENT}/"
+  rm -rf "${REACT_DOM_TMP}"
+  grep -q '"version": "16.14.0"' "${REACT_DOM_COMPONENT}/package.json"
+done < <(find "${VENV}" -path '*/components/react-dom' -type d -print0)
+test "${react_dom_dirs}" -gt 0
+
 test -x "${VENV}/bin/jupyter"
 
 for f in "${VENV}/bin"/*; do
