@@ -41,6 +41,42 @@ contents:
     - sed
     - tzdata
     - yq-go
+  builds:
+    - name: java-cacerts
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - java-cacerts
+          - openjdk11-jre-headless
+          - p11-kit
+          - p11-kit-trust
+      pipeline:
+        - name: distrust emSign Root CA G1 in the JVM trust store
+          shell: /bin/bash
+          runs: |
+            set -eux -o pipefail
+
+            grep -qx 'mozilla/emSign_Root_CA_-_G1.crt' /etc/ca-certificates.conf
+            sed -i 's#^mozilla/emSign_Root_CA_-_G1.crt$#!&#' /etc/ca-certificates.conf
+            mkdir -p /etc/ssl/certs/java
+            update-ca-certificates
+
+            listing="$(/usr/lib/jvm/java-11-openjdk/bin/keytool -list \
+              -keystore /etc/ssl/certs/java/cacerts -storepass changeit)"
+            if grep -i -E 'emsignrootca-?g1|emsignrootca-?g2|emsigneccrootca-?g3|comodoaaa|aaa-?certificate' <<< "$listing"; then
+              echo 'compromised CA root still trusted' >&2
+              exit 1
+            fi
+            test "$(grep -c trustedCertEntry <<< "$listing")" -gt 100
+
+            install -D -m 0444 /etc/ssl/certs/java/cacerts ${target.dir}/etc/ssl/certs/java/cacerts
+      outputs:
+        - source: ${target.dir}/etc/ssl/certs/java/cacerts
+          target: /etc/ssl/certs/java/cacerts
+          uid: 0
+          gid: 0
 accounts:
   run-as: janusgraph
   users:
