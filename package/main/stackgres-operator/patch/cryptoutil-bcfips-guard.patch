@@ -1,0 +1,26 @@
+Subject: Register BouncyCastleProvider only when BCFIPS is absent
+Origin: DHI-internal (FIPS provider coexistence)
+Description: Skip adding the non-FIPS Bouncy Castle provider next to BCFIPS.
+ CryptoUtil adds BouncyCastleProvider to the JCA provider list every time it
+ generates a certificate. On a runtime that already registers the BCFIPS
+ provider, the two Bouncy Castle providers share class names and algorithm
+ aliases, so the operator only adds BouncyCastleProvider when no BCFIPS
+ provider is registered. Without BCFIPS the behaviour is unchanged.
+Base-Tree: git https://github.com/ongres/stackgres.git 003e92b0be1aaaeb91b05f07c90ade9d7ce65814
+Verify: cmd `dhi def build --fast package/main/stackgres-operator/debian-13/1.19.yaml` expect "BUILD SUCCESS"
+Forwarded: not-needed (upstream ships no BCFIPS runtime)
+Drop-When: never: upstream does not ship a BCFIPS runtime
+
+--- a/stackgres-k8s/src/operator/src/main/java/io/stackgres/operator/common/CryptoUtil.java
++++ b/stackgres-k8s/src/operator/src/main/java/io/stackgres/operator/common/CryptoUtil.java
+@@ -101,7 +101,9 @@
+       KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+       keyPairGenerator.initialize(4096, new SecureRandom());
+       KeyPair keyPair = keyPairGenerator.generateKeyPair();
+-      Security.addProvider(new BouncyCastleProvider());
++      if (Security.getProvider("BCFIPS") == null) {
++        Security.addProvider(new BouncyCastleProvider());
++      }
+ 
+       X500Principal subject = new X500Principal(subjectString);
+ 
