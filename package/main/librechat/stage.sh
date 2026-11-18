@@ -148,7 +148,7 @@ canvas_banner() {
   fi
 }
 
-# Banners present in both the glibc and musl prebuilds of @napi-rs/canvas 0.1.88.
+# Banners present in both the glibc and musl prebuilds of @napi-rs/canvas 0.1.100.
 canvas_banner libjpeg-turbo "libjpeg-turbo version ${CANVAS_LIBJPEG_TURBO_VERSION}"
 canvas_banner libaom "AOMedia Project AV1 Encoder v${CANVAS_LIBAOM_VERSION}"
 canvas_banner libavif "libavif"
@@ -156,7 +156,7 @@ canvas_banner mimalloc "mimalloc: error:"
 canvas_banner zlib "${CANVAS_ZLIB_VERSION}"
 canvas_banner libpng "Application built with libpng-"
 canvas_banner expat "EXPAT_ACCOUNTING_DEBUG"
-canvas_banner harfbuzz "HB_OPTIONS"
+canvas_banner harfbuzz "HB_SHAPER_LIST"
 icu_major="${CANVAS_ICU_VERSION%%.*}"
 canvas_banner icu "icudt${icu_major}l"
 canvas_banner freetype "FREETYPE_PROPERTIES"
@@ -204,25 +204,28 @@ test -f api/server/index.js
 
 test -d client/dist
 test -f client/dist/index.html
-test -d client/public/fonts
-test -d client/public/assets
+test -f client/public/mcp-sandbox.html
 test -d packages/api/dist
 test -d packages/data-provider/dist
 test -d packages/data-schemas/dist
 test -d packages/client/dist
+test -f packages/chat/dist/index.cjs
 test -f node_modules/.bin/cross-env
+test -f vendor/code/browser-enrollment-protocol.js
+test -f vendor/code/package.json
 test -f LICENSE
 test -f package.json
 
 staged="${TARGET_DIR}/usr/lib/librechat"
 rm -rf "$staged"
-mkdir -p "$staged/packages" "$staged/client/public"
+mkdir -p "$staged/packages" "$staged/client/public" "$staged/vendor"
 
 cp -a package.json LICENSE node_modules api config "$staged/"
+cp -a vendor/code "$staged/vendor/"
 cp -a client/package.json "$staged/client/"
 cp -a client/dist "$staged/client/"
-cp -a client/public/fonts client/public/assets "$staged/client/public/"
-for name in api client data-provider data-schemas; do
+cp -a client/public/mcp-sandbox.html "$staged/client/public/"
+for name in api client chat data-provider data-schemas; do
   mkdir -p "$staged/packages/$name"
   cp -a "packages/$name/package.json" "$staged/packages/$name/"
   cp -a "packages/$name/dist" "$staged/packages/$name/"
@@ -241,7 +244,7 @@ fi
 # Workspace package node_modules still contain the TypeScript bundler after
 # npm prune. Those directories are build tools, including every platform's
 # native binding. Production peers such as winston-daily-rotate-file stay.
-for name in api client data-provider data-schemas; do
+for name in api client chat data-provider data-schemas; do
   base="$staged/packages/$name/node_modules"
   if [ ! -d "$base" ]; then
     continue
