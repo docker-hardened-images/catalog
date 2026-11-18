@@ -1,0 +1,231 @@
+# syntax=dhi.io/build:2-debian13
+
+name: Zabbix web interface (Nginx, PostgreSQL) 6.0.x (dev)
+image: dhi.io/zabbix-web-nginx-pgsql
+variant: dev
+tags:
+  - 6-dev
+  - 6.0-dev
+  - 6.0.49-dev
+  - 6-debian-dev
+  - 6-debian13-dev
+  - 6.0-debian-dev
+  - 6.0-debian13-dev
+  - 6.0.49-debian-dev
+  - 6.0.49-debian13-dev
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2022-02-08"
+  end-of-life: "2027-02-28"
+vars:
+  PG_CLIENT_VERSION: 17.12-0+deb13u1+dhi0
+  PHP_MAJOR_MINOR: "8.3"
+  PHP_VERSION: 8.3.36-0
+  SEMVER_MAJOR_MINOR_VERSION: "6.0"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.0.49
+  VERSION: 6.0.49-0
+  ZABBIX_LICENSE: GPL-2.0-or-later
+  ZBX_LINE: "6.0"
+  ZBX_PACKAGE: zabbix-web-nginx-pgsql-6.0
+  ZBX_PHP_EXT_DEB_VERSION: 6.0.49-0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!gawk'
+    - '!libelogind0'
+    - '!mawk'
+    - '!original-awk'
+    - apt
+    - base-files
+    - bash
+    - ca-certificates
+    - ca-certificates-bundle
+    - coreutils
+    - curl
+    - diffutils
+    - dpkg
+    - findutils
+    - grep
+    - jq
+    - libargon2-1
+    - libc-bin
+    - libc6
+    - libcurl4t64
+    - libfreetype6
+    - libgcc-s1
+    - libicu76
+    - libjpeg62-turbo
+    - libldap2
+    - liblz4-1
+    - libonig5
+    - libpcre2-8-0
+    - libpng16-16t64
+    - libpq5
+    - libreadline8t64
+    - libsodium23
+    - libsqlite3-0
+    - libssl3t64
+    - libstdc++6
+    - libwebp7
+    - libxml2
+    - libzstd1
+    - mawk
+    - nginx-stable
+    - perl-base
+    - php-8.3-fpm=8.3.36-0
+    - php-8.3=8.3.36-0
+    - postgresql-client-17=17.12-0+deb13u1+dhi0
+    - sed
+    - tzdata
+    - util-linux
+    - zabbix-web-nginx-pgsql-6.0-php-ext=6.0.49-0
+    - zabbix-web-nginx-pgsql-6.0=6.0.49-0
+    - zlib1g
+  builds:
+    - name: frontend-locales
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - grep
+          - gzip
+          - locales
+          - mawk
+          - sed
+          - zabbix-web-nginx-pgsql-6.0=6.0.49-0
+      pipeline:
+        - name: generate locales
+          runs: |
+            set -eux -o pipefail
+
+            grep "'display' => true" /usr/share/zabbix/include/locales.inc.php \
+              | awk '{$1=$1};1' | cut -d"'" -f 2 | sort -u \
+              | sed 's/$/.UTF-8 UTF-8/' > /etc/locale.gen
+
+            grep -qx 'de_DE.UTF-8 UTF-8' /etc/locale.gen
+            grep -qx 'ja_JP.UTF-8 UTF-8' /etc/locale.gen
+
+            locale-gen
+
+            test "$(localedef --list-archive | wc -l)" -eq "$(wc -l < /etc/locale.gen)"
+      outputs:
+        - source: /usr/lib/locale/locale-archive
+          target: /usr/lib/locale/locale-archive
+          uid: 0
+          gid: 0
+    - name: writable-paths
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - nginx-stable
+          - zabbix-web-nginx-pgsql-6.0=6.0.49-0
+          - php-8.3-fpm=8.3.36-0
+      pipeline:
+        - name: own writable paths
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /etc/nginx/conf.d /var/lib/php/session /var/lib/zabbix
+            case "6.0" in
+              7.4)
+                mkdir -p /var/lib/zabbix/enc /var/lib/zabbix/enc_internal
+                ;;
+              8.0)
+                mkdir -p /var/lib/zabbix/enc /var/lib/zabbix/enc_internal \
+                  /var/lib/zabbix/ssl/certs /var/lib/zabbix/ssl/keys \
+                  /var/lib/zabbix/ssl/ssl_ca /var/lib/zabbix/ssl/ssl_ca_internal
+                ;;
+            esac
+
+            for dir in /etc/nginx /etc/zabbix /etc/php-8.3/php-fpm.d \
+              /usr/share/zabbix/modules /var/lib/php/session /var/lib/zabbix; do
+              chown -R 1997:0 "$dir"
+              chmod -R g=u "$dir"
+              mkdir -p "${target.dir}$(dirname "$dir")"
+              cp -a "$dir" "${target.dir}$dir"
+            done
+      outputs:
+        - source: ${target.dir}
+          target: /
+          uid: 0
+          gid: 0
+accounts:
+  root: true
+  run-as: root
+  users:
+    - name: zabbix
+      uid: 1997
+      gid: 1995
+    - name: _apt
+      uid: 42
+      gid: 65532
+  groups:
+    - name: zabbix
+      gid: 1995
+      members:
+        - zabbix
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/share/zabbix
+environment:
+  DAEMON_GROUP: zabbix
+  DAEMON_USER: zabbix
+  DEBIAN_FRONTEND: noninteractive
+  NGINX_BIN: /usr/sbin/nginx
+  NGINX_CONF_FILE: /etc/nginx/nginx-zabbix.conf
+  NGINX_CONFD_DIR: /etc/nginx/conf.d
+  PHP_FPM_BIN: /usr/sbin/php-fpm-8.3
+  PHP_FPM_CONFIG: /etc/php-8.3/php-fpm-zabbix.conf
+  PHP_ZBX_CONFIG_FILE: /etc/php-8.3/php-fpm.d/zabbix.conf
+  PYTHONDONTWRITEBYTECODE: "1"
+  TERM: xterm
+  ZABBIX_CONF_DIR: /etc/zabbix
+  ZABBIX_USER_HOME_DIR: /var/lib/zabbix
+  ZABBIX_WWW_ROOT: /usr/share/zabbix
+  ZBX_SOURCES: https://git.zabbix.com/scm/zbx/zabbix.git
+  ZBX_VERSION: 6.0.49
+paths:
+  - type: delete
+    path: /etc/nginx/conf.d/default.conf
+    uid: 0
+    gid: 0
+  - type: delete
+    path: /etc/php-8.3/php-fpm.d/www.conf
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /var/log/nginx/access.log
+    uid: 0
+    gid: 0
+    source: /dev/stdout
+  - type: symlink
+    path: /var/log/nginx/error.log
+    uid: 0
+    gid: 0
+    source: /dev/stderr
+  - type: symlink
+    path: /usr/bin/psql
+    uid: 0
+    gid: 0
+    source: /usr/lib/postgresql/17/bin/psql
+annotations:
+  org.opencontainers.image.description: Zabbix - web interface served by Nginx and PHP-FPM for a PostgreSQL database
+  org.opencontainers.image.licenses: GPL-2.0-or-later
+entrypoint:
+  - docker-entrypoint.sh
+ports:
+  - 8080/tcp
+  - 8443/tcp

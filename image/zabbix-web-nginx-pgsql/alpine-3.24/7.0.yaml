@@ -1,0 +1,153 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+name: Zabbix web interface (Nginx, PostgreSQL) 7.0.x
+image: dhi.io/zabbix-web-nginx-pgsql
+variant: runtime
+tags:
+  - 7.0-alpine
+  - 7.0.32-alpine
+  - 7.0-alpine3.24
+  - 7.0.32-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-06-04"
+  end-of-life: "2029-06-30"
+vars:
+  PHP_APK_VERSION: 8.5.12-r0
+  PHP_MAJOR_MINOR: "8.5"
+  POSTGRESQL_CLIENT_APK: postgresql17-client
+  SEMVER_MAJOR_MINOR_VERSION: "7.0"
+  SEMVER_MAJOR_VERSION: "7"
+  SEMVER_VERSION: 7.0.32
+  VERSION: 7.0.32-r0
+  ZABBIX_LICENSE: AGPL-3.0-only
+  ZBX_LINE: "7.0"
+  ZBX_PACKAGE: zabbix-web-nginx-pgsql-7.0
+  ZBX_PHP_EXT_APK_VERSION: 7.0.32-r0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+    - bash
+    - ca-certificates-bundle
+    - coreutils
+    - curl
+    - grep
+    - jq
+    - libgd
+    - libintl
+    - libldap
+    - libpq
+    - nginx-stable
+    - php-8.5-fpm=8.5.12-r0
+    - php-8.5=8.5.12-r0
+    - postgresql17-client
+    - sed
+    - zabbix-web-nginx-pgsql-7.0-php-ext=7.0.32-r0
+    - zabbix-web-nginx-pgsql-7.0=7.0.32-r0
+  builds:
+    - name: writable-paths
+      contents:
+        packages:
+          - busybox
+          - nginx-stable
+          - zabbix-web-nginx-pgsql-7.0=7.0.32-r0
+          - php-8.5-fpm=8.5.12-r0
+      pipeline:
+        - name: own writable paths
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /etc/nginx/conf.d /var/lib/php/session /var/lib/zabbix
+            case "7.0" in
+              7.4)
+                mkdir -p /var/lib/zabbix/enc /var/lib/zabbix/enc_internal
+                ;;
+              8.0)
+                mkdir -p /var/lib/zabbix/enc /var/lib/zabbix/enc_internal \
+                  /var/lib/zabbix/ssl/certs /var/lib/zabbix/ssl/keys \
+                  /var/lib/zabbix/ssl/ssl_ca /var/lib/zabbix/ssl/ssl_ca_internal
+                ;;
+            esac
+
+            for dir in /etc/nginx /etc/zabbix /etc/php-8.5/php-fpm.d \
+              /usr/share/zabbix/modules /var/lib/nginx /var/lib/php/session /var/lib/zabbix; do
+              chown -R 1997:0 "$dir"
+              chmod -R g=u "$dir"
+              mkdir -p "${target.dir}$(dirname "$dir")"
+              cp -a "$dir" "${target.dir}$dir"
+            done
+      outputs:
+        - source: ${target.dir}
+          target: /
+          uid: 0
+          gid: 0
+accounts:
+  run-as: zabbix
+  users:
+    - name: zabbix
+      uid: 1997
+      gid: 1995
+  groups:
+    - name: zabbix
+      gid: 1995
+      members:
+        - zabbix
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
+work-dir: /usr/share/zabbix
+environment:
+  DAEMON_GROUP: zabbix
+  DAEMON_USER: zabbix
+  NGINX_BIN: /usr/sbin/nginx
+  NGINX_CONF_FILE: /etc/nginx/nginx-zabbix.conf
+  NGINX_CONFD_DIR: /etc/nginx/conf.d
+  PHP_FPM_BIN: /usr/sbin/php-fpm-8.5
+  PHP_FPM_CONFIG: /etc/php-8.5/php-fpm-zabbix.conf
+  PHP_ZBX_CONFIG_FILE: /etc/php-8.5/php-fpm.d/zabbix.conf
+  TERM: xterm
+  ZABBIX_CONF_DIR: /etc/zabbix
+  ZABBIX_USER_HOME_DIR: /var/lib/zabbix
+  ZABBIX_WWW_ROOT: /usr/share/zabbix
+  ZBX_SOURCES: https://git.zabbix.com/scm/zbx/zabbix.git
+  ZBX_VERSION: 7.0.32
+paths:
+  - type: delete
+    path: /etc/nginx/http.d
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /etc/nginx/http.d
+    uid: 0
+    gid: 0
+    source: conf.d
+  - type: symlink
+    path: /var/log/nginx/access.log
+    uid: 0
+    gid: 0
+    source: /dev/stdout
+  - type: symlink
+    path: /var/log/nginx/error.log
+    uid: 0
+    gid: 0
+    source: /dev/stderr
+annotations:
+  org.opencontainers.image.description: Zabbix - web interface served by Nginx and PHP-FPM for a PostgreSQL database
+  org.opencontainers.image.licenses: AGPL-3.0-only
+entrypoint:
+  - docker-entrypoint.sh
+ports:
+  - 8080/tcp
+  - 8443/tcp
