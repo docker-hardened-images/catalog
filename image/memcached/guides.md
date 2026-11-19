@@ -165,14 +165,6 @@ docker run --rm -it --pid container:my-image \
   dhi.io/memcached:<tag> /dbg/bin/sh
 ```
 
-### FIPS variant TLS support
-
-The `debian13-fips` variant links OpenSSL and supports TLS (`memcached -Z` with a certificate and key), so
-FIPS-validated TLS connections are available. The `alpine3.24-fips` variant does not: Alpine's memcached build has no
-TLS support (`memcached -Z` reports "This server is not built with TLS support"). Choose the Debian FIPS variant when
-FIPS-validated TLS is required; both distros' FIPS variants provide the validated OpenSSL module for the container's own
-TLS certificate operations regardless.
-
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use.
