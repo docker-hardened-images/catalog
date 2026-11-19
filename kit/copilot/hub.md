@@ -40,6 +40,9 @@ tool or MCP destinations in the runtime network policy as needed.
 
 If a tool cannot reach a service, run `sbx policy log` on the host to identify blocked destinations.
 
+The agent owns the Copilot CLI install. To move to a newer release inside a sandbox, run `copilot update`. A new sandbox
+starts from the release this Kit pins.
+
 ## Related kits
 
 - [`sbx/copilot-mixin`](https://hub.docker.com/r/sbx/copilot-mixin) provides the agent overlay for a compatible
