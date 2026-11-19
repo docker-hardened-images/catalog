@@ -47,6 +47,9 @@ tool or MCP destinations in the runtime network policy as needed.
 If a tool cannot reach a service, run `sbx policy log` on the host to identify blocked destinations. Additional
 language-server downloads may need extra destinations in the runtime network policy.
 
+The agent owns the OpenCode install. To move to a newer release inside a sandbox, run `opencode upgrade`. A new sandbox
+starts from the release this Kit pins.
+
 ## Related kits
 
 - [`sbx/opencode-mixin`](https://hub.docker.com/r/sbx/opencode-mixin) provides the agent overlay for a compatible
