@@ -32,7 +32,6 @@ vars:
   SEMVER_MAJOR_VERSION: "4"
   SEMVER_VERSION: 4.6.0
   SUFFIX: ""
-  UPSTREAM_UBUNTU_REFERENCE: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
   VERSION: 4.6.0-4.8.3
 contents:
   repositories:
@@ -51,71 +50,6 @@ contents:
     - libstdc++6
     - tini
     - tzdata
-  builds:
-    - name: prebuild ld.so.cache for libdcgm
-      uses: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
-      pipeline:
-        - name: prebuild ld.so.cache for libdcgm
-          shell: /bin/bash
-          runs: |
-            set -eux -o pipefail
-
-            case "${target.arch}" in
-              amd64) libdir=x86_64-linux-gnu ;;
-              arm64) libdir=aarch64-linux-gnu ;;
-              *)
-                echo "unsupported arch: ${target.arch}" >&2
-                exit 1
-                ;;
-            esac
-
-            mkdir -p ${target.dir}/usr/lib/${libdir} ${target.dir}/etc/ld.so.conf.d
-            cp -a /usr/lib/${libdir}/libdcgm*.so* ${target.dir}/usr/lib/${libdir}/
-            echo "/usr/lib/${libdir}" > ${target.dir}/etc/ld.so.conf.d/libdcgm.conf
-            /sbin/ldconfig -r ${target.dir} -X
-            ls -la ${target.dir}/etc/ld.so.cache
-      outputs:
-        - source: ${target.dir}/etc/ld.so.cache
-          target: /etc/ld.so.cache
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/etc/ld.so.conf.d/libdcgm.conf
-          target: /etc/ld.so.conf.d/libdcgm.conf
-          uid: 0
-          gid: 0
-    - name: dcgm-dpkg-status
-      uses: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
-      pipeline:
-        - name: slice dcgm dpkg stanzas into status.d
-          shell: /bin/bash
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p ${target.dir}/var/lib/dpkg/status.d
-            for pkg in datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary; do
-              grep -q "^Package: ${pkg}$" /var/lib/dpkg/status # fail loud if renamed
-              awk -v pkg="${pkg}" '$0 == "Package: " pkg {f=1} f && !/^(Status|Depends|Pre-Depends|Recommends|Suggests):/{print} /^$/{if(f)exit}' /var/lib/dpkg/status \
-                > ${target.dir}/var/lib/dpkg/status.d/${pkg}
-              test -s ${target.dir}/var/lib/dpkg/status.d/${pkg}
-            done
-      outputs:
-        - source: ${target.dir}/var/lib/dpkg/status.d/datacenter-gpu-manager-4-core
-          target: /var/lib/dpkg/status.d/datacenter-gpu-manager-4-core
-          uid: 0
-          gid: 0
-        - source: ${target.dir}/var/lib/dpkg/status.d/datacenter-gpu-manager-4-proprietary
-          target: /var/lib/dpkg/status.d/datacenter-gpu-manager-4-proprietary
-          uid: 0
-          gid: 0
-  artifacts:
-    - name: nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04@sha256:2f74687df0f3116e168061a6d0544cb15d2e0e72a55cffa136ddce3a80b24551
-      includes:
-        - etc/dcgm-exporter/1.x-compatibility-metrics.csv
-        - etc/dcgm-exporter/dcp-metrics-included.csv
-        - etc/dcgm-exporter/default-counters.csv
-        - usr/lib/*-linux-gnu/libdcgm*.so*
-      uid: 0
-      gid: 0
 accounts:
   root: true
   run-as: root
