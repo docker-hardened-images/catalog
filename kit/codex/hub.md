@@ -40,6 +40,9 @@ remain proxy-managed.
 The sandbox supplies the isolation for agent tool execution. Launch the kit through Docker Sandboxes and configure extra
 tool or MCP destinations in the runtime network policy as needed.
 
+The agent owns the Codex install. To move to a newer release inside a sandbox, run `codex update`. A new sandbox starts
+from the release this Kit pins.
+
 ## Related kits
 
 - [`sbx/codex-acp`](https://hub.docker.com/r/sbx/codex-acp) provides the ACP adapter for the composed agent.
