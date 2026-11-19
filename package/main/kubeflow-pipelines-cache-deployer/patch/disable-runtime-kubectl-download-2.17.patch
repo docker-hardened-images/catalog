@@ -1,0 +1,37 @@
+Subject: Do not download a cluster-matched kubectl at runtime on the 2.17 line
+
+Origin: DHI-internal (runtime dependency policy)
+Base-Tree: git https://github.com/kubeflow/pipelines a0733cb51b0484a6050cafee989ffe3312f808ad
+Verify: cmd `go test ./package/main/kubeflow-pipelines-cache-deployer/tests -run TestClosureRoot -count=1` expect "ok"
+Forwarded: no (upstream offers no switch to turn the download off)
+Drop-When: never: upstream calls the download unconditionally; revisit if upstream adds a way to turn it off
+
+The 2.17.3 deployer downloads a kubectl matching the API server into $HOME/bin before it
+talks to the cluster. Its download block is inline rather than the function that 2.18.0 uses,
+so the 2.17 line carries this patch instead of disable-runtime-kubectl-download.patch. The
+package declares the pinned kubectl-1.36 line as a runtime dependency, so a running deployer
+never executes a binary it fetched itself and needs neither curl nor jq for that step. The
+block is removed whole, including the PATH change it makes, so the packaged kubectl is the
+only kubectl on PATH.
+
+--- a/backend/src/cache/deployer/deploy-cache-service.sh
++++ b/backend/src/cache/deployer/deploy-cache-service.sh
+@@ -28,18 +28,6 @@
+ MUTATING_WEBHOOK_CONFIGURATION_NAME="cache-webhook-${NAMESPACE}"
+ WEBHOOK_SECRET_NAME=webhook-server-tls
+
+-# Getting correct kubectl. Kubernetes only supports kubectl versions within +/-1 minor version.
+-# kubectl has some resource version information hardcoded, so using too old kubectl can lead to errors
+-mkdir -p "$HOME/bin"
+-export PATH="$HOME/bin:$PATH"
+-{
+-    server_version_major_minor=$(kubectl version --output json | jq --raw-output '(.serverVersion.major + "." + .serverVersion.minor)' | tr -d '"+')
+-    stable_build_version=$(curl -fsSL "https://dl.k8s.io/release/stable-${server_version_major_minor}.txt")
+-    kubectl_url="https://dl.k8s.io/release/${stable_build_version}/bin/linux/amd64/kubectl"
+-    curl -L -o "$HOME/bin/kubectl" "$kubectl_url"
+-    chmod +x "$HOME/bin/kubectl"
+-} || true
+-
+ # This should fail if there are connectivity problems
+ # Gotcha: Listing all objects requires list permission,
+ # but when listing a single oblect kubectl will fail if it's not found

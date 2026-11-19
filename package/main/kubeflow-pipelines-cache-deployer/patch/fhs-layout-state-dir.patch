@@ -1,0 +1,51 @@
+Subject: Run the deployer from packaged paths and a separate state directory
+
+Origin: DHI-internal (package filesystem layout)
+Base-Tree: git https://github.com/kubeflow/pipelines 555bfa60a70da88c594960bdacfd78fa7c061043
+Verify: cmd `go test ./package/main/kubeflow-pipelines-cache-deployer/tests -run TestClosureRoot -count=1` expect "ok"
+Forwarded: not-needed (packaging layout only)
+Drop-When: never: upstream runs from its own writable image directory, which a package cannot ship
+
+Upstream runs deploy-cache-service.sh from its own directory, calls the helper
+scripts as ./webhook-*.sh, reads templates relative to the working directory and
+writes webhooks.txt, cache_secret.txt, ca_cert and the rendered webhook manifest
+next to the scripts, which its image makes world-writable. The package installs
+the helpers under /usr/lib/kubeflow-pipelines-cache-deployer and the templates
+under /usr/share/kubeflow-pipelines-cache-deployer, both read-only, and the
+script now changes into a state directory before writing anything. The state
+directory defaults to /var/lib/kubeflow-pipelines-cache-deployer and can be moved
+with KFP_CACHE_DEPLOYER_STATE_DIR. Library mode still returns before any of this.
+
+--- a/backend/src/cache/deployer/deploy-cache-service.sh
++++ b/backend/src/cache/deployer/deploy-cache-service.sh
+@@ -64,6 +64,12 @@
+ 
+ set -ex
+ 
++KFP_CACHE_DEPLOYER_LIB_DIR=/usr/lib/kubeflow-pipelines-cache-deployer
++KFP_CACHE_DEPLOYER_DATA_DIR=/usr/share/kubeflow-pipelines-cache-deployer
++STATE_DIR="${KFP_CACHE_DEPLOYER_STATE_DIR:-/var/lib/kubeflow-pipelines-cache-deployer}"
++mkdir -p "$STATE_DIR"
++cd "$STATE_DIR"
++
+ # Warning: grep in this image does not support long option names like --word-regexp
+ 
+ echo "Start deploying cache service to existing cluster:"
+@@ -112,7 +118,7 @@
+ touch ${CA_FILE}
+ 
+ # Generate signed certificate for cache server.
+-./webhook-create-signed-cert.sh --namespace "${NAMESPACE}" --cert_output_path "${CA_FILE}" --secret "${WEBHOOK_SECRET_NAME}"
++"$KFP_CACHE_DEPLOYER_LIB_DIR"/webhook-create-signed-cert.sh --namespace "${NAMESPACE}" --cert_output_path "${CA_FILE}" --secret "${WEBHOOK_SECRET_NAME}"
+ echo "Signed certificate generated for cache server"
+ 
+ # Patch CA_BUNDLE for MutatingWebhookConfiguration
+@@ -127,7 +133,7 @@
+ else
+     cache_webhook_config_template="cache-webhook-config.v1beta1.yaml.template"
+ fi
+-NAMESPACE="$NAMESPACE" ./webhook-patch-ca-bundle.sh --cert_input_path "${CA_FILE}" <./"$cache_webhook_config_template" >./cache-configmap-ca-bundle.yaml
++NAMESPACE="$NAMESPACE" "$KFP_CACHE_DEPLOYER_LIB_DIR"/webhook-patch-ca-bundle.sh --cert_input_path "${CA_FILE}" <"$KFP_CACHE_DEPLOYER_DATA_DIR/$cache_webhook_config_template" >./cache-configmap-ca-bundle.yaml
+ echo "CA_BUNDLE patched successfully"
+ 
+ # Create MutatingWebhookConfiguration
