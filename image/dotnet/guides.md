@@ -43,9 +43,9 @@ To inspect the image configuration:
 
 ```bash
 # Check entry point and user configuration
-docker image inspect dhi.io/dotnet:8 --format='{{.Config.Entrypoint}}'
-docker image inspect dhi.io/dotnet:8 --format='{{.Config.Cmd}}'
-docker image inspect dhi.io/dotnet:8 --format='{{.Config.User}}'
+docker image inspect dhi.io/dotnet:10 --format='{{.Config.Entrypoint}}'
+docker image inspect dhi.io/dotnet:10 --format='{{.Config.Cmd}}'
+docker image inspect dhi.io/dotnet:10 --format='{{.Config.User}}'
 
 # Compare image sizes
 docker images | grep dotnet
@@ -59,7 +59,7 @@ Use a multi-stage Dockerfile to build your application with the SDK variant and 
 
 ```dockerfile
 # Build stage using SDK variant
-FROM dhi.io/dotnet:8-sdk AS build
+FROM dhi.io/dotnet:10-sdk AS build
 WORKDIR /src
 COPY *.csproj .
 RUN dotnet restore
@@ -67,7 +67,7 @@ COPY . .
 RUN dotnet publish -c Release -o /app
 
 # Runtime stage using minimal runtime variant
-FROM dhi.io/dotnet:8
+FROM dhi.io/dotnet:10
 WORKDIR /app
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "YourApp.dll"]
@@ -86,7 +86,7 @@ For web applications, use the ASP.NET Core runtime from the separate DHI ASP.NET
 
 ```dockerfile
 # Build stage
-FROM dhi.io/dotnet:8-sdk AS build
+FROM dhi.io/dotnet:10-sdk AS build
 WORKDIR /src
 COPY MyWebApp/*.csproj ./MyWebApp/
 RUN dotnet restore MyWebApp/MyWebApp.csproj
@@ -94,7 +94,7 @@ COPY . .
 RUN dotnet publish MyWebApp/MyWebApp.csproj -c Release -o /app
 
 # Runtime stage for web apps
-FROM dhi.io/aspnetcore:8
+FROM dhi.io/aspnetcore:10
 WORKDIR /app
 COPY --from=build /app .
 EXPOSE 8080
@@ -138,7 +138,7 @@ Mount your source code for live development:
 docker run --rm -it \
   -v $(pwd):/workspace \
   -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   bash
 ```
 
@@ -168,21 +168,21 @@ For quick development tasks without entering the container:
 ```bash
 # Create a new project from outside the container
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet new web -n MyWebApp
 
 # Build the project
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet build MyWebApp
 
 # Create and run a simple console application
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet new console -n HelloWorld
 
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet run --project HelloWorld
 ```
 
@@ -193,20 +193,20 @@ Execute .NET CLI commands to run pre-built applications:
 ```bash
 # Create and build a console application using SDK
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet new console -n MyApp
 
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8-sdk \
+  dhi.io/dotnet:10-sdk \
   dotnet build MyApp
 
 # Run the built application using runtime image (note the full path to the compiled DLL)
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  dhi.io/dotnet:8 \
-  dotnet MyApp/bin/Debug/net8.0/MyApp.dll
+  dhi.io/dotnet:10 \
+  dotnet MyApp/bin/Debug/net10.0/MyApp.dll
 ```
 
-**Note**: When using `dotnet build`, the compiled DLL is placed in `bin/Debug/net8.0/` (or `bin/Release/net8.0/` for
+**Note**: When using `dotnet build`, the compiled DLL is placed in `bin/Debug/net10.0/` (or `bin/Release/net10.0/` for
 release builds). When using `dotnet publish` in multi-stage builds, the DLL is copied directly to the specified output
 directory (`/app` in the examples above), which is why the multi-stage examples work with just the DLL name.
 
@@ -350,7 +350,7 @@ For example, you can use Docker Debug:
 
 ```bash
 # Start your application
-docker run -d --name my-app dhi.io/dotnet:8
+docker run -d --name my-app dhi.io/dotnet:10
 
 # Attach debugger
 docker debug my-app
@@ -361,7 +361,7 @@ or mount debugging tools with the Image Mount feature:
 ```bash
 docker run --rm -it --pid container:my-dotnet-app \
   --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/dotnet:8 /dbg/bin/sh
+  dhi.io/dotnet:10 /dbg/bin/sh
 ```
 
 ## Image variants
@@ -385,15 +385,15 @@ first stage of a multi-stage Dockerfile. These images typically:
 
 Available variants include:
 
-- `8`: .NET 8 runtime only
-- `8-sdk`: .NET 8 SDK for development and building
-- `9`: .NET 9 runtime only
-- `9-sdk`: .NET 9 SDK for development and building
+- `10`: .NET 10 runtime only
+- `10-sdk`: .NET 10 SDK for development and building
+- `11`: .NET 11 runtime only
+- `11-sdk`: .NET 11 SDK for development and building
 
 For ASP.NET Core application, use the separate DHI ASP.NET Core repository:
 
-- `dhi.io/aspnetcore:8`: ASP.NET Core 8 runtime
-- `dhi.io/aspnetcore:9`: ASP.NET Core 9 runtime
+- `dhi.io/aspnetcore:10`: ASP.NET Core 8 runtime
+- `dhi.io/aspnetcore:11`: ASP.NET Core 9 runtime
 
 ## Migrate to a Docker Hardened Image
 
@@ -450,12 +450,12 @@ The following steps outline the general migration process.
 Before (using official images):
 
 ```dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
 RUN dotnet publish -c Release -o /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "MyApp.dll"]
@@ -464,14 +464,14 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 After (using DHI):
 
 ```dockerfile
-FROM dhi.io/dotnet:8-sdk AS build
+FROM dhi.io/dotnet:10-sdk AS build
 WORKDIR /src
 COPY *.csproj .
 RUN dotnet restore
 COPY . .
 RUN dotnet publish -c Release -o /app
 
-FROM dhi.io/aspnetcore:8
+FROM dhi.io/aspnetcore:10
 WORKDIR /app
 COPY --from=build /app .
 EXPOSE 8080
@@ -521,8 +521,8 @@ Docker Hardened Images may have different entry points than images such as Docke
 - NuGet packages: All package restoration should happen in the SDK build stage
 - Runtime dependencies: Ensure all required runtime libraries are present in the final runtime image
 - Configurations: Use environment variables or configuration files that are accessible to the nonroot user
-- File paths: When running applications with `dotnet build`, the DLL is located in `bin/Debug/net8.0/` or
-  `bin/Release/net8.0/` subdirectories. When using `dotnet publish`, the DLL is placed in the specified output
+- File paths: When running applications with `dotnet build`, the DLL is located in `bin/Debug/net10.0/` or
+  `bin/Release/net10.0/` subdirectories. When using `dotnet publish`, the DLL is placed in the specified output
   directory.
 - Logging: Configure logging to write to stdout/stderr or to directories writable by the nonroot user
 - Health checks: Implement health check endpoints for Kubernetes liveness and readiness probes
