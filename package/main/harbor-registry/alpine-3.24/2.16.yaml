@@ -4,7 +4,7 @@ image: dhi.io/pkg-harbor-registry
 variant: runtime
 tags:
   - 2.16.0-alpine3.24
-  - 2.16.0-r2-alpine3.24
+  - 2.16.0-r3-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -18,7 +18,7 @@ vars:
   REGISTRY_COMMIT_SHA: 72e8fdc1ff9021b77e618568a967e4b53689ce32
   REGISTRY_SRC_TAG: v2.8.3-harbor.3
   REGISTRYVERSION: v2.8.3-patch-redis
-  REL: "2"
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "2.16"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.16.0
@@ -91,6 +91,7 @@ contents:
         - name: build
           uses: go/build@v1
           with:
+            fips: false
             ldflags:
               - -X github.com/docker/distribution/version.Version=v2.8.3-patch-redis
               - -X github.com/docker/distribution/version.Package=github.com/docker/distribution
@@ -100,12 +101,26 @@ contents:
         - name: build dev
           uses: go/build@v1
           with:
+            fips: false
             ldflags:
               - -X github.com/docker/distribution/version.Version=v2.8.3-patch-redis
               - -X github.com/docker/distribution/version.Package=github.com/docker/distribution
             output: ${target.dir}/usr/bin/registry-dev
             packages: ./cmd/registry
             strip: false
+        - name: check go fips build settings
+          runs: |
+            set -eux -o pipefail
+
+            for bin in "${target.dir}/usr/bin/registry" "${target.dir}/usr/bin/registry-dev"; do
+              go version -m "$bin" > /tmp/buildinfo.txt
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0' /tmp/buildinfo.txt
+              elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
         - uses: dhi/build-pkg:0
           with:
             description: Harbor Registry - OCI/Docker registry component for Harbor
@@ -113,7 +128,7 @@ contents:
               - usr/bin/registry
             license: Apache-2.0
             name: harbor-registry-2.16
-            rel: 2
+            rel: 3
             subpackages:
               - files:
                   - path: usr/bin/registry
