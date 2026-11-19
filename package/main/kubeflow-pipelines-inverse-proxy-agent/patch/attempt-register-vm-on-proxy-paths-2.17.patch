@@ -1,0 +1,30 @@
+Subject: Point the inverse proxy launcher at the package's FHS install paths
+
+Origin: DHI-internal (package/main/kubeflow-pipelines-inverse-proxy-agent build, 2.17 line)
+Description: Upstream 2.17.3's launcher hardcodes /opt/bin/proxy-forwarding-agent and runs get_proxy_url.py with whatever python3 is first on PATH. The package installs the agent at /usr/bin and the script and its venv under /usr/lib/kubeflow-pipelines-inverse-proxy-agent, so both references are rewritten to those paths. Flags, environment and control flow are unchanged. The 2.17.3 discovery fetch uses wget, not curl. This patch adds `-O proxy-agent-config.json` to that line, so the fetch writes the same file in a fresh directory and in one where the image has already created it; without it, GNU wget saves to proxy-agent-config.json.1 next to the existing file.
+Base-Tree: git https://github.com/kubeflow/pipelines.git a0733cb51b0484a6050cafee989ffe3312f808ad
+Verify: cmd `go test ./package/main/kubeflow-pipelines-inverse-proxy-agent/tests -run TestInverseProxyAgentDEB -count=1` expect "ok"
+Forwarded: not-needed (DHI install layout only; upstream's image keeps its /opt layout)
+Drop-When: never: upstream's launcher hardcodes /opt/bin, which FHS reserves for the local administrator
+
+--- a/proxy/attempt-register-vm-on-proxy.sh
++++ b/proxy/attempt-register-vm-on-proxy.sh
+@@ -22,7 +22,7 @@
+   # Start the proxy process
+   # https://github.com/google/inverting-proxy/blob/master/agent/Dockerfile
+   # Connect proxy agent to Kubeflow Pipelines UI
+-  /opt/bin/proxy-forwarding-agent \
++  /usr/bin/proxy-forwarding-agent \
+         --debug=${DEBUG} \
+         --proxy=${PROXY_URL}/ \
+         --proxy-timeout=${PROXY_TIMEOUT} \
+@@ -61,7 +61,7 @@
+ if [[ -z "${PROXY_URL}" ]]; then
+   # Get latest Proxy server URL
+-  wget https://storage.googleapis.com/ml-pipeline/proxy-agent-config.json
++  wget -O proxy-agent-config.json https://storage.googleapis.com/ml-pipeline/proxy-agent-config.json
+-  PROXY_URL=$(python3 ${DIR}/get_proxy_url.py --config-file-path "proxy-agent-config.json" --location "${INSTANCE_ZONE}" --version "latest")
++  PROXY_URL=$(/usr/lib/kubeflow-pipelines-inverse-proxy-agent/venv/bin/python3 /usr/lib/kubeflow-pipelines-inverse-proxy-agent/get_proxy_url.py --config-file-path "proxy-agent-config.json" --location "${INSTANCE_ZONE}" --version "latest")
+ fi
+ if [[ -z "${PROXY_URL}" ]]; then
+     echo "Proxy URL for the zone ${INSTANCE_ZONE} no found, exiting."

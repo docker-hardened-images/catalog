@@ -1,0 +1,34 @@
+Subject: Wait for local proxy completion before agent tests finish
+Origin: DHI-internal (upstream test synchronization)
+Description: Move proxy completion logging into test cleanup so the test remains active until the subprocess exits.
+Base-Tree: git https://github.com/google/inverting-proxy.git 6264998ae706281fd068e8f3eeb3cbd42046c5b6
+Verify: test agent/agent_test.go::TestHTTP2Backend
+Forwarded: no (local package build stabilization pending upstream submission)
+Drop-When: never: pinned upstream source lacks synchronized proxy process cleanup
+
+The proxy subprocess exits asynchronously after its context is cancelled. Waiting from test cleanup prevents its
+completion log from using testing.T after the enclosing agent test has already completed.
+
+diff --git a/agent/agent_test.go b/agent/agent_test.go
+index 7e640d3..d920054 100644
+--- a/agent/agent_test.go
++++ b/agent/agent_test.go
+@@ -105,10 +105,16 @@ func RunLocalProxy(ctx context.Context, t *testing.T) (int, error) {
+ 	if err := proxyCmd.Start(); err != nil {
+ 		t.Fatalf("Failed to start the inverting-proxy binary: %v", err)
+ 	}
++	proxyDone := make(chan struct{})
++	var proxyErr error
+ 	go func() {
+-		err := proxyCmd.Wait()
+-		t.Logf("Proxy result: %v, stdout/stderr: %q", err, proxyOut.String())
++		proxyErr = proxyCmd.Wait()
++		close(proxyDone)
+ 	}()
++	t.Cleanup(func() {
++		<-proxyDone
++		t.Logf("Proxy result: %v, stdout/stderr: %q", proxyErr, proxyOut.String())
++	})
+ 	for i := 0; i < 30; i++ {
+ 		for _, line := range strings.Split(proxyOut.String(), "\n") {
+ 			if strings.Contains(line, "Listening on [::]:") {

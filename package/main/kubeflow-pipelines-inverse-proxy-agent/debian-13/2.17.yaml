@@ -1,0 +1,304 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kubeflow-pipelines-inverse-proxy-agent
+variant: runtime
+tags:
+  - 2.17.3
+  - 2.17.3-r0
+  - 2.17.3-debian13
+  - 2.17.3-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  AGENT_IMAGE: gcr.io/inverting-proxy/agent@sha256:694d6c1bf299585b530c923c3728cd2c45083f3b396ec83ff799cef1c9dc7474
+  AGENT_IMAGE_VERIFIED: gcr.io/inverting-proxy/agent@sha256:694d6c1bf299585b530c923c3728cd2c45083f3b396ec83ff799cef1c9dc7474
+  AGENT_SOURCE_COMMIT: 9ccd9226c6acb508fa2ba28d5e34229c30d9130a
+  AGENT_SOURCE_COMMIT_SHORT: 9ccd9226c6ac
+  AGENT_SOURCE_COMMIT_TIME: "20230302040338"
+  COMMIT_SHA: a0733cb51b0484a6050cafee989ffe3312f808ad
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-8
+  KUBECTL_MAJOR_MINOR_VERSION: "1.36"
+  LIB_DIR: /usr/lib/kubeflow-pipelines-inverse-proxy-agent
+  PACKAGE_NAME: kubeflow-pipelines-inverse-proxy-agent-2.17
+  PYTHON_MINOR: "3.13"
+  PYTHON_VERSION: 3.13.18-7
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.17"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.17.3
+  UV_VERSION: 0.13.8-0
+  VERSION: 2.17.3
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: kubeflow-pipelines-inverse-proxy-agent-2.17
+      work-dir: /go/src/github.com/google/inverting-proxy
+      environment:
+        GOTOOLCHAIN: local
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - patch
+          - sed
+          - golang-1.27=1.27.4-8
+          - golang-1.27-oci-config=1.27.4-8
+          - uv=0.13.8-0
+          - libpython-3.13=3.13.18-7
+          - libpython-3.13-minimal=3.13.18-7
+          - libpython-3.13-stdlib=3.13.18-7
+          - python-3.13=3.13.18-7
+          - python-3.13-minimal=3.13.18-7
+          - libbz2-1.0
+          - libc6
+          - libcrypt1
+          - libdb5.3t64
+          - libexpat1
+          - libffi8
+          - libgdbm-compat4t64
+          - libgdbm6
+          - liblzma5
+          - libncursesw6
+          - libreadline8t64
+          - libsqlite3-0
+          - libtinfo6
+          - libuuid1
+          - libzstd1
+          - zlib1g
+        files:
+          - url: git+https://github.com/kubeflow/pipelines.git#2.17.3
+            checksum: a0733cb51b0484a6050cafee989ffe3312f808ad
+            path: ${source.dir}/kubeflow-pipelines
+            spdx:
+              name: kubeflow-pipelines
+              version: 2.17.3
+              packages:
+                - name: kubeflow-pipelines
+                  purl: pkg:github/kubeflow/pipelines@2.17.3#proxy
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/google/inverting-proxy.git#9ccd9226c6acb508fa2ba28d5e34229c30d9130a
+            checksum: 9ccd9226c6acb508fa2ba28d5e34229c30d9130a
+            path: /go/src/github.com/google/inverting-proxy
+            spdx:
+              name: inverting-proxy
+              version: v0.0.0-20230302040338-9ccd9226c6ac
+              packages:
+                - name: inverting-proxy
+                  purl: pkg:golang/github.com/google/inverting-proxy@v0.0.0-20230302040338-9ccd9226c6ac
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: check agent image digest
+          runs: |
+            set -eux -o pipefail
+
+            test "gcr.io/inverting-proxy/agent@sha256:694d6c1bf299585b530c923c3728cd2c45083f3b396ec83ff799cef1c9dc7474" = "gcr.io/inverting-proxy/agent@sha256:694d6c1bf299585b530c923c3728cd2c45083f3b396ec83ff799cef1c9dc7474"
+        - name: apply launcher path patch
+          uses: patch@v1
+          work-dir: ${source.dir}/kubeflow-pipelines
+          with:
+            options: -p1
+            patch: ${source.dir}/patch/attempt-register-vm-on-proxy-paths-2.17.patch
+        - name: check patched launcher and kubectl line
+          runs: |
+            set -eux -o pipefail
+
+            test -n "1.36"
+            launcher=${source.dir}/kubeflow-pipelines/proxy/attempt-register-vm-on-proxy.sh
+            grep -qxF '  /usr/bin/proxy-forwarding-agent \' "$launcher"
+            grep -qF 'PROXY_URL=$(/usr/lib/kubeflow-pipelines-inverse-proxy-agent/venv/bin/python3 /usr/lib/kubeflow-pipelines-inverse-proxy-agent/get_proxy_url.py ' "$launcher"
+            if grep -nF '/opt/' "$launcher"; then
+              exit 1
+            fi
+        - name: check agent module
+          runs: |
+            set -eux -o pipefail
+
+            test -f go.mod
+            test -f go.sum
+            grep -q '^module github.com/google/inverting-proxy$' go.mod
+            grep -q '^go 1[.]18$' go.mod
+        - name: bump go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - github.com/gorilla/websocket@v1.5.3
+              - golang.org/x/net@v0.60.0
+              - golang.org/x/oauth2@v0.36.0
+              - golang.org/x/sys@v0.48.0
+              - golang.org/x/text@v0.42.0
+              - google.golang.org/grpc@v1.83.2
+              - google.golang.org/api@v0.264.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+            download: true
+        - name: build proxy-forwarding-agent
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags: -w
+            output: ${target.dir}/usr/bin/proxy-forwarding-agent
+            packages: ./agent
+        - name: check agent build info
+          runs: |
+            set -eux -o pipefail
+
+            agent=${target.dir}/usr/bin/proxy-forwarding-agent
+            info=$(go version -m "$agent")
+            printf '%s\n' "$info"
+            buildinfo=${source.dir}/agent-buildinfo.txt
+            printf '%s\n' "$info" > "$buildinfo"
+            head -1 "$buildinfo" | grep -qE ': go1.27([.]|$)'
+            if grep -qF -- '-X main.' "$buildinfo"; then exit 1; fi
+            grep -qE '^[[:space:]]+mod[[:space:]]+github.com/google/inverting-proxy[[:space:]]+v0[.]0[.]0-20230302040338-9ccd9226c6ac([+]dirty)?([[:space:]]|$)' "$buildinfo"
+            if [ "false" = "true" ]; then
+              grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1[.]0[.]0(-[0-9a-f]+)?$' "$buildinfo"
+              grep -aqF 'crypto/internal/fips140/v' "$agent"
+            elif grep -qF 'GOFIPS140=' "$buildinfo"; then
+              exit 1
+            fi
+        - name: test agent
+          runs: |
+            set -eux -o pipefail
+
+            gobin="$(go env GOPATH)/bin"
+            mkdir -p "$gobin"
+            CGO_ENABLED=0 go build -trimpath -o "$gobin/inverting-proxy" ./server
+            ln -s ${target.dir}/usr/bin/proxy-forwarding-agent "$gobin/proxy-forwarding-agent"
+            go test -count=1 -skip '^TestProxyTimeoutWithShortTimeout$' ./agent/...
+        - name: bump python dependencies
+          uses: python/bump@v1
+          work-dir: ${source.dir}
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/python-bumps.json
+            hashes: require
+            mode: requirements
+            python: /usr/bin/python3.13
+            requirements:
+              - requirements-lock.txt
+        - name: build venv
+          work-dir: ${source.dir}
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            test "$(grep -vE '^[[:space:]]*(#|$)' kubeflow-pipelines/proxy/requirements.txt)" = requests
+
+            export UV_PYTHON_DOWNLOADS=never
+            venv=${target.dir}/usr/lib/kubeflow-pipelines-inverse-proxy-agent/venv
+            uv venv "$venv" --python /usr/bin/python3.13
+            uv pip install --python "$venv/bin/python" --no-cache --no-deps --require-hashes -r requirements-lock.txt
+            uv pip check --python "$venv/bin/python"
+            "$venv/bin/python" -c 'import requests'
+
+            rm "$venv"/bin/activate* "$venv"/bin/deactivate.bat "$venv"/bin/pydoc.bat
+            rm "$venv/.lock" "$venv/CACHEDIR.TAG" "$venv/.gitignore"
+            find "$venv" -type d -name __pycache__ -prune -exec rm -rf {} +
+            test ! -e "$venv/lib/python3.13/site-packages/pip"
+            test ! -e "$venv/lib/python3.13/site-packages/setuptools"
+
+            for f in "$venv"/bin/*; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              if head -1 "$f" | grep -qF "#!${target.dir}"; then
+                sed -i "1s|#!${target.dir}|#!|" "$f"
+              fi
+            done
+            leaks=$(grep -rlF -e "$venv" -e "${source.dir}" "$venv" || true)
+            test -z "$leaks"
+            test -z "$(find "$venv" -perm -0002 ! -type l)"
+        - name: install launcher and licenses
+          work-dir: ${source.dir}/kubeflow-pipelines
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 proxy/attempt-register-vm-on-proxy.sh ${target.dir}/usr/lib/kubeflow-pipelines-inverse-proxy-agent/attempt-register-vm-on-proxy.sh
+            install -D -m 0644 proxy/get_proxy_url.py ${target.dir}/usr/lib/kubeflow-pipelines-inverse-proxy-agent/get_proxy_url.py
+            install -D -m 0644 LICENSE ${target.dir}/usr/share/doc/kubeflow-pipelines-inverse-proxy-agent/LICENSE
+            install -D -m 0644 /go/src/github.com/google/inverting-proxy/LICENSE ${target.dir}/usr/share/doc/inverting-proxy/LICENSE
+        - name: python sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: kubeflow-pipelines-inverse-proxy-agent-python
+            source: ${target.dir}/usr/lib/kubeflow-pipelines-inverse-proxy-agent/venv
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/docker/sbom
+            for d in kubeflow-pipelines inverting-proxy kubeflow-pipelines-inverse-proxy-agent-python; do
+              test -d /opt/docker/sbom/$d
+              cp -a /opt/docker/sbom/$d ${target.dir}/opt/docker/sbom/
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: kubeflow-pipelines-inverse-proxy-agent-2.17-fips
+            depends:
+              - bash
+              - ca-certificates-bundle
+              - cloud-sdk
+              - coreutils
+              - curl
+              - jq
+              - kubectl-1.36
+              - python-3.13
+              - wget
+            description: Kubeflow Pipelines inverse proxy agent, which connects the Pipelines UI to a Google Cloud inverting proxy
+            files:
+              - usr/bin/proxy-forwarding-agent
+              - usr/lib/kubeflow-pipelines-inverse-proxy-agent
+              - usr/share/doc/inverting-proxy/LICENSE
+              - usr/share/doc/kubeflow-pipelines-inverse-proxy-agent/LICENSE
+              - opt/docker/sbom/kubeflow-pipelines
+              - opt/docker/sbom/inverting-proxy
+              - opt/docker/sbom/kubeflow-pipelines-inverse-proxy-agent-python
+            formats:
+              - deb
+            license: Apache-2.0
+            name: kubeflow-pipelines-inverse-proxy-agent-2.17
+            rel: 0
+            url: https://github.com/kubeflow/pipelines/tree/2.17.3/proxy
+            version: 2.17.3
+      paths:
+        - type: file
+          path: ${source.dir}/patch/attempt-register-vm-on-proxy-paths-2.17.patch
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-pipelines-inverse-proxy-agent/patch/attempt-register-vm-on-proxy-paths-2.17.patch
+        - type: file
+          path: ${source.dir}/patch/python-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-pipelines-inverse-proxy-agent/patch/python-bumps.json
+        - type: file
+          path: ${source.dir}/requirements-lock.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-pipelines-inverse-proxy-agent/requirements-lock.txt
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
