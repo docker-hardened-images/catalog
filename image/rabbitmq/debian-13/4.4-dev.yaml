@@ -25,7 +25,9 @@ vars:
   DEBIAN_EPOCH_MAJOR_VERSION: "4"
   DEBIAN_EPOCH_VERSION: 4.4.1
   ERLANG_VERSION: 27.3.4.19
-  VERSION: 4.4.1
+  RABBITMQ_PACKAGE: rabbitmq-4.4
+  RABBITMQ_PACKAGE_SUFFIX: ""
+  VERSION: 4.4.1-1
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -46,114 +48,49 @@ contents:
     - findutils
     - grep
     - libc-bin
+    - libssl3t64
+    - libtinfo6
     - mawk
+    - openssl
     - perl-base
+    - rabbitmq-4.4=4.4.1-1
     - sed
     - util-linux
   builds:
-    - name: rabbitmq
+    - name: rabbitmq-sbom
       contents:
         packages:
-          - base-files
-          - binutils
           - bash
           - coreutils
-          - gcc
-          - grep
-          - gzip
-          - findutils
-          - libc6-dev
-          - libncurses-dev
-          - libssl3t64
-          - libssl-dev
-          - make
-          - mawk
-          - openssl
-          - perl
-          - sed
-          - tar
-          - xz-utils
-        files:
-          - url: https://github.com/erlang/otp/releases/download/OTP-27.3.4.19/otp_src_27.3.4.19.tar.gz
-            checksum: https://github.com/erlang/otp/releases/download/OTP-27.3.4.19/SHA256.txt
-            path: ${source.dir}/erlang.tar.gz
-            spdx:
-              name: erlang
-              version: 27.3.4.19
-              packages:
-                - name: erlang
-                  purl: pkg:dhi/erlang@27.3.4.19
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://github.com/rabbitmq/signing-keys/releases/download/3.0/rabbitmq-release-signing-key.asc
-            path: ${source.dir}/rabbitmq-signing-key-public.asc
-            uid: 0
-            gid: 0
-          - url: https://github.com/rabbitmq/rabbitmq-server/releases/download/v4.4.1/rabbitmq-server-generic-unix-4.4.1.tar.xz.asc
-            path: ${source.dir}/rabbitmq-sig.tar.xz.asc
-            uid: 0
-            gid: 0
-          - url: https://github.com/rabbitmq/rabbitmq-server/releases/download/v4.4.1/rabbitmq-server-generic-unix-4.4.1.tar.xz
-            path: ${source.dir}/rabbitmq-server-generic-unix-4.4.1.tar.xz
-            spdx:
-              name: rabbitmq
-              version: 4.4.1
-              packages:
-                - name: rabbitmq
-                  purl: pkg:dhi/rabbitmq@4.4.1
-                  license: MPL-2.0
-            uid: 0
-            gid: 0
+          - rabbitmq-4.4=4.4.1-1
       pipeline:
-        - name: verify
-          uses: gpg/verify@v1
+        - name: verify bundled versions
+          runs: |
+            set -eux -o pipefail
+
+            test "$(cat /usr/lib/erlang/releases/*/OTP_VERSION)" = "27.3.4.19"
+            test -d "/usr/lib/rabbitmq/plugins/rabbit-4.4.1"
+        - name: erlang sbom
+          uses: spdx@v1
           with:
-            file: ${source.dir}/rabbitmq-server-generic-unix-4.4.1.tar.xz
-            keys: ${source.dir}/rabbitmq-signing-key-public.asc
-            signature: ${source.dir}/rabbitmq-sig.tar.xz.asc
-        - name: install-erlang
-          work-dir: ${source.dir}/erlang
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "${source.dir}/erlang"
-            tar -xzf ${source.dir}/erlang.tar.gz -C "${source.dir}/erlang" --strip-components=1
-            ERL_TOP="$(pwd)"
-            export ERL_TOP
-
-            FIPS_MODE=""
-            if [ "${target.fips}" = "true" ]; then
-              FIPS_MODE="--enable-fips"
-            fi
-
-            ./configure $FIPS_MODE --with-ssl --without-jinterface --without-javac
-
-            make && make install
-        - name: install
-          work-dir: /usr/local/rabbitmq_server-4.4.1/sbin
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p "/usr/local"
-            tar -xJf "${source.dir}/rabbitmq-server-generic-unix-4.4.1.tar.xz" -C "/usr/local"
-            # shellcheck disable=SC2086
-            sed --debug -i 's/SYS_PREFIX=\${RABBITMQ_HOME}/SYS_PREFIX=/g' rabbitmq-defaults
+            license: Apache-2.0
+            name: erlang
+            purl: pkg:dhi/erlang@27.3.4.19
+            version: 27.3.4.19
+        - name: rabbitmq sbom
+          uses: spdx@v1
+          with:
+            license: MPL-2.0
+            name: rabbitmq
+            purl: pkg:dhi/rabbitmq@4.4.1
+            version: 4.4.1
       outputs:
-        - source: /usr/local/rabbitmq_server-4.4.1
-          target: /usr/local/rabbitmq_server-4.4.1
+        - source: /opt/docker/sbom/erlang
+          target: /opt/docker/sbom/erlang
           uid: 0
           gid: 0
-        - source: /usr/local/bin
-          target: /usr/local/bin
-          uid: 0
-          gid: 0
-        - source: /usr/local/lib/erlang
-          target: /usr/local/lib/erlang
-          uid: 0
-          gid: 0
-        - source: /opt/docker/sbom
-          target: /opt/docker/sbom
+        - source: /opt/docker/sbom/rabbitmq
+          target: /opt/docker/sbom/rabbitmq
           uid: 0
           gid: 0
     - name: locale
@@ -235,11 +172,6 @@ environment:
   RUNNING_UNDER_SYSTEMD: "true"
 paths:
   - type: directory
-    path: /usr/local/rabbitmq_server-4.4.1
-    uid: 65532
-    gid: 65532
-    mode: "0755"
-  - type: directory
     path: /var/lib/rabbitmq
     uid: 65532
     gid: 65532
@@ -249,6 +181,73 @@ paths:
     uid: 65532
     gid: 65532
     mode: "0755"
+  - type: directory
+    path: /usr/local
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/rabbitmq_server-4.4.1
+    uid: 0
+    gid: 0
+    source: /usr/lib/rabbitmq
+  - type: directory
+    path: /usr/local/lib
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/lib/erlang
+    uid: 0
+    gid: 0
+    source: /usr/lib/erlang
+  - type: directory
+    path: /usr/local/bin
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /usr/local/bin/ct_run
+    uid: 0
+    gid: 0
+    source: /usr/bin/ct_run
+  - type: symlink
+    path: /usr/local/bin/dialyzer
+    uid: 0
+    gid: 0
+    source: /usr/bin/dialyzer
+  - type: symlink
+    path: /usr/local/bin/epmd
+    uid: 0
+    gid: 0
+    source: /usr/bin/epmd
+  - type: symlink
+    path: /usr/local/bin/erl
+    uid: 0
+    gid: 0
+    source: /usr/bin/erl
+  - type: symlink
+    path: /usr/local/bin/erlc
+    uid: 0
+    gid: 0
+    source: /usr/bin/erlc
+  - type: symlink
+    path: /usr/local/bin/escript
+    uid: 0
+    gid: 0
+    source: /usr/bin/escript
+  - type: symlink
+    path: /usr/local/bin/run_erl
+    uid: 0
+    gid: 0
+    source: /usr/bin/run_erl
+  - type: symlink
+    path: /usr/local/bin/to_erl
+    uid: 0
+    gid: 0
+    source: /usr/bin/to_erl
+  - type: symlink
+    path: /usr/local/bin/typer
+    uid: 0
+    gid: 0
+    source: /usr/bin/typer
 annotations:
   org.opencontainers.image.description: A minimal RabbitMQ image
   org.opencontainers.image.licenses: MPL-2.0
