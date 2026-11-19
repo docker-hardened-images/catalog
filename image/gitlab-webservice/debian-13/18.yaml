@@ -193,7 +193,9 @@ contents:
             #   sidekiq-cron    2.3.1  -> 2.4.0  (CVE-2025-67202, GitLab 18 and 19)
             #   graphql         leave at upstream lock (2.6.10+); bumping past the
             #                   pinned initializer guard breaks gitlab:assets:compile
-            #   puma            7.2.0  -> 7.2.1  (CVE-2026-47736, CVE-2026-47737)
+            #   puma            18.x: patch-bump within ~> 7.2 (CVE-2026-47736, CVE-2026-47737;
+            #                   7.2.0 is vulnerable). 19.x: leave at the PumaIoThreadExit pin
+            #                   (8.0.2); do not bundle lock --update puma there.
             #   concurrent-ruby 1.3.6  -> 1.3.7  (CVE-2026-54904, CVE-2026-54905, CVE-2026-54906)
             #   websocket-driver 0.8.0 -> 0.8.2  (CVE-2026-61666, CVE-2026-54463, CVE-2026-54464, CVE-2026-54465)
             #   excon           1.3.0  -> 1.5.0  (CVE-2026-54171)
@@ -205,7 +207,7 @@ contents:
             #   oauth2          2.0.10/2.0.20 -> 2.0.22 (CVE-2026-54603)
             # oauth stays on 0.5.6 (CVE-2026-54605 needs a 1.x major bump that
             # jira-ruby's "oauth (~> 0.5, >= 0.5.0)" pin blocks) — see VEX.
-            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron puma concurrent-ruby websocket-driver excon css_parser loofah rails-html-sanitizer json msgpack oauth2 rubyzip crass --conservative
+            bundle lock --update activestorage activesupport actionview actionpack railties addressable faraday net-imap nokogiri sidekiq-cron concurrent-ruby websocket-driver excon css_parser loofah rails-html-sanitizer json msgpack oauth2 rubyzip crass --conservative
 
             echo "Lockfile updated:"
             grep -E "activestorage|addressable|^    faraday |^    net-imap |^    nokogiri |^    sidekiq-cron |^    puma |^    concurrent-ruby |^    websocket-driver |^    excon |^    css_parser |^    loofah |^    rails-html-sanitizer |^    json |^    msgpack |^    oauth2 |^    crass " Gemfile.lock | head -30
@@ -221,6 +223,34 @@ contents:
             '
             echo "graphql lockfile version:"
             grep -E "^    graphql " Gemfile.lock
+
+            # GitLab 19 ships PumaIoThreadExit pinned to the initializer version (8.0.2).
+            # Do not bundle lock --update puma there. GitLab 18 has no pin and locks
+            # puma 7.2.0, which is CVE-2026-47736 / CVE-2026-47737; patch-bump within ~> 7.2.
+            # NOTE: keep this ruby -e body free of ASCII apostrophes — the pipeline wraps
+            # it in bash single quotes.
+            pin="config/initializers/puma_io_thread_exit_patch.rb"
+            if [ ! -f "$pin" ]; then
+              bundle lock --update puma --conservative --patch
+            fi
+            ruby -rbundler -e '
+              specs = Bundler::LockfileParser.new(File.read("Gemfile.lock")).specs.to_h { |spec| [spec.name, spec.version] }
+              got = specs.fetch("puma")
+              pin = "config/initializers/puma_io_thread_exit_patch.rb"
+              if File.exist?(pin)
+                text = File.read(pin)
+                m = text.match(/Gem::Version\.new\W+([0-9.]+)/)
+                abort "could not parse PumaIoThreadExit pin from #{pin}" unless m
+                want = Gem::Version.new(m[1])
+                abort "puma resolved to #{got}, expected #{want} (GitLab PumaIoThreadExit pin)" if got != want
+              else
+                floor = Gem::Version.new("7.2.1")
+                ceiling = Gem::Version.new("7.3.0")
+                abort "puma resolved to #{got}, expected >= 7.2.1 and < 7.3 (GitLab 18 CVE-2026-47736/47737)" if got < floor || got >= ceiling
+              end
+            '
+            echo "puma lockfile version:"
+            grep -E "^    puma " Gemfile.lock
 
             ruby -rbundler -e '
               specs = Bundler::LockfileParser.new(File.read("Gemfile.lock")).specs.to_h { |spec| [spec.name, spec.version] }
