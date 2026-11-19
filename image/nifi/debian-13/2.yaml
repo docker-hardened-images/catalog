@@ -19,19 +19,14 @@ platforms:
 dates:
   release: "2026-06-18"
 vars:
-  COMMIT_SHA: 19f4df8e048e91d87d3e4967c69b1298f9dbe450
   JAVA_HOME: /usr/lib/jvm/temurin-21
   JAVA_MAJOR_VERSION: "21"
-  MAVEN_VERSION: 3.10.1-0
   NIFI_HOME: /opt/nifi/nifi-current
-  PYTHON_REFERENCE: dhi/python:3.13.14-debian13@sha256:f97073bcfd7f380ad2479fc49371709a345763b10687b5bb4b61bbc9a318bfd9
-  PYTHON_VERSION: 3.13.14
   SEMVER_MAJOR_MINOR_VERSION: "2.12"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.12.0
-  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-gnu" : "aarch64-unknown-linux-gnu" }'
   UV_VERSION: 0.13.9
-  VERSION: 2.12.0
+  VERSION: 2.12.0-5
 contents:
   repositories:
     - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
@@ -50,6 +45,7 @@ contents:
     - hostname
     - libstdc++6
     - mawk
+    - nifi=2.12.0-5
     - procps
     - python-3.13
     - python-3.13-dev
@@ -58,251 +54,49 @@ contents:
     - sed
     - xmlstarlet
   builds:
-    - name: nifi
-      environment:
-        JAVA_HOME: /usr/lib/jvm/temurin-21
-        MAVEN_HOME: /usr/share/java/maven-3
-        MAVEN_OPTS: -Xmx2g -XX:ReservedCodeCacheSize=1g
+    - name: sbom
       contents:
         packages:
           - bash
-          - ca-certificates
           - coreutils
-          - curl
-          - eclipse-temurin-21-jdk
-          - findutils
-          - git
-          - gpg
-          - gpg-agent
-          - grep
-          - gzip
-          - jq
-          - libstdc++6
-          - maven=3.10.1-0
-          - sed
-          - tar
-          - unzip
-          - xmlstarlet
-        files:
-          - url: git+https://github.com/apache/nifi.git#rel/nifi-2.12.0
-            checksum: 19f4df8e048e91d87d3e4967c69b1298f9dbe450
-            path: ${source.dir}/nifi
-            spdx:
-              name: nifi
-              version: 2.12.0
-              packages:
-                - name: nifi
-                  purl: pkg:github/apache/nifi@2.12.0
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://github.com/astral-sh/uv/releases/download/0.13.9/uv-${UV_ARCH}.tar.gz
-            checksum: https://github.com/astral-sh/uv/releases/download/0.13.9/uv-${UV_ARCH}.tar.gz.sha256
-            path: ${source.dir}/uv-${UV_ARCH}.tar.gz
-            spdx:
-              name: uv-binary
-              version: 0.13.9
-              packages:
-                - name: uv
-                  purl: pkg:github/astral-sh/uv@0.13.9
-                  license: MIT OR Apache-2.0
-            uid: 0
-            gid: 0
       pipeline:
-        - name: setup uv
-          runs: |
-            set -eux -o pipefail
-
-            # Create target directory first
-            mkdir -p "${target.dir}/nifi-uv/.local/bin"
-
-            # Extract UV binary to target location
-            UV_TAR="${source.dir}/uv-${UV_ARCH}.tar.gz"
-            UV_ARCH_DIR="uv-${UV_ARCH}"
-            echo "Extracting UV binary from $UV_TAR"
-            tar -xzf "$UV_TAR" -C "${target.dir}/nifi-uv/.local/bin" --strip-components=1 "${UV_ARCH_DIR}/uv"
-
-            # Make binary executable
-            chmod +x "${target.dir}/nifi-uv/.local/bin/uv"
-
-            # Verify uv binary was installed correctly
-            "${target.dir}/nifi-uv/.local/bin/uv" --version
-        - name: patch
-          uses: mvn/patch@v1
+        - uses: spdx@v1
           with:
-            dependencies: ${source.dir}/patch/mvn-deps.json
-            mvn-root: ${source.dir}/nifi
-            properties: ${source.dir}/patch/mvn-properties.json
-        - name: patch iceberg parquet writer
-          uses: mvn/patch@v1
+            license: Apache-2.0
+            name: nifi
+            purl: pkg:github/apache/nifi@2.12.0
+            version: 2.12.0
+        - uses: spdx@v1
           with:
-            dependencies: ${source.dir}/patch/mvn-deps-iceberg-parquet-writer.json
-            mvn-root: ${source.dir}/nifi/nifi-extension-bundles/nifi-iceberg-bundle/nifi-iceberg-parquet-writer
-        - name: patch aws bundle
-          uses: mvn/patch@v1
-          with:
-            mvn-root: ${source.dir}/nifi/nifi-extension-bundles/nifi-aws-bundle
-            properties: ${source.dir}/patch/mvn-properties-aws.json
-        - name: remove develocity maven extension
-          work-dir: ${source.dir}/nifi
-          runs: |
-            set -eux -o pipefail
-
-            # Remove the Gradle Develocity extension — it's optional build analytics tooling
-            # and version 2.1 is not available on Maven Central, causing resolution failures.
-            if [ -f ".mvn/extensions.xml" ]; then
-              xmlstarlet ed -P -L \
-                -d "//*[local-name()='extension'][*[local-name()='groupId'][text()='com.gradle']]" \
-                .mvn/extensions.xml
-            fi
-        - name: configure maven mirror
-          runs: |
-            set -eux -o pipefail
-
-            mkdir -p /root/.m2
-            cat > /root/.m2/settings.xml << 'EOF'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-              <mirrors>
-                <mirror>
-                  <id>google-maven-central</id>
-                  <name>GCS Maven Central mirror</name>
-                  <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
-                  <mirrorOf>central</mirrorOf>
-                </mirror>
-              </mirrors>
-            </settings>
-            EOF
-        - name: patch nifi toolkit cli
-          work-dir: ${source.dir}/nifi/nifi-toolkit/nifi-toolkit-cli
-          runs: |
-            set -eux -o pipefail
-
-            xmlstarlet ed -P -L \
-              -N m="http://maven.apache.org/POM/4.0.0" \
-              -u "/m:project/m:properties/m:jline.version" \
-              -v "4.3.1" \
-              pom.xml
-
-            test "$(xmlstarlet sel -N m="http://maven.apache.org/POM/4.0.0" -t -v "/m:project/m:properties/m:jline.version" pom.xml)" = "4.3.1"
-        - name: patch minifi commons daemon download
-          work-dir: ${source.dir}/nifi
-          runs: |
-            set -eux -o pipefail
-
-            file="minifi/minifi-assembly/pom.xml"
-            grep -q "https://repo1.maven.org/maven2/commons-daemon/commons-daemon/" "$file"
-            sed -i 's#https://repo1.maven.org/maven2/commons-daemon/commons-daemon/#https://maven-central.storage-download.googleapis.com/maven2/commons-daemon/commons-daemon/#g' "$file"
-            grep -q "https://maven-central.storage-download.googleapis.com/maven2/commons-daemon/commons-daemon/" "$file"
-        - name: build nifi web api
-          work-dir: ${source.dir}/nifi/nifi-framework-bundle/nifi-framework/nifi-web/nifi-web-api
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Build NiFi-WebAPI
-            mvn package -DskipTests
-        - name: build nifi toolkit
-          work-dir: ${source.dir}/nifi/nifi-toolkit
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Build NiFi-Toolkit
-            mvn package -DskipTests
-        - name: build nifi
-          work-dir: ${source.dir}/nifi
-          privileged: true
-          runs: |
-            set -eux -o pipefail
-
-            # Build NiFi
-            mvn package -T1C -DskipTests
-        - name: extract nifi
-          work-dir: ${source.dir}/nifi
-          runs: |
-            set -eux -o pipefail
-
-            # Extract the built NiFi distribution
-            nifi_dist=$(find nifi-assembly/target -name "nifi-*-bin.zip" | head -1)
-            if [ -z "$nifi_dist" ]; then
-                echo "unable to find nifi zip" 1>&2
-                exit 1
-            fi
-            mkdir -p "${target.dir}/nifi/nifi-current"
-            unzip "$nifi_dist" -d "${target.dir}/nifi/nifi-current"
-
-            # Secure directory flattening
-            shopt -s nullglob dotglob
-            nifi_dirs=("${target.dir}"/nifi/nifi-current/nifi-[0-9]*.[0-9]*.[0-9]*)
-            case ${#nifi_dirs[@]} in
-                0) echo "Error: No NiFi directory found"; exit 1 ;;
-                1) mv "${nifi_dirs[0]}"/* "${target.dir}/nifi/nifi-current/"; rmdir "${nifi_dirs[0]}" ;;
-                *) echo "Error: Multiple NiFi directories found"; exit 1 ;;
-            esac
-        - name: extract nifi toolkit
-          work-dir: ${source.dir}/nifi/nifi-toolkit
-          runs: |
-            set -eux -o pipefail
-
-            TOOLKIT_DIST=$(find nifi-toolkit-assembly/target -name "nifi-toolkit-*-bin.zip" | head -1)
-            mkdir -p "${target.dir}/nifi/nifi-toolkit-current"
-            unzip "$TOOLKIT_DIST" -d "${target.dir}/nifi/nifi-toolkit-current"
-
-            # Secure toolkit directory flattening
-            shopt -s nullglob dotglob
-            toolkit_dirs=("${target.dir}"/nifi/nifi-toolkit-current/nifi-toolkit-[0-9]*.[0-9]*.[0-9]*)
-            case ${#toolkit_dirs[@]} in
-                0) echo "Error: No NiFi toolkit directory found"; exit 1 ;;
-                1) mv "${toolkit_dirs[0]}"/* "${target.dir}/nifi/nifi-toolkit-current/"; rmdir "${toolkit_dirs[0]}" ;;
-                *) echo "Error: Multiple NiFi toolkit directories found"; exit 1 ;;
-            esac
-        - name: final setup
-          runs: |
-            set -eux -o pipefail
-
-            # IMPORTANT: Order matters - set execute permissions before ownership changes
-            # Step 1: Set executable permissions on root-owned files
-            chmod +x "${target.dir}/nifi/nifi-current/bin/"*.sh
-            chmod +x "${target.dir}/nifi/nifi-toolkit-current/bin/"*.sh
-
-            # Step 2: Transfer conf ownership to runtime user for modifications
-            chown -R 1000:1000 ${target.dir}/nifi/nifi-current/conf
-            chmod -R u+rwX,g+rX,o+rX ${target.dir}/nifi/nifi-current/conf
-
-            # Step 3: Set "other" permissions on root-owned bin files for user 1000 access
-            chmod o+rX ${target.dir}/nifi/nifi-current/bin/*.sh
-            chmod o+rX ${target.dir}/nifi/nifi-toolkit-current/bin/*.sh
-
-            # NiFi lib directory - needed for bootstrap and runtime (read-only access)
-            if [ -d "${target.dir}/nifi/nifi-current/lib" ]; then
-              # Give nifi user read and execute access to lib directory and subdirectories
-              chmod -R u+rX,g+rX,o+rX ${target.dir}/nifi/nifi-current/lib
-            fi
-
-            # NiFi toolkit lib directory - needed for CLI tool JAR access
-            if [ -d "${target.dir}/nifi/nifi-toolkit-current/lib" ]; then
-              # Give nifi user read and execute access to toolkit lib directory and subdirectories
-              chmod -R u+rX,g+rX,o+rX ${target.dir}/nifi/nifi-toolkit-current/lib
-            fi
-      paths:
-        - type: directory
-          path: ${source.dir}/patch
-          uid: 0
-          gid: 0
-          source: image/nifi/patch/
+            license: MIT OR Apache-2.0
+            name: uv-binary
+            purl: pkg:github/astral-sh/uv@0.13.9
+            version: 0.13.9
       outputs:
-        - source: ${target.dir}/nifi
-          target: /opt/nifi
+        - source: /opt/docker/sbom/nifi
+          target: /opt/docker/sbom/nifi
           uid: 0
           gid: 0
-        - source: ${source.dir}/nifi/nifi-docker/dockerhub/sh
-          target: /opt/nifi/scripts
+        - source: /opt/docker/sbom/uv-binary
+          target: /opt/docker/sbom/uv-binary
           uid: 0
           gid: 0
-          mode: "0755"
-        - source: ${target.dir}/nifi-uv/.local
-          target: /home/nifi/.local
+    - name: nifi conf ownership
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - nifi=2.12.0-5
+      pipeline:
+        - name: make conf writable for the nifi user
+          runs: |
+            set -eux -o pipefail
+
+            chmod -R u+rwX,g+rX,o+rX /usr/share/nifi/nifi-current/conf
+            chown -R 1000:1000 /usr/share/nifi/nifi-current/conf
+      outputs:
+        - source: /usr/share/nifi/nifi-current/conf
+          target: /usr/share/nifi/nifi-current/conf
           uid: 0
           gid: 0
     - name: locale
@@ -359,11 +153,25 @@ environment:
   PATH: /home/nifi/.local/bin:/opt/nifi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 paths:
   - type: directory
+    path: /opt
+    uid: 0
+    gid: 0
+  - type: symlink
+    path: /opt/nifi
+    uid: 0
+    gid: 0
+    source: /usr/share/nifi
+  - type: directory
     path: /home/nifi/.local
     uid: 1000
     gid: 1000
     mode: "0755"
     recursive: true
+  - type: symlink
+    path: /home/nifi/.local/bin
+    uid: 0
+    gid: 0
+    source: /usr/lib/nifi/.local/bin
   - type: directory
     path: /home/nifi/.cache
     uid: 1000
@@ -371,72 +179,77 @@ paths:
     mode: "0755"
     recursive: true
   - type: directory
-    path: /opt/nifi/nifi-current/logs
+    path: /usr/share/nifi/nifi-current/conf
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/run
+    path: /usr/share/nifi/nifi-current/logs
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/work
+    path: /usr/share/nifi/nifi-current/run
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/content_repository
+    path: /usr/share/nifi/nifi-current/work
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/database_repository
+    path: /usr/share/nifi/nifi-current/content_repository
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/flowfile_repository
+    path: /usr/share/nifi/nifi-current/database_repository
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/provenance_repository
+    path: /usr/share/nifi/nifi-current/flowfile_repository
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/state
+    path: /usr/share/nifi/nifi-current/provenance_repository
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/python_extensions
+    path: /usr/share/nifi/nifi-current/state
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/nar_extensions
+    path: /usr/share/nifi/nifi-current/python_extensions
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/assets
+    path: /usr/share/nifi/nifi-current/nar_extensions
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/connector_assets
+    path: /usr/share/nifi/nifi-current/assets
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/nar_repository
+    path: /usr/share/nifi/nifi-current/connector_assets
     uid: 1000
     gid: 1000
     mode: "0755"
   - type: directory
-    path: /opt/nifi/nifi-current/diagnostics
+    path: /usr/share/nifi/nifi-current/nar_repository
+    uid: 1000
+    gid: 1000
+    mode: "0755"
+  - type: directory
+    path: /usr/share/nifi/nifi-current/diagnostics
     uid: 1000
     gid: 1000
     mode: "0755"
