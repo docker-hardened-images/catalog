@@ -1,0 +1,376 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-locust
+variant: runtime
+tags:
+  - 2-alpine3.24
+  - 2.47-alpine3.24
+  - 2.47.0-alpine3.24
+  - 2.47.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2021-08-01"
+vars:
+  BUILD_DIR: /tmp/locust-build
+  COMMIT_SHA: 66279c936b4b69a8a7df3ac3b11f7e47d20780de
+  LLHTTP_COMMIT: 0e815792b167a9bd8ace259b95b7da953776c288
+  LLHTTP_VERSION: 9.4.3
+  NATIVE_PACKAGES: brotli gevent geventhttpclient greenlet pyzmq zope-interface
+  NODEJS_VERSION: 24.22.3-r0
+  PYTHON_MAJOR_MINOR_VERSION: "3.14"
+  PYTHON_VERSION: 3.14.10-r3
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.47"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.47.0
+  UV_ARCH: '#{ target.arch == "amd64" ? "x86_64-unknown-linux-musl" : "aarch64-unknown-linux-musl" }'
+  UV_VERSION: 0.13.8
+  VENV_DIR: /usr/lib/locust
+  VERSION: 2.47.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: locust
+      work-dir: ${source.dir}/locust
+      environment:
+        PYTHONDONTWRITEBYTECODE: "1"
+        UV_CACHE_DIR: /root/.cache/uv-musl
+        UV_LINK_MODE: copy
+        UV_NO_MANAGED_PYTHON: "1"
+        UV_PYTHON_DOWNLOADS: never
+        YARN_CACHE_FOLDER: /root/.cache/yarn-musl
+        YARN_ENABLE_GLOBAL_CACHE: "false"
+        YARN_ENABLE_TELEMETRY: "0"
+      caches:
+        - path: /root/.cache/uv-musl
+        - path: /root/.cache/yarn-musl
+      contents:
+        packages:
+          - bash
+          - binutils
+          - brotli-dev
+          - build-base
+          - c-ares-dev
+          - ca-certificates-bundle
+          - cmake
+          - coreutils
+          - findutils
+          - grep
+          - libev-dev
+          - libsodium-dev
+          - libuv-dev
+          - pkgconf
+          - samurai
+          - sed
+          - tar
+          - zeromq-dev
+          - nodejs-24=24.22.3-r0
+          - python-3.14=3.14.10-r3
+          - python-3.14-dev=3.14.10-r3
+        files:
+          - url: https://github.com/astral-sh/uv/releases/download/0.13.8/uv-${UV_ARCH}.tar.gz
+            checksum: https://github.com/astral-sh/uv/releases/download/0.13.8/uv-${UV_ARCH}.tar.gz.sha256
+            path: ${source.dir}/uv.tar.gz
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/locustio/locust.git#2.47.0
+            checksum: 66279c936b4b69a8a7df3ac3b11f7e47d20780de
+            path: ${source.dir}/locust
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: setup uv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /usr/local/bin
+            tar -xzf "${source.dir}/uv.tar.gz" -C /usr/local/bin --strip-components=1
+            test -x /usr/local/bin/uv
+            uv --version | grep -qF "uv 0.13.8"
+        - name: install build backends
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            grep -qxF "# upstream: locustio/locust 2.47.0" "${source.dir}/build-requirements.lock"
+            uv venv "/tmp/locust-build/venv" --python "/usr/bin/python3.14"
+            uv pip install --python "/tmp/locust-build/venv/bin/python" --require-hashes --only-binary :all: \
+              -r "${source.dir}/build-requirements.lock"
+            "/tmp/locust-build/venv/bin/python" -c 'import Cython, cffi, greenlet, hatch_vcs, hatchling, pip, pkgconfig, scikit_build_core, setuptools, wheel'
+        - name: build web ui
+          work-dir: ${source.dir}/locust/locust/webui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            test ! -e dist
+            node .yarn/releases/yarn-4.12.0.cjs install --immutable
+            node .yarn/releases/yarn-4.12.0.cjs build
+            test -s dist/index.html
+            test -s dist/auth.html
+            test -s dist/report.html
+            test -n "$(find dist/assets -maxdepth 1 -name 'src-*.js' -size +0)"
+        - name: inventory web ui bundles
+          work-dir: ${source.dir}/locust/locust/webui
+          runs: |
+            set -eux -o pipefail
+
+            node_modules/.bin/vite build --sourcemap --outDir "/tmp/locust-build/webui-maps/ui"
+            node_modules/.bin/vite build --config vite.report.config.ts --sourcemap \
+              --outDir "/tmp/locust-build/webui-maps/report"
+            "/usr/bin/python3.14" "${source.dir}/webui-inventory.py" \
+              --webui . \
+              --scratch "/tmp/locust-build/webui-maps" \
+              --bundled "${source.dir}/webui-bundled.txt" \
+              --doc-out "${target.dir}/usr/share/licenses/locust-2/webui" \
+              --sbom-out "/tmp/locust-build/webui-sbom"
+        - name: build locust wheel
+          environment:
+            SETUPTOOLS_SCM_PRETEND_VERSION: 2.47.0
+            SKIP_PRE_BUILD: "true"
+          runs: |
+            set -eux -o pipefail
+
+            uv build --no-build-isolation --python "/tmp/locust-build/venv/bin/python" --out-dir "/tmp/locust-build/dist" .
+            test -s "/tmp/locust-build/dist/locust-2.47.0.tar.gz"
+            test -s "/tmp/locust-build/dist/locust-2.47.0-py3-none-any.whl"
+            "/usr/bin/python3.14" "${source.dir}/check-wheel.py" \
+              "/tmp/locust-build/dist/locust-2.47.0-py3-none-any.whl" "2.47.0"
+        - name: export runtime lock
+          runs: |
+            set -eux -o pipefail
+
+            uv export --frozen --no-default-groups --no-dev --no-emit-project --format requirements-txt \
+              -o "/tmp/locust-build/requirements.txt"
+            grep -q '^gevent==' "/tmp/locust-build/requirements.txt"
+            grep -q '^pytest==' "/tmp/locust-build/requirements.txt"
+            if grep -qE '^(hatch|ruff|pyquery|cryptography)==' "/tmp/locust-build/requirements.txt"; then
+              echo "dev or build groups leaked into the runtime lock" >&2
+              exit 1
+            fi
+        - name: bump python dependencies
+          uses: python/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/python-bumps.json
+            mode: requirements
+            requirements:
+              - /tmp/locust-build/requirements.txt
+        - name: split runtime lock
+          runs: |
+            set -eux -o pipefail
+
+            "/usr/bin/python3.14" "${source.dir}/split-lock.py" \
+              --bumps "${source.dir}/patch/python-bumps.json" \
+              "/tmp/locust-build/requirements.txt" "/tmp/locust-build/wheels.txt" "/tmp/locust-build/sdists" brotli gevent geventhttpclient greenlet pyzmq zope-interface
+            wheel_sha=$(sha256sum "/tmp/locust-build/dist/locust-2.47.0-py3-none-any.whl" | cut -d' ' -f1)
+            test -n "$wheel_sha"
+            printf 'locust==%s \\\n    --hash=sha256:%s\n' "2.47.0" "$wheel_sha" >> "/tmp/locust-build/wheels.txt"
+            grep -q "^locust==2.47.0 " "/tmp/locust-build/wheels.txt"
+        - name: create venv
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            uv venv "/usr/lib/locust" --python "/usr/bin/python3.14"
+            UV_COMPILE_BYTECODE=1 uv pip install --python "/usr/lib/locust/bin/python" --require-hashes --no-deps \
+              --only-binary :all: --find-links "/tmp/locust-build/dist" -r "/tmp/locust-build/wheels.txt"
+        - name: fetch native sdists
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            for pkg in brotli gevent geventhttpclient greenlet pyzmq zope-interface; do
+              "/tmp/locust-build/venv/bin/pip" download --no-deps --no-binary :all: --no-build-isolation --require-hashes \
+                -d "/tmp/locust-build/sdist-files/$pkg" -r "/tmp/locust-build/sdists/$pkg.txt"
+              archive=$(find "/tmp/locust-build/sdist-files/$pkg" -maxdepth 1 -name '*.tar.gz')
+              test -n "$archive"
+              mkdir -p "/tmp/locust-build/src/$pkg"
+              tar -xzf "$archive" -C "/tmp/locust-build/src/$pkg" --strip-components=1
+            done
+        - name: verify vendored llhttp
+          work-dir: /tmp/locust-build/src/geventhttpclient/llhttp
+          runs: |
+            set -eux -o pipefail
+
+            sha256sum -c "${source.dir}/llhttp-release-v9.4.3.sha256"
+            major=$(printf '%s' "9.4.3" | cut -d. -f1)
+            minor=$(printf '%s' "9.4.3" | cut -d. -f2)
+            patch=$(printf '%s' "9.4.3" | cut -d. -f3)
+            grep -qx "#define LLHTTP_VERSION_MAJOR $major" include/llhttp.h
+            grep -qx "#define LLHTTP_VERSION_MINOR $minor" include/llhttp.h
+            grep -qx "#define LLHTTP_VERSION_PATCH $patch" include/llhttp.h
+        - name: build system-linked native extensions
+          work-dir: /tmp/locust-build
+          environment:
+            CFLAGS: -ffile-prefix-map=/tmp/locust-build/src=.
+            CXXFLAGS: -ffile-prefix-map=/tmp/locust-build/src=.
+            GEVENTSETUP_EMBED: "0"
+            PYZMQ_LIBZMQ_RPATH: "0"
+            PYZMQ_NO_BUNDLE: "1"
+            USE_SYSTEM_BROTLI: "1"
+          runs: |
+            set -eux -o pipefail
+
+            for pkg in brotli gevent geventhttpclient greenlet pyzmq zope-interface; do
+              uv build --wheel --no-build-isolation --python "/tmp/locust-build/venv/bin/python" \
+                --out-dir "/tmp/locust-build/natives" "/tmp/locust-build/src/$pkg"
+            done
+            sed -n 's/^\([a-z][a-z0-9._-]*==[^ ;]*\).*/\1/p' "/tmp/locust-build"/sdists/*.txt > "/tmp/locust-build/natives.txt"
+            test "$(wc -l < "/tmp/locust-build/natives.txt")" -eq "$(ls "/tmp/locust-build"/natives/*.whl | wc -l)"
+            UV_COMPILE_BYTECODE=1 uv pip install --python "/usr/lib/locust/bin/python" --no-deps --no-index \
+              --find-links "/tmp/locust-build/natives" -r "/tmp/locust-build/natives.txt"
+            uv pip check --python "/usr/lib/locust/bin/python"
+            "/usr/lib/locust/bin/python" -B "${source.dir}/check-natives.py" list-so brotli gevent geventhttpclient greenlet pyzmq zope-interface > "/tmp/locust-build/native-so.txt"
+            test -s "/tmp/locust-build/native-so.txt"
+            xargs strip --strip-debug < "/tmp/locust-build/native-so.txt"
+            "/usr/lib/locust/bin/python" -B "${source.dir}/check-natives.py" check "$(pkg-config --modversion libzmq)"
+        - name: trim and check venv
+          runs: |
+            set -eux -o pipefail
+
+            rm "/usr/lib/locust/.gitignore" "/usr/lib/locust/.lock" "/usr/lib/locust/CACHEDIR.TAG"
+            find "/usr/lib/locust/bin" -maxdepth 1 -type f \( -name 'activate*' -o -name '*.bat' \) -print -delete
+            test -z "$(find "/usr/lib/locust/bin" \( -name 'pip*' -o -name 'activate*' -o -name '*.bat' \))"
+            site="/usr/lib/locust/lib/python3.14/site-packages"
+            test -d "$site/locust/webui/dist"
+            test -z "$(find "$site" -maxdepth 1 \( -name 'cffi' -o -name 'cffi-*' -o -name '_cffi_backend*' -o -name 'pip' -o -name 'pip-*' \))"
+            if grep -rlaF -e "/tmp/locust-build" "/usr/lib/locust"; then
+              echo "build paths leaked into the venv" >&2
+              exit 1
+            fi
+            "/usr/lib/locust/bin/python" -B -m locust --version | grep -qF "locust 2.47.0 "
+        - name: stage venv
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/usr/lib" "${target.dir}/usr/bin" "${target.dir}/usr/share/licenses/locust-2/llhttp"
+            cp -a "/usr/lib/locust" "${target.dir}/usr/lib/locust"
+            ln -s ../lib/locust/bin/locust "${target.dir}/usr/bin/locust"
+            cp "/tmp/locust-build/src/geventhttpclient/llhttp/LICENSE-MIT" "${target.dir}/usr/share/licenses/locust-2/llhttp/LICENSE-MIT"
+        - name: python dependencies sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: locust
+            source: ${target.dir}/usr/lib/locust
+        - name: web ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: locust-webui
+            source: /tmp/locust-build/webui-sbom
+        - uses: spdx@v1
+          with:
+            license: MIT
+            name: locust-llhttp
+            purl: pkg:github/nodejs/llhttp@0e815792b167a9bd8ace259b95b7da953776c288
+            version: 9.4.3
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom"
+            for sbom in locust locust-webui locust-llhttp; do
+              cp -a "/opt/docker/sbom/$sbom" "${target.dir}/opt/docker/sbom/$sbom"
+            done
+            "/usr/bin/python3.14" "${source.dir}/check-sboms.py" "${target.dir}/opt/docker/sbom" \
+              "2.47.0" "${source.dir}/webui-bundled.txt" "0e815792b167a9bd8ace259b95b7da953776c288"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - brotli-libs
+              - c-ares
+              - libev
+              - libgcc
+              - libstdc++
+              - libuv
+              - libzmq
+              - musl
+              - python-3.14
+            description: Locust load-testing tool
+            files:
+              - usr/bin/locust
+              - usr/lib/locust
+              - usr/share/licenses/locust-2
+              - opt/docker/sbom/locust
+              - opt/docker/sbom/locust-webui
+              - opt/docker/sbom/locust-llhttp
+            formats:
+              - apk
+            license: MIT
+            name: locust-2
+            rel: 0
+            url: https://locust.io
+            version: 2.47.0
+      paths:
+        - type: file
+          path: ${source.dir}/build-requirements.lock
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/build-requirements.lock
+        - type: file
+          path: ${source.dir}/check-natives.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/check-natives.py
+        - type: file
+          path: ${source.dir}/check-sboms.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/check-sboms.py
+        - type: file
+          path: ${source.dir}/check-wheel.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/check-wheel.py
+        - type: file
+          path: ${source.dir}/llhttp-release-v9.4.3.sha256
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/llhttp-release-v9.4.3.sha256
+        - type: file
+          path: ${source.dir}/patch/python-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/patch/python-bumps.json
+        - type: file
+          path: ${source.dir}/split-lock.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/split-lock.py
+        - type: file
+          path: ${source.dir}/webui-bundled.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/webui-bundled.txt
+        - type: file
+          path: ${source.dir}/webui-inventory.py
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/locust/webui-inventory.py
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
