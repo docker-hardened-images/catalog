@@ -4,7 +4,7 @@ image: dhi.io/pkg-cloudnative-pg
 variant: runtime
 tags:
   - 1.28.4-alpine3.24
-  - 1.28.4-r12-alpine3.24
+  - 1.28.4-r13-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.11-r1
   PACKAGE_NAME: cloudnative-pg-1.28
-  REL: "12"
+  REL: "13"
   SEMVER_MAJOR_MINOR_VERSION: "1.28"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.28.4
@@ -34,6 +34,8 @@ contents:
   builds:
     - name: cloudnative-pg-1.28
       work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
+      environment:
+        GOTOOLCHAIN: local
       contents:
         packages:
           - busybox
@@ -64,6 +66,8 @@ contents:
           uses: go/bump@v2
           with:
             deps:
+              - golang.org/x/text@v0.39.0
+              - golang.org/x/net@v0.62.0
               - github.com/moby/spdystream@v0.5.1
               - google.golang.org/grpc@v1.83.2
             tidy: true
@@ -72,11 +76,11 @@ contents:
             set -eux -o pipefail
 
             go test ./pkg/... -count=1 -timeout 10m -skip '^TestPostgres$'
-        - name: create operator directory
+        - name: create output directories
           runs: |
             set -eux -o pipefail
 
-            mkdir -p ${target.dir}/operator
+            mkdir -p ${target.dir}/operator ${target.dir}/operator-dev ${target.dir}/usr/bin
         - name: build manager for amd64
           uses: go/build@v1
           environment:
@@ -103,39 +107,70 @@ contents:
               - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
             output: ${target.dir}/operator/manager_arm64
             packages: ./cmd/manager
-        - name: build dev
+        - name: build dev manager for amd64
           uses: go/build@v1
-          work-dir: /go/src/github.com/cloudnative-pg/cloudnative-pg
+          environment:
+            GOFLAGS: -buildvcs=false
           with:
+            extra-env: GOOS=linux GOARCH=amd64
             fips: false
             ldflags:
               - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=1.28.4
               - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit=f74344b4d3a6d9fbe06748ba1747901f6077db2a
               - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
-            output: ${target.dir}/usr/bin/manager-dev
+            output: ${target.dir}/operator-dev/manager_amd64
             packages: ./cmd/manager
             strip: false
-        - name: copy architecture-specific manager binary
+        - name: build dev manager for arm64
+          uses: go/build@v1
+          environment:
+            GOFLAGS: -buildvcs=false
+          with:
+            extra-env: GOOS=linux GOARCH=arm64
+            fips: false
+            ldflags:
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion=1.28.4
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit=f74344b4d3a6d9fbe06748ba1747901f6077db2a
+              - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%d')
+            output: ${target.dir}/operator-dev/manager_arm64
+            packages: ./cmd/manager
+            strip: false
+        - name: stage manager link and sbom
           runs: |
             set -eux -o pipefail
 
-            mkdir -p ${target.dir}/usr/bin
-            cp ${target.dir}/operator/manager_${target.arch} ${target.dir}/usr/bin/manager
+            ln -s ../../operator/manager_${target.arch} ${target.dir}/usr/bin/manager
+            ln -s ../../operator/manager_${target.arch} ${target.dir}/usr/bin/manager-dev
+
+            sbom=/opt/docker/sbom/cloudnative-pg
+            test -d "$sbom"
+            install -d ${target.dir}/opt/docker/sbom ${target.dir}/opt/docker/sbom-dev
+            cp -a "$sbom" ${target.dir}/opt/docker/sbom/
+            cp -a "$sbom" ${target.dir}/opt/docker/sbom-dev/
         - uses: dhi/build-pkg:0
           with:
             description: Cloudnative-pg
             files:
               - usr/bin/manager
+              - operator/manager_amd64
+              - operator/manager_arm64
+              - opt/docker/sbom/cloudnative-pg
             license: Apache-2.0
             name: cloudnative-pg-1.28
             priority: "200"
             provides: cloudnative-pg=$pkg_full_version
-            rel: 12
+            rel: 13
             replaces: cloudnative-pg
             subpackages:
               - files:
                   - path: usr/bin/manager
                     source: usr/bin/manager-dev
+                  - path: operator/manager_amd64
+                    source: operator-dev/manager_amd64
+                  - path: operator/manager_arm64
+                    source: operator-dev/manager_arm64
+                  - path: opt/docker/sbom/cloudnative-pg
+                    source: opt/docker/sbom-dev/cloudnative-pg
                 name: cloudnative-pg-1.28-dev
             url: https://github.com/cloudnative-pg/cloudnative-pg
             version: 1.28.4
