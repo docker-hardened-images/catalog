@@ -1,0 +1,102 @@
+Subject: Build Alpine AOT sanitizer runtimes with system clang
+
+Origin: DHI-internal (Alpine musl package build)
+Description: Point create_sdk's sanitizer copies (dartaotruntime_* and dartcliruntime_*) at the clang_{arm64,x64} toolchains, and build those toolchains for *-alpine-linux-musl, so asan/tsan runtimes ship without DT_NEEDED on libasan/libtsan. Alpine GCC enables libsanitizer only on x86_64 (and even then the shared libs are not a runtime Depends of this package), and this image has no glibc sysroot.
+Base-Tree: git https://github.com/dart-lang/sdk.git c8a0db5978a68d4037f7e5294ffc79867935c8c2
+Verify: cmd `for b in dartaotruntime_asan dartaotruntime_tsan dartcliruntime_asan dartcliruntime_tsan; do test -x out/Release*/dart-sdk/bin/$b && ! llvm-readelf -d out/Release*/dart-sdk/bin/$b | grep -qE '\[lib(asan|tsan)\.so'; done && echo ok` expect "ok"
+Forwarded: not-needed (Alpine musl SDK build; GCC sanitizer shared libs are not shipped as Depends)
+Drop-When: never: Alpine aarch64 GCC is built without libsanitizer, and x86_64 libasan/libtsan must not be dynamic runtime deps of the SDK package
+
+diff --color -ruN a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
+--- a/build/config/BUILDCONFIG.gn	2026-11-19 13:53:56
++++ b/build/config/BUILDCONFIG.gn	2026-11-19 13:53:56
+@@ -257,8 +257,10 @@
+ # BUILD OPTIONS
+ # =============================================================================
+ 
++# Bundled libcxx targets glibc locale APIs (strtoll_l) and does not build
++# against musl. TSan uses the system libstdc++ with compiler-rt instead.
+ use_flutter_cxx =
+-    is_clang && (((is_asan || is_ubsan) && is_mac) || is_msan || is_tsan ||
++    is_clang && (((is_asan || is_ubsan) && is_mac) || is_msan ||
+                  is_ios || is_android || current_cpu == "arm64e")
+ 
+ using_sanitizer = !is_win && (is_asan || is_hwasan || is_lsan || is_msan ||
+diff --color -ruN a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+--- a/build/config/compiler/BUILD.gn	2026-11-19 13:53:56
++++ b/build/config/compiler/BUILD.gn	2026-11-19 13:53:56
+@@ -354,8 +354,10 @@
+           cflags += [ "--target=armv7-linux-gnueabihf" ]
+           ldflags += [ "--target=armv7-linux-gnueabihf" ]
+         } else if (current_cpu == "arm64") {
+-          cflags += [ "--target=aarch64-linux-gnu" ]
+-          ldflags += [ "--target=aarch64-linux-gnu" ]
++          # This image is musl and has no aarch64-linux-gnu sysroot.
++          # compiler-rt is installed for aarch64-alpine-linux-musl.
++          cflags += [ "--target=aarch64-alpine-linux-musl" ]
++          ldflags += [ "--target=aarch64-alpine-linux-musl" ]
+         } else if (current_cpu == "riscv32") {
+           cflags += [ "--target=riscv32-linux-gnu" ]
+           ldflags += [ "--target=riscv32-linux-gnu" ]
+@@ -365,6 +367,8 @@
+         } else if (current_cpu == "x64") {
+-          cflags += [ "--target=x86_64-linux-gnu" ]
+-          ldflags += [ "--target=x86_64-linux-gnu" ]
++          # This image is musl and has no x86_64-linux-gnu sysroot.
++          # compiler-rt is installed for x86_64-alpine-linux-musl.
++          cflags += [ "--target=x86_64-alpine-linux-musl" ]
++          ldflags += [ "--target=x86_64-alpine-linux-musl" ]
+         } else if (current_cpu == "x86") {
+           cflags += [ "--target=i386-linux-gnu" ]
+           ldflags += [ "--target=i386-linux-gnu" ]
+@@ -644,6 +648,11 @@
+ 
+ default_warning_flags = []
+ default_warning_flags_cc = []
++if (is_clang && (current_cpu == "arm64" || current_cpu == "x64") && dart_sysroot != "alpine") {
++  # musl ssize_t versus size_t. -Wextra re-enables -Wsign-compare, so this
++  # has to follow it. GCC, which builds the rest of this SDK, does not warn.
++  default_warning_flags += [ "-Wno-sign-compare" ]
++}
+ if (is_win) {
+   if (current_cpu != "x86") {
+     default_warning_flags += [ "/WX" ]  # Treat warnings as errors.
+diff --color -ruN a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn	2026-11-19 13:53:56
++++ b/sdk/BUILD.gn	2026-11-19 13:53:56
+@@ -456,11 +456,21 @@
+   }
+ 
+   foreach(sanitizer, sanitizers) {
++    # Alpine GCC is built --disable-libsanitizer except on x86_64. On x64 the
++    # GCC sanitizer copies DT_NEEDED libasan/libtsan from the gcc package, which
++    # this SDK does not Depend on. Build sanitizer runtimes with system clang
++    # and compiler-rt on both arm64 and x64.
++    _sanitizer_toolchain = current_toolchain
++    if (current_cpu == "arm64") {
++      _sanitizer_toolchain = "//build/toolchain/linux:clang_arm64"
++    } else if (current_cpu == "x64") {
++      _sanitizer_toolchain = "//build/toolchain/linux:clang_x64"
++    }
+     copy("copy_dart_aotruntime_$sanitizer") {
+       visibility = [ ":*" ]
+-      deps = [ "../runtime/bin:dartaotruntime_product(${current_toolchain}_${sanitizer})" ]
++      deps = [ "../runtime/bin:dartaotruntime_product(${_sanitizer_toolchain}_${sanitizer})" ]
+       src_dir = get_label_info(
+-              "../runtime/bin:dartaotruntime_product(${current_toolchain}_${sanitizer})",
++              "../runtime/bin:dartaotruntime_product(${_sanitizer_toolchain}_${sanitizer})",
+               "root_out_dir")
+       sources =
+           [ "$src_dir/${dart_aotruntime_stripped_binary}${executable_suffix}" ]
+@@ -468,9 +478,9 @@
+     }
+     copy("copy_dart_cliruntime_$sanitizer") {
+       visibility = [ ":*" ]
+-      deps = [ "../runtime/bin:dartcliruntime_product(${current_toolchain}_${sanitizer})" ]
++      deps = [ "../runtime/bin:dartcliruntime_product(${_sanitizer_toolchain}_${sanitizer})" ]
+       src_dir = get_label_info(
+-              "../runtime/bin:dartcliruntime_product(${current_toolchain}_${sanitizer})",
++              "../runtime/bin:dartcliruntime_product(${_sanitizer_toolchain}_${sanitizer})",
+               "root_out_dir")
+       sources =
+           [ "$src_dir/${dart_cliruntime_stripped_binary}${executable_suffix}" ]
