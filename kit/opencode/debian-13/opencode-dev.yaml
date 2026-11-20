@@ -9,6 +9,16 @@ args:
     pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
     description: OpenCode release the image carries
     buildArg: VERSION
+  model:
+    default: ''
+    pattern: '^([A-Za-z0-9._-]+/[A-Za-z0-9._/:-]+)?$'
+    description: OpenCode model as provider/model (opencode.json `model`); empty keeps the CLI default
+    env: OPENCODE_MODEL
+  reasoningEffort:
+    default: ''
+    pattern: '^[A-Za-z0-9._-]*$'
+    description: Model variant such as high or max (opencode.json `model` suffix); needs model; empty keeps the model default
+    env: OPENCODE_REASONING_EFFORT
 provides:
   - opencode@${{ kit.args.version }}
 capabilities:
@@ -199,6 +209,24 @@ capabilities:
         - command: mkdir -p /home/agent/.config/opencode && chown agent:agent /home/agent/.config /home/agent/.config/opencode
           user: '0'
           description: Ensure ~/.config/opencode is owned by agent
+        - command: |
+            set -e
+            model='${{ kit.args.model }}'
+            effort='${{ kit.args.reasoningEffort }}'
+            [ -n "$model$effort" ] || exit 0
+            if [ -z "$model" ]; then
+              echo "reasoningEffort=$effort needs a model: add --kit-arg model=<provider/model>. OpenCode applies an effort as a variant of a named model." >&2
+              exit 1
+            fi
+            [ -z "$effort" ] || model="$model#$effort"
+            cfg=/home/agent/.config/opencode/opencode.json
+            [ -s "$cfg" ] || echo '{}' > "$cfg"
+            tmp=$(mktemp "$cfg.XXXXXX")
+            trap 'rm -f "$tmp"' EXIT
+            jq --arg model "$model" '.model = $model' "$cfg" > "$tmp"
+            mv -f "$tmp" "$cfg"
+          user: agent
+          description: Write the model and reasoning effort kit arguments to opencode.json
       startup:
         - command: |
             set -e

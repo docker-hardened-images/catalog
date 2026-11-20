@@ -21,7 +21,27 @@ The kit configures OpenCode to allow tool execution without approval prompts.
 
 ## Kit arguments
 
-This kit has no create-time kit arguments.
+Set these arguments when creating the sandbox with `--kit-arg <name>=<value>`. Repeat the flag for multiple arguments.
+Use `--kit-arg <kit>.<name>=<value>` to target one kit in a composition, as in the example below.
+
+| Argument          | Default | Description                                                                           | Accepted values                                                                   |
+| ----------------- | ------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `model`           | `""`    | OpenCode model as provider/model (opencode.json `model`); empty keeps the CLI default | Empty, or a `provider/model` value. Letters, digits, `.`, `_`, `/`, `:`, and `-`. |
+| `reasoningEffort` | `""`    | Model variant such as `high` or `max`; needs `model`; empty keeps the model default   | Letters, digits, `.`, `_`, and `-`.                                               |
+
+An empty value keeps the agent default. The model must be available to your provider account. OpenCode applies an effort
+as a variant of a named model, and each model has its own variant names, so `reasoningEffort` needs `model` and the
+sandbox is not created without it. These are kit configuration inputs, separate from agent command-line arguments passed
+after `--`.
+
+```console
+sbx run sbx/opencode:latest \
+  --kit-arg opencode.model=anthropic/claude-sonnet-4-5 --kit-arg opencode.reasoningEffort=high \
+  /path/to/workspace
+```
+
+The kit writes the selection to `~/.config/opencode/opencode.json` as `provider/model#variant` when the sandbox is
+created and keeps the other settings in that file.
 
 ## Authentication and configuration
 
