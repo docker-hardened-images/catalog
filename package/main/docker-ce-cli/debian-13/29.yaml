@@ -4,9 +4,9 @@ image: dhi.io/pkg-docker-ce-cli
 variant: runtime
 tags:
   - 29.10.0
-  - 29.10.0-r8
+  - 29.10.0-r9
   - 29.10.0-debian13
-  - 29.10.0-r8-debian13
+  - 29.10.0-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   COMMIT_SHA: fdd4b8e5da335e1d0d83d29af5045f57280cd694
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.11-18
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "29.10"
   SEMVER_MAJOR_VERSION: "29"
   SEMVER_VERSION: 29.10.0
@@ -47,6 +47,7 @@ contents:
           - golang-1.26=1.26.11-18
           - golang-1.26-oci-config=1.26.11-18
           - libc6-dev
+          - patch
         files:
           - url: git+https://github.com/docker/cli.git#v29.10.0
             checksum: fdd4b8e5da335e1d0d83d29af5045f57280cd694
@@ -73,11 +74,22 @@ contents:
             deps:
               - golang.org/x/net@v0.62.0
             download: true
+        - name: backport distribution digest verification for CVE-2026-85747
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-cve-2026-85747-distribution-blob-digest.patch
         - name: test docker cli after dependency updates
           runs: |
             set -eux -o pipefail
 
             CGO_ENABLED=1 go test -count=1 -timeout=5m -tags grpcnotrace ./cmd/docker
+
+            mkdir -p ./dhi/distributionblob
+            cp "${source.dir}/tests/blob_digest_test.go" ./dhi/distributionblob/digest_test.go
+            go test -mod=vendor -count=1 -timeout=2m ./dhi/distributionblob
+            rm -r ./dhi
         - name: build docker cli
           uses: go/build@v1
           with:
@@ -102,9 +114,21 @@ contents:
               - deb
             license: Apache-2.0
             name: docker-ce-cli
-            rel: 8
+            rel: 9
             url: https://www.docker.com/
             version: 5:29.10.0
+      paths:
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/docker-ce-cli/patch
+        - type: file
+          path: ${source.dir}/tests/blob_digest_test.go
+          uid: 0
+          gid: 0
+          mode: "644"
+          source: package/main/docker-ce-cli/tests/testdata/blob_digest_test.go
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian

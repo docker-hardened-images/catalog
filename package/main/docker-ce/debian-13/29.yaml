@@ -4,9 +4,9 @@ image: dhi.io/pkg-docker-ce
 variant: runtime
 tags:
   - 29.10.0
-  - 29.10.0-r8
+  - 29.10.0-r9
   - 29.10.0-debian13
-  - 29.10.0-r8-debian13
+  - 29.10.0-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   COMMIT_SHA: 06db1734267bf7770914b417bff6556d835bf8cc
   GOLANG_MAJOR_MINOR_VERSION: "1.26"
   GOLANG_VERSION: 1.26.11-18
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "29.10"
   SEMVER_MAJOR_VERSION: "29"
   SEMVER_VERSION: 29.10.0
@@ -53,6 +53,7 @@ contents:
           - libseccomp-dev
           - libsystemd-dev
           - make
+          - patch
           - pkg-config
           - sed
         files:
@@ -88,7 +89,16 @@ contents:
             deps:
               - github.com/cilium/ebpf@v0.22.0
               - golang.org/x/net@v0.62.0
+              - github.com/klauspost/compress@v1.20.2
+              - github.com/moby/swarmkit/v2@v2.1.3
             download: true
+        - name: backport distribution digest verification for CVE-2026-85747
+          uses: patch@v1
+          work-dir: /go/src/github.com/moby/moby
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-cve-2026-85747-distribution-blob-digest.patch
         - name: retag moby v2 module version
           work-dir: /go/src/github.com/moby/moby
           runs: |
@@ -102,6 +112,11 @@ contents:
             set -eux -o pipefail
 
             CGO_ENABLED=1 go test -count=1 -timeout=5m -tags "nri_no_wasm journald" ./cmd/dockerd
+
+            mkdir -p ./dhi/distributionblob
+            cp "${source.dir}/tests/blob_digest_test.go" ./dhi/distributionblob/digest_test.go
+            go test -mod=vendor -count=1 -timeout=2m ./dhi/distributionblob
+            rm -r ./dhi
         - name: build docker engine
           work-dir: /go/src/github.com/moby/moby
           runs: |
@@ -158,7 +173,7 @@ contents:
               - deb
             license: Apache-2.0
             name: docker-ce
-            rel: 8
+            rel: 9
             url: https://www.docker.com/
             version: 5:29.10.0
       paths:
@@ -167,6 +182,17 @@ contents:
           uid: 0
           gid: 0
           source: package/main/docker-ce/debian-13/assets
+        - type: directory
+          path: ${source.dir}/patch
+          uid: 0
+          gid: 0
+          source: package/main/docker-ce/patch
+        - type: file
+          path: ${source.dir}/tests/blob_digest_test.go
+          uid: 0
+          gid: 0
+          mode: "644"
+          source: package/main/docker-ce/tests/testdata/blob_digest_test.go
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
