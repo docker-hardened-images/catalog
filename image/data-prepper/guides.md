@@ -15,7 +15,7 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 This Docker Hardened Data Prepper image is a server-side data collector built for trace, log, and metric observability
 pipelines. Data Prepper receives telemetry from sources such as OpenTelemetry Collector, Fluent Bit, and S3, applies
 processors (field mapping, aggregate, grok, drop events), and routes data to sinks such as OpenSearch, S3, and Kafka.
-The image ships the Java 17 JRE (Eclipse Temurin), the full Data Prepper plugin set (83 plugin directories, 582 bundled
+The image ships the Java 21 JRE (Eclipse Temurin), the full Data Prepper plugin set (83 plugin directories, 582 bundled
 JARs), and GNU `gettext-base` for `envsubst`-based pipeline config templating. A writable log directory is provided at
 `/var/log/data-prepper`. The default server configuration is at
 `/usr/share/data-prepper/config/data-prepper-config.yaml` and pipeline definitions are read from
