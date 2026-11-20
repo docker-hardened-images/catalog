@@ -1,0 +1,122 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-influx-cli
+variant: runtime
+tags:
+  - 2.9.1-alpine3.24
+  - 2.9.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 54431c54aa7cd7fb486740908f60cdbe3831e7d3
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: influx-cli-2
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.9"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.9.1
+  VERSION: 2.9.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: influx-cli
+      work-dir: /go/src/github.com/influxdata/influx-cli
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/influxdata/influx-cli.git#v2.9.1
+            checksum: 54431c54aa7cd7fb486740908f60cdbe3831e7d3
+            path: /go/src/github.com/influxdata/influx-cli
+            spdx:
+              name: influx-cli
+              version: 2.9.1
+              packages:
+                - name: influx-cli
+                  purl: pkg:golang/github.com/influxdata/influx-cli/v2@2.9.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v1
+          with:
+            deps:
+              - golang.org/x/text@v0.41.0
+              - golang.org/x/net@v0.62.0
+            download: true
+        - name: test
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.commit=54431c54aa7cd7fb486740908f60cdbe3831e7d3
+              - -X main.version=v2.9.1
+              - -X main.date=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/influx
+            packages: ./cmd/influx
+        - name: build dev
+          uses: go/build@v1
+          with:
+            ldflags:
+              - -X main.commit=54431c54aa7cd7fb486740908f60cdbe3831e7d3
+              - -X main.version=v2.9.1
+              - -X main.date=$(date -u -d @${SOURCE_DATE_EPOCH} +'%FT%TZ')
+            output: ${target.dir}/usr/bin/influx-dev
+            packages: ./cmd/influx
+            strip: false
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -d /opt/docker/sbom/influx-cli
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/influx-cli "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            description: Command line client for InfluxDB 2
+            files:
+              - usr/bin/influx
+              - opt/docker/sbom/influx-cli
+            license: MIT
+            name: influx-cli-2
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/influx
+                    source: usr/bin/influx-dev
+                name: influx-cli-2-dev
+            url: https://github.com/influxdata/influx-cli
+            version: 2.9.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
