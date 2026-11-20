@@ -1,0 +1,204 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kubevirt-velero-plugin
+variant: runtime
+tags:
+  - 0.9-alpine3.24
+  - 0.9.1-alpine3.24
+  - 0.9.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 6d1f84081afa0a2c19ff5c99e4e3347847e309f5
+  GO_UPSTREAM_VERSION: 1.26.11
+  GOLANG_VERSION: 1.26.11-r1
+  PACKAGE_NAME: kubevirt-velero-plugin-0.9
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.9"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.9.1
+  VERSION: 0.9.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubevirt-velero-plugin-0.9
+      work-dir: /go/src/kubevirt.io/kubevirt-velero-plugin
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/kubevirt/kubevirt-velero-plugin.git#v0.9.1
+            checksum: 6d1f84081afa0a2c19ff5c99e4e3347847e309f5
+            path: /go/src/kubevirt.io/kubevirt-velero-plugin
+            spdx:
+              name: kubevirt-velero-plugin
+              version: 0.9.1
+              packages:
+                - name: kubevirt-velero-plugin
+                  purl: pkg:golang/kubevirt.io/kubevirt-velero-plugin@0.9.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/golang/go/go1.26.11/LICENSE
+            checksum: sha256:911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad
+            path: /go/src/go-license/LICENSE
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - name: update go dependencies (0.9 only)
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - google.golang.org/grpc@v1.83.2
+            download: true
+        - name: pin velero (0.9 only)
+          uses: go/bump@v3
+          with:
+            deps:
+              - github.com/vmware-tanzu/velero@v1.18.1
+            download: true
+            pin-only: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=readonly -count=1 ./pkg/...
+        - name: build
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            extra-args: -mod=readonly
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/usr/lib/kubevirt-velero-plugin/kubevirt-velero-plugin
+            packages: .
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            bin=${target.dir}/usr/lib/kubevirt-velero-plugin/kubevirt-velero-plugin
+            test -x "$bin"
+            go version -m "$bin" > /tmp/buildinfo.txt
+            awk '$1 == "path" && $2 == "kubevirt.io/kubevirt-velero-plugin" { f = 1 } END { exit !f }' /tmp/buildinfo.txt
+            awk '$1 == "mod" && $2 == "kubevirt.io/kubevirt-velero-plugin" { f = 1 } END { exit !f }' /tmp/buildinfo.txt
+            grep -F -- 'CGO_ENABLED=0' /tmp/buildinfo.txt
+            grep -F -- '-ldflags=-w' /tmp/buildinfo.txt
+            grep -F -- 'trimpath=true' /tmp/buildinfo.txt
+            if grep -E -- '-ldflags=.*-X' /tmp/buildinfo.txt; then
+              echo "no -X may reach the link" >&2
+              exit 1
+            fi
+            if [ "false" = "true" ]; then
+              grep -F 'GOFIPS140' /tmp/buildinfo.txt
+            fi
+
+            set +e
+            "$bin" > /tmp/plugin-direct.txt 2>&1
+            rc=$?
+            set -e
+            test "$rc" -eq 1
+            grep -F 'This binary is a plugin' /tmp/plugin-direct.txt
+        - name: stage licenses
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/kubevirt.io/kubevirt-velero-plugin
+            bin=${target.dir}/usr/lib/kubevirt-velero-plugin/kubevirt-velero-plugin
+            lic=${target.dir}/usr/share/licenses/kubevirt-velero-plugin
+
+            test "$(go env GOVERSION)" = "go1.26.11"
+            grep -q 'Copyright 2009 The Go Authors' /go/src/go-license/LICENSE
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+
+            go version -m "$bin" | awk '
+              $1 == "dep" { if (line != "") print line; line = $2 " " $3 }
+              $1 == "=>" { line = line " => " $2 " " $3 }
+              END { if (line != "") print line }
+            ' | sort -u > /tmp/bin-mods.txt
+            go list -mod=readonly -deps \
+              -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{with .Replace}} => {{.Path}} {{.Version}}{{end}}{{end}}{{end}}' . \
+              | awk 'NF' | sort -u > /tmp/list-mods.txt
+            diff /tmp/bin-mods.txt /tmp/list-mods.txt
+            go list -mod=readonly -deps \
+              -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' . \
+              | awk 'NF' | sort -u > /tmp/mod-dirs.txt
+            test "$(wc -l < /tmp/mod-dirs.txt)" -eq "$(wc -l < /tmp/bin-mods.txt)"
+
+            install -d "$lic/third_party/go"
+            install -m 0644 "$src/LICENSE" "$lic/LICENSE"
+            install -m 0644 /go/src/go-license/LICENSE "$lic/third_party/go/LICENSE"
+            install -m 0644 /tmp/bin-mods.txt "$lic/MODULES.txt"
+
+            while read -r path dir; do
+              test -n "$dir"
+              test -d "$dir"
+              dest="$lic/third_party/$path"
+              install -d "$dest"
+              find "$dir" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'PATENTS*' \) \
+                -exec install -m 0644 {} "$dest/" \;
+              if ! find "$dest" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' -o -iname 'COPYING*' \) | grep -q .; then
+                echo "no license file for $path in $dir" >&2
+                exit 1
+              fi
+              if find "$dir" -maxdepth 1 -type f -iname 'NOTICE*' | grep -q .; then
+                find "$dest" -maxdepth 1 -type f -iname 'NOTICE*' | grep -q .
+              fi
+            done < /tmp/mod-dirs.txt
+
+            test "$(find "$lic/third_party" -mindepth 1 -type f ! -path "$lic/third_party/go/*" -exec dirname {} \; | sort -u | wc -l)" -eq "$(wc -l < /tmp/bin-mods.txt)"
+            grep -q 'Mozilla Public License' "$lic/third_party/github.com/hashicorp/go-plugin/LICENSE"
+            grep -q 'Mozilla Public License' "$lic/third_party/github.com/hashicorp/yamux/LICENSE"
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/kubevirt-velero-plugin/.spdx.kubevirt-velero-plugin.json
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/kubevirt-velero-plugin "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            commit: 6d1f84081afa0a2c19ff5c99e4e3347847e309f5
+            description: KubeVirt plugin for Velero, backs up and restores virtual machines and their volumes
+            files:
+              - usr/lib/kubevirt-velero-plugin/kubevirt-velero-plugin
+              - usr/share/licenses/kubevirt-velero-plugin
+              - opt/docker/sbom/kubevirt-velero-plugin
+            license: Apache-2.0
+            name: kubevirt-velero-plugin-0.9
+            provides: kubevirt-velero-plugin=$pkg_full_version
+            rel: 0
+            replaces: kubevirt-velero-plugin
+            url: https://github.com/kubevirt/kubevirt-velero-plugin
+            version: 0.9.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
