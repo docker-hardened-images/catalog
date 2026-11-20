@@ -1,0 +1,203 @@
+# syntax=dhi.io/build:2-alpine3.23
+
+image: dhi.io/pkg-docker
+variant: runtime
+tags:
+  - 29.10.0-alpine3.23
+  - 29.10.0-r1-alpine3.23
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-11-10"
+vars:
+  CLI_COMMIT_SHA: fdd4b8e5da335e1d0d83d29af5045f57280cd694
+  COMMIT_SHA: 06db1734267bf7770914b417bff6556d835bf8cc
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  REL: "1"
+  SEMVER_MAJOR_MINOR_VERSION: "29.10"
+  SEMVER_MAJOR_VERSION: "29"
+  SEMVER_VERSION: 29.10.0
+  VERSION: 29.10.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.23/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: docker apk
+      caches:
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - btrfs-progs-dev
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - gcc
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+          - libseccomp-dev
+          - linux-headers
+          - make
+          - musl-dev
+          - pkgconf
+          - sed
+        files:
+          - url: git+https://github.com/moby/moby.git#docker-v29.10.0
+            checksum: 06db1734267bf7770914b417bff6556d835bf8cc
+            path: /go/src/github.com/moby/moby
+            spdx:
+              name: docker-engine
+              version: 29.10.0
+              packages:
+                - name: docker-engine
+                  purl: pkg:golang/github.com/moby/moby/v2@29.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/docker/cli.git#v29.10.0
+            checksum: fdd4b8e5da335e1d0d83d29af5045f57280cd694
+            path: /go/src/github.com/docker/cli
+            spdx:
+              name: docker-cli
+              version: 29.10.0
+              packages:
+                - name: docker-cli
+                  purl: pkg:golang/github.com/docker/cli@29.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update docker engine go dependencies
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/moby/moby
+          with:
+            deps:
+              - github.com/cilium/ebpf@v0.22.0
+              - golang.org/x/net@v0.62.0
+              - github.com/klauspost/compress@v1.20.2
+            download: true
+        - name: update swarmkit for CVE-2026-115539
+          uses: go/bump@v2
+          work-dir: /go/src/github.com/moby/moby
+          with:
+            deps:
+              - github.com/moby/swarmkit/v2@v2.1.3
+            download: true
+        - name: patch vendored distribution client for CVE-2026-85747
+          uses: patch@v1
+          work-dir: /go/src/github.com/moby/moby
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/dhi-cve-2026-85747-distribution-blob-digest.patch
+        - name: test docker engine after dependency updates
+          work-dir: /go/src/github.com/moby/moby
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=1 go test -count=1 -timeout=5m -tags seccomp ./cmd/dockerd
+
+            mkdir -p ./dhi/distributionblob
+            cp "${source.dir}/tests/testdata/blob_digest_test.go" ./dhi/distributionblob/digest_test.go
+            go test -mod=vendor -count=1 -timeout=2m ./dhi/distributionblob
+            rm -rf ./dhi
+        - name: build docker engine
+          work-dir: /go/src/github.com/moby/moby
+          runs: |
+            set -eux -o pipefail
+
+            export CGO_ENABLED=1
+            export DISABLE_WARN_OUTSIDE_CONTAINER=1
+            export DOCKER_BUILDTAGS=seccomp
+            export DOCKER_GITCOMMIT="06db1734267bf7770914b417bff6556d835bf8cc"
+            export GOFLAGS=-trimpath
+            export VERSION="29.10.0"
+            hack/make.sh dynbinary
+
+            install -Dm755 bundles/dynbinary-daemon/dockerd "${target.dir}/usr/bin/dockerd"
+            install -Dm755 bundles/dynbinary-daemon/docker-proxy "${target.dir}/usr/bin/docker-proxy"
+        - name: prepare docker cli go module
+          work-dir: /go/src/github.com/docker/cli
+          runs: |
+            set -eux -o pipefail
+
+            ln -s vendor.mod go.mod
+            ln -s vendor.sum go.sum
+        - name: build docker cli
+          work-dir: /go/src/github.com/docker/cli
+          runs: |
+            set -eux -o pipefail
+
+            export CGO_ENABLED=1
+            export GITCOMMIT="fdd4b8e5da335e1d0d83d29af5045f57280cd694"
+            export GOFLAGS=-trimpath
+            make VERSION="29.10.0" dynbinary
+
+            install -Dm755 build/docker "${target.dir}/usr/bin/docker"
+        - name: symlink docker-init to tini-static
+          runs: |
+            set -eux -o pipefail
+
+            ln -s ../../sbin/tini-static "${target.dir}/usr/bin/docker-init"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - docker-engine=29.10.0-r1
+              - docker-cli=29.10.0-r1
+              - docker-cli-buildx
+            description: Pack, ship and run any application as a lightweight container
+            formats:
+              - apk
+            license: Apache-2.0
+            name: docker
+            rel: 1
+            subpackages:
+              - depends:
+                  - ca-certificates
+                  - containerd
+                  - iptables
+                  - musl
+                  - tini-static
+                description: Docker Engine (dockerd)
+                files:
+                  - usr/bin/dockerd
+                  - usr/bin/docker-proxy
+                  - usr/bin/docker-init
+                name: docker-engine
+              - depends:
+                  - ca-certificates
+                  - musl
+                description: Docker CLI
+                files:
+                  - usr/bin/docker
+                name: docker-cli
+            url: https://www.docker.io/
+            version: 29.10.0
+      paths:
+        - type: file
+          path: ${source.dir}/patch/dhi-cve-2026-85747-distribution-blob-digest.patch
+          uid: 0
+          gid: 0
+          mode: "644"
+          source: package/main/docker/patch/dhi-cve-2026-85747-distribution-blob-digest.patch
+        - type: file
+          path: ${source.dir}/tests/testdata/blob_digest_test.go
+          uid: 0
+          gid: 0
+          mode: "644"
+          source: package/main/docker/tests/testdata/blob_digest_test.go
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.23"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.23
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
