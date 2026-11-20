@@ -1,5 +1,8 @@
 #!/usr/bin/make -f
 
+SBOM_FILES := rust-upstream cargo-upstream rustfmt-upstream clippy-upstream
+SHIPPED_BINARIES := rustc rustdoc cargo cargo-fmt rustfmt cargo-clippy clippy-driver
+
 %:
 	dh $@
 
@@ -12,8 +15,7 @@ override_dh_auto_build:
 override_dh_auto_install:
 	DESTDIR="$$(pwd)/debian/tmp" ./x.py install
 	rm -rf \
-		debian/tmp/usr/share/doc \
-		debian/tmp/usr/share/man \
+		debian/tmp/usr/share \
 		debian/tmp/etc \
 		debian/tmp/usr/bin/rust-gdb \
 		debian/tmp/usr/bin/rust-gdbgui \
@@ -25,10 +27,22 @@ override_dh_auto_install:
 		debian/tmp/usr/lib/rustlib/install.log \
 		debian/tmp/usr/lib/rustlib/uninstall.sh \
 		debian/tmp/usr/lib/rustlib/rust-installer-version
+	for bin in $(SHIPPED_BINARIES); do \
+		test -x "debian/tmp/usr/bin/$$bin"; \
+	done
+	mkdir -p debian/tmp/opt/docker/sbom
+	for sbom in $(SBOM_FILES); do \
+		cp -a "/opt/docker/sbom/$$sbom" debian/tmp/opt/docker/sbom/; \
+	done
 
 override_dh_auto_test:
 
 override_dh_auto_clean:
+
+# rustfmt and clippy-driver link the private librustc_driver and libstd shared
+# libraries that ship in the rustc package; they have no shlibs entry.
+override_dh_shlibdeps:
+	dh_shlibdeps -- -l$(CURDIR)/debian/rustc/usr/lib --ignore-missing-info
 
 # rustc ships large binaries with pre-compressed debug sections; dwz fails on arm64.
 override_dh_dwz:
