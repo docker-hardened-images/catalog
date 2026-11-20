@@ -16,7 +16,26 @@ prompts, run `copilot` directly with `sbx exec`.
 
 ## Kit arguments
 
-This kit has no create-time kit arguments.
+Set these arguments when creating the sandbox with `--kit-arg <name>=<value>`. Repeat the flag for multiple arguments.
+Use `--kit-arg <kit>.<name>=<value>` to target one kit in a composition, as in the example below.
+
+| Argument          | Default | Description                                                                   | Accepted values                                                       |
+| ----------------- | ------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `model`           | `""`    | Copilot model to use (settings.json `model`); empty keeps the CLI default     | Letters, digits, `.`, `_`, `/`, `:`, and `-`.                         |
+| `reasoningEffort` | `""`    | Reasoning effort (settings.json `effortLevel`); empty keeps the model default | Empty, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
+
+An empty value keeps the agent default. The model must be available to your Copilot plan, and the selected model must
+support the requested effort level. These are kit configuration inputs, separate from agent command-line arguments
+passed after `--`.
+
+```console
+sbx run sbx/copilot:latest \
+  --kit-arg copilot.model=gpt-5.6-sol --kit-arg copilot.reasoningEffort=high \
+  /path/to/workspace
+```
+
+The kit writes both values to `~/.copilot/settings.json` when the sandbox is created and keeps the other settings in
+that file. Change them later with `copilot config` or `/model`.
 
 ## Authentication and configuration
 

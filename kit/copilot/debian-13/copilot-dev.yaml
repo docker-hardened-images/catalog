@@ -9,6 +9,16 @@ args:
     pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
     description: GitHub Copilot release carried by the image
     buildArg: VERSION
+  model:
+    default: ''
+    pattern: ^[A-Za-z0-9._/:-]*$
+    description: Copilot model to use (settings.json `model`); empty keeps the CLI default
+    env: COPILOT_KIT_MODEL
+  reasoningEffort:
+    default: ''
+    enum: ['', none, minimal, low, medium, high, xhigh, max]
+    description: Reasoning effort (settings.json `effortLevel`); empty keeps the model default
+    env: COPILOT_KIT_REASONING_EFFORT
 provides:
   - copilot@${{ kit.args.version }}
 capabilities:
@@ -88,6 +98,21 @@ capabilities:
           env:
             - WORKSPACE_DIR
           description: Copilot config with trusted workspace folder
+        - command: |
+            set -e
+            model='${{ kit.args.model }}'
+            effort='${{ kit.args.reasoningEffort }}'
+            [ -n "$model$effort" ] || exit 0
+            cfg=/home/agent/.copilot/settings.json
+            [ -s "$cfg" ] || echo '{}' > "$cfg"
+            tmp=$(mktemp "$cfg.XXXXXX")
+            trap 'rm -f "$tmp"' EXIT
+            jq --arg model "$model" --arg effort "$effort" '
+              if $model != "" then .model = $model else . end
+              | if $effort != "" then .effortLevel = $effort else . end' "$cfg" > "$tmp"
+            mv -f "$tmp" "$cfg"
+          user: agent
+          description: Write the model and reasoning effort kit arguments to ~/.copilot/settings.json
       startup:
         - command:
             - sh
