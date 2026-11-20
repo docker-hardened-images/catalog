@@ -22,7 +22,7 @@ LinkedIn and now maintained by the DataHub Project and Acryl Data.
   proposal, and applies it to DataHub's metadata storage layer via the GMS REST API. Successfully applied proposals flow
   downstream to `MetadataChangeLog_v1` (where the MAE Consumer picks them up to update search and graph indices); failed
   proposals are written back to `FailedMetadataChangeProposal_v1` for producers to retry. The service is a Spring Boot
-  3.5.14 application built on OpenJDK 17 and is deployed as a fat JAR via `mce-consumer-job.jar`. This DHI image also
+  4.0.8 application built on OpenJDK 25 and is deployed as a fat JAR via `mce-consumer-job.jar`. This DHI image also
   bundles two optional Java agents - the OpenTelemetry javaagent and the JMX Prometheus javaagent - that are activated
   via environment variables at runtime.
 

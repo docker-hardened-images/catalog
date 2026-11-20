@@ -5,9 +5,9 @@ DataHub MCE Consumer (Metadata Change Event Consumer) is the Kafka consumer serv
 metadata sources) and applies them to DataHub's metadata storage layer via the GMS (General Metadata Service) API.
 Successfully applied proposals are forwarded to the downstream `MetadataChangeLog_v1` topic that the MAE Consumer
 subscribes to; failed proposals are written back to the `FailedMetadataChangeProposal_v1` topic so producers can retry.
-The MCE Consumer is a Spring Boot 3.5.14 application built on OpenJDK 17. It can run standalone (this image's default)
-or be embedded inside `datahub-gms`; standalone deployment gives operators independent scaling and isolated failure
-domains for the metadata-write path.
+The MCE Consumer is a Spring Boot 4.0.8 application built on OpenJDK 25. It can run standalone (this image's default) or
+be embedded inside `datahub-gms`; standalone deployment gives operators independent scaling and isolated failure domains
+for the metadata-write path.
 
 For more information about DataHub, visit https://datahub.com.
 
