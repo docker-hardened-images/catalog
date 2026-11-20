@@ -119,11 +119,6 @@ node -e '
     if (ws.includes(line)) ws = ws.replace(line, "\n  " + to + "\n");
     else if (!ws.includes(currentLine)) throw new Error("catalog entry " + from + " or " + current + " not found, re-check the " + why + " pin");
   }
-  // Upstream pins the get-uri dependency of basic-ftp through a more specific
-  // selector, which outranks the "basic-ftp" override above, so that line moves too.
-  const getUriFtp = "\n  get-uri>basic-ftp: 6.2.2\n";
-  if (!ws.includes(getUriFtp)) throw new Error("pnpm-workspace.yaml no longer pins get-uri>basic-ftp to 6.2.2, re-check the basic-ftp pin");
-  ws = ws.replace(getUriFtp, "\n  get-uri>basic-ftp: 6.2.4\n");
   const shellEmulator = "\nshellEmulator: true\n";
   if (!ws.includes(shellEmulator)) throw new Error("pnpm-workspace.yaml no longer enables shellEmulator");
   ws = ws.replace(shellEmulator, "\nshellEmulator: false\n");
