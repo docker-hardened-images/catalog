@@ -1,0 +1,111 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-docker-sbx
+variant: runtime
+tags:
+  - 0.54.0
+  - 0.54.0-r0
+  - 0.54.0-debian13
+  - 0.54.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-11-16"
+vars:
+  DHI_TEST_DEB_EXPECTED_FILES: /usr/bin/sbx /usr/libexec/docker-docklet /usr/libexec/containerd-shim-nerdbox-v1 /usr/libexec/lib/libsailor.so /etc/apparmor.d/docker-sbx-nerdbox-shim /usr/share/doc/docker-sbx/copyright
+  REL: "0"
+  SBX_SHA256: '#{ target.arch == "amd64" ? "eded29017121a857c98d4a91cad593f6a9e00f4010e830679bd385f4a5edba4d" : "40498341fd6b7f67d8f6ff4b1a17c73f516811fc6184a3bd554f9b3442a91115" }'
+  SBX_SHA256_AMD64: eded29017121a857c98d4a91cad593f6a9e00f4010e830679bd385f4a5edba4d
+  SBX_SHA256_ARM64: 40498341fd6b7f67d8f6ff4b1a17c73f516811fc6184a3bd554f9b3442a91115
+  SBX_URL: '#{ "https://github.com/docker/sbx-releases/releases/download/v0.54.0/DockerSandboxes-linux-" + target.arch + ".tar.gz" }'
+  SEMVER_MAJOR_MINOR_VERSION: "0.54"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.54.0
+  VERSION: 0.54.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: docker-sbx
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+        packages:
+          - bash
+          - coreutils
+          - libarchive-tools
+        files:
+          - url: ${SBX_URL}
+            checksum: sha256:${SBX_SHA256}
+            path: /tmp/docker-sbx.tar.gz
+            spdx:
+              name: docker-sbx
+              version: 0.54.0
+              packages:
+                - name: docker-sbx
+                  purl: pkg:github/docker/sbx-releases@v0.54.0
+                  license: LicenseRef-Proprietary
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: install sbx
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /tmp/sbx
+            bsdtar -xf /tmp/docker-sbx.tar.gz -C /tmp/sbx --strip-components=1
+
+            root="${target.dir}"
+            install -D -m 0755 /tmp/sbx/sbx "$root"/usr/bin/sbx
+            for f in docker-docklet containerd-shim-nerdbox-v1 mkfs.erofs mkfs.ext4; do
+              install -D -m 0755 /tmp/sbx/"$f" "$root"/usr/libexec/"$f"
+            done
+            if [ -e /tmp/sbx/containerd-shim-nerdbox-gpu-v1 ]; then
+              install -D -m 0755 /tmp/sbx/containerd-shim-nerdbox-gpu-v1 "$root"/usr/libexec/containerd-shim-nerdbox-gpu-v1
+            fi
+            for f in /tmp/sbx/nerdbox-kernel-* /tmp/sbx/nerdbox-rootfs-*.erofs /tmp/sbx/sailor-rootfs-*.erofs; do
+              install -D -m 0644 "$f" "$root"/usr/libexec/"${f##*/}"
+            done
+            install -D -m 0755 /tmp/sbx/libsailor.so "$root"/usr/libexec/lib/libsailor.so
+            install -D -m 0644 /tmp/sbx/apparmor-profile "$root"/etc/apparmor.d/docker-sbx-nerdbox-shim
+            install -D -m 0644 /tmp/sbx/LICENSE "$root"/usr/share/doc/docker-sbx/copyright
+            install -D -m 0644 /tmp/sbx/THIRD-PARTY-NOTICES "$root"/usr/share/doc/docker-sbx/THIRD-PARTY-NOTICES
+
+            rm -rf /tmp/sbx
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates
+              - dbus-daemon
+              - libc6 >= 2.34
+              - libgcc-s1
+            description: Docker Sandboxes CLI (sbx)
+            files:
+              - usr/bin/sbx
+              - usr/libexec
+              - etc/apparmor.d/docker-sbx-nerdbox-shim
+              - usr/share/doc/docker-sbx
+            formats:
+              - deb
+            license: LicenseRef-Proprietary
+            name: docker-sbx
+            priority: optional
+            rel: 0
+            section: admin
+            url: https://docs.docker.com/sandbox/
+            version: 0.54.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
