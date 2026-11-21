@@ -1,0 +1,407 @@
+Subject: Take Quarkus 3.33.2.1 on the 1.18 line
+
+StackGres 1.18.10 subclasses fabric8 Container and calls the 7.4.0 all-args constructor. Quarkus 3.33.2.1 manages fabric8 7.5.2, which inserts restartPolicyRules between restartPolicy and securityContext, so CustomContainer has to match that constructor.
+
+Origin: backport, https://github.com/ongres/stackgres/commit/66cd4f2a51b12022ca97d05d100227b388d5cdf9, https://github.com/ongres/stackgres/commit/7f24680fc6b0027e400e5ca389b8c9136a373628
+CVE: CVE-2026-39852
+CVE: CVE-2026-50559
+Base-Tree: git https://github.com/ongres/stackgres.git de07225fa07fb0e583168acfe3b41f92f0277f80
+Adaptation: Keeps StackGres 1.18.10 and sets quarkus.version to 3.33.2.1, the first platform release whose quarkus-vertx-http contains both fixes, instead of 66cd4f2a51's 3.34.6. Takes only CustomContainer.java from 66cd4f2a51, the same file 1.18.10 has, plus the ContainerRestartRule BuildableReference added in 7f24680fc6. Leaves that commit's sundrio 0.300.0 bump and the other CRD @Buildable edits out.
+Verify: cmd `dhi def build package/main/stackgres-operator/debian-13/1.18.yaml` expect "BUILD SUCCESS"
+Drop-When: upstream >= 1.19.0 (only the 1.18 leaves apply it)
+
+--- a/stackgres-k8s/src/pom.xml
++++ b/stackgres-k8s/src/pom.xml
+@@ -86,7 +86,7 @@
+     <maven.compiler.source>${java.version}</maven.compiler.source>
+     <maven.compiler.target>${java.version}</maven.compiler.target>
+     <!-- Dependencies versions -->
+-    <quarkus.version>3.31.2</quarkus.version>
++    <quarkus.version>3.33.2.1</quarkus.version>
+     <hibernate.version>7.2.4.Final</hibernate.version>
+     <jool.version>0.9.15</jool.version>
+     <immutables.version>2.12.1</immutables.version>
+--- a/stackgres-k8s/src/common/src/main/java/io/stackgres/common/crd/CustomContainer.java
++++ b/stackgres-k8s/src/common/src/main/java/io/stackgres/common/crd/CustomContainer.java
+@@ -10,6 +10,7 @@
+ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+ import io.fabric8.kubernetes.api.model.ContainerPort;
+ import io.fabric8.kubernetes.api.model.ContainerResizePolicy;
++import io.fabric8.kubernetes.api.model.ContainerRestartRule;
+ import io.fabric8.kubernetes.api.model.EnvFromSource;
+ import io.fabric8.kubernetes.api.model.EnvVar;
+ import io.fabric8.kubernetes.api.model.Lifecycle;
+@@ -24,7 +25,7 @@
+ 
+ @RegisterForReflection
+ @JsonIgnoreProperties(ignoreUnknown = true)
+-@Buildable(editableEnabled = false, validationEnabled = false, generateBuilderPackage = false,
++@Buildable(editableEnabled = false, generateBuilderPackage = false,
+     lazyCollectionInitEnabled = false, lazyMapInitEnabled = false,
+     builderPackage = "io.fabric8.kubernetes.api.builder",
+     refs = {
+@@ -39,6 +40,7 @@
+         @BuildableReference(io.fabric8.kubernetes.api.model.VolumeDevice.class),
+         @BuildableReference(io.fabric8.kubernetes.api.model.VolumeMount.class),
+         @BuildableReference(io.fabric8.kubernetes.api.model.ContainerResizePolicy.class),
++        @BuildableReference(io.fabric8.kubernetes.api.model.ContainerRestartRule.class),
+     })
+ public class CustomContainer extends io.fabric8.kubernetes.api.model.Container {
+ 
+@@ -51,15 +53,15 @@
+   public CustomContainer(List<String> args, List<String> command, List<EnvVar> env,
+       List<EnvFromSource> envFrom, String image, String imagePullPolicy, Lifecycle lifecycle,
+       Probe livenessProbe, String name, List<ContainerPort> ports, Probe readinessProbe,
+-      List<ContainerResizePolicy> resizePolicy,
+-      ResourceRequirements resources, String restartPolicy, SecurityContext securityContext, Probe startupProbe,
+-      Boolean stdin, Boolean stdinOnce, String terminationMessagePath,
+-      String terminationMessagePolicy, Boolean tty, List<VolumeDevice> volumeDevices,
+-      List<VolumeMount> volumeMounts, String workingDir) {
+-    super(args, command, env, envFrom, image, imagePullPolicy, lifecycle, livenessProbe, name,
+-        ports, readinessProbe, resizePolicy, resources, restartPolicy, securityContext, startupProbe, stdin,
+-        stdinOnce, terminationMessagePath, terminationMessagePolicy, tty, volumeDevices,
+-        volumeMounts, workingDir);
++      List<ContainerResizePolicy> resizePolicy, ResourceRequirements resources,
++      String restartPolicy, List<ContainerRestartRule> restartPolicyRules,
++      SecurityContext securityContext, Probe startupProbe, Boolean stdin, Boolean stdinOnce,
++      String terminationMessagePath, String terminationMessagePolicy, Boolean tty,
++      List<VolumeDevice> volumeDevices, List<VolumeMount> volumeMounts, String workingDir) {
++    super(args, command, env, envFrom, image, imagePullPolicy, lifecycle, livenessProbe, name, ports,
++        readinessProbe, resizePolicy, resources, restartPolicy, restartPolicyRules, securityContext,
++        startupProbe, stdin, stdinOnce, terminationMessagePath, terminationMessagePolicy, tty,
++        volumeDevices, volumeMounts, workingDir);
+   }
+ 
+   @Override
+@@ -68,223 +70,243 @@
+   }
+ 
+   @Override
+-  public void setArgs(List<String> args) {
+-    super.setArgs(args);
++  public List<String> getCommand() {
++    return super.getCommand();
+   }
+ 
+   @Override
+-  public List<String> getCommand() {
+-    return super.getCommand();
++  public List<EnvVar> getEnv() {
++    return super.getEnv();
+   }
+ 
+   @Override
+-  public void setCommand(List<String> command) {
+-    super.setCommand(command);
++  public List<EnvFromSource> getEnvFrom() {
++    return super.getEnvFrom();
+   }
+ 
+   @Override
+-  public List<EnvVar> getEnv() {
+-    return super.getEnv();
++  public String getImage() {
++    return super.getImage();
+   }
+ 
+   @Override
+-  public void setEnv(List<EnvVar> env) {
+-    super.setEnv(env);
++  public String getImagePullPolicy() {
++    return super.getImagePullPolicy();
+   }
+ 
+   @Override
+-  public List<EnvFromSource> getEnvFrom() {
+-    return super.getEnvFrom();
++  public Lifecycle getLifecycle() {
++    return super.getLifecycle();
+   }
+ 
+   @Override
+-  public void setEnvFrom(List<EnvFromSource> envFrom) {
+-    super.setEnvFrom(envFrom);
++  public Probe getLivenessProbe() {
++    return super.getLivenessProbe();
+   }
+ 
+   @Override
+-  public String getImage() {
+-    return super.getImage();
++  public String getName() {
++    return super.getName();
+   }
+ 
+   @Override
+-  public void setImage(String image) {
+-    super.setImage(image);
++  public List<ContainerPort> getPorts() {
++    return super.getPorts();
+   }
+ 
+   @Override
+-  public String getImagePullPolicy() {
+-    return super.getImagePullPolicy();
++  public Probe getReadinessProbe() {
++    return super.getReadinessProbe();
+   }
+ 
+   @Override
+-  public void setImagePullPolicy(String imagePullPolicy) {
+-    super.setImagePullPolicy(imagePullPolicy);
++  public List<ContainerResizePolicy> getResizePolicy() {
++    return super.getResizePolicy();
+   }
+ 
+   @Override
+-  public Lifecycle getLifecycle() {
+-    return super.getLifecycle();
++  public ResourceRequirements getResources() {
++    return super.getResources();
+   }
+ 
+   @Override
+-  public void setLifecycle(Lifecycle lifecycle) {
+-    super.setLifecycle(lifecycle);
++  public String getRestartPolicy() {
++    return super.getRestartPolicy();
+   }
+ 
+   @Override
+-  public Probe getLivenessProbe() {
+-    return super.getLivenessProbe();
++  public List<ContainerRestartRule> getRestartPolicyRules() {
++    return super.getRestartPolicyRules();
+   }
+ 
+   @Override
+-  public void setLivenessProbe(Probe livenessProbe) {
+-    super.setLivenessProbe(livenessProbe);
++  public SecurityContext getSecurityContext() {
++    return super.getSecurityContext();
+   }
+ 
+   @Override
+-  public String getName() {
+-    return super.getName();
++  public Probe getStartupProbe() {
++    return super.getStartupProbe();
+   }
+ 
+   @Override
+-  public void setName(String name) {
+-    super.setName(name);
++  public Boolean getStdin() {
++    return super.getStdin();
+   }
+ 
+   @Override
+-  public List<ContainerPort> getPorts() {
+-    return super.getPorts();
++  public Boolean getStdinOnce() {
++    return super.getStdinOnce();
+   }
+ 
+   @Override
+-  public void setPorts(List<ContainerPort> ports) {
+-    super.setPorts(ports);
++  public String getTerminationMessagePath() {
++    return super.getTerminationMessagePath();
+   }
+ 
+   @Override
+-  public Probe getReadinessProbe() {
+-    return super.getReadinessProbe();
++  public String getTerminationMessagePolicy() {
++    return super.getTerminationMessagePolicy();
+   }
+ 
+   @Override
+-  public void setReadinessProbe(Probe readinessProbe) {
+-    super.setReadinessProbe(readinessProbe);
++  public Boolean getTty() {
++    return super.getTty();
+   }
+ 
+   @Override
+-  public List<ContainerResizePolicy> getResizePolicy() {
+-    return super.getResizePolicy();
++  public List<VolumeDevice> getVolumeDevices() {
++    return super.getVolumeDevices();
+   }
+ 
+   @Override
+-  public void setResizePolicy(List<ContainerResizePolicy> resizePolicy) {
+-    super.setResizePolicy(resizePolicy);
++  public List<VolumeMount> getVolumeMounts() {
++    return super.getVolumeMounts();
+   }
+ 
+   @Override
+-  public ResourceRequirements getResources() {
+-    return super.getResources();
++  public String getWorkingDir() {
++    return super.getWorkingDir();
+   }
+ 
+   @Override
+-  public void setResources(ResourceRequirements resources) {
+-    super.setResources(resources);
++  public void setArgs(List<String> args) {
++    super.setArgs(args);
+   }
+ 
+   @Override
+-  public SecurityContext getSecurityContext() {
+-    return super.getSecurityContext();
++  public void setCommand(List<String> command) {
++    super.setCommand(command);
+   }
+ 
+   @Override
+-  public void setSecurityContext(SecurityContext securityContext) {
+-    super.setSecurityContext(securityContext);
++  public void setEnv(List<EnvVar> env) {
++    super.setEnv(env);
+   }
+ 
+   @Override
+-  public Probe getStartupProbe() {
+-    return super.getStartupProbe();
++  public void setEnvFrom(List<EnvFromSource> envFrom) {
++    super.setEnvFrom(envFrom);
+   }
+ 
+   @Override
+-  public void setStartupProbe(Probe startupProbe) {
+-    super.setStartupProbe(startupProbe);
++  public void setImage(String image) {
++    super.setImage(image);
+   }
+ 
+   @Override
+-  public Boolean getStdin() {
+-    return super.getStdin();
++  public void setImagePullPolicy(String imagePullPolicy) {
++    super.setImagePullPolicy(imagePullPolicy);
+   }
+ 
+   @Override
+-  public void setStdin(Boolean stdin) {
+-    super.setStdin(stdin);
++  public void setLifecycle(Lifecycle lifecycle) {
++    super.setLifecycle(lifecycle);
+   }
+ 
+   @Override
+-  public Boolean getStdinOnce() {
+-    return super.getStdinOnce();
++  public void setLivenessProbe(Probe livenessProbe) {
++    super.setLivenessProbe(livenessProbe);
+   }
+ 
+   @Override
+-  public void setStdinOnce(Boolean stdinOnce) {
+-    super.setStdinOnce(stdinOnce);
++  public void setName(String name) {
++    super.setName(name);
+   }
+ 
+   @Override
+-  public String getTerminationMessagePath() {
+-    return super.getTerminationMessagePath();
++  public void setPorts(List<ContainerPort> ports) {
++    super.setPorts(ports);
+   }
+ 
+   @Override
+-  public void setTerminationMessagePath(String terminationMessagePath) {
+-    super.setTerminationMessagePath(terminationMessagePath);
++  public void setReadinessProbe(Probe readinessProbe) {
++    super.setReadinessProbe(readinessProbe);
+   }
+ 
+   @Override
+-  public String getTerminationMessagePolicy() {
+-    return super.getTerminationMessagePolicy();
++  public void setResizePolicy(List<ContainerResizePolicy> resizePolicy) {
++    super.setResizePolicy(resizePolicy);
+   }
+ 
+   @Override
+-  public void setTerminationMessagePolicy(String terminationMessagePolicy) {
+-    super.setTerminationMessagePolicy(terminationMessagePolicy);
++  public void setResources(ResourceRequirements resources) {
++    super.setResources(resources);
+   }
+ 
+   @Override
+-  public Boolean getTty() {
+-    return super.getTty();
++  public void setRestartPolicy(String restartPolicy) {
++    super.setRestartPolicy(restartPolicy);
+   }
+ 
+   @Override
+-  public void setTty(Boolean tty) {
+-    super.setTty(tty);
++  public void setRestartPolicyRules(List<ContainerRestartRule> restartPolicyRules) {
++    super.setRestartPolicyRules(restartPolicyRules);
+   }
+ 
+   @Override
+-  public List<VolumeDevice> getVolumeDevices() {
+-    return super.getVolumeDevices();
++  public void setSecurityContext(SecurityContext securityContext) {
++    super.setSecurityContext(securityContext);
+   }
+ 
+   @Override
+-  public void setVolumeDevices(List<VolumeDevice> volumeDevices) {
+-    super.setVolumeDevices(volumeDevices);
++  public void setStartupProbe(Probe startupProbe) {
++    super.setStartupProbe(startupProbe);
+   }
+ 
+   @Override
+-  public List<VolumeMount> getVolumeMounts() {
+-    return super.getVolumeMounts();
++  public void setStdin(Boolean stdin) {
++    super.setStdin(stdin);
+   }
+ 
+   @Override
+-  public void setVolumeMounts(List<VolumeMount> volumeMounts) {
+-    super.setVolumeMounts(volumeMounts);
++  public void setStdinOnce(Boolean stdinOnce) {
++    super.setStdinOnce(stdinOnce);
+   }
+ 
+   @Override
+-  public String getWorkingDir() {
+-    return super.getWorkingDir();
++  public void setTerminationMessagePath(String terminationMessagePath) {
++    super.setTerminationMessagePath(terminationMessagePath);
++  }
++
++  @Override
++  public void setTerminationMessagePolicy(String terminationMessagePolicy) {
++    super.setTerminationMessagePolicy(terminationMessagePolicy);
++  }
++
++  @Override
++  public void setTty(Boolean tty) {
++    super.setTty(tty);
++  }
++
++  @Override
++  public void setVolumeDevices(List<VolumeDevice> volumeDevices) {
++    super.setVolumeDevices(volumeDevices);
++  }
++
++  @Override
++  public void setVolumeMounts(List<VolumeMount> volumeMounts) {
++    super.setVolumeMounts(volumeMounts);
+   }
+ 
+   @Override
