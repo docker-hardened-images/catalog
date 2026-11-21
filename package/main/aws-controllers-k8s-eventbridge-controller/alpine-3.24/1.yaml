@@ -1,0 +1,211 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-aws-controllers-k8s-eventbridge-controller
+variant: runtime
+tags:
+  - 1.10.0-alpine3.24
+  - 1.10.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 8ac05cf68e68e35b1b06288e2f588fdb7c2b3022
+  GOLANG_VERSION: 1.26.11-r1
+  PACKAGE_NAME: aws-controllers-k8s-eventbridge-controller-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.10"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.10.0
+  VERSION: 1.10.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: aws-controllers-k8s-eventbridge-controller-1
+      work-dir: /go/src/github.com/aws-controllers-k8s/eventbridge-controller
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/aws-controllers-k8s/eventbridge-controller.git#v1.10.0
+            checksum: 8ac05cf68e68e35b1b06288e2f588fdb7c2b3022
+            path: /go/src/github.com/aws-controllers-k8s/eventbridge-controller
+            spdx:
+              name: eventbridge-controller
+              version: 1.10.0
+              packages:
+                - name: eventbridge-controller
+                  purl: pkg:golang/github.com/aws-controllers-k8s/eventbridge-controller@1.10.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            go test -count=1 -timeout 30m ./pkg/... ./apis/... ./cmd/...
+        - name: stamp module state
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/aws-controllers-k8s/eventbridge-controller
+            if grep -qE '^[[:space:]]*(replace|exclude|godebug)([[:space:]]|\()' "$src/go.mod"; then
+              echo "$src/go.mod has replace, exclude or godebug directives; the in-tree build would not match upstream" >&2
+              exit 1
+            fi
+            awk '$1=="go"{print "go directive:", $2; exit}' "$src/go.mod"
+        - name: build
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.GitVersion=1.10.0
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.GitCommit=8ac05cf68e68e35b1b06288e2f588fdb7c2b3022
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-eventbridge-controller
+            packages: ./cmd/controller
+        - name: build dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.GitVersion=1.10.0
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.GitCommit=8ac05cf68e68e35b1b06288e2f588fdb7c2b3022
+              - -X github.com/aws-controllers-k8s/eventbridge-controller/pkg/version.BuildDate=$(date -u -d @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M')
+            output: ${target.dir}/usr/bin/ack-eventbridge-controller-dev
+            packages: ./cmd/controller
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/aws-controllers-k8s/eventbridge-controller
+            runtime="${target.dir}/usr/bin/ack-eventbridge-controller"
+            dev="${target.dir}/usr/bin/ack-eventbridge-controller-dev"
+            mod=$(printf 'mod\tgithub.com/aws-controllers-k8s/eventbridge-controller\t(devel)')
+
+            awk '/^require \($/{r=1; next} r && /^\)$/{r=0; next} r && NF >= 2 {print $1, $2} /^require [^(]/{print $2, $3}' "$src/go.mod" | LC_ALL=C sort -u > /tmp/requires.txt
+            test -s /tmp/requires.txt
+
+            for bin in "$runtime" "$dev"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qF "$mod" /tmp/buildinfo.txt
+              grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo.txt
+              if grep -qE 'vcs\.|\+dirty' /tmp/buildinfo.txt; then
+                echo "$bin: VCS stamping leaked into build info" >&2
+                exit 1
+              fi
+              grep -F -- "pkg/version.GitVersion=1.10.0" /tmp/buildinfo.txt
+              grep -F -- "pkg/version.GitCommit=8ac05cf68e68e35b1b06288e2f588fdb7c2b3022" /tmp/buildinfo.txt
+              awk '$1 == "dep" {print $2, $3}' /tmp/buildinfo.txt | LC_ALL=C sort -u > /tmp/deps.txt
+              test -s /tmp/deps.txt
+              if LC_ALL=C comm -13 /tmp/requires.txt /tmp/deps.txt | grep .; then
+                echo "$bin: module versions differ from $src/go.mod" >&2
+                exit 1
+              fi
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0(-[0-9a-f]+)?$' /tmp/buildinfo.txt
+                grep -qE '^[[:space:]]+build[[:space:]]+DefaultGODEBUG=(.*,)?fips140=on(,|$)' /tmp/buildinfo.txt
+              elif grep -q fips140 /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
+
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            go version -m "$runtime" | grep -qF -- '-ldflags="-w '
+            if go version -m "$dev" | grep -E -- '-trimpath=true|-ldflags=.*(-w|-s)( |"|$)'; then
+              echo "$dev: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/aws-controllers-k8s/eventbridge-controller
+            test -s "$src/LICENSE"
+            test -s "$src/NOTICE"
+            test -s "$src/ATTRIBUTION.md"
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+            grep -q 'Amazon' "$src/NOTICE"
+            test -s /opt/docker/sbom/eventbridge-controller/.spdx.eventbridge-controller.json
+
+            for root in "${target.dir}" "${target.dir}/dev"; do
+              install -D -m 0644 "$src/LICENSE" "$root/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/LICENSE"
+              install -D -m 0644 "$src/NOTICE" "$root/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/NOTICE"
+              install -D -m 0644 "$src/ATTRIBUTION.md" "$root/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/ATTRIBUTION.md"
+              install -d "$root/opt/docker/sbom"
+              cp -a /opt/docker/sbom/eventbridge-controller "$root/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: AWS Controllers for Kubernetes controller for Amazon EventBridge
+            files:
+              - usr/bin/ack-eventbridge-controller
+              - usr/share/licenses/aws-controllers-k8s-eventbridge-controller/LICENSE
+              - usr/share/licenses/aws-controllers-k8s-eventbridge-controller/NOTICE
+              - usr/share/licenses/aws-controllers-k8s-eventbridge-controller/ATTRIBUTION.md
+              - opt/docker/sbom/eventbridge-controller
+            license: Apache-2.0
+            name: aws-controllers-k8s-eventbridge-controller-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/ack-eventbridge-controller
+                    source: usr/bin/ack-eventbridge-controller-dev
+                  - path: usr/share/licenses/aws-controllers-k8s-eventbridge-controller/LICENSE
+                    source: dev/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/LICENSE
+                  - path: usr/share/licenses/aws-controllers-k8s-eventbridge-controller/NOTICE
+                    source: dev/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/NOTICE
+                  - path: usr/share/licenses/aws-controllers-k8s-eventbridge-controller/ATTRIBUTION.md
+                    source: dev/usr/share/licenses/aws-controllers-k8s-eventbridge-controller/ATTRIBUTION.md
+                  - path: opt/docker/sbom/eventbridge-controller
+                    source: dev/opt/docker/sbom/eventbridge-controller
+                name: aws-controllers-k8s-eventbridge-controller-1-dev
+            url: https://github.com/aws-controllers-k8s/eventbridge-controller
+            version: 1.10.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
