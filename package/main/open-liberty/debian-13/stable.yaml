@@ -1,0 +1,263 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-open-liberty
+variant: runtime
+tags:
+  - 26.0.0.11
+  - 26.0.0.11-r0
+  - 26.0.0.11-debian13
+  - 26.0.0.11-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CI_DOCKER_COMMIT_SHA: ab22b80688e0e127b871ac973bb4e6fe2cfd706a
+  COMMIT_SHA: 228be8d3cc03590b8a5a1d22c03362608791cf90
+  PACKAGE_NAME: open-liberty
+  REL: "0"
+  RUNTIME_SHA256: dba6f751e7875646ea103484d84194b6ace2dc66d01feb15db1a48aa66887766
+  VERSION: 26.0.0.11
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: open-liberty
+      work-dir: ${source.dir}/open-liberty
+      contents:
+        packages:
+          - bash
+          - coreutils
+          - diffutils
+          - findutils
+          - gawk
+          - grep
+          - openssl
+          - python3
+          - sed
+          - unzip
+        files:
+          - url: https://public.dhe.ibm.com/ibmdl/export/pub/software/openliberty/runtime/release/26.0.0.11/openliberty-26.0.0.11.zip
+            checksum: sha256:dba6f751e7875646ea103484d84194b6ace2dc66d01feb15db1a48aa66887766
+            path: ${source.dir}/open-liberty/openliberty-26.0.0.11.zip
+            spdx:
+              name: open-liberty-runtime
+              version: 26.0.0.11
+              packages:
+                - name: openliberty-runtime
+                  purl: pkg:maven/io.openliberty/openliberty-runtime@26.0.0.11
+                  license: EPL-2.0
+            uid: 0
+            gid: 0
+          - url: https://public.dhe.ibm.com/ibmdl/export/pub/software/openliberty/runtime/release/26.0.0.11/openliberty-26.0.0.11.zip.sig
+            path: ${source.dir}/open-liberty/openliberty-26.0.0.11.zip.sig
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/OpenLiberty/ci.docker.git#26.0.0.11
+            checksum: ab22b80688e0e127b871ac973bb4e6fe2cfd706a
+            path: ${source.dir}/open-liberty/ci.docker
+            excludes:
+              - .git
+            spdx:
+              name: open-liberty-ci-docker
+              version: 26.0.0.11
+              packages:
+                - name: ci.docker
+                  purl: pkg:github/openliberty/ci.docker@26.0.0.11
+                  license: EPL-1.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/OpenLiberty/open-liberty.git#gm-26.0.0.11
+            checksum: 228be8d3cc03590b8a5a1d22c03362608791cf90
+            path: ${source.dir}/open-liberty/src
+            excludes:
+              - .git
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify runtime signature
+          runs: |
+            set -eux -o pipefail
+
+            cert="${source.dir}/open-liberty/keys/OpenLiberty_04-13-2026.pem.cer"
+            zip="${source.dir}/open-liberty/openliberty-26.0.0.11.zip"
+            sig="$zip.sig"
+            test -s "$cert"
+            test -s "$sig"
+
+            fpr=$(openssl x509 -in "$cert" -noout -fingerprint -sha256)
+            test "$fpr" = "sha256 Fingerprint=69:CB:CA:F8:BC:99:0F:11:EE:BE:1F:CE:86:21:DB:79:7B:6A:EC:6F:B7:DA:4C:45:CB:47:0A:AE:CA:E1:28:66"
+            openssl x509 -in "$cert" -noout -subject | grep -qF "O=International Business Machines Corporation"
+
+            openssl x509 -in "$cert" -pubkey -noout > "${source.dir}/open-liberty/signer.pem"
+            openssl dgst -sha256 -verify "${source.dir}/open-liberty/signer.pem" -signature "$sig" "$zip"
+        - name: install runtime
+          runs: |
+            set -eux -o pipefail
+
+            zip="${source.dir}/open-liberty/openliberty-26.0.0.11.zip"
+            ol="${target.dir}/opt/ol"
+            wlp="$ol/wlp"
+
+            unzip -tq "$zip"
+            install -d "$ol"
+            unzip -q "$zip" -d "$ol"
+            test "$(ls -A "$ol")" = wlp
+
+            zipinfo -1 "$zip" | grep -v '/$' | sort > "${source.dir}/open-liberty/zip.list"
+            (cd "$ol" && find wlp -type f | sort) > "${source.dir}/open-liberty/tree.list"
+            cmp "${source.dir}/open-liberty/zip.list" "${source.dir}/open-liberty/tree.list"
+
+            native=$(find "$wlp" -type f \( -name '*.so' -o -name '*.so.*' -o -name '*.dll' -o -name '*.dylib' -o -name '*.jnilib' \))
+            if [ -n "$native" ]; then
+              echo "loose native libraries in the runtime zip; this package is built once for both architectures:" >&2
+              echo "$native" >&2
+              exit 1
+            fi
+
+            grep -qx "com.ibm.websphere.productVersion=26.0.0.11" "$wlp/lib/versions/openliberty.properties"
+            test -x "$wlp/bin/server"
+            test -x "$wlp/bin/productInfo"
+
+            chmod -R a+rX "$wlp"
+        - name: create default server
+          runs: |
+            set -eux -o pipefail
+
+            dockerfile="${source.dir}/open-liberty/ci.docker/releases/26.0.0.11/full/Dockerfile.ubuntu.openjdk17"
+            wlp="${target.dir}/opt/ol/wlp"
+            srv="$wlp/usr/servers/defaultServer"
+            template="$wlp/templates/servers/javaee8/server.xml"
+            port='<server description="Default Server"><httpEndpoint id="defaultHttpEndpoint" host="*" /></server>'
+
+            test -s "$template"
+            grep -qF 'echo "<server description=\"Default Server\"><httpEndpoint id=\"defaultHttpEndpoint\" host=\"*\" /></server>" > /config/configDropins/defaults/open-default-port.xml' "$dockerfile"
+
+            test ! -e "$srv"
+            install -d -m 0755 "$srv/apps" "$srv/dropins" "$srv/configDropins/defaults" "$srv/configDropins/overrides" \
+              "$wlp/usr/shared/resources/lib.index.cache"
+            touch "$srv/apps/.keep" "$srv/dropins/.keep" "$srv/configDropins/overrides/.keep" \
+              "$wlp/usr/shared/resources/lib.index.cache/.keep"
+            install -m 0644 "$template" "$srv/server.xml"
+            printf '%s\n' "$port" > "$srv/configDropins/defaults/open-default-port.xml"
+            chmod 0644 "$srv/configDropins/defaults/open-default-port.xml"
+        - name: install helpers
+          runs: |
+            set -eux -o pipefail
+
+            src="${source.dir}/open-liberty/ci.docker"
+            rel="$src/releases/26.0.0.11/full"
+            ol="${target.dir}/opt/ol"
+
+            test -d "$rel/helpers"
+            install -d -m 0755 "$ol/helpers"
+            cp -R "$rel/helpers/." "$ol/helpers/"
+
+            for f in build/populate_scc.sh build/checkpoint.sh build/pidplus.sh \
+              build/infinispan-client-setup.sh runtime/restore-server.sh; do
+              test -f "$ol/helpers/$f"
+              rm "$ol/helpers/$f"
+            done
+
+            test "$(ls -A "$rel/fixes")" = .gitkeep
+            install -d -m 0755 "$ol/fixes"
+            install -m 0644 "$rel/fixes/.gitkeep" "$ol/fixes/.gitkeep"
+            cmp "$rel/fixes/.gitkeep" "$ol/fixes/.gitkeep"
+
+            install -m 0644 "$rel/NOTICES" "$ol/NOTICES"
+            install -m 0644 "$src/LICENSE" "$ol/helpers/LICENSE"
+            cmp "$rel/NOTICES" "$ol/NOTICES"
+            cmp "$src/LICENSE" "$ol/helpers/LICENSE"
+            head -1 "$ol/helpers/LICENSE" | grep -qx "Eclipse Public License - v 1.0"
+
+            chmod -R u+rwX,go+rX,go-w "$ol/helpers"
+            for f in build/configure.sh build/internal/logger.sh runtime/docker-server.sh \
+              runtime/livenessHealthCheck.sh runtime/readinessHealthCheck.sh runtime/startupHealthCheck.sh; do
+              test -x "$ol/helpers/$f"
+            done
+        - name: generate bundled sbom
+          runs: |
+            set -eux -o pipefail
+
+            out="/opt/docker/sbom/open-liberty-bundled"
+            install -d "$out"
+            python3 "${source.dir}/open-liberty/sbom/bundled_sbom.py" \
+              --wlp "${target.dir}/opt/ol/wlp" \
+              --source "${source.dir}/open-liberty/src" \
+              --tables "${source.dir}/open-liberty/sbom" \
+              --name open-liberty-bundled \
+              --version "26.0.0.11" \
+              --out "$out/.spdx.open-liberty-bundled.json" \
+              --report "${source.dir}/open-liberty/bundled-sbom.txt"
+            cat "${source.dir}/open-liberty/bundled-sbom.txt"
+
+            doc="$out/.spdx.open-liberty-bundled.json"
+            for purl in pkg:maven/commons-io/commons-io@ pkg:maven/com.fasterxml.jackson.core/jackson-databind@ \
+              pkg:maven/io.netty/netty-codec-http@ pkg:maven/org.apache.cxf/cxf-core@ pkg:maven/org.bouncycastle/bcprov-jdk18on@; do
+              grep -qF "\"$purl" "$doc"
+            done
+            if grep -qF '"pkg:maven/dev/' "$doc"; then
+              echo "bundled sbom names a build-tree path instead of a published coordinate" >&2
+              exit 1
+            fi
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom"
+            for d in open-liberty-runtime open-liberty-ci-docker open-liberty-bundled; do
+              test -s "/opt/docker/sbom/$d/.spdx.$d.json"
+              cp -R "/opt/docker/sbom/$d" "${target.dir}/opt/docker/sbom/"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - busybox
+                - procps-ng
+            deb:
+              depends:
+                - dash
+                - procps
+            depends:
+              - eclipse-temurin-21-jre
+              - bash
+              - coreutils
+              - findutils
+              - gawk
+              - grep
+              - openssl
+              - sed
+            description: Open Liberty Jakarta EE and MicroProfile application server runtime
+            files:
+              - opt/ol
+              - opt/docker/sbom/open-liberty-runtime
+              - opt/docker/sbom/open-liberty-ci-docker
+              - opt/docker/sbom/open-liberty-bundled
+            license: EPL-2.0 AND EPL-1.0
+            name: open-liberty
+            rel: 0
+            url: https://openliberty.io/
+            version: 26.0.0.11
+      paths:
+        - type: directory
+          path: ${source.dir}/open-liberty/keys
+          uid: 0
+          gid: 0
+          source: package/main/open-liberty/keys
+        - type: directory
+          path: ${source.dir}/open-liberty/sbom
+          uid: 0
+          gid: 0
+          source: package/main/open-liberty/sbom
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
