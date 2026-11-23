@@ -1,0 +1,163 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-openshift-client
+variant: runtime
+tags:
+  - 5.0.1-alpine3.24
+  - 5.0.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-11-03"
+vars:
+  COMMIT_SHA: 5f5d12605c98ef982ce50dd9f008aa31f20b9952
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  KUBE_MINOR_VERSION: "36"
+  KUBE_VERSION: 1.36.5
+  PACKAGE_NAME: openshift-client-5.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "5.0"
+  SEMVER_MAJOR_VERSION: "5"
+  SEMVER_VERSION: 5.0.1
+  VERSION: 5.0.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: openshift-client-5.0
+      work-dir: /go/src/github.com/openshift/oc
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/openshift/oc.git#5f5d12605c98ef982ce50dd9f008aa31f20b9952
+            checksum: 5f5d12605c98ef982ce50dd9f008aa31f20b9952
+            path: /go/src/github.com/openshift/oc
+            spdx:
+              name: openshift-client
+              version: 5.0.1
+              packages:
+                - name: oc
+                  purl: pkg:github/openshift/oc@5f5d12605c98ef982ce50dd9f008aa31f20b9952
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (5.0 only)
+          uses: go/bump@v2
+          with:
+            deps:
+              - github.com/Azure/go-ntlmssp@v0.1.1
+              - github.com/containerd/containerd@v1.7.36
+              - github.com/go-git/go-billy/v5@v5.9.1
+              - github.com/go-git/go-git/v5@v5.19.2
+              - github.com/moby/buildkit@v0.31.1
+              - github.com/moby/spdystream@v0.5.1
+              - github.com/sigstore/fulcio@v1.8.6
+              - github.com/sigstore/rekor@v1.5.2
+            replaces:
+              - github.com/moby/go-archive=github.com/moby/go-archive@v0.3.3
+            tidy: true
+        - name: patch Docker 28 for go-archive 0.3 (5.0)
+          uses: git/patch@v1
+          with:
+            patch: docker-28-go-archive-0.3-compat.patch
+        - name: verify kubernetes version pin
+          runs: |
+            set -eux -o pipefail
+
+            grep -qxF 'KUBE_GIT_VERSION := "v1.36.5"' Makefile
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -mod=vendor -tags include_gcs,include_oss,containers_image_openpgp -count=1 ./pkg/cli/admin/release/...
+        - name: build oc
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/openshift/oc/pkg/version.versionFromGit=5.0.1
+              - -X github.com/openshift/oc/pkg/version.commitFromGit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X github.com/openshift/oc/pkg/version.gitTreeState=clean
+              - -X k8s.io/component-base/version.gitMajor=1
+              - -X k8s.io/component-base/version.gitMinor=36
+              - -X k8s.io/component-base/version.gitVersion=v1.36.5
+              - -X k8s.io/component-base/version.gitCommit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X k8s.io/component-base/version.gitTreeState=clean
+              - -X k8s.io/client-go/pkg/version.gitVersion=5.0.1
+              - -X k8s.io/client-go/pkg/version.gitCommit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X k8s.io/client-go/pkg/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/oc
+            packages: ./cmd/oc
+            strip: true
+            tags: include_gcs,include_oss,containers_image_openpgp
+        - name: build oc dev
+          uses: go/build@v1
+          with:
+            extra-args: -mod=vendor -buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/openshift/oc/pkg/version.versionFromGit=5.0.1
+              - -X github.com/openshift/oc/pkg/version.commitFromGit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X github.com/openshift/oc/pkg/version.gitTreeState=clean
+              - -X k8s.io/component-base/version.gitMajor=1
+              - -X k8s.io/component-base/version.gitMinor=36
+              - -X k8s.io/component-base/version.gitVersion=v1.36.5
+              - -X k8s.io/component-base/version.gitCommit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X k8s.io/component-base/version.gitTreeState=clean
+              - -X k8s.io/client-go/pkg/version.gitVersion=5.0.1
+              - -X k8s.io/client-go/pkg/version.gitCommit=5f5d12605c98ef982ce50dd9f008aa31f20b9952
+              - -X k8s.io/client-go/pkg/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/oc-dev
+            packages: ./cmd/oc
+            strip: false
+            tags: include_gcs,include_oss,containers_image_openpgp
+        - name: verify binary
+          runs: |
+            set -eux -o pipefail
+
+            '${target.dir}/usr/bin/oc' version --client > /tmp/oc-version.txt
+            grep -qF '5.0.1' /tmp/oc-version.txt
+        - uses: dhi/build-pkg:0
+          with:
+            description: OpenShift oc command-line client built from source
+            files:
+              - usr/bin/oc
+            license: Apache-2.0
+            name: openshift-client-5.0
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/oc
+                    source: usr/bin/oc-dev
+                name: openshift-client-5.0-dev
+            url: https://github.com/openshift/oc
+            version: 5.0.1
+      paths:
+        - type: file
+          path: /go/src/github.com/openshift/oc/docker-28-go-archive-0.3-compat.patch
+          uid: 0
+          gid: 0
+          source: package/main/openshift-client/patch/docker-28-go-archive-0.3-compat.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
