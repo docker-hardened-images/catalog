@@ -25,6 +25,7 @@ vars:
   JAVA_VARIANT: jdk
   JDK_MAJOR_VERSION: "8"
   JRE_PATH: /usr/lib/jvm/temurin-8
+  MAVEN_VERSION: 3.10.1-0
   SEMVER_MAJOR_MINOR_VERSION: "2.0"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.0.51
@@ -75,6 +76,7 @@ contents:
           - libstdc++6
           - base-files
           - eclipse-temurin-8-jdk
+          - maven=3.10.1-0
         files:
           - url: git+https://github.com/stargate/stargate.git#v2.0.51
             checksum: 7e81d606bc44c39d211fd39c3c92444e3f8da349
@@ -86,16 +88,6 @@ contents:
                 - name: stargate
                   purl: pkg:dhi/stargate@2.0.51
                   license: Apache-2.0
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/org/apache/maven/wrapper/maven-wrapper/3.1.1/maven-wrapper-3.1.1.jar
-            checksum: sha256:ff7f21f2ef81723377e3d42d06661c4e3af60cf4bdfb7579ac8f22051399942d
-            path: ${source.dir}/patch/deps/maven-wrapper-3.1.1.jar
-            uid: 0
-            gid: 0
-          - url: https://repo1.maven.org/maven2/org/apache/maven/apache-maven/3.9.0/apache-maven-3.9.0-bin.zip
-            checksum: sha256:68e5a1745a5f5e4b0dfae051f83297e2ea40912b2c3b84d3b7420f463f39260d
-            path: ${source.dir}/patch/deps/apache-maven-3.9.0-bin.zip
             uid: 0
             gid: 0
       pipeline:
@@ -126,6 +118,12 @@ contents:
           with:
             dependencies: ${source.dir}/patch/mvn-auth-jwt-service-2.0.json
             mvn-root: ${source.dir}/stargate/coordinator/auth-jwt-service
+        - name: use antrun target
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/antrun-target-2.0.patch
         - name: install
           privileged: true
           secrets:
@@ -138,16 +136,7 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            chmod +x ./mvnw
-
-            wrapper_version="$(sed -n 's#^wrapperUrl=.*/maven-wrapper-\(.*\)\.jar#\1#p' .mvn/wrapper/maven-wrapper.properties)"
-            maven_version="$(sed -n 's#^distributionUrl=.*/apache-maven-\(.*\)-bin\.zip#\1#p' .mvn/wrapper/maven-wrapper.properties)"
-
-            cp "${source.dir}/patch/deps/maven-wrapper-${wrapper_version}.jar" .mvn/wrapper/maven-wrapper.jar
-            sed -i "s#^distributionUrl=.*#distributionUrl=file://${source.dir}/patch/deps/apache-maven-${maven_version}-bin.zip#" \
-              .mvn/wrapper/maven-wrapper.properties
-
-            ./mvnw clean install -Dmaven.test.skip=true -Dxml-format.skip=true \
+            mvn clean install -Dmaven.test.skip=true -Dxml-format.skip=true \
               -pl '!persistence-cassandra-3.11,!testing,!testing-services,!grpc-examples'
 
             mkdir -p "${target.dir}/stargate-lib"
@@ -182,7 +171,7 @@ contents:
             #                                                         strict-stubbing fails on patched dep paths.
             # -DfailIfNoTests=false: surefire's -Dtest filter otherwise errors on
             #                        modules with no matching tests (e.g. persistence-test).
-            ./mvnw clean test -Dxml-format.skip=true \
+            mvn clean test -Dxml-format.skip=true \
               -Dtest='!*IT,!CreateIndexFetcherTest,!CreateTableFetcherTest,!DropIndexFetcherTest,!ReactiveDocumentServiceTest' \
               -DfailIfNoTests=false \
               -pl '!persistence-cassandra-3.11,!testing,!testing-services,!grpc-examples'
