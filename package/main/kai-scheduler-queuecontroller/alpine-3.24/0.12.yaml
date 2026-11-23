@@ -1,0 +1,188 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kai-scheduler-queuecontroller
+variant: runtime
+tags:
+  - 0.12.29-alpine3.24
+  - 0.12.29-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-12-24"
+  end-of-life: "2026-12-24"
+vars:
+  COMMIT_SHA: c0fd15f5988b57259ee9c8357536e6a1c3564ecf
+  GO_MODULE: github.com/NVIDIA/KAI-scheduler
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  LICENSE_FILES: LICENSE NOTICE
+  PACKAGE_NAME: kai-scheduler-queuecontroller-0.12
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.12"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.12.29
+  TEST_PACKAGES: ./cmd/queuecontroller/... ./pkg/queuecontroller/...
+  VERSION: 0.12.29
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kai-scheduler-queuecontroller-0.12
+      work-dir: /go/src/github.com/NVIDIA/KAI-scheduler
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/kai-scheduler/KAI-scheduler.git#v0.12.29
+            checksum: c0fd15f5988b57259ee9c8357536e6a1c3564ecf
+            path: /go/src/github.com/NVIDIA/KAI-scheduler
+            spdx:
+              name: kai-scheduler
+              version: 0.12.29
+              packages:
+                - name: kai-scheduler
+                  purl: pkg:golang/github.com/NVIDIA/KAI-scheduler@0.12.29
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          environment:
+            GODEBUG: ""
+          runs: |
+            set -eux -o pipefail
+
+            test -n "./cmd/queuecontroller/... ./pkg/queuecontroller/..."
+            pkgs=$(go list ./cmd/queuecontroller/... ./pkg/queuecontroller/... | grep -vxF github.com/NVIDIA/KAI-scheduler/pkg/queuecontroller/controllers)
+            test -n "$pkgs"
+            go test -count=1 $pkgs
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitVersion=v0.12.29
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitCommit=c0fd15f5988b57259ee9c8357536e6a1c3564ecf
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/kai-scheduler-queuecontroller
+            packages: ./cmd/queuecontroller
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitVersion=v0.12.29
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitCommit=c0fd15f5988b57259ee9c8357536e6a1c3564ecf
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+              - -X github.com/NVIDIA/KAI-scheduler/pkg/scheduler/version.gitTreeState=clean
+            output: ${target.dir}/usr/bin/kai-scheduler-queuecontroller-dev
+            packages: ./cmd/queuecontroller
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/bin/kai-scheduler-queuecontroller
+            devbin=${target.dir}/usr/bin/kai-scheduler-queuecontroller-dev
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qxF "$(printf '\tbuild\tCGO_ENABLED=0')" /tmp/buildinfo.txt
+              grep -qF "pkg/scheduler/version.gitVersion=v0.12.29 " /tmp/buildinfo.txt
+              grep -qF "pkg/scheduler/version.gitCommit=c0fd15f5988b57259ee9c8357536e6a1c3564ecf " /tmp/buildinfo.txt
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' /tmp/buildinfo.txt
+              elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+              test "$(od -A n -t x1 -N 5 "$bin" | tr -d ' \n')" = 7f454c4602
+              phoff=$(od -A n -t u8 -j 32 -N 8 "$bin" | tr -d ' \n')
+              phentsize=$(od -A n -t u2 -j 54 -N 2 "$bin" | tr -d ' \n')
+              phnum=$(od -A n -t u2 -j 56 -N 2 "$bin" | tr -d ' \n')
+              test -n "$phoff" && test -n "$phentsize" && test "$phnum" -gt 0
+              i=0
+              while [ "$i" -lt "$phnum" ]; do
+                if [ "$(od -A n -t u4 -j $((phoff + i * phentsize)) -N 4 "$bin" | tr -d ' \n')" = 3 ]; then
+                  echo "$bin: has a PT_INTERP program header" >&2
+                  exit 1
+                fi
+                i=$((i + 1))
+              done
+            done
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if go version -m "$devbin" | grep -E -- '-trimpath=true|-w( |"|$)'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/NVIDIA/KAI-scheduler
+            lic=${target.dir}/usr/share/licenses/kai-scheduler-queuecontroller
+            licdev=${target.dir}/usr/share/licenses/kai-scheduler-queuecontroller-dev
+            test -s /opt/docker/sbom/kai-scheduler/.spdx.kai-scheduler.json
+            grep -q 'Apache License' "$src/LICENSE"
+            grep -q 'Version 2.0' "$src/LICENSE"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/kai-scheduler "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/kai-scheduler "${target.dir}/opt/docker/sbom-dev/"
+            test -n "LICENSE NOTICE"
+            for f in LICENSE NOTICE; do
+              test -s "$src/$f"
+              install -D -m 0644 "$src/$f" "$lic/$f"
+            done
+            cp -a "$lic" "$licdev"
+        - uses: dhi/build-pkg:0
+          with:
+            description: KAI Scheduler queue controller, which maintains Queue status and exports queue metrics
+            files:
+              - usr/bin/kai-scheduler-queuecontroller
+              - opt/docker/sbom/kai-scheduler
+              - usr/share/licenses/kai-scheduler-queuecontroller
+            license: Apache-2.0
+            name: kai-scheduler-queuecontroller-0.12
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/kai-scheduler-queuecontroller
+                    source: usr/bin/kai-scheduler-queuecontroller-dev
+                  - path: opt/docker/sbom/kai-scheduler
+                    source: opt/docker/sbom-dev/kai-scheduler
+                  - path: usr/share/licenses/kai-scheduler-queuecontroller
+                    source: usr/share/licenses/kai-scheduler-queuecontroller-dev
+                name: kai-scheduler-queuecontroller-0.12-dev
+            url: https://github.com/kai-scheduler/KAI-scheduler
+            version: 0.12.29
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
