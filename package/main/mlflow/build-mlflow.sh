@@ -38,7 +38,7 @@ export LDFLAGS="${LDFLAGS:-} $("${PYTHON_BIN}-config" --ldflags)"
 # pillow 13.0.0 clears Scout on pkg:pypi/pillow (see package/main/netbox/files/overrides.txt).
 "${VENV}/bin/python3" -m pip install --upgrade "pillow==13.0.0" # CVE-2026-96636 CVE-2026-96637 CVE-2026-96638 CVE-2026-96639 CVE-2026-96640 CVE-2026-96641 CVE-2026-96642 CVE-2026-96643 CVE-2026-96644 CVE-2026-96778 CVE-2026-112390 CVE-2026-112391 CVE-2026-112392 CVE-2026-112393 CVE-2026-112394 CVE-2026-112396 CVE-2026-112398 CVE-2026-112399 CVE-2026-112401 CVE-2026-112402 CVE-2026-112405 CVE-2026-112406 CVE-2026-112891 CVE-2026-112892 CVE-2026-112893 CVE-2026-112894 CVE-2026-112898 CVE-2026-112900 CVE-2026-112901 CVE-2026-112902 CVE-2026-114501 GHSA-78G4-XQWV-Q3G8
 "${VENV}/bin/python3" -m pip install --upgrade "certifi==2026.10.23" # CVE-2026-53995
-"${VENV}/bin/python3" -m pip install --upgrade "starlette==1.3.1"
+"${VENV}/bin/python3" -m pip install --upgrade "starlette==1.6.0"
 "${VENV}/bin/python3" -m pip install --upgrade "gitpython==3.2.1"  # CVE-2026-114145; GHSA-59cr-6r3x-644w; CVE-2026-87817, CVE-2026-87818, CVE-2026-87819
 
 "${VENV}/bin/python3" -m pip uninstall -y pip setuptools wheel
