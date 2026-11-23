@@ -4,9 +4,9 @@ image: dhi.io/pkg-nifi
 variant: runtime
 tags:
   - 2.12.0
-  - 2.12.0-r8
+  - 2.12.0-r9
   - 2.12.0-debian13
-  - 2.12.0-r8-debian13
+  - 2.12.0-r9-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -19,7 +19,7 @@ vars:
   MAVEN_VERSION: 3.10.2-0
   PACKAGE_HOME: /usr/share/nifi
   PACKAGE_NAME: nifi
-  REL: "8"
+  REL: "9"
   SEMVER_MAJOR_MINOR_VERSION: "2.12"
   SEMVER_MAJOR_VERSION: "2"
   SEMVER_VERSION: 2.12.0
@@ -137,6 +137,18 @@ contents:
                 - name: jackson-databind
                   purl: pkg:maven/tools.jackson.core/jackson-databind@3.1.7
                   license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/org/json/json/20260719/json-20260719.jar
+            checksum: sha256:c243f45f9590c12694a4142ed3f07fc70dfb71e4daebd05ae234bf92a2da92a6
+            path: ${source.dir}/patch/deps/json-20260719.jar
+            spdx:
+              name: json
+              version: "20260719"
+              packages:
+                - name: json
+                  purl: pkg:maven/org.json/json@20260719
+                  license: LicenseRef-Public-Domain
             uid: 0
             gid: 0
       pipeline:
@@ -305,7 +317,27 @@ contents:
 
             install -d -m 0755 "${target.dir}/usr/share/nifi/scripts"
             cp -a "${source.dir}/nifi/nifi-docker/dockerhub/sh/." "${target.dir}/usr/share/nifi/scripts/"
-        - name: patch shaded jackson in nar bundles
+        - name: relocate fixed org.json for hazelcast
+          work-dir: ${source.dir}/patch/hazelcast-orgjson-shade
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn -B org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
+              -Dfile="${source.dir}/patch/deps/json-20260719.jar" \
+              -DgroupId=org.json -DartifactId=json -Dversion=20260719 \
+              -Dpackaging=jar -DgeneratePom=true
+            mvn -B package
+            test -f target/hazelcast-shaded-orgjson-20260719.jar
+            cp target/hazelcast-shaded-orgjson-20260719.jar "${source.dir}/patch/deps/"
+        - name: patch shaded jackson and org.json in nar bundles
           runs: |
             set -eux -o pipefail
 
@@ -322,11 +354,12 @@ contents:
               cd "$NAR_WORK"
               jar xf "$nar"
 
-              inner_jar="$(find META-INF/bundled-dependencies -maxdepth 1 -type f -name "$inner_glob" | sort | head -1)"
-              if [ -z "$inner_jar" ]; then
-                echo "no $inner_glob in $nar" >&2
+              mapfile -t inner_jars < <(find META-INF/bundled-dependencies -maxdepth 1 -type f -name "$inner_glob" | sort)
+              if [ "${#inner_jars[@]}" -ne 1 ]; then
+                echo "expected exactly one $inner_glob in $nar, found ${#inner_jars[@]}: ${inner_jars[*]}" >&2
                 exit 1
               fi
+              inner_jar="${inner_jars[0]}"
 
               bash "$patch_script" "$NAR_WORK/$inner_jar" "$PATCH_DIR"
 
@@ -334,17 +367,25 @@ contents:
               rm -rf "$NAR_WORK"
             }
 
-            hz_nar="$(find "$LIB" -maxdepth 1 -type f -name 'nifi-hazelcast-services-nar-*.nar' | sort | head -1)"
-            if [ -n "$hz_nar" ]; then
-              patch_nar_embedded_jar "$hz_nar" 'hazelcast-[0-9]*.jar' \
-                "${source.dir}/patch/patch-hazelcast-jackson.sh"
-            fi
+            # Fail closed: an upstream layout change must break the build,
+            # not ship an unpatched NAR.
+            require_one_nar() {
+              local glob="$1"
+              mapfile -t nars < <(find "$LIB" -maxdepth 1 -type f -name "$glob" | sort)
+              if [ "${#nars[@]}" -ne 1 ]; then
+                echo "expected exactly one $glob in $LIB, found ${#nars[@]}: ${nars[*]}" >&2
+                exit 1
+              fi
+              printf '%s\n' "${nars[0]}"
+            }
 
-            pq_nar="$(find "$LIB" -maxdepth 1 -type f -name 'nifi-iceberg-parquet-writer-nar-*.nar' | sort | head -1)"
-            if [ -n "$pq_nar" ]; then
-              patch_nar_embedded_jar "$pq_nar" 'parquet-jackson-*.jar' \
-                "${source.dir}/patch/patch-parquet-jackson.sh"
-            fi
+            hz_nar="$(require_one_nar 'nifi-hazelcast-services-nar-*.nar')"
+            patch_nar_embedded_jar "$hz_nar" 'hazelcast-[0-9]*.jar' \
+              "${source.dir}/patch/patch-hazelcast-jackson.sh"
+
+            pq_nar="$(require_one_nar 'nifi-iceberg-parquet-writer-nar-*.nar')"
+            patch_nar_embedded_jar "$pq_nar" 'parquet-jackson-*.jar' \
+              "${source.dir}/patch/patch-parquet-jackson.sh"
         - name: final setup
           runs: |
             set -eux -o pipefail
@@ -377,7 +418,7 @@ contents:
               - deb
             license: Apache-2.0
             name: nifi
-            rel: 8
+            rel: 9
             url: https://nifi.apache.org/
             version: 2.12.0
       paths:

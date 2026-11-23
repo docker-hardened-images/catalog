@@ -1,10 +1,15 @@
 #!/bin/bash
-# Patch shaded Jackson copies inside hazelcast-*.jar.
+# Patch shaded Jackson and org.json copies inside hazelcast-*.jar.
 #
-# Hazelcast 5.7.0 embeds jackson-core/databind 2.21.2 and tools.jackson 3.1.2
-# under com.hazelcast.shaded.*. Maven pins cannot reach those copies inside NiFi
-# NAR bundles, so relocate fixed jackson JAR contents after the distribution is
-# extracted. Fixes GHSA-r7wm-3cxj-wff9, CVE-2026-54512, and CVE-2026-54513.
+# Hazelcast 5.7.0 embeds jackson-core/databind 2.21.2, tools.jackson 3.1.2 and
+# org.json 20250107 under com.hazelcast.shaded.*. Maven pins cannot reach those
+# copies inside NiFi NAR bundles, so relocate fixed JAR contents after the
+# distribution is extracted. Fixes GHSA-r7wm-3cxj-wff9, CVE-2026-54512,
+# CVE-2026-54513 and CVE-2026-59171.
+#
+# The org.json classes come from hazelcast-shaded-orgjson-<ver>.jar, built by the
+# "relocate fixed org.json for hazelcast" pipeline step with maven-shade so the
+# bytecode already declares the com.hazelcast.shaded.org.json names.
 set -euo pipefail
 
 HZ_JAR="${1:?usage: patch-hazelcast-jackson.sh <hazelcast.jar> <patch-deps-dir>}"
@@ -17,8 +22,11 @@ JACKSON_CORE_2="${PATCH_DIR}/jackson-core-2.21.7.jar"
 JACKSON_DATABIND_2="${PATCH_DIR}/jackson-databind-2.21.7.jar"
 JACKSON_CORE_3="${PATCH_DIR}/tools-jackson-core-3.1.7.jar"
 JACKSON_DATABIND_3="${PATCH_DIR}/tools-jackson-databind-3.1.7.jar"
+ORGJSON_VERSION="20260719"
+ORGJSON_JAR="${PATCH_DIR}/json-${ORGJSON_VERSION}.jar"
+ORGJSON_SHADED="${PATCH_DIR}/hazelcast-shaded-orgjson-${ORGJSON_VERSION}.jar"
 
-for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3"; do
+for jar in "$JACKSON_CORE_2" "$JACKSON_DATABIND_2" "$JACKSON_CORE_3" "$JACKSON_DATABIND_3" "$ORGJSON_JAR" "$ORGJSON_SHADED"; do
     if [ ! -f "$jar" ]; then
         echo "missing patch dependency: $jar" >&2
         exit 1
@@ -62,6 +70,7 @@ relocate_tree "$JACKSON_CORE_2" com/fasterxml/jackson/core com/hazelcast/shaded/
 relocate_tree "$JACKSON_DATABIND_2" com/fasterxml/jackson/databind com/hazelcast/shaded/com/fasterxml/jackson/databind
 relocate_tree "$JACKSON_CORE_3" tools/jackson/core com/hazelcast/shaded/tools/jackson/core
 relocate_tree "$JACKSON_DATABIND_3" tools/jackson/databind com/hazelcast/shaded/tools/jackson/databind
+relocate_tree "$ORGJSON_SHADED" com/hazelcast/shaded/org/json com/hazelcast/shaded/org/json
 
 write_pom_properties() {
     local group="$1"
@@ -79,23 +88,38 @@ write_pom_properties com.fasterxml.jackson.core jackson-core 2.21.7
 write_pom_properties com.fasterxml.jackson.core jackson-databind 2.21.7
 write_pom_properties tools.jackson.core jackson-core 3.1.7
 write_pom_properties tools.jackson.core jackson-databind 3.1.7
+write_pom_properties org.json json "$ORGJSON_VERSION"
+
+ORGJSON_META="$(mktemp -d)"
+(cd "$ORGJSON_META" && jar xf "$ORGJSON_JAR" META-INF/maven/org.json/json/pom.xml)
+cp "$ORGJSON_META/META-INF/maven/org.json/json/pom.xml" META-INF/maven/org.json/json/pom.xml
+rm -rf "$ORGJSON_META"
 
 test -f com/hazelcast/shaded/com/fasterxml/jackson/core/JsonFactory.class
 test -f com/hazelcast/shaded/tools/jackson/databind/ObjectMapper.class
+test -f com/hazelcast/shaded/org/json/JSONTokener.class
+
+javap -cp "$HZ_WORK" com.hazelcast.shaded.org.json.JSONObject \
+    | grep -q '^public class com\.hazelcast\.shaded\.org\.json\.JSONObject'
+javap -p -cp "$HZ_WORK" com.hazelcast.shaded.org.json.ParserConfiguration \
+    | grep -q 'getMaxNumberLength()'
 
 rm -f "$HZ_JAR"
 jar cf "$HZ_JAR" .
 
 jar tf "$HZ_JAR" | grep -q 'com/hazelcast/shaded/com/fasterxml/jackson/core/JsonFactory.class'
 jar tf "$HZ_JAR" | grep -q 'com/hazelcast/shaded/tools/jackson/databind/ObjectMapper.class'
+jar tf "$HZ_JAR" | grep -q 'com/hazelcast/shaded/org/json/JSONTokener.class'
 
 VERIFY_WORK="$(mktemp -d)"
 (
     cd "$VERIFY_WORK"
     jar xf "$HZ_JAR" \
         META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties \
-        META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
+        META-INF/maven/tools.jackson.core/jackson-databind/pom.properties \
+        META-INF/maven/org.json/json/pom.properties
     grep -q 'version=2.21.7' META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties
     grep -q 'version=3.1.7' META-INF/maven/tools.jackson.core/jackson-databind/pom.properties
+    grep -q "version=${ORGJSON_VERSION}" META-INF/maven/org.json/json/pom.properties
 )
 rm -rf "$VERIFY_WORK"
