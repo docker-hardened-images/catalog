@@ -8,4 +8,4 @@
 # handled by the flux-core-strict-warnings.patch applied to vendor/.
 # This wrapper disables default features to skip unnecessary compilation.
 
-exec /usr/local/bin/cargo "$@" --no-default-features --features=cffi
+exec /usr/bin/cargo "$@" --no-default-features --features=cffi
