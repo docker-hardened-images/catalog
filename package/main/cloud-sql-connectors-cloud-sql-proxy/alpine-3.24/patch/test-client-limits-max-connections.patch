@@ -1,0 +1,68 @@
+Subject: Wait for the Cloud SQL proxy max-connections refusal
+Origin: DHI-internal (upstream test race)
+Description: Dial until the listener accepts and poll the refusal callback.
+ Serve starts its listener in another goroutine, and connRefuseNotify is
+ started with go, so the upstream test can read callbackGot before it moves.
+Base-Tree: git https://github.com/GoogleCloudPlatform/cloud-sql-proxy.git aa05bcc2b21c3ba3985bb1f3f3196a0ac3ee5863
+Verify: test internal/proxy/proxy_test.go
+Forwarded: no (not reported upstream yet)
+Drop-When: never: upstream TestClientLimitsMaxConnections still dials once and reads callbackGot without waiting
+
+--- a/internal/proxy/proxy_test.go
++++ b/internal/proxy/proxy_test.go
+@@ -448,15 +448,28 @@
+ 	defer c.Close()
+ 	go c.Serve(context.Background(), func() {})
+ 
+-	conn1, err1 := net.Dial("tcp", "127.0.0.1:24011")
+-	if err1 != nil {
+-		t.Fatalf("net.Dial error: %v", err1)
++	// Serve starts its listener in another goroutine. Dial until it accepts,
++	// with a bound, so a slow start is not a failed test.
++	var (
++		conn1 net.Conn
++		err1  error
++	)
++	listenDeadline := time.Now().Add(2 * time.Second)
++	for {
++		conn1, err1 = net.Dial("tcp", "127.0.0.1:24011")
++		if err1 == nil {
++			break
++		}
++		if time.Now().After(listenDeadline) {
++			t.Fatalf("net.Dial error: %v", err1)
++		}
++		time.Sleep(10 * time.Millisecond)
+ 	}
+ 	defer conn1.Close()
+ 
+ 	conn2, err2 := net.Dial("tcp", "127.0.0.1:24011")
+ 	if err2 != nil {
+-		t.Fatalf("net.Dial error: %v", err1)
++		t.Fatalf("net.Dial error: %v", err2)
+ 	}
+ 	defer conn2.Close()
+ 
+@@ -482,8 +495,20 @@
+ 		t.Fatalf("dial attempts did not match expected, want = %v, got = %v", want, got)
+ 	}
+ 
+-	if callbackGot == 0 {
+-		t.Fatal("connRefuseNotifyCallback is not called")
++	// connRefuseNotify runs in its own goroutine and writes callbackGot
++	// under d.mu. Poll that counter until it moves, with a bound.
++	callbackDeadline := time.Now().Add(2 * time.Second)
++	for {
++		d.mu.Lock()
++		got := callbackGot
++		d.mu.Unlock()
++		if got != 0 {
++			break
++		}
++		if time.Now().After(callbackDeadline) {
++			t.Fatal("connRefuseNotifyCallback is not called")
++		}
++		time.Sleep(10 * time.Millisecond)
+ 	}
+ }
+ 

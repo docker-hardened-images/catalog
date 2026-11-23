@@ -1,0 +1,165 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-cloud-sql-connectors-cloud-sql-proxy
+variant: runtime
+tags:
+  - 1.38.5-alpine3.24
+  - 1.38.5-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2016-04-27"
+vars:
+  BINARY_NAME: cloud_sql_proxy
+  COMMIT_SHA: d788bfe2879db651a9c592d2dd23d08ac0f76676
+  FIPS_TEST_SKIP: ""
+  GO_PACKAGES: ./cmd/cloud_sql_proxy
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  LDFLAGS: -buildid=
+  MAX_CONN_PATCH: "false"
+  MODULE_DIR: /go/src/github.com/GoogleCloudPlatform/cloudsql-proxy
+  PACKAGE_NAME: cloud-sql-proxy-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.38"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.38.5
+  SPDX_NAME: cloudsql-proxy
+  SPDX_PURL: pkg:golang/github.com/GoogleCloudPlatform/cloudsql-proxy@1.38.5
+  TEST_ARGS: ./cmd/... ./proxy/...
+  TEST_SKIP: ""
+  VERSION: 1.38.5
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cloud-sql-proxy-1
+      work-dir: /go/src/github.com/GoogleCloudPlatform/cloudsql-proxy
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - patch
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/GoogleCloudPlatform/cloud-sql-proxy.git#v1.38.5
+            checksum: d788bfe2879db651a9c592d2dd23d08ac0f76676
+            path: /go/src/github.com/GoogleCloudPlatform/cloudsql-proxy
+            spdx:
+              name: cloudsql-proxy
+              version: 1.38.5
+              packages:
+                - name: cloudsql-proxy
+                  purl: pkg:golang/github.com/GoogleCloudPlatform/cloudsql-proxy@1.38.5
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps: []
+            download: true
+            tidy: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            skip=""
+            if [ "false" = "true" ]; then
+              export GODEBUG=fips140=on
+              if [ -n "" ]; then
+                skip="${skip:+${skip}|}"
+              fi
+            fi
+
+            if [ -n "${skip}" ]; then
+              CGO_ENABLED=0 go test -short -count=1 -timeout 20m -skip "${skip}" ./cmd/... ./proxy/...
+            else
+              CGO_ENABLED=0 go test -short -count=1 -timeout 20m ./cmd/... ./proxy/...
+            fi
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -buildid=
+            output: ${target.dir}/usr/bin/cloud_sql_proxy
+            packages: ./cmd/cloud_sql_proxy
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -buildid=
+            output: ${target.dir}/usr/bin/cloud_sql_proxy-dev
+            packages: ./cmd/cloud_sql_proxy
+            strip: false
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            test -s LICENSE
+            grep -q 'Apache License' LICENSE
+            grep -q 'Version 2.0' LICENSE
+
+            test -d "/opt/docker/sbom/cloudsql-proxy"
+            test -n "$(find "/opt/docker/sbom/cloudsql-proxy" -name '.spdx.*.json' -print -quit)"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/dev/opt/docker/sbom"
+            cp -a "/opt/docker/sbom/cloudsql-proxy" "${target.dir}/opt/docker/sbom/"
+            cp -a "/opt/docker/sbom/cloudsql-proxy" "${target.dir}/dev/opt/docker/sbom/"
+
+            install -D -m 0644 LICENSE "${target.dir}/usr/share/licenses/cloud-sql-proxy-1/LICENSE"
+            install -D -m 0644 LICENSE "${target.dir}/dev/usr/share/licenses/cloud-sql-proxy-1-dev/LICENSE"
+
+            test -n "$(find "${target.dir}/opt/docker/sbom/cloudsql-proxy" -name '.spdx.*.json' -print -quit)"
+            test -n "$(find "${target.dir}/dev/opt/docker/sbom/cloudsql-proxy" -name '.spdx.*.json' -print -quit)"
+            test -s "${target.dir}/usr/share/licenses/cloud-sql-proxy-1/LICENSE"
+            test -s "${target.dir}/dev/usr/share/licenses/cloud-sql-proxy-1-dev/LICENSE"
+            grep -q 'Apache License' "${target.dir}/usr/share/licenses/cloud-sql-proxy-1/LICENSE"
+            grep -q 'Apache License' "${target.dir}/dev/usr/share/licenses/cloud-sql-proxy-1-dev/LICENSE"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: Cloud SQL Auth Proxy
+            files:
+              - usr/bin/cloud_sql_proxy
+              - opt/docker/sbom/cloudsql-proxy
+              - usr/share/licenses/cloud-sql-proxy-1/LICENSE
+            license: Apache-2.0
+            name: cloud-sql-proxy-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/cloud_sql_proxy
+                    source: usr/bin/cloud_sql_proxy-dev
+                  - path: opt/docker/sbom/cloudsql-proxy
+                    source: dev/opt/docker/sbom/cloudsql-proxy
+                  - path: usr/share/licenses/cloud-sql-proxy-1-dev/LICENSE
+                    source: dev/usr/share/licenses/cloud-sql-proxy-1-dev/LICENSE
+                name: cloud-sql-proxy-1-dev
+            url: https://github.com/GoogleCloudPlatform/cloud-sql-proxy
+            version: 1.38.5
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
