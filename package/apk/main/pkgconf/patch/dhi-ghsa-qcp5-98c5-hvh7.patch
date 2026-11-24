@@ -1,0 +1,109 @@
+Subject: libpkgconf: only allow paths to pc(5) files in queries
+Origin: backport, https://github.com/pkgconf/pkgconf/commit/c11eea3d1fbac7dcf0858bf247388b3b2b317c92
+Advisory: https://github.com/pkgconf/pkgconf/security/advisories/GHSA-qcp5-98c5-hvh7
+Base-Tree: tarball https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz sha256:cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243
+Adaptation: Upstream c11eea3d builds on an is_path_separator helper that the 2.5.1 base lacks, so this port adds that helper with the same body as upstream 3.0.11, placed above name_has_path_separator. The remaining hunks apply to 2.5.1 pkg.c unchanged: pkg_find takes an allow_path flag, pkgconf_pkg_find keeps its public signature and passes true, and pkgconf_pkg_verify_dependency passes allow_path from the PKGCONF_PKG_DEPF_QUERY flag.
+Verify: cmd `sh -c 'mkdir -p /tmp/m/lib /tmp/m/secret && printf "Name: main\nVersion: 1\nDescription: m\nRequires: ../secret/evil\n" > /tmp/m/lib/main.pc && printf "Name: evil\nVersion: 1\nDescription: e\n" > /tmp/m/secret/evil.pc && PKG_CONFIG_PATH=/tmp/m/lib pkgconf --print-errors --exists main'` expect "not found"
+
+A dependency named in a pc(5) file was resolved as a path whenever it contained a slash, so one file could make pkgconf load a .pc file from any directory it could name, including one that loops back to itself. Only a name given on the command line may now be a path, and a name taken from a dependency is always looked up as a module name.
+
+diff --git a/libpkgconf/pkg.c b/libpkgconf/pkg.c
+index 491c0de..428d399 100644
+--- a/libpkgconf/pkg.c
++++ b/libpkgconf/pkg.c
+@@ -874,28 +874,48 @@ search_preload_list(pkgconf_client_t *client, const char *name)
+ 	return NULL;
+ }
+ 
++static inline bool
++is_path_separator(char c)
++{
++#ifdef _WIN32
++	return c == '/' || c == '\\';
++#else
++	return c == '/';
++#endif
++}
++
++static inline bool
++name_has_path_separator(const char *name)
++{
++	for (; *name != '\0'; name++)
++		if (is_path_separator(*name))
++			return true;
++
++	return false;
++}
++
+ /*
+- * !doc
+- *
+- * .. c:function:: pkgconf_pkg_t *pkgconf_pkg_find(pkgconf_client_t *client, const char *name)
+- *
+- *    Search for a package.
+- *
+- *    :param pkgconf_client_t* client: The pkgconf client object to use for dependency resolution.
+- *    :param char* name: The name of the package `atom` to use for searching.
+- *    :return: A package object reference if the package was found, else ``NULL``.
+- *    :rtype: pkgconf_pkg_t *
++ * Only a name the user asked for may be a path.  A name which a .pc file
++ * supplies is a module name: letting it be a path would let the file reach
++ * outside the search path, and would let it spell one module several ways,
++ * each of which loads as a package the cache has never seen.
+  */
+-pkgconf_pkg_t *
+-pkgconf_pkg_find(pkgconf_client_t *client, const char *name)
++static pkgconf_pkg_t *
++pkg_find(pkgconf_client_t *client, const char *name, bool allow_path)
+ {
+ 	pkgconf_pkg_t *pkg = NULL;
+ 	pkgconf_node_t *n;
+ 
+ 	PKGCONF_TRACE(client, "looking for: %s", name);
+ 
++	if (!allow_path && name_has_path_separator(name))
++	{
++		PKGCONF_TRACE(client, "%s is a path, which only a query may use", name);
++		return NULL;
++	}
++
+ 	/* name might actually be a filename. */
+-	if (str_has_suffix(name, PKG_CONFIG_EXT))
++	if (allow_path && str_has_suffix(name, PKG_CONFIG_EXT))
+ 	{
+ 		if (client->unveil_handler != NULL)
+ 			client->unveil_handler(client, name, "r");
+@@ -952,6 +972,24 @@ out:
+ 	return pkg;
+ }
+ 
++/*
++ * !doc
++ *
++ * .. c:function:: pkgconf_pkg_t *pkgconf_pkg_find(pkgconf_client_t *client, const char *name)
++ *
++ *    Search for a package.
++ *
++ *    :param pkgconf_client_t* client: The pkgconf client object to use for dependency resolution.
++ *    :param char* name: The name of the package `atom` to use for searching.
++ *    :return: A package object reference if the package was found, else ``NULL``.
++ *    :rtype: pkgconf_pkg_t *
++ */
++pkgconf_pkg_t *
++pkgconf_pkg_find(pkgconf_client_t *client, const char *name)
++{
++	return pkg_find(client, name, true);
++}
++
+ /*
+  * !doc
+  *
+@@ -1515,7 +1553,7 @@ pkgconf_pkg_verify_dependency(pkgconf_client_t *client, pkgconf_dependency_t *pk
+ 		return pkgconf_pkg_ref(client, pkgdep->match);
+ 	}
+ 
+-	pkg = pkgconf_pkg_find(client, pkgdep->package);
++	pkg = pkg_find(client, pkgdep->package, (pkgdep->flags & PKGCONF_PKG_DEPF_QUERY) != 0);
+ 	if (pkg == NULL)
+ 	{
+ 		if (client->flags & PKGCONF_PKG_PKGF_SKIP_PROVIDES)
