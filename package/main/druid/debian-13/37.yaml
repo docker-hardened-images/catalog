@@ -4,9 +4,9 @@ image: dhi.io/pkg-druid
 variant: runtime
 tags:
   - 37.0.0
-  - 37.0.0-r37
+  - 37.0.0-r38
   - 37.0.0-debian13
-  - 37.0.0-r37-debian13
+  - 37.0.0-r38-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -25,7 +25,7 @@ vars:
   NODEJS_VERSION: 24.22.3-0
   PACKAGE_HOME: /usr/share/druid
   PACKAGE_NAME: druid-37
-  REL: "37"
+  REL: "38"
   SEMVER_MAJOR_MINOR_VERSION: "37.0"
   SEMVER_MAJOR_VERSION: "37"
   SEMVER_VERSION: 37.0.0
@@ -155,6 +155,11 @@ contents:
           work-dir: ${source.dir}/druid
           with:
             patch: ${source.dir}/patch/vertx-core-37.0.patch
+        - name: backport hadoop 3.5.0 module poms
+          uses: git/patch@v1
+          work-dir: ${source.dir}/druid
+          with:
+            patch: ${source.dir}/patch/hadoop-3.5-37.0.patch
         - name: prune unused extensions from build
           runs: |
             set -eux -o pipefail
@@ -365,6 +370,28 @@ contents:
             rm -f "${LIB}"/calcite-core-*.jar
             install -m 0644 "$TMP" "${LIB}/calcite-core-${CALCITE_VERSION}.jar"
             rm -f "$TMP"
+        - name: build relocated replacement libraries
+          work-dir: ${source.dir}/patch/reshade
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            mvn package -B --no-transfer-progress
+        - name: re-shade bundled libraries
+          runs: |
+            set -eux -o pipefail
+
+            python3 -I "${source.dir}/patch/check-jar-refs.py" --self-test
+            bash "${source.dir}/patch/reshade-shaded-jars.sh" \
+              "${target.dir}/usr/share/druid" \
+              "${source.dir}/patch/reshade/target"
         - name: install scripts
           runs: |
             set -eux -o pipefail
@@ -396,7 +423,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-37
-            rel: 37
+            rel: 38
             url: https://druid.apache.org/
             version: 37.0.0
         - name: fipsify
@@ -430,7 +457,7 @@ contents:
               - deb
             license: Apache-2.0
             name: druid-37-fips
-            rel: 37
+            rel: 38
             url: https://druid.apache.org/
             version: 37.0.0
       paths:
@@ -469,6 +496,26 @@ contents:
           uid: 0
           gid: 0
           source: package/main/druid/patch/vertx-core-37.0.patch
+        - type: file
+          path: ${source.dir}/patch/hadoop-3.5-37.0.patch
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/hadoop-3.5-37.0.patch
+        - type: file
+          path: ${source.dir}/patch/reshade/pom.xml
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/reshade/pom.xml
+        - type: file
+          path: ${source.dir}/patch/reshade-shaded-jars.sh
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/reshade-shaded-jars.sh
+        - type: file
+          path: ${source.dir}/patch/check-jar-refs.py
+          uid: 0
+          gid: 0
+          source: package/main/druid/patch/check-jar-refs.py
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
