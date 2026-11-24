@@ -1,0 +1,93 @@
+# syntax=dhi.io/build:2-helm3
+
+name: Prometheus Node Exporter Helm chart 6.x
+image: dhi.io/node-exporter-chart
+variant: helm
+tags:
+  - 6.0.0
+platforms:
+  - linux/amd64
+vars:
+  CHART_COMMIT_SHA: a72cd1e73bf8f3f6e56bac419035d59f61cd5e3b
+  CHART_HELM_NAME: node-exporter-chart
+  DHI_NAMESPACE: dhi
+  DHI_PREFIX: ""
+  DHI_REGISTRY: dhi.io
+  DHI_SKIP_CONTEXT_COPY: "true"
+  HELM_VERSION: 4.1.4-2
+  KUBE_RBAC_PROXY_REFERENCE: dhi/kube-rbac-proxy:0.23.1-debian13@sha256:e7731232cd2c65c23e124f87137d53bd6397d82c4f7073fe9efea4ff249b55f4
+  NODE_EXPORTER_REFERENCE: dhi/node-exporter:1.13.1-debian13@sha256:e3ad85450c815c0ceb140909db98c2ff3c1291af5f3598df02d035ae09c4632e
+  SEMVER_MAJOR_MINOR_VERSION: "6.0"
+  SEMVER_MAJOR_VERSION: "6"
+  SEMVER_VERSION: 6.0.0
+  VERSION: 6.0.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  builds:
+    - name: node-exporter-chart
+      contents:
+        packages:
+          - bash
+          - ca-certificates
+          - coreutils
+          - helm=4.1.4-2
+        files:
+          - url: git+https://github.com/prometheus-community/helm-charts.git#prometheus-node-exporter-6.0.0
+            checksum: a72cd1e73bf8f3f6e56bac419035d59f61cd5e3b
+            path: ${source.dir}/helm-charts
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: prepare chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/prometheus-node-exporter
+          with:
+            chart:
+              appRef: node-exporter
+              description: Docker Hardened Images Helm chart for Prometheus Node Exporter
+              images:
+                - name: node-exporter
+                  ref: dhi/node-exporter:1.13.1-debian13@sha256:e3ad85450c815c0ceb140909db98c2ff3c1291af5f3598df02d035ae09c4632e
+                - name: kube-rbac-proxy
+                  ref: dhi/kube-rbac-proxy:0.23.1-debian13@sha256:e7731232cd2c65c23e124f87137d53bd6397d82c4f7073fe9efea4ff249b55f4
+              name: node-exporter-chart
+              notes: ${source.dir}/config/NOTES.txt
+              sourceUrl: https://github.com/prometheus-community/helm-charts
+            cmd: prepare
+            registry: dhi.io
+        - name: relocate chart
+          uses: helm/rudder@v1
+          work-dir: ${source.dir}/helm-charts/charts/prometheus-node-exporter
+          with:
+            cmd: patch
+            patches:
+              from: ${source.dir}/config
+            registry: dhi.io
+        - name: update dependencies
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          privileged: true
+          with:
+            chart: prometheus-node-exporter
+            cmd: dependency update
+        - name: lint
+          uses: helm/cmd@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: prometheus-node-exporter
+            cmd: lint .
+        - name: package
+          uses: helm/package@v1
+          work-dir: ${source.dir}/helm-charts/charts
+          with:
+            chart: prometheus-node-exporter
+      paths:
+        - type: directory
+          path: ${source.dir}/config
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: chart/node-exporter/config
