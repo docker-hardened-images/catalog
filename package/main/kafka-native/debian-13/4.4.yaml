@@ -1,0 +1,264 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kafka-native
+variant: runtime
+tags:
+  - 4.4.0
+  - 4.4.0-r0
+  - 4.4.0-debian13
+  - 4.4.0-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-10-13"
+vars:
+  GRAALVM_CE: "false"
+  GRAALVM_HOME: /usr/lib/graalvm-jdk-community-25
+  GRAALVM_VERSION: 25.5.5.0.3-0
+  MAVEN_VERSION: 3.9.16-1
+  PACKAGE_NAME: kafka-native-4.4
+  REL: "0"
+  SCALA_VERSION: "2.13"
+  SEMVER_MAJOR_MINOR_VERSION: "4.4"
+  SEMVER_MAJOR_VERSION: "4"
+  SEMVER_VERSION: 4.4.0
+  VERSION: 4.4.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: kafka-native-4.4
+      work-dir: ${source.dir}
+      environment:
+        JAVA_HOME: /usr/lib/graalvm-jdk-community-25
+      caches:
+        - path: /root/.m2/repository
+      contents:
+        packages:
+          - bash
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - findutils
+          - graalvm-jdk-community-25=25.5.5.0.3-0
+          - gzip
+          - maven=3.9.16-1
+          - sed
+          - tar
+          - zlib1g-dev
+        files:
+          - url: https://downloads.apache.org/kafka/KEYS
+            path: ${source.dir}/keys/apache-gpg-key
+            uid: 0
+            gid: 0
+          - url: https://archive.apache.org/dist/kafka/4.4.0/kafka-4.4.0-src.tgz.asc
+            path: ${source.dir}/kafka-src.tgz.asc
+            uid: 0
+            gid: 0
+          - url: https://archive.apache.org/dist/kafka/4.4.0/kafka-4.4.0-src.tgz
+            path: ${source.dir}/kafka-src.tgz
+            uid: 0
+            gid: 0
+          - url: https://archive.apache.org/dist/kafka/4.4.0/kafka_2.13-4.4.0.tgz.asc
+            path: ${source.dir}/kafka-dist.tgz.asc
+            uid: 0
+            gid: 0
+          - url: https://archive.apache.org/dist/kafka/4.4.0/kafka_2.13-4.4.0.tgz
+            path: ${source.dir}/kafka-dist.tgz
+            spdx:
+              name: kafka
+              version: 4.4.0
+              packages:
+                - name: kafka
+                  purl: pkg:dhi/kafka@4.4.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify dist
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/kafka-dist.tgz
+            keys: ${source.dir}/keys/apache-gpg-key
+            signature: ${source.dir}/kafka-dist.tgz.asc
+        - name: verify source
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/kafka-src.tgz
+            keys: ${source.dir}/keys/apache-gpg-key
+            signature: ${source.dir}/kafka-src.tgz.asc
+        - name: extract kafka
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${source.dir}/kafka/src" "${source.dir}/kafka/dist"
+            tar -xzf kafka-src.tgz --strip-components=1 -C "${source.dir}/kafka/src"
+            tar -xzf kafka-dist.tgz --strip-components=1 -C "${source.dir}/kafka/dist"
+        - uses: mvn/mirror@v1
+        - name: fix CVEs
+          work-dir: ${source.dir}/kafka/dist
+          privileged: true
+          secrets:
+            - id: maven_user
+              env: MAVEN_USER
+              optional: true
+            - id: maven_password
+              env: MAVEN_PASSWORD
+              optional: true
+          runs: |
+            set -eux -o pipefail
+
+            replace_maven_jar() {
+              group="$1"
+              artifact="$2"
+              version="$3"
+              jar="$(find libs -maxdepth 1 -type f -name "${artifact}-[0-9]*.jar")"
+              if [ -z "$jar" ]; then
+                echo "Expected ${artifact} JAR was not found"
+                exit 1
+              fi
+              rm "$jar"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy \
+                -Dartifact="${group}:${artifact}:${version}" \
+                -DoutputDirectory=./libs
+            }
+
+            cb="$(find libs -maxdepth 1 \( -name 'commons-beanutils-1.9.*.jar' -o -name 'commons-beanutils-1.10.*.jar' \))"
+            if [ -n "$cb" ]; then
+              rm "$cb"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=commons-beanutils:commons-beanutils:1.11.0 -DoutputDirectory=./libs
+            fi
+
+            cl="$(find libs -maxdepth 1 -type f -name 'commons-lang3-3.12.*.jar')"
+            if [ -n "$cl" ]; then
+              rm "$cl"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.commons:commons-lang3:3.18.0 -DoutputDirectory=./libs
+            fi
+
+            replace_maven_jar org.eclipse.jetty.ee10 jetty-ee10-servlet 12.0.38
+            replace_maven_jar org.eclipse.jetty.ee10 jetty-ee10-servlets 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-alpn-client 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-client 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-http 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-io 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-security 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-server 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-session 12.0.38
+            replace_maven_jar org.eclipse.jetty jetty-util 12.0.38
+
+            jl="$(find libs -maxdepth 1 -type f -name 'jline-3.*.jar')"
+            if [ -n "$jl" ]; then
+              rm "$jl"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.jline:jline:4.3.1 -DoutputDirectory=./libs
+            fi
+
+            l4j="$(find libs -maxdepth 1 -type f -name 'log4j-core-2.25.*.jar' ! -name 'log4j-core-2.25.5.jar')"
+            if [ -n "$l4j" ]; then
+              rm $l4j
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.logging.log4j:log4j-core:2.25.5 -DoutputDirectory=./libs
+            fi
+            l4j="$(find libs -maxdepth 1 -type f -name 'log4j-api-2.25.*.jar' ! -name 'log4j-api-2.25.5.jar')"
+            if [ -n "$l4j" ]; then
+              rm $l4j
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.logging.log4j:log4j-api:2.25.5 -DoutputDirectory=./libs
+            fi
+            l4j="$(find libs -maxdepth 1 -type f -name 'log4j-1.2-api-2.25.*.jar' ! -name 'log4j-1.2-api-2.25.5.jar')"
+            if [ -n "$l4j" ]; then
+              rm $l4j
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.logging.log4j:log4j-1.2-api:2.25.5 -DoutputDirectory=./libs
+            fi
+            l4j="$(find libs -maxdepth 1 -type f -name 'log4j-slf4j-impl-2.25.*.jar' ! -name 'log4j-slf4j-impl-2.25.5.jar')"
+            if [ -n "$l4j" ]; then
+              rm $l4j
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy -Dartifact=org.apache.logging.log4j:log4j-slf4j-impl:2.25.5 -DoutputDirectory=./libs
+            fi
+
+            replace_maven_jar com.fasterxml.jackson.core jackson-databind 2.21.7
+            replace_maven_jar com.fasterxml.jackson.core jackson-core 2.21.7
+            replace_maven_jar com.fasterxml.jackson.core jackson-annotations 2.21
+
+            replace_maven_jar at.yawk.lz4 lz4-java 1.11.4
+
+            snappy="$(find libs -maxdepth 1 -type f \( \
+              -name 'snappy-java-1.1.10.5.jar' -o \
+              -name 'snappy-java-1.1.10.7.jar' -o \
+              -name 'snappy-java-1.1.10.8.jar' \))"
+            if [ -n "$snappy" ]; then
+              rm "$snappy"
+              mvn org.apache.maven.plugins:maven-dependency-plugin:3.7.0:copy \
+                -Dartifact=org.xerial.snappy:snappy-java:1.1.10.9 \
+                -DoutputDirectory=./libs
+            fi
+
+            replace_maven_jar com.github.luben zstd-jni 1.5.7-14
+        - name: build native image
+          runs: |
+            set -eux -o pipefail
+
+            export JAVA_HOME="/usr/lib/graalvm-jdk-community-25"
+
+            "${source.dir}/kafka/src/docker/native/native_command.sh" \
+              "/usr/lib/graalvm-jdk-community-25/bin/native-image" \
+              "${source.dir}/kafka/src/docker/native/native-image-configs" \
+              "${source.dir}/kafka/dist/libs" \
+              "${source.dir}/kafka.Kafka"
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 "${source.dir}/kafka.Kafka" "${target.dir}/usr/lib/kafka-native/kafka.Kafka"
+
+            config="${target.dir}/etc/kafka/config"
+            mkdir -p "$config"
+            cp -a "${source.dir}/kafka/src/config/." "$config/"
+            cp "${source.dir}/kafka/src/docker/server.properties" "$config/server.properties"
+            test -f "$config/log4j2.yaml"
+            test -f "$config/tools-log4j2.yaml"
+
+            licenses="${target.dir}/usr/share/licenses/kafka-native-4.4"
+            install -D -m 0644 "${source.dir}/kafka/dist/LICENSE" "$licenses/LICENSE"
+            install -D -m 0644 "${source.dir}/kafka/dist/NOTICE" "$licenses/NOTICE"
+        - name: java sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: java-archive-cataloger
+            prefix: kafka
+            source: ${source.dir}/kafka/dist
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/kafka "${target.dir}/opt/docker/sbom/"
+            test "$(find "${target.dir}/opt/docker/sbom/kafka" -type f | wc -l)" -ge 1
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - zlib1g
+            description: Apache Kafka broker compiled ahead of time with GraalVM native-image
+            files:
+              - etc/kafka/config
+              - opt/docker/sbom/kafka
+              - usr/lib/kafka-native
+              - usr/share/licenses/kafka-native-4.4
+            formats:
+              - deb
+            license: Apache-2.0
+            name: kafka-native-4.4
+            rel: 0
+            url: https://kafka.apache.org/
+            version: 4.4.0
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
