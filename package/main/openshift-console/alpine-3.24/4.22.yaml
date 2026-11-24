@@ -4,7 +4,7 @@ image: dhi.io/pkg-openshift-console
 variant: runtime
 tags:
   - 4.22.22-alpine3.24
-  - 4.22.22-r2-alpine3.24
+  - 4.22.22-r3-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -15,7 +15,7 @@ vars:
   CONSOLE_IMAGE_DIGEST: sha256:3c97014c525b17825155b1c6c7db8e3ed3a24c36c49f0c432810172e6599634c
   GOLANG_VERSION: 1.26.11-r1
   PACKAGE_NAME: openshift-console
-  REL: "2"
+  REL: "3"
   SEMVER_MAJOR_MINOR_VERSION: "4.22"
   SEMVER_MAJOR_VERSION: "4"
   SEMVER_VERSION: 4.22.22
@@ -75,7 +75,7 @@ contents:
               - github.com/go-viper/mapstructure/v2@v2.4.0
               - helm.sh/helm/v3@v3.20.2
               - github.com/google/cel-go@v0.30.0
-              - golang.org/x/net@v0.62.0
+              - golang.org/x/net@v0.63.0
             download: true
             replaces:
               - github.com/docker/cli=github.com/docker/cli@v27.5.0+incompatible
@@ -124,6 +124,10 @@ contents:
           privileged: true
           runs: |
             set -eux -o pipefail
+
+            if [ ! -f ${source.dir}/patches/yarn-patches-4.22.json ]; then
+              exit 0
+            fi
 
             cd frontend
             YARN="node $(awk '/yarnPath:/{print $2}' .yarnrc.yml)"
@@ -223,8 +227,10 @@ contents:
             ${YARN} install --mode=update-lockfile
             node /tmp/bump-tool.js ${source.dir}/patches/yarn-patches-4.22.json verify
 
-            sed -i 's/ unstable_useTransitions={false}/ useTransitions={false}/' public/components/app.tsx
-            ! grep -E 'unstable_mask|unstable_useTransitions' public/components/app.tsx
+            if [ "4.22" = "4.22" ]; then
+              sed -i 's/ unstable_useTransitions={false}/ useTransitions={false}/' public/components/app.tsx
+              ! grep -E 'unstable_mask|unstable_useTransitions' public/components/app.tsx
+            fi
         - name: build and stage frontend
           privileged: true
           runs: |
@@ -251,11 +257,13 @@ contents:
             find ${target.dir}/usr/share/openshift-console/static \( -name '*.js' -o -name '*.css' \) \
               -exec sed -i -E '/^[[:space:]]*\/[*/][#@][[:space:]]*sourceMappingURL=/d' {} +
 
-            mkdir -p \
-              ${target.dir}/usr/share/openshift-console/graphql \
-              ${target.dir}/usr/share/openshift-console/graphql-dev
-            cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql/schema.graphql
-            cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql-dev/schema.graphql
+            if [ -f pkg/graphql/schema.graphql ]; then
+              mkdir -p \
+                ${target.dir}/usr/share/openshift-console/graphql \
+                ${target.dir}/usr/share/openshift-console/graphql-dev
+              cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql/schema.graphql
+              cp -a pkg/graphql/schema.graphql ${target.dir}/usr/share/openshift-console/graphql-dev/schema.graphql
+            fi
         - name: generate frontend sbom
           privileged: true
           runs: |
@@ -338,7 +346,8 @@ contents:
             GENSPDX
             cd ..
 
-            node - /tmp/frontend-sbom.json ${source.dir}/patches/yarn-patches-4.22.json << 'CHECK'
+            if [ -f ${source.dir}/patches/yarn-patches-4.22.json ]; then
+              node - /tmp/frontend-sbom.json ${source.dir}/patches/yarn-patches-4.22.json << 'CHECK'
             const fs = require('fs');
             const [sbomPath, bumpsPath] = process.argv.slice(2);
             const sbom = JSON.parse(fs.readFileSync(sbomPath));
@@ -387,6 +396,7 @@ contents:
             }
             if (failed) process.exit(1);
             CHECK
+            fi
 
             install -D -m 0644 /tmp/frontend-sbom.json \
               "${target.dir}/opt/docker/sbom/openshift-console-frontend/.spdx.openshift-console-frontend.json"
@@ -402,7 +412,7 @@ contents:
               - opt/docker/sbom
             license: Apache-2.0
             name: openshift-console
-            rel: 2
+            rel: 3
             subpackages:
               - files:
                   - path: usr/lib/openshift-console/bin/bridge
