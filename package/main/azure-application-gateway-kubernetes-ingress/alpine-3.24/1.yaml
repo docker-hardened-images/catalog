@@ -1,0 +1,205 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-azure-application-gateway-kubernetes-ingress
+variant: runtime
+tags:
+  - 1.9.16-alpine3.24
+  - 1.9.16-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 75b1bb202a14e194f8d887ed27f5c72fff7ac272
+  COMMIT_SHORT: 75b1bb20
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: azure-application-gateway-kubernetes-ingress-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.9"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.9.16
+  VERSION: 1.9.16
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: azure-application-gateway-kubernetes-ingress-1
+      work-dir: /go/src/github.com/Azure/application-gateway-kubernetes-ingress
+      contents:
+        packages:
+          - binutils
+          - busybox
+          - ca-certificates-bundle
+          - openssl
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/Azure/application-gateway-kubernetes-ingress.git#1.9.16
+            checksum: 75b1bb202a14e194f8d887ed27f5c72fff7ac272
+            path: /go/src/github.com/Azure/application-gateway-kubernetes-ingress
+            spdx:
+              name: application-gateway-kubernetes-ingress
+              version: 1.9.16
+              packages:
+                - name: application-gateway-kubernetes-ingress
+                  purl: pkg:golang/github.com/Azure/application-gateway-kubernetes-ingress@1.9.16
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/crypto@v0.59.0
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            CGO_ENABLED=0 go test -count=1 -tags unittest ./cmd/... ./pkg/... ./functional_tests/...
+        - name: build
+          uses: go/build@v1
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off
+            fips: false
+            ldflags:
+              - -s -w
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.Version=1.9.16
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.GitCommit=75b1bb20
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +%Y-%m-%d-%H:%MT%z)
+            output: ${target.dir}/usr/bin/appgw-ingress
+            packages: ./cmd/appgw-ingress
+        - name: build dev
+          uses: go/build@v1
+          with:
+            extra-env: GOPROXY=off GOSUMDB=off
+            fips: false
+            ldflags:
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.Version=1.9.16
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.GitCommit=75b1bb20
+              - -X github.com/Azure/application-gateway-kubernetes-ingress/pkg/version.BuildDate=$(date -ud @${SOURCE_DATE_EPOCH} +%Y-%m-%d-%H:%MT%z)
+            output: ${target.dir}/usr/bin/appgw-ingress-dev
+            packages: ./cmd/appgw-ingress
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/Azure/application-gateway-kubernetes-ingress
+            runtime=${target.dir}/usr/bin/appgw-ingress
+            devbin=${target.dir}/usr/bin/appgw-ingress-dev
+            want_date=$(date -ud @${SOURCE_DATE_EPOCH} +%Y-%m-%d-%H:%MT%z)
+            want="Version: 1.9.16; Commit: 75b1bb20; Date: $want_date"
+
+            awk '/^require \($/{r=1; next} r && /^\)$/{r=0; next} r && NF >= 2 {print $1, $2} /^require [^(]/{print $2, $3}' "$src/go.mod" | LC_ALL=C sort -u > /tmp/requires.txt
+            awk '/^replace \($/{r=1; next} r && /^\)$/{r=0; next} (r || /^replace [^(]/) && /=>/ {print $(NF - 1), $NF}' "$src/go.mod" | LC_ALL=C sort -u > /tmp/replaces.txt
+            test -s /tmp/requires.txt
+            test -s /tmp/replaces.txt
+
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo.txt
+              awk '$1 == "dep" {print $2, $3}' /tmp/buildinfo.txt | LC_ALL=C sort -u > /tmp/deps.txt
+              test -s /tmp/deps.txt
+              if LC_ALL=C comm -13 /tmp/requires.txt /tmp/deps.txt | grep .; then
+                echo "$bin: module versions differ from $src/go.mod" >&2
+                exit 1
+              fi
+              awk '$1 == "=>" {print $2, $3}' /tmp/buildinfo.txt | LC_ALL=C sort -u > /tmp/reps.txt
+              if LC_ALL=C comm -13 /tmp/replaces.txt /tmp/reps.txt | grep .; then
+                echo "$bin: replace targets differ from $src/go.mod" >&2
+                exit 1
+              fi
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0(-[0-9a-f]+)?$' /tmp/buildinfo.txt
+                grep -qE '^[[:space:]]+build[[:space:]]+DefaultGODEBUG=(.*,)?fips140=on(,|$)' /tmp/buildinfo.txt
+              elif grep -q fips140 /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+              if readelf -d "$bin" | grep -q NEEDED; then
+                echo "$bin: dynamically linked" >&2
+                exit 1
+              fi
+              got=$("$bin" --version 2>/dev/null)
+              if [ "$got" != "$want" ]; then
+                echo "$bin: --version printed '$got', want '$want'" >&2
+                exit 1
+              fi
+            done
+
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if readelf -S "$runtime" | grep -E '\.symtab|\.debug_'; then
+              echo "$runtime: upstream strips with -s -w" >&2
+              exit 1
+            fi
+            readelf -S "$devbin" | grep -q '\.symtab'
+            go version -m "$devbin" | grep -qE -- '-ldflags=.*pkg/version\.Version='
+            if go version -m "$devbin" | grep -E -- '-ldflags=.*-(s|w)( |"|$)|-trimpath=true'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/Azure/application-gateway-kubernetes-ingress
+            sbom=/opt/docker/sbom/application-gateway-kubernetes-ingress
+
+            test -s "$sbom/.spdx.application-gateway-kubernetes-ingress.json"
+            grep -q 'pkg:golang/github.com/Azure/application-gateway-kubernetes-ingress@' "$sbom/.spdx.application-gateway-kubernetes-ingress.json"
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a "$sbom" "${target.dir}/opt/docker/sbom/"
+            cp -a "$sbom" "${target.dir}/opt/docker/sbom-dev/"
+
+            grep -q 'MIT License' "$src/LICENSE"
+            grep -q 'Copyright (c) Microsoft Corporation' "$src/LICENSE"
+            install -D -m 0644 "$src/LICENSE" "${target.dir}/usr/share/licenses/azure-application-gateway-kubernetes-ingress/LICENSE"
+            install -D -m 0644 "$src/LICENSE" "${target.dir}/usr/share/licenses/azure-application-gateway-kubernetes-ingress-dev/LICENSE"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+              - openssl
+            description: Azure Application Gateway Ingress Controller (AGIC) for Kubernetes
+            files:
+              - usr/bin/appgw-ingress
+              - opt/docker/sbom/application-gateway-kubernetes-ingress
+              - usr/share/licenses/azure-application-gateway-kubernetes-ingress/LICENSE
+            license: MIT
+            name: azure-application-gateway-kubernetes-ingress-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                  - openssl
+                files:
+                  - path: usr/bin/appgw-ingress
+                    source: usr/bin/appgw-ingress-dev
+                  - path: opt/docker/sbom/application-gateway-kubernetes-ingress
+                    source: opt/docker/sbom-dev/application-gateway-kubernetes-ingress
+                  - path: usr/share/licenses/azure-application-gateway-kubernetes-ingress/LICENSE
+                    source: usr/share/licenses/azure-application-gateway-kubernetes-ingress-dev/LICENSE
+                name: azure-application-gateway-kubernetes-ingress-1-dev
+            url: https://github.com/Azure/application-gateway-kubernetes-ingress
+            version: 1.9.16
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
