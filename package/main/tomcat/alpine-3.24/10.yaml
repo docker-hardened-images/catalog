@@ -1,0 +1,171 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-tomcat
+variant: runtime
+tags:
+  - 10.1.62-alpine3.24
+  - 10.1.62-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  HAMCREST_VERSION: "1.3"
+  JDK_MAJOR_VERSION: "21"
+  JDK_VERSION: 21.0.13.9.1.2-r0
+  JUNIT_VERSION: 4.13.2
+  PACKAGE_HOME: /usr/share/tomcat-10
+  PACKAGE_NAME: tomcat-10
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "10.1"
+  SEMVER_MAJOR_VERSION: "10"
+  SEMVER_VERSION: 10.1.62
+  VERSION: 10.1.62
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: tomcat-10
+      work-dir: ${source.dir}/tomcat
+      environment:
+        JAVA_HOME: /usr/lib/jvm/temurin-21
+      contents:
+        packages:
+          - apache-ant
+          - apr-dev
+          - busybox
+          - eclipse-temurin-21-jdk=21.0.13.9.1.2-r0
+          - gcc
+          - gpg
+          - gpg-agent
+          - grep
+          - gzip
+          - make
+          - musl-dev
+          - openssl-dev
+          - sed
+        files:
+          - url: https://repo1.maven.org/maven2/org/apache/tomcat/tomcat/10.1.62/tomcat-10.1.62.tar.gz.asc
+            path: ${source.dir}/tomcat/signatures/tomcat.tar.gz.asc
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/apache/tomcat/tomcat/10.1.62/tomcat-10.1.62.tar.gz
+            checksum: https://repo1.maven.org/maven2/org/apache/tomcat/tomcat/10.1.62/tomcat-10.1.62.tar.gz.sha256
+            path: ${source.dir}/tomcat/apache-tomcat-10.1.62.tar.gz
+            spdx:
+              name: tomcat
+              version: 10.1.62
+              packages:
+                - name: tomcat
+                  purl: pkg:dhi/tomcat@10.1.62
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar
+            checksum: sha256:8e495b634469d64fb8acfa3495a065cbacc8a0fff55ce1e31007be4c16dc57d3
+            path: ${source.dir}/tomcat/test-lib/junit.jar
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar
+            checksum: sha256:66fdef91e9739348df7a096aa384a5685f4e875584cce89386a7a47251c4d8e9
+            path: ${source.dir}/tomcat/test-lib/hamcrest-core.jar
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: verify
+          uses: gpg/verify@v1
+          with:
+            file: ${source.dir}/tomcat/apache-tomcat-10.1.62.tar.gz
+            key-filter:
+              - A9C5DF4D22E99998D9875A5110C01C5A2F6059E7
+              - 48F8E69F6390C9F25CFEDCD268248959359E722B
+              - 5C3C5F3E314C866292F359A8F3AD5C94A67F707E
+            keys: ${source.dir}/tomcat/key/10
+            signature: ${source.dir}/tomcat/signatures/tomcat.tar.gz.asc
+        - name: install
+          runs: |
+            set -eux -o pipefail
+
+            home="${target.dir}/usr/share/tomcat-10"
+            install -d "$home"
+            cd "$home"
+            tar -xf "${source.dir}/tomcat/apache-tomcat-10.1.62.tar.gz" --strip-components=1
+
+            mkdir -p "${source.dir}/tomcat/native-build"
+            tar -xf bin/tomcat-native.tar.gz -C "${source.dir}/tomcat/native-build" --strip-components=1
+
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
+            export CATALINA_HOME="$home"
+            export TOMCAT_NATIVE_LIBDIR="$CATALINA_HOME/native-jni-lib"
+            export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$TOMCAT_NATIVE_LIBDIR"
+
+            cd "${source.dir}/tomcat/native-build/native"
+            aprConfig="$(command -v apr-1-config)"
+            ./configure \
+              --libdir="$TOMCAT_NATIVE_LIBDIR" \
+              --prefix="$CATALINA_HOME" \
+              --with-apr="$aprConfig" \
+              --with-java-home="$JAVA_HOME"
+
+            nproc="$(nproc)"
+            make -j "$nproc"
+            make install
+
+            cd "$home"
+            chmod -R +rX .
+            rm -r webapps
+            install -d logs temp work webapps conf/Catalina/localhost
+            touch logs/.keep temp/.keep work/.keep webapps/.keep conf/Catalina/localhost/.keep
+            chmod 1777 logs temp work webapps conf/Catalina/localhost
+            rm native-jni-lib/*.a native-jni-lib/*.la
+        - name: test
+          work-dir: ${source.dir}/tomcat/native-build
+          runs: |
+            set -eux -o pipefail
+
+            export JAVA_HOME="/usr/lib/jvm/temurin-21"
+            home="${target.dir}/usr/share/tomcat-10"
+            export CATALINA_HOME="$home"
+            export TOMCAT_NATIVE_LIBDIR="$CATALINA_HOME/native-jni-lib"
+            export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$TOMCAT_NATIVE_LIBDIR"
+
+            ant -Djava.library.path="$TOMCAT_NATIVE_LIBDIR" \
+              -Djunit.jar="${source.dir}/tomcat/test-lib/junit.jar" \
+              -Dhamcrest.jar="${source.dir}/tomcat/test-lib/hamcrest-core.jar" \
+              test
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - apr
+              - busybox
+              - libcrypto3
+              - libssl3
+            description: Apache Tomcat servlet container
+            files:
+              - usr/share/tomcat-10
+            formats:
+              - apk
+            license: Apache-2.0
+            name: tomcat-10
+            rel: 0
+            url: https://tomcat.apache.org/
+            version: 10.1.62
+      paths:
+        - type: file
+          path: ${source.dir}/tomcat/key/10
+          uid: 0
+          gid: 0
+          source: package/main/tomcat/key/10
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
