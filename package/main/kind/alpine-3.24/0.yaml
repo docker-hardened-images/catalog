@@ -1,0 +1,139 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kind
+variant: runtime
+tags:
+  - 0.33.0-alpine3.24
+  - 0.33.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 407a9675e6d9af1200b5f57f9ca52ec6cdacce74
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  PACKAGE_NAME: kind-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.33"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.33.0
+  VERSION: 0.33.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kind-0
+      work-dir: /go/src/sigs.k8s.io/kind
+      contents:
+        packages:
+          - busybox
+          - ca-certificates-bundle
+          - git
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/kubernetes-sigs/kind.git#v0.33.0
+            checksum: 407a9675e6d9af1200b5f57f9ca52ec6cdacce74
+            path: /go/src/sigs.k8s.io/kind
+            spdx:
+              name: kind
+              version: 0.33.0
+              packages:
+                - name: kind
+                  purl: pkg:golang/sigs.k8s.io/kind@0.33.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -short -tags=nointegration ./...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=sigs.k8s.io/kind/pkg/cmd/kind/version.gitCommit=407a9675e6d9af1200b5f57f9ca52ec6cdacce74
+            output: ${target.dir}/usr/bin/kind
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=sigs.k8s.io/kind/pkg/cmd/kind/version.gitCommit=407a9675e6d9af1200b5f57f9ca52ec6cdacce74
+            output: ${target.dir}/usr/bin/kind-dev
+            strip: false
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF '"pkg:golang/sigs.k8s.io/kind@0.33.0"' /opt/docker/sbom/kind/.spdx.kind.json
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/kind "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/kind "${target.dir}/opt/docker/sbom-dev/"
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - /bin/sh
+                - ca-certificates-bundle
+                - docker-cli
+                - make
+            deb:
+              depends:
+                - ca-certificates-bundle
+                - dash
+                - docker-ce-cli
+                - make
+            description: kind runs local Kubernetes clusters using container nodes
+            files:
+              - usr/bin/kind
+              - opt/docker/sbom/kind
+            license: Apache-2.0
+            name: kind-0
+            rel: 0
+            subpackages:
+              - apk:
+                  depends:
+                    - /bin/sh
+                    - ca-certificates-bundle
+                    - docker-cli
+                    - make
+                deb:
+                  depends:
+                    - ca-certificates-bundle
+                    - dash
+                    - docker-ce-cli
+                    - make
+                files:
+                  - path: usr/bin/kind
+                    source: usr/bin/kind-dev
+                  - path: opt/docker/sbom/kind
+                    source: opt/docker/sbom-dev/kind
+                name: kind-0-dev
+            url: https://github.com/kubernetes-sigs/kind
+            version: 0.33.0
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
