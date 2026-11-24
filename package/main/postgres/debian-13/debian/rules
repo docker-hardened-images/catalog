@@ -1,0 +1,143 @@
+#!/usr/bin/make -f
+
+SHELL := /bin/bash
+
+ifndef DHI_PG_MAJOR
+$(error DHI_PG_MAJOR must be set)
+endif
+MAJOR := $(DHI_PG_MAJOR)
+
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/pkg-info.mk
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+LIBPKGS := $(if $(wildcard debian/libpq5.install),y)
+UPSTREAM_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)')
+LLVM_CONFIG := $(lastword $(shell ls -v /usr/bin/llvm-config-*))
+LLVM_VERSION := $(subst /usr/bin/llvm-config-,,$(LLVM_CONFIG))
+MULTIARCH := $(DEB_HOST_MULTIARCH)
+
+PKGLIBDIR := /usr/lib/postgresql/$(MAJOR)/lib
+INCLUDEDIR_SERVER := /usr/include/postgresql/$(MAJOR)/server
+PATH_VARS := pkglibdir=$(PKGLIBDIR) includedir_server=$(INCLUDEDIR_SERVER)
+
+CONFIGURE_FLAGS = \
+  --prefix=/usr \
+  --datarootdir=/usr/share \
+  --datadir=/usr/share/postgresql/$(MAJOR) \
+  --bindir=/usr/lib/postgresql/$(MAJOR)/bin \
+  --libdir=/usr/lib/$(MULTIARCH) \
+  --libexecdir=/usr/lib/postgresql \
+  --includedir=/usr/include/postgresql \
+  --mandir=/usr/share/postgresql/$(MAJOR)/man \
+  --sysconfdir=/etc/postgresql-common \
+  --disable-rpath \
+  --enable-thread-safety \
+  --with-gnu-ld \
+  --with-gssapi \
+  --with-icu \
+  --with-ldap \
+  --with-libxml \
+  --with-libxslt \
+  --with-llvm LLVM_CONFIG=$(LLVM_CONFIG) CLANG=/usr/bin/clang-$(LLVM_VERSION) \
+  --with-lz4 \
+  --with-pam \
+  --with-perl \
+  --with-pgport=5432 \
+  --with-python \
+  --with-selinux \
+  --with-ssl=openssl \
+  --with-system-tzdata=/usr/share/zoneinfo \
+  --with-tcl \
+  --with-uuid=e2fs \
+  --with-zstd \
+  AWK=mawk \
+  PYTHON=/usr/bin/python3 \
+  CFLAGS='$(CFLAGS)' \
+  LDFLAGS='$(LDFLAGS)'
+
+ifeq ($(shell test $(MAJOR) -ge 18 && echo y),y)
+  CONFIGURE_FLAGS += --with-libcurl --with-libnuma --with-liburing
+endif
+
+CLIENT_LINKS := clusterdb createdb createuser dropdb dropuser pg_amcheck \
+  pg_basebackup pg_combinebackup pg_dump pg_dumpall pg_isready pg_receivewal \
+  pg_recvlogical pg_restore pg_verifybackup psql reindexdb vacuumdb
+
+%:
+	dh $@
+
+override_dh_autoreconf:
+
+override_dh_auto_configure:
+	grep -q 'DEFAULT_PGSOCKET_DIR  "/tmp"' src/include/pg_config_manual.h
+	sed -i 's|DEFAULT_PGSOCKET_DIR  "/tmp"|DEFAULT_PGSOCKET_DIR  "/var/run/postgresql"|' src/include/pg_config_manual.h
+	grep -q 'DEFAULT_PGSOCKET_DIR  "/var/run/postgresql"' src/include/pg_config_manual.h
+	mkdir -p build
+	cd build && ../configure $(CONFIGURE_FLAGS)
+
+override_dh_auto_build:
+	MAKELEVEL=0 $(MAKE) -C build world-bin -j$$(nproc) $(PATH_VARS)
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	MAKELEVEL=0 $(MAKE) -C build install-world-bin DESTDIR=$(CURDIR)/debian/tmp $(PATH_VARS)
+	sed -i 's|^includedir_server = \$$(pkgincludedir)/server$$|includedir_server = $$(pkgincludedir)/$(MAJOR)/server|' debian/tmp$(PKGLIBDIR)/pgxs/src/Makefile.global
+	grep -q '^includedir_server = \$$(pkgincludedir)/$(MAJOR)/server$$' debian/tmp$(PKGLIBDIR)/pgxs/src/Makefile.global
+	find debian/tmp/usr/lib/$(MULTIARCH) -maxdepth 1 \( -name 'libpgport*.a' -o -name 'libpgcommon*.a' -o -name 'libpgfeutils*.a' \) -exec mv -t debian/tmp$(PKGLIBDIR) {} +
+	cp COPYRIGHT debian/copyright
+
+override_dh_install:
+	for t in pg_createsubscriber pg_walsummary; do \
+	  if [ -e debian/tmp/usr/lib/postgresql/$(MAJOR)/bin/$$t ]; then \
+	    echo usr/lib/postgresql/*/bin/$$t >> debian/postgresql-$(MAJOR).install; \
+	  fi; \
+	done
+	for t in pg_combinebackup; do \
+	  if [ -e debian/tmp/usr/lib/postgresql/$(MAJOR)/bin/$$t ]; then \
+	    echo usr/lib/postgresql/*/bin/$$t >> debian/postgresql-client-$(MAJOR).install; \
+	  fi; \
+	done
+	dh_install
+	rm -v debian/postgresql-$(MAJOR)/usr/share/postgresql/$(MAJOR)/extension/{plperl,plpython,pltcl,*_pl}*
+	rm -v debian/postgresql-$(MAJOR)/usr/lib/postgresql/$(MAJOR)/lib/{plperl,plpython,pltcl,*_pl}*
+	rm -rfv debian/postgresql-$(MAJOR)/usr/lib/postgresql/$(MAJOR)/lib/bitcode/*{plperl,plpython,pltcl}*
+
+override_dh_link:
+ifeq ($(LIBPKGS),y)
+	for t in $(CLIENT_LINKS); do \
+	  if [ -e debian/postgresql-client-$(MAJOR)/usr/lib/postgresql/$(MAJOR)/bin/$$t ]; then \
+	    dh_link -ppostgresql-client-$(MAJOR) usr/lib/postgresql/$(MAJOR)/bin/$$t usr/bin/$$t; \
+	  fi; \
+	done
+	dh_link -plibpq-dev usr/lib/postgresql/$(MAJOR)/bin/pg_config usr/bin/pg_config
+	dh_link -plibecpg-dev usr/lib/postgresql/$(MAJOR)/bin/ecpg usr/bin/ecpg
+endif
+	dh_link --remaining-packages
+
+override_dh_missing:
+	dh_missing --list-missing
+
+override_dh_makeshlibs:
+	dh_makeshlibs -Xusr/lib/postgresql/$(MAJOR)
+
+override_dh_shlibdeps:
+ifneq ($(LIBPKGS),y)
+	echo 'libpq 5 libpq5 (>= $(UPSTREAM_VERSION))' > debian/shlibs.local
+endif
+	dh_shlibdeps -l$(CURDIR)/debian/tmp/usr/lib/$(MULTIARCH)
+
+override_dh_dwz:
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+
+override_dh_gencontrol:
+	dh_gencontrol -- -Vllvm:Version=$(LLVM_VERSION)
+
+override_dh_auto_clean:
+	rm -rf build debian/shlibs.local

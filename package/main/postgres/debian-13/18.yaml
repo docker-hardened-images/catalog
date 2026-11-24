@@ -3,10 +3,10 @@
 image: dhi.io/pkg-postgres
 variant: runtime
 tags:
-  - 18-r1
-  - 18.7-r1
-  - 18-r1-debian13
-  - 18.7-r1-debian13
+  - 18-r2
+  - 18.7-r2
+  - 18-r2-debian13
+  - 18.7-r2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -14,10 +14,13 @@ dates:
   release: "2025-09-25"
   end-of-life: "2030-11-14"
 vars:
+  DHI_VERSION: 18.7-2+dhi
+  EXPECTED_PACKAGES: libpq-dev,libpq5,libpq-oauth,libecpg6,libecpg-dev,libecpg-compat3,libpgtypes3,postgresql-18,postgresql-client-18,postgresql-server-dev-18,postgresql-plperl-18,postgresql-plpython3-18,postgresql-pltcl-18
+  LIBPQ_OWNER: "true"
   MAJOR_VERSION: "18"
   MINOR_VERSION: "7"
-  PACKAGE_NAME: dhi-postgresql-18
-  REL: "1"
+  PACKAGE_NAME: postgresql-18
+  REL: "2"
   VERSION: "18.7"
 contents:
   repositories:
@@ -25,9 +28,9 @@ contents:
   keyring:
     - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
   packages:
-    - base-files
+    - '!base-files'
   builds:
-    - name: dhi-postgresql-18
+    - name: postgresql-18 deb
       work-dir: ${source.dir}/postgresql-18.7
       contents:
         packages:
@@ -39,15 +42,18 @@ contents:
           - ca-certificates
           - clang
           - coreutils
+          - debhelper
+          - dpkg-dev
           - flex
           - grep
           - libcurl4-openssl-dev
-          - libgss-dev
           - libicu-dev
+          - libkrb5-dev
           - libldap2-dev
           - liblz4-dev
           - libnuma-dev
           - libpam0g-dev
+          - libperl-dev
           - libreadline-dev
           - libselinux1-dev
           - libssl-dev
@@ -58,8 +64,11 @@ contents:
           - llvm-dev
           - lz4
           - mawk
+          - perl
           - pkgconf
+          - python3-dev
           - sed
+          - tcl-dev
           - tzdata
           - uuid-dev
           - zlib1g-dev
@@ -85,74 +94,42 @@ contents:
             patches:
               - ${source.dir}/patch/initdb.patch
               - ${source.dir}/patch/pager-less.patch
-        - name: build and install
+        - name: render debian templates
+          shell: /bin/bash
           runs: |
             set -eux -o pipefail
 
-            ./configure \
-              --prefix='/usr/lib/postgresql/18' \
-              --bindir='/usr/bin' \
-              --with-gssapi \
-              --with-icu \
-              --with-ldap \
-              --with-libcurl \
-              --with-libnuma \
-              --with-liburing \
-              --with-libxml \
-              --with-libxslt \
-              --with-llvm \
-              --with-lz4 \
-              --with-pam \
-              --with-selinux \
-              --with-ssl=openssl \
-              --with-uuid=e2fs \
-              --with-zstd \
-              --with-system-tzdata=/usr/share/zoneinfo
-
-            make world-bin -j"$(nproc)"
-
-            make install-world-bin DESTDIR='${target.dir}'
-        - name: configure defaults
-          work-dir: ${target.dir}/usr/lib/postgresql/18/share
-          runs: |
-            set -eux -o pipefail
-
-            sed -E -i postgresql.conf.sample \
-              -e "s|^#?(listen_addresses)\s*=\s*\S+.*|\1 = '*'|"
-        - uses: dhi/build-pkg:0
+            for f in debian/*MAJOR*; do
+              mv "$f" "${f//MAJOR/18}"
+            done
+            sed "s/@MAJOR@/18/g" debian/control.in > debian/control
+            if [ "true" = "true" ]; then
+              printf '\n' >> debian/control
+              sed "s/@MAJOR@/18/g" debian/control.libs.in >> debian/control
+            else
+              rm debian/lib*.install
+            fi
+            sed "s/@MAJOR@/18/g" debian/changelog.in > debian/changelog
+            rm debian/control.in debian/control.libs.in debian/changelog.in
+        - uses: dpkg/bump@v1
           with:
-            conflicts: postgresql-common, postgresql-client-common, postgresql-client-18
-            depends:
-              - libcurl4t64
-              - libgssapi-krb5-2
-              - libicu76
-              - libldap2
-              - liblz4-1
-              - libnuma1
-              - libpam0g
-              - libreadline8t64
-              - libselinux1
-              - libssl3t64
-              - liburing2
-              - libuuid1
-              - libxml2
-              - libxslt1.1
-              - libzstd1
-              - llvm
-              - tzdata
-              - zlib1g
-            description: PostgreSQL object-relational database system
-            files:
-              - usr/bin
-              - usr/lib/postgresql/18
-            formats:
-              - deb
-            license: PostgreSQL
-            name: dhi-postgresql-18
-            rel: 1
-            url: https://www.postgresql.org/
-            version: 18.7
+            changelog:
+              - Use the Debian per-version install layout and /var/run/postgresql as the default socket directory
+              - Print a shorter initdb success message for container images
+              - Use less as the default psql pager
+            version: 18.7-2+dhi
+        - uses: dpkg/build@v1
+          environment:
+            DHI_PG_MAJOR: "18"
+          with:
+            args: -b -uc -us -d
       paths:
+        - type: directory
+          path: ${source.dir}/postgresql-18.7/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/postgres/debian-13/debian
         - type: file
           path: ${source.dir}/patch/initdb.patch
           uid: 0
