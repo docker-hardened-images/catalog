@@ -1,7 +1,15 @@
 #!/usr/bin/make -f
 
-SBOM_FILES := rust-upstream cargo-upstream rustfmt-upstream clippy-upstream
-SHIPPED_BINARIES := rustc rustdoc cargo cargo-fmt rustfmt cargo-clippy clippy-driver
+SBOM_FILES := rust-upstream cargo-upstream rustfmt-upstream clippy-upstream rust-analyzer-upstream \
+	rust-gdb-upstream rust-lldb-upstream rust-analyzer-cargo
+SHIPPED_BINARIES := rustc rustdoc cargo cargo-fmt rustfmt cargo-clippy clippy-driver rust-analyzer \
+	rust-gdb rust-gdbgui rust-lldb
+SHIPPED_RUSTLIB_BINARIES := llc llvm-ar llvm-link llvm-nm llvm-objdump opt self-contained/llvm-bitcode-linker
+SHIPPED_RUSTLIB_ETC := gdb_load_rust_pretty_printers.py gdb_lookup.py gdb_providers.py \
+	lldb_lookup.py lldb_providers.py rust_types.py
+
+# Files that the rustc package must not own: rust-gdb and rust-lldb install them (see debian/*.install).
+RUSTC_EXCLUDES := -X/rustlib/etc/gdb_ -X/rustlib/etc/lldb_
 
 %:
 	dh $@
@@ -17,10 +25,6 @@ override_dh_auto_install:
 	rm -rf \
 		debian/tmp/usr/share \
 		debian/tmp/etc \
-		debian/tmp/usr/bin/rust-gdb \
-		debian/tmp/usr/bin/rust-gdbgui \
-		debian/tmp/usr/bin/rust-lldb \
-		debian/tmp/usr/lib/rustlib/etc \
 		debian/tmp/usr/lib/rustlib/components
 	rm -f \
 		debian/tmp/usr/lib/rustlib/manifest-* \
@@ -30,17 +34,29 @@ override_dh_auto_install:
 	for bin in $(SHIPPED_BINARIES); do \
 		test -x "debian/tmp/usr/bin/$$bin"; \
 	done
+	test -x debian/tmp/usr/libexec/rust-analyzer-proc-macro-srv
+	for bin in $(SHIPPED_RUSTLIB_BINARIES); do \
+		test -x debian/tmp/usr/lib/rustlib/*/bin/$$bin; \
+	done
+	for file in $(SHIPPED_RUSTLIB_ETC); do \
+		test -f debian/tmp/usr/lib/rustlib/etc/$$file; \
+	done
 	mkdir -p debian/tmp/opt/docker/sbom
 	for sbom in $(SBOM_FILES); do \
 		cp -a "/opt/docker/sbom/$$sbom" debian/tmp/opt/docker/sbom/; \
 	done
 
+# rustc installs usr/lib/ wholesale, which includes files the other packages own.
+override_dh_install:
+	dh_install -prustc $(RUSTC_EXCLUDES)
+	dh_install -Nrustc
+
 override_dh_auto_test:
 
 override_dh_auto_clean:
 
-# rustfmt and clippy-driver link the private librustc_driver and libstd shared
-# libraries that ship in the rustc package; they have no shlibs entry.
+# rustfmt, clippy-driver and rust-analyzer link the private librustc_driver and libstd shared libraries that ship in
+# the rustc package; they have no shlibs entry.
 override_dh_shlibdeps:
 	dh_shlibdeps -- -l$(CURDIR)/debian/rustc/usr/lib --ignore-missing-info
 
