@@ -1,0 +1,218 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kapacitor
+variant: runtime
+tags:
+  - 1.8.9
+  - 1.8.9-r0
+  - 1.8.9-debian13
+  - 1.8.9-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BUILD_ENTITLEMENT: ""
+  CARGO_VERSION: 1.100.0-2
+  COMMIT_SHA: acdeb951399e424437df095eea22d71422df8dd0
+  GOLANG_VERSION: 1.26.11-18
+  PACKAGE_NAME: kapacitor-1
+  PACKAGE_SUFFIX: ""
+  REL: "0"
+  RUSTC_VERSION: 1.100.0-2
+  SEMVER_MAJOR_MINOR_VERSION: "1.8"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.8.9
+  VERSION: 1.8.9
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: kapacitor-1
+      work-dir: /go/src/github.com/influxdata/kapacitor
+      caches:
+        - path: /root/.cargo
+      contents:
+        packages:
+          - bash
+          - binutils
+          - ca-certificates-bundle
+          - cargo=1.100.0-2
+          - coreutils
+          - findutils
+          - gcc
+          - git
+          - golang-1.26=1.26.11-18
+          - golang-1.26-oci-config=1.26.11-18
+          - libc6-dev
+          - libcurl4t64
+          - libgcc-s1
+          - libsqlite3-0
+          - libssh2-1t64
+          - libssl3t64
+          - libstdc++6
+          - patch
+          - pkg-config
+          - rustc=1.100.0-2
+          - sed
+          - zlib1g
+        files:
+          - url: git+https://github.com/influxdata/kapacitor.git#v1.8.9
+            checksum: acdeb951399e424437df095eea22d71422df8dd0
+            path: /go/src/github.com/influxdata/kapacitor
+            spdx:
+              name: kapacitor
+              version: 1.8.9
+              packages:
+                - name: kapacitor
+                  purl: pkg:golang/github.com/influxdata/kapacitor@1.8.9
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update kapacitor go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.58.0
+              - golang.org/x/net@v0.62.0
+              - github.com/dvsekhvalnov/jose2go@v1.7.0
+              - github.com/eclipse/paho.mqtt.golang@v1.5.1
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - github.com/gorilla/websocket@v1.5.4-0.20240701034025-d67f41855da4
+              - github.com/klauspost/compress@v1.20.2
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - go.opentelemetry.io/otel/sdk@v1.47.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+              - google.golang.org/grpc@v1.83.2
+            download: true
+        - name: sync vendor directory
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go mod vendor
+        - name: patch flux-core strict warnings
+          runs: |
+            set -eux -o pipefail
+
+            flux_dir="$(go list -mod=mod -m -f '{{.Dir}}' github.com/influxdata/flux)"
+            chmod -R u+w "$flux_dir/libflux/flux-core"
+            patch -p1 -d "$flux_dir/libflux/flux-core" < ${source.dir}/patch/flux-core-strict-warnings.patch
+        - name: stage flux Cargo.lock for sbom
+          runs: |
+            set -eux -o pipefail
+
+            flux_dir="$(go list -mod=mod -m -f '{{.Dir}}' github.com/influxdata/flux)"
+            install -D -m 644 "$flux_dir/libflux/Cargo.lock" ${source.dir}/flux-libflux/Cargo.lock
+        - name: flux cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: flux-cargo
+            source: ${source.dir}/flux-libflux
+        - name: install pkg-config shim
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            go install github.com/influxdata/pkg-config
+        - name: go build
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            gobin="$(go env GOPATH)/bin"
+            case ":$PATH:" in
+              *":$gobin:"*) ;;
+              *) export PATH="$gobin:$PATH" ;;
+            esac
+            export CARGO=${source.dir}/helpers/bin/cargo-wrapper.sh
+
+            if [ "${target.fips}" = "true" ]; then
+              export GOFIPS140=v1.0.0
+            fi
+
+            GOLDFLAGS="-extldflags \"-fno-PIC -Wl,--allow-multiple-definition\"
+                      -X main.version=1.8.9
+                      -X main.branch=HEAD
+                      -X main.commit=acdeb951399e424437df095eea22d71422df8dd0
+                      -X main.platform=OSS"
+
+            TAGS="netgo osusergo"
+            if [ '${target.arch}' = 'arm64' ]; then
+              TAGS="$TAGS noasm"
+            fi
+
+            build() {
+              CGO_ENABLED=1 go build \
+                -o "${target.dir}/$1" \
+                -tags "$TAGS" \
+                -ldflags "$GOLDFLAGS" \
+                "$2"
+            }
+
+            build usr/bin/kapacitord ./cmd/kapacitord
+            build usr/bin/kapacitor-cli ./cmd/kapacitor
+            build usr/bin/tickfmt ./tick/cmd/tickfmt
+
+            install -D -m 644 etc/kapacitor/kapacitor.conf ${target.dir}/etc/kapacitor/kapacitor.conf
+        - name: collect sboms
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/flux-cargo "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libc6
+              - libgcc-s1
+            description: Kapacitor, a data processing engine for time series monitoring and alerting
+            files:
+              - usr/bin/kapacitord
+              - etc/kapacitor/kapacitor.conf
+              - opt/docker/sbom/flux-cargo
+            formats:
+              - deb
+            license: MIT
+            name: kapacitor-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - libc6
+                  - libgcc-s1
+                description: Kapacitor command line client
+                files:
+                  - path: usr/bin/kapacitor
+                    source: usr/bin/kapacitor-cli
+                name: kapacitor-cli-1
+              - description: TICKscript formatter
+                files:
+                  - path: usr/bin/tickfmt
+                name: kapacitor-tickfmt-1
+            url: https://github.com/influxdata/kapacitor
+            version: 1.8.9
+      paths:
+        - type: file
+          path: ${source.dir}/patch/flux-core-strict-warnings.patch
+          uid: 0
+          gid: 0
+          source: package/main/kapacitor/patch/flux-core-strict-warnings.patch
+        - type: file
+          path: ${source.dir}/helpers/bin/cargo-wrapper.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kapacitor/bin/cargo-wrapper.sh
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
