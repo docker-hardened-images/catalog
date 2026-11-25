@@ -1,0 +1,35 @@
+Subject: Install python-flake8 without the setuptools deb install scheme
+Origin: DHI-internal (DHI build harness)
+Description: Keep Debian's dist-packages, script, and shared-data destinations for python3-flake8 when the builder setuptools lacks the deb install layout.
+Base-Tree: debian python-flake8 7.1.1-3
+Verify: cmd `sh -c 'dpkg-deb -c python3-flake8_7.1.1-3+deb13u0+dhi0_all.deb | grep -q " ./usr/lib/python3/dist-packages/flake8/__init__.py" && ! dpkg-deb -c python3-flake8_7.1.1-3+deb13u0+dhi0_all.deb | grep -q " ./usr/local/" && echo clean'` expect "clean"
+Forwarded: not-needed (DHI build environment workaround only)
+Drop-When: never: no version of the dhi.io python3-setuptools is known to ship the deb install scheme (84.2.1-0 lacks it, although it sorts above Debian's 78.1.1-0.1); drop this patch once the builder's python3-setuptools provides it
+
+Debian's pybuild install step (dh_auto_install) passes --install-layout=deb to setup.py install through the ~/.pydistutils.cfg it generates. That option needs the deb scheme from Debian's patched python3-setuptools, but the DHI hermetic builder ships setuptools 84.x without it, so the install step fails with KeyError 'deb_system'. This patch runs setup.py install directly with the same destinations explicitly: modules remain under /usr/lib/python3/dist-packages, scripts remain under /usr/bin, and shared data remains under /usr instead of falling back to /usr/local.
+
+The upstream test run after the install step also needs flake8's distribution metadata (entry points for the pyflakes, pycodestyle and formatter plugins). pybuild's build directory has none, so the test run sets PYTHONPATH to the staged dist-packages that contains flake8-7.1.1-py3.13.egg-info. Without it, 28 tests fail with empty reporter and plugin registries.
+
+--- a/debian/rules
++++ b/debian/rules
+@@ -9,13 +9,18 @@
+ override_dh_auto_test:
+ 
+ override_dh_auto_install:
+-	dh_auto_install
++	python3 setup.py install --root=$(CURDIR)/debian/python3-flake8 --prefix=/usr \
++		--install-purelib=/usr/lib/python3/dist-packages --install-platlib=/usr/lib/python3/dist-packages \
++		--install-scripts=/usr/bin \
++		--install-data=/usr
+ 
+ 	mkdir -p debian/flake8/usr
+ 	mv $(CURDIR)/debian/python3-flake8/usr/bin $(CURDIR)/debian/flake8/usr/
+ 	# run tests after install: plugin needs to get registered by setup.py/entry_points
+ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+-	dh_auto_test
++	# flake8 discovers its checkers and formatters via its distribution metadata (entry points); the build
++	# directory has none, so point the test run at the staged dist-packages that holds flake8's egg-info.
++	PYTHONPATH=$(CURDIR)/debian/python3-flake8/usr/lib/python3/dist-packages dh_auto_test
+ endif
+ 
+ override_dh_installchangelogs:
