@@ -1,0 +1,144 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-bullet
+variant: runtime
+tags:
+  - 3.24-dfsg-2.1-deb13u0-dhi0
+  - 3.24-dfsg-2.1-deb13u0-dhi0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  DEBIAN_DEBIAN_CHECKSUM: sha256:63817b931cb1ea65e7b4c4aac79b0927ad4ad32bb15b2d45a2d7224f86e48159
+  DEBIAN_DEBIAN_FILENAME: bullet_3.24+dfsg-2.1.debian.tar.xz
+  DEBIAN_DEBIAN_URL: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg-2.1.debian.tar.xz
+  DEBIAN_DSC_CHECKSUM: sha256:9d346f36c880908e124153b4457cb0a967e54dbdfc6f8e1ad3ed441f133050dd
+  DEBIAN_DSC_FILENAME: bullet_3.24+dfsg-2.1.dsc
+  DEBIAN_DSC_URL: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg-2.1.dsc
+  DEBIAN_FILENAME_VERSION: 3.24+dfsg-2.1
+  DEBIAN_ORIG_CHECKSUM: sha256:43c1edae2024ba18bb5d7bfd3bb2394b066a79151a29789504a2d8efcdc333d7
+  DEBIAN_ORIG_FILENAME: bullet_3.24+dfsg.orig.tar.xz
+  DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg.orig.tar.xz
+  DEBIAN_VERSION: 3.24+dfsg-2.1
+  DHI_REL: "0"
+  DHI_VERSION: 3.24+dfsg-2.1+deb13u0+dhi0
+  TAG_VERSION: 3.24-dfsg-2.1-deb13u0-dhi0
+  UPSTREAM_VERSION: 3.24+dfsg
+contents:
+  packages:
+    - '!base-files'
+  builds:
+    - name: bullet deb
+      work-dir: ${source.dir}/bullet
+      contents:
+        packages:
+          - build-essential
+          - cmake
+          - debhelper
+          - dpkg-dev
+          - doxygen
+          - graphviz
+          - libtinyxml2-dev
+          - rdfind
+          - symlinks
+        files:
+          - url: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg-2.1.dsc
+            checksum: sha256:9d346f36c880908e124153b4457cb0a967e54dbdfc6f8e1ad3ed441f133050dd
+            path: ${source.dir}/bullet_3.24+dfsg-2.1.dsc
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg.orig.tar.xz
+            checksum: sha256:43c1edae2024ba18bb5d7bfd3bb2394b066a79151a29789504a2d8efcdc333d7
+            path: ${source.dir}/bullet_3.24+dfsg.orig.tar.xz
+            uid: 0
+            gid: 0
+          - url: https://deb.debian.org/debian/pool/main/b/bullet/bullet_3.24+dfsg-2.1.debian.tar.xz
+            checksum: sha256:63817b931cb1ea65e7b4c4aac79b0927ad4ad32bb15b2d45a2d7224f86e48159
+            path: ${source.dir}/bullet_3.24+dfsg-2.1.debian.tar.xz
+            uid: 0
+            gid: 0
+      pipeline:
+        - uses: dpkg/source@v1
+          work-dir: ${source.dir}
+          with:
+            file: bullet_3.24+dfsg-2.1.dsc
+            path: bullet
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Rebuild
+            version: 3.24+dfsg-2.1+deb13u0+dhi0
+        - name: copy source for upstream unit tests
+          work-dir: ${source.dir}
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf /tmp/bullet-check
+            cp -a bullet /tmp/bullet-check
+        - name: prune CI copy to upstream targets with sources present
+          work-dir: /tmp/bullet-check
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/SUBDIRS(  InverseDynamics SharedMemory )/SUBDIRS(  InverseDynamics )/' test/CMakeLists.txt
+            sed -i '/^SUBDIRS(pendulum )$/d' test/BulletDynamics/CMakeLists.txt
+            sed -i '/ADD_EXECUTABLE(Test_BulletInverseForwardDynamics/,/ENDIF(INTERNAL_ADD_POSTFIX_EXECUTABLE_NAMES)/d' test/InverseDynamics/CMakeLists.txt
+            grep -qF 'SUBDIRS(  InverseDynamics )' test/CMakeLists.txt
+            ! grep -qF 'SharedMemory' test/CMakeLists.txt
+            ! grep -qF 'pendulum' test/BulletDynamics/CMakeLists.txt
+            ! grep -qF 'Test_BulletInverseForwardDynamics' test/InverseDynamics/CMakeLists.txt
+            test ! -e examples
+        - name: drop float64 library suffix in CI copy
+          work-dir: /tmp/bullet-check
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/set( lib_type_suffix "-float64" )/set( lib_type_suffix "" )/' CMakeLists.txt
+            ! grep -qF '"-float64"' CMakeLists.txt
+            grep -qF 'set( lib_type_suffix "" )' CMakeLists.txt
+        - name: upstream unit tests CTest
+          work-dir: /tmp/bullet-check
+          runs: |
+            set -eux -o pipefail
+
+            for variant in float32:off float64:on; do
+              name="${variant%%:*}"
+              precision="${variant##*:}"
+              cmake -S . -B "build-${name}" \
+                -DUSE_DOUBLE_PRECISION="${precision}" \
+                -DBUILD_SHARED_LIBS=on \
+                -DBUILD_EXTRAS=on \
+                -DBUILD_BULLET2_DEMOS=off \
+                -DBUILD_OPENGL3_DEMOS=off \
+                -DBUILD_CPU_DEMOS=off \
+                -DBUILD_UNIT_TESTS=ON \
+                -DBUILD_BULLET_ROBOTICS_GUI_EXTRA=OFF \
+                -DBUILD_BULLET_ROBOTICS_EXTRA=OFF \
+                -DBUILD_OBJ2SDF_EXTRA=OFF \
+                -DCMAKE_BUILD_TYPE=RelWithDebInfo > "configure-${name}.log" 2>&1 || {
+                tail -n 80 "configure-${name}.log"
+                exit 1
+              }
+              cmake --build "build-${name}" -j"$(nproc)" > "make-${name}.log" 2>&1 || {
+                tail -n 120 "make-${name}.log"
+                exit 1
+              }
+              ctest --test-dir "build-${name}" --output-on-failure > "ctest-${name}.log" 2>&1 || {
+                ctest --test-dir "build-${name}" --rerun-failed --output-on-failure || true
+                tail -n 40 "ctest-${name}.log"
+                exit 1
+              }
+              tail -n 5 "ctest-${name}.log"
+              grep -q "100% tests passed, 0 tests failed out of 4" "ctest-${name}.log"
+            done
+        - uses: dpkg/build@v1
+          with:
+            args: -uc -us -d
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
