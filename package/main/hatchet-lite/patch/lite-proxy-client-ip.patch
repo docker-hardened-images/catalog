@@ -1,0 +1,32 @@
+Subject: Derive Lite proxy client identity from the connection peer
+Origin: backport, https://github.com/hatchet-dev/hatchet/commit/f442a4dfcdbe057fe01dbc47b8d3ea6aec0384b6
+CVE: CVE-2026-118653
+Base-Tree: git https://github.com/hatchet-dev/hatchet.git c8fe0f2ecdd6294209d28cd3d4fdcdf7f070d747
+Adaptation: Retain the upstream main.go change with shifted hunk context; omit the unrelated configuration documentation update.
+Verify: cmd `go test ./package/main/hatchet-lite/tests -run TestLiteRejectsSpoofedClientIP -count=1` expect "ok"
+Drop-When: upstream >= 0.120.24
+
+Lite proxies API requests through localhost, which the API explicitly trusts. Remove the client's X-Real-IP and set forwarded identity from the connection peer so rotating spoofed addresses cannot obtain fresh login rate-limit buckets.
+
+--- a/cmd/hatchet-lite/main.go
++++ b/cmd/hatchet-lite/main.go
+@@ -184,12 +184,19 @@ func start(cf *loader.ConfigLoader, interruptCh <-chan interface{}, version stri
+ 		Addr:              fmt.Sprintf(":%s", runtimePort),
+ 		ReadHeaderTimeout: 5 * time.Second,
+ 		Handler: &httputil.ReverseProxy{
++			// The API rate-limits by client IP, which it reads from X-Forwarded-For. Set that header to
++			// the address of whoever connected to hatchet-lite and drop any X-Forwarded-For or X-Real-IP
++			// the client sent, so a client cannot choose its own IP. Behind a load balancer, every
++			// connection comes from the balancer, so all clients share one IP.
+ 			Rewrite: func(r *httputil.ProxyRequest) {
+ 				if strings.HasPrefix(r.In.URL.Path, "/api") {
+ 					r.SetURL(apiURL)
+ 				} else {
+ 					r.SetURL(feURL)
+ 				}
++
++				r.Out.Header.Del("X-Real-Ip")
++				r.SetXForwarded()
+ 			},
+ 		},
+ 	}

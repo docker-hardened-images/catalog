@@ -4,7 +4,7 @@ image: dhi.io/pkg-hatchet-lite
 variant: runtime
 tags:
   - 0.120.0-alpine3.24
-  - 0.120.0-r4-alpine3.24
+  - 0.120.0-r5-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
@@ -16,7 +16,7 @@ vars:
   NODEJS_VERSION: 24.22.3-r0
   PACKAGE_NAME: hatchet-lite
   PNPM_VERSION: 10.16.1
-  REL: "4"
+  REL: "5"
   SEMVER_MAJOR_MINOR_VERSION: "0.120"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.120.0
@@ -68,6 +68,12 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: fix Lite proxy client identity
+          uses: patch@v1
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/lite-proxy-client-ip.patch
         - name: generate docs index
           work-dir: /go/src/github.com/hatchet-dev/hatchet/frontend/snippets
           runs: |
@@ -106,8 +112,16 @@ contents:
               - google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
               - github.com/andybalholm/brotli@v1.2.7
               - github.com/klauspost/compress@v1.20.2
+              - github.com/labstack/echo/v4@v4.16.3
             download: true
             tidy: true
+        - name: test echo client IP security
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test -count=1 -v \
+              github.com/labstack/echo/v4 github.com/labstack/echo/v4/middleware \
+              -run 'Test(ContextRealIP|ClientIP|ProxyClientIP)'
         - name: test
           runs: |
             set -eux -o pipefail
@@ -115,7 +129,9 @@ contents:
             CGO_ENABLED=0 go test -short -count=1 -v \
               ./cmd/hatchet-lite/... \
               ./cmd/hatchet-admin/... \
-              ./cmd/hatchet-migrate/...
+              ./cmd/hatchet-migrate/... \
+              ./api/v1/server/run/... \
+              ./api/v1/server/middleware/...
         - name: build hatchet-lite
           uses: go/build@v1
           with:
@@ -180,7 +196,7 @@ contents:
               - usr/share/hatchet-lite/static-assets
             license: MIT
             name: hatchet-lite
-            rel: 4
+            rel: 5
             subpackages:
               - files:
                   - path: usr/bin/hatchet-lite
@@ -193,6 +209,12 @@ contents:
             url: https://hatchet.run/
             version: 0.120.0
       paths:
+        - type: file
+          path: ${source.dir}/patch/lite-proxy-client-ip.patch
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/hatchet-lite/patch/lite-proxy-client-ip.patch
         - type: file
           path: ${target.dir}/usr/bin/docker-entrypoint.sh
           uid: 0
