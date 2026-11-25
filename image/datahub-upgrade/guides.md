@@ -14,7 +14,7 @@ For the examples, you must first use `docker login dhi.io` to authenticate to th
 
 The DataHub Upgrade image is a run-to-completion batch container that applies schema migrations, rebuilds search and
 graph indices, and emits upgrade readiness signals for a running DataHub deployment. It packages the
-`datahub-upgrade.jar` Spring Boot application (Java 21). The entrypoint waits for upstream datastores before the JVM
+`datahub-upgrade.jar` Spring Boot application (Java 25). The entrypoint waits for upstream datastores before the JVM
 starts, and the image also ships a `kubectl` binary for Kubernetes-side operations and opt-in OpenTelemetry and JMX
 Prometheus Java agents.
 
@@ -192,7 +192,7 @@ services:
 
 The FIPS variant (`dhi.io/datahub-upgrade:<tag>-fips`) enables FIPS 140-validated cryptography for the Java workload:
 
-- The image installs the FIPS-validated Temurin JRE from the `eclipse-temurin-21-jre-fips` Debian package.
+- The image installs the FIPS-validated Temurin JRE from the `eclipse-temurin-25-jre-fips` Debian package.
 - BouncyCastle FIPS jars (`bc-fips`, `bctls-fips`, `bcutil-fips`, `bcpkix-fips`, `bc-rng-jent`) are provided through
   stable links under `/usr/lib/bouncycastle/current/` and wired in at JVM bootstrap via
   `JDK_JAVA_OPTIONS=@/datahub/datahub-upgrade/scripts/datahub-fips.properties`. The properties file prepends the

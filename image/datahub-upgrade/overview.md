@@ -33,7 +33,7 @@ Full job reference: https://docs.datahub.com
 
 ## Bundled tools
 
-In addition to the `datahub-upgrade.jar` Spring Boot application (Java 21), the image ships:
+In addition to the `datahub-upgrade.jar` Spring Boot application (Java 25), the image ships:
 
 - **`kubectl`** — Kubernetes CLI, used by some upgrade jobs that perform Kubernetes-side operations during migration.
 - **OpenTelemetry Java agent** — bundled at `/datahub/datahub-upgrade/lib/opentelemetry-javaagent.jar`. Activated by
