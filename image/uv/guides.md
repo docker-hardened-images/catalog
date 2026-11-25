@@ -1,4 +1,4 @@
-## Prerequisites
+## How to use this image
 
 All examples in this guide use the public image. If you’ve mirrored the repository for your own use (for example, to
 your Docker Hub namespace), update your commands to reference the mirrored image instead of the public one.
@@ -10,93 +10,97 @@ For example:
 
 For the examples, you must first use `docker login dhi.io` to authenticate to the registry to pull the images.
 
-## Start a uv instance
+### What's included in this uv image
 
 This image includes uv tools you can invoke directly:
 
 - `uv` - The main uv command-line tool
-- `uvx` - Run Python tools and scripts
+- `uvx` - Run Python tools and scripts. It is the same as `uv tool run`.
 
-The following example shows how to run `uv --help` in a Docker container. You can use this pattern to run any of the uv
-tools included in this image.
+You can run or copy the tools from `/usr/local/bin/uv` and `/usr/local/bin/uvx`. The image also has them at `/uv` and
+`/uvx`, the paths of the upstream image. In the Debian 13 and Alpine tags, these paths are links to `/usr/bin/uv` and
+`/usr/bin/uvx`. Copy the files by name, not the whole directory. With `docker cp`, add `-L`. This way you get the files
+and not the links.
+
+## Start a uv instance
+
+This image comes in Debian and Alpine variants. Tags without a distribution name use Debian 13. Alpine tags include
+`alpine`, for example `0-alpine` or `0-alpine-fips`.
+
+The entrypoint of this image is `uv`. Pass the uv arguments to `docker run` and leave out the `uv` command name. The
+following example shows how to run `uv --help` in a Docker container.
 
 Run the following command.
 
 ```
-docker run --rm dhi.io/uv:<tag> uv --help
+docker run --rm dhi.io/uv:<tag> --help
 ```
 
 ## Common uv use cases
 
+The working directory of the image is `/io`. The examples mount the current directory there. The runtime variants run as
+UID 65532 by default. `--user "$(id -u):$(id -g)"` runs uv as your user, so uv can write to the mount and the files it
+creates belong to you. `-e HOME=/tmp` gives uv a writable cache directory in the container.
+
+The image does not include Python. When a command needs Python, uv downloads a managed Python build, so the container
+needs network access. uv also needs `git` for `git+` dependencies. Only the dev variants include `git`.
+
 ### Initialize a new Python project
 
-Create a new Python project with uv:
+Create a new Python project in the current directory. Run it in an empty directory. The next examples use the same
+directory:
 
 ```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uv init my-project
+docker run --rm -v "$PWD:/io" --user "$(id -u):$(id -g)" -e HOME=/tmp dhi.io/uv:<tag> init --name my-project
 ```
 
-### Install dependencies
+### Add a dependency
 
-Use uv to install Python packages in your project:
-
-```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uv add requests pandas
-```
-
-### Create and manage virtual environments
-
-Create a virtual environment for your Python project:
+Add `requests` to the project. `--no-sync` writes `pyproject.toml` and `uv.lock` without creating a virtual environment:
 
 ```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uv venv
+docker run --rm -v "$PWD:/io" --user "$(id -u):$(id -g)" -e HOME=/tmp dhi.io/uv:<tag> add --no-sync requests
 ```
 
-### Run Python scripts
+A virtual environment that a `--rm` container creates links to a Python inside that container. The link breaks when the
+container is removed. Create the environment in a Dockerfile instead, as shown in the multi-stage example.
 
-Execute Python scripts using uvx:
+### Check the lockfile
 
-```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uvx ruff check .
-```
-
-### Install Python tools
-
-Install and run Python tools without creating a virtual environment:
+Check that `uv.lock` is up to date with `pyproject.toml`:
 
 ```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uv tool install ruff
+docker run --rm -v "$PWD:/io" --user "$(id -u):$(id -g)" -e HOME=/tmp dhi.io/uv:<tag> lock --check
 ```
 
-### Sync dependencies from lockfile
+### Export the lockfile as a requirements file
 
-Synchronize your environment with a lockfile for reproducible builds:
+Write the locked dependencies of your project to `requirements.txt`. With `--frozen`, uv reads `uv.lock` as it is and
+does not update it:
 
 ```
-docker run --rm -it \
-  -v "$PWD:/workspace:rw" \
-  dhi.io/uv:<tag> \
-  uv sync
+docker run --rm -v "$PWD:/io" --user "$(id -u):$(id -g)" -e HOME=/tmp dhi.io/uv:<tag> export --frozen --no-hashes > requirements.txt
+```
+
+### Run a Python tool without installing it
+
+Run ruff on the project without installing it. `uv tool run` is the same as `uvx`:
+
+```
+docker run --rm -v "$PWD:/io" --user "$(id -u):$(id -g)" -e HOME=/tmp dhi.io/uv:<tag> tool run ruff check .
 ```
 
 ### Use in a multi-stage Dockerfile
 
-Use the uv image to manage Python dependencies in your application's Dockerfile:
+Use the uv image to manage Python dependencies in your application's Dockerfile. The uv binary in this image links to
+the C library of its distribution. Copy it from a tag of the same distribution release as your build image. For example,
+copy a Debian 13 tag (a tag with no distribution name, or a tag with `-debian` or `-debian13`) into a Debian 13 image, a
+`-debian12` tag into a Debian 12 image, and an Alpine 3.24 tag into an Alpine 3.24 image. An Alpine image also needs the
+`libgcc` and `zstd-libs` packages.
+
+The following Dockerfile builds the project that the `init` example creates. It installs the dependencies first, so
+Docker can reuse that layer when only your code changes. Use a Python tag that meets the `requires-python` value in
+`pyproject.toml`.
 
 ```dockerfile
 FROM dhi.io/python:<tag>-dev AS builder
@@ -104,32 +108,37 @@ FROM dhi.io/python:<tag>-dev AS builder
 COPY --from=dhi.io/uv:<tag> /usr/local/bin/uv \
     /usr/local/bin/uvx /usr/local/bin/
 
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev --no-install-project
+COPY . .
+RUN uv sync --frozen --no-dev
 
 FROM dhi.io/python:<tag>
 
 WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
-COPY . .
+COPY --from=builder /app /app
 
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["python", "main.py"]
+CMD ["my-project"]
 ```
 
 ## Non-hardened images vs Docker Hardened Images
 
 ### Key differences
 
-| Feature         | Non-hardened uv                     | Docker Hardened uv                                  |
-| --------------- | ----------------------------------- | --------------------------------------------------- |
-| Security        | Standard base with common utilities | Minimal, hardened base with security patches        |
-| Shell access    | Full shell (bash/sh) available      | No shell in runtime variants                        |
-| Package manager | apt/apk available                   | No package manager in runtime variants              |
-| User            | Runs as root by default             | Runs as nonroot user                                |
-| Attack surface  | Larger due to additional utilities  | Minimal, only essential components                  |
-| Debugging       | Traditional shell debugging         | Use Docker Debug or Image Mount for troubleshooting |
+| Feature         | Non-hardened uv                      | Docker Hardened uv                                                                                  |
+| --------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Security        | Standard base with common utilities  | Minimal, hardened base with security patches                                                        |
+| Shell access    | Full shell (bash/sh) available       | No shell in runtime variants                                                                        |
+| Package manager | apt/apk available                    | No package manager in runtime variants                                                              |
+| User            | Runs as root by default              | Runs as nonroot user                                                                                |
+| Binary linking  | Static binary that runs on any Linux | Linked to the C library of its distribution. Copy it into an image of the same distribution release |
+| FIPS            | No FIPS variant                      | FIPS variants run uv's TLS through the OpenSSL FIPS provider. See FIPS variants                     |
+| Attack surface  | Larger due to additional utilities   | Minimal, only essential components                                                                  |
+| Debugging       | Traditional shell debugging          | Use Docker Debug or Image Mount for troubleshooting                                                 |
 
 ### Why no shell or package manager?
 
@@ -155,13 +164,19 @@ For example, you can use Docker Debug:
 docker debug <container-name>
 ```
 
-or mount debugging tools with the Image Mount feature:
+or mount debugging tools with the Image Mount feature. The busybox shell links point to paths outside the mount, so
+start the `busybox` binary itself and pass `sh`. Pull the busybox image first, because Docker does not pull a mount
+source for you. This example joins a running container named `my-uv` that uses a Debian tag:
 
 ```
+docker pull dhi.io/busybox:1
 docker run --rm -it --pid container:my-uv \
-  --mount=type=image,source=dhi.io/busybox,destination=/dbg,ro \
-  dhi.io/uv:<tag> /dbg/bin/sh
+  --mount=type=image,source=dhi.io/busybox:1,destination=/dbg,ro \
+  --entrypoint /dbg/usr/bin/busybox \
+  dhi.io/uv:<tag> sh
 ```
+
+For an Alpine tag, mount `dhi.io/busybox:1-alpine3.24` and use `--entrypoint /dbg/bin/busybox`.
 
 ## Image variants
 
@@ -185,10 +200,12 @@ multi-stage Dockerfile. These images typically:
 
 FIPS variants include `fips` in the variant name and tag. They come in both runtime and build-time variants. These
 variants use cryptographic modules that have been validated under FIPS 140, a U.S. government standard for secure
-cryptographic operations.
+cryptographic operations. For example, usage of MD5 fails in FIPS variants.
 
-For example, usage of MD5 fails in FIPS variants. To verify FIPS compliance, check the cryptographic module version in
-use by your uv instance.
+In the FIPS variants, uv uses OpenSSL for its HTTPS connections. Its TLS runs through the OpenSSL FIPS provider and
+offers only FIPS-approved ciphers, so a server that supports only ChaCha20-Poly1305 fails to connect. uv still checks
+package hashes, MD5 included, in its own Rust code outside the FIPS module. So does the request signing it uses for S3,
+GCS and Azure storage endpoints. Python builds and wheels that uv downloads are not part of this image.
 
 ## Migrate to a Docker Hardened Image
 
@@ -237,7 +254,7 @@ The following steps outline the general migration process.
    For Alpine-based images, you can use apk to install packages. For Debian-based images, you can use apt-get to install
    packages.
 
-## Troubleshoot migration
+## Troubleshooting migration
 
 ### General debugging
 
