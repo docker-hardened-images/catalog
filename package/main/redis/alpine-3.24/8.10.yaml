@@ -1,0 +1,270 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-redis-upstream
+variant: runtime
+tags:
+  - 8.10.3-alpine3.24
+  - 8.10.3-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-07-29"
+vars:
+  ARCH: '#{ target.arch == "amd64" ? "x86_64" : "aarch64" }'
+  COMMIT_SHA: 1a2574ce1551d3de6e0b4a56756c0fdbc6659e4f
+  PACKAGE_NAME: redis-8.10
+  REDIS_FULL_ASSET: redis-full.tar.gz
+  REDIS_FULL_CHECKSUM: sha256:5e0c00ed77f789fb1a4a30f1fbb58a793cc88c41c0f11f0e38e1b4f192991188
+  REDIS_LICENSE: AGPL-3.0-only
+  REDISBLOOM_VERSION: 8.10.1
+  REDISEARCH_VERSION: 8.10.1
+  REDISJSON_VERSION: 8.10.0
+  REDISTIMESERIES_VERSION: 8.10.1
+  REL: "0"
+  RUST_SHA: '#{ target.arch == "amd64" ? "sha256:9a358120ce1491a4d5b7f71a41e4e97b380b5db5d4ec31f7110f5b3090bd3d55" : "sha256:008b3f0fc4175c956ecbfa4e0c48865ec3f953741b2926e75e8ded7e3adfdb19" }'
+  RUST_VERSION: 1.94.0
+  SEMVER_MAJOR_MINOR_VERSION: "8.10"
+  SEMVER_MAJOR_VERSION: "8"
+  SEMVER_VERSION: 8.10.3
+  VERSION: 8.10.3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: redis
+      work-dir: ${source.dir}/redis
+      caches:
+        - path: /root/.cargo
+        - path: /root/.cache/pip
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - bash
+          - bsd-compat-headers
+          - build-base
+          - ca-certificates
+          - cargo
+          - clang21
+          - clang21-libclang
+          - clang21-static
+          - cmake
+          - coreutils
+          - curl
+          - git
+          - which
+          - grep
+          - libffi-dev
+          - libgcc
+          - libtool
+          - linux-headers
+          - lld21
+          - llvm21-dev
+          - ncurses-dev
+          - openssh
+          - openssl
+          - openssl-dev
+          - pkgconf
+          - py3.14-cryptography
+          - py3.14-pip
+          - py3.14-setuptools
+          - py3.14-virtualenv
+          - python-3.14
+          - python-3.14-dev
+          - rsync
+          - sed
+          - tar
+          - unzip
+          - xsimd
+          - xz
+        files:
+          - url: https://github.com/redis/redis/releases/download/8.10.3/redis-full.tar.gz
+            checksum: sha256:5e0c00ed77f789fb1a4a30f1fbb58a793cc88c41c0f11f0e38e1b4f192991188
+            path: ${source.dir}/redis/redis-full.tar.gz
+            spdx:
+              name: redis
+              version: 8.10.3
+              packages:
+                - name: redis
+                  purl: pkg:github/redis/redis@8.10.3
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+          - url: https://static.rust-lang.org/dist/rust-1.94.0-${ARCH}-unknown-linux-musl.tar.xz
+            checksum: ${RUST_SHA}
+            path: ${source.dir}/rust
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract full Redis source
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf redis-full.tar.gz --strip-components=1
+            rm redis-full.tar.gz
+        - name: bump python dependencies
+          uses: python/bump@v1
+          work-dir: ${source.dir}
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/python-bumps.json
+            hashes: require
+            mode: requirements
+            python: /usr/bin/python3.14
+            requirements: requirements-ramp-packer-lock.txt
+            verify: none
+        - name: install ramp-packer
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            PIP_BREAK_SYSTEM_PACKAGES=1 pip install -q --require-hashes -r '${source.dir}/requirements-ramp-packer-lock.txt'
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            if [ ${target.arch} = arm64 ]; then
+              jemallocFlags="--build=aarch64-alpine-linux-musl --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-alpine-linux-musl --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' '${source.dir}/redis/deps/Makefile'
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' '${source.dir}/redis/deps/Makefile'
+            grep -F "cd jemalloc && ./configure $jemallocFlags " '${source.dir}/redis/deps/Makefile'
+        - name: patch redisjson rust flags
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/^RUST_FLAGS=$/RUST_FLAGS += -C target-feature=-crt-static/' \
+              '${source.dir}/redis/modules/redisjson/src/Makefile'
+            grep -E 'RUST_FLAGS' '${source.dir}/redis/modules/redisjson/src/Makefile'
+        - name: install rust
+          work-dir: ${source.dir}/rust/rust-1.94.0-${ARCH}-unknown-linux-musl
+          runs: |
+            set -eux -o pipefail
+
+            ./install.sh
+        - name: patch config
+          runs: |
+            set -eux -o pipefail
+
+            echo 'include /etc/redis/conf.d/*.conf' >> '${source.dir}/redis/redis.conf'
+        - name: build and install
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export BUILD_TLS=yes
+            export RUST_DYN_CRT=1
+            export PATH="/usr/lib/llvm21/bin:$PATH"
+            export DISABLE_WERRORS=yes
+
+            make sync-redis-conf ASSUME_BUILT=1 IGNORE_MISSING_DEPS=1
+            make deploy -j"$(nproc)" PREFIX=/usr DESTDIR='${target.dir}' IGNORE_MISSING_DEPS=1
+            sed -i 's!${target.dir}/usr/!/usr/!g' redis.conf redis-full.conf
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisbloom
+            purl: pkg:github/redisbloom/redisbloom@v8.10.1
+            version: 8.10.1
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisearch
+            purl: pkg:github/redisearch/redisearch@v8.10.1
+            version: 8.10.1
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisjson
+            purl: pkg:github/redisjson/redisjson@v8.10.0
+            version: 8.10.0
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redistimeseries
+            purl: pkg:github/redistimeseries/redistimeseries@v8.10.1
+            version: 8.10.1
+        - name: stage config
+          runs: |
+            set -eux -o pipefail
+
+            install -d "${target.dir}/etc/redis"
+            install -m 0644 '${source.dir}/redis/redis.conf' "${target.dir}/etc/redis/redis.conf"
+            install -m 0644 '${source.dir}/redis/redis-full.conf' "${target.dir}/etc/redis/redis-full.conf"
+            ! grep -q '^loadmodule \./' "${target.dir}/etc/redis/redis-full.conf"
+            grep -q '^loadmodule /usr/lib/redis/modules/' "${target.dir}/etc/redis/redis-full.conf"
+            for so in $(sed -n 's!^loadmodule /usr/lib/redis/modules/!!p' "${target.dir}/etc/redis/redis-full.conf"); do
+              test -f "${target.dir}/usr/lib/redis/modules/$so"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - libcrypto3
+              - libgcc
+              - libssl3
+              - libstdc++
+              - musl
+            description: Redis server with its bundled modules
+            files:
+              - usr/bin/redis-server
+              - usr/bin/redis-check-rdb
+              - usr/bin/redis-check-aof
+              - usr/lib/redis/modules
+              - etc/redis/redis.conf
+              - etc/redis/redis-full.conf
+            formats:
+              - apk
+            license: AGPL-3.0-only
+            name: redis-8.10-server
+            rel: 0
+            subpackages:
+              - depends:
+                  - libcrypto3
+                  - libssl3
+                  - musl
+                description: Redis command-line client and benchmark
+                files:
+                  - usr/bin/redis-cli
+                  - usr/bin/redis-benchmark
+                name: redis-8.10-tools
+              - depends:
+                  - redis-8.10-server
+                description: Redis high availability monitor
+                files:
+                  - usr/bin/redis-sentinel
+                name: redis-8.10-sentinel
+            url: https://redis.io
+            version: 8.10.3
+      paths:
+        - type: file
+          path: ${source.dir}/requirements-ramp-packer-lock.in
+          uid: 0
+          gid: 0
+          source: package/main/redis/requirements-ramp-packer-lock.in
+        - type: file
+          path: ${source.dir}/requirements-ramp-packer-lock.txt
+          uid: 0
+          gid: 0
+          source: package/main/redis/requirements-ramp-packer-lock.txt
+        - type: file
+          path: ${source.dir}/patch/python-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/redis/patch/python-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
