@@ -63,12 +63,15 @@ contents:
         - path: /root/.cache/pip
         - path: /root/.cargo
       contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
         packages:
           - base-files
           - build-essential
           - pkg-config
-          - postgresql-common
-          - postgresql-server-dev-all
+          - libpq-dev
           - python-3.14
           - python-3.14-dev
           - python3-pip
@@ -125,7 +128,14 @@ contents:
           runs: |
             set -eux -o pipefail
 
-            "/app/.venv/bin/python3" -m pip install --no-cache-dir "cryptography>=50.0.0" # CVE-2026-69247
+            "/app/.venv/bin/python3" -m pip install --no-binary=cryptography --no-cache-dir "cryptography>=50.0.0" # CVE-2026-69247
+
+            # The cryptography wheels statically bundle their own OpenSSL, which would bypass the
+            # system (FIPS) OpenSSL. Fail the build unless the source build links the system libraries.
+            so=$(find /app/.venv -path '*/cryptography/hazmat/bindings/_rust*.so')
+            test -n "$so"
+            readelf -d "$so" | grep -E 'NEEDED.*\[libssl\.so\.3\]'
+            readelf -d "$so" | grep -E 'NEEDED.*\[libcrypto\.so\.3\]'
       outputs:
         - source: /app/.venv
           target: /app/.venv
