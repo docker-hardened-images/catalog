@@ -4,9 +4,9 @@ image: dhi.io/pkg-grobid
 variant: runtime
 tags:
   - 0.9.1
-  - 0.9.1-r10
+  - 0.9.1-r11
   - 0.9.1-debian13
-  - 0.9.1-r10-debian13
+  - 0.9.1-r11-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -21,10 +21,12 @@ vars:
   GNU_TRIPLE: '#{ target.arch == "amd64" ? "x86-64-linux-gnu" : "aarch64-linux-gnu" }'
   GRADLE_VERSION: 9.9.1-2
   JDK_VERSION: 1:21.0.13.1+2-0
+  OTEL_API_VERSION: 1.67.0
+  OTEL_CONTEXT_VERSION: 1.67.0
   PACKAGE_NAME: grobid-0
   PDFALTO_COMMIT_SHA: c830572fc1e9e8c55e796307ff441e56db895827
   PDFALTO_VERSION: v0.6.2
-  REL: "10"
+  REL: "11"
   SEMVER_MAJOR_MINOR_VERSION: "0.9"
   SEMVER_MAJOR_VERSION: "0"
   SEMVER_VERSION: 0.9.1
@@ -196,6 +198,30 @@ contents:
                 - name: crfpp
                   purl: pkg:github/taku910/crfpp@c603ea6fc2cc8e5317d2754971bc787da383f7e5
                   license: LGPL-2.1-only OR BSD-3-Clause
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar
+            checksum: sha256:538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+            path: ${source.dir}/opentelemetry-api-1.67.0.jar
+            spdx:
+              name: opentelemetry-api
+              version: 1.67.0
+              packages:
+                - name: opentelemetry-api
+                  purl: pkg:maven/io.opentelemetry/opentelemetry-api@1.67.0
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-context/1.67.0/opentelemetry-context-1.67.0.jar
+            checksum: sha256:40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e
+            path: ${source.dir}/opentelemetry-context-1.67.0.jar
+            spdx:
+              name: opentelemetry-context
+              version: 1.67.0
+              packages:
+                - name: opentelemetry-context
+                  purl: pkg:maven/io.opentelemetry/opentelemetry-context@1.67.0
+                  license: Apache-2.0
             uid: 0
             gid: 0
       pipeline:
@@ -409,6 +435,21 @@ contents:
             root="${target.dir}/usr/lib/grobid"
             mkdir -p "$root"
             mv "$svc_dir" "$root/grobid-service"
+            agent=$(find "$root/grobid-service/lib" -maxdepth 1 -type f -name 'prometheus-metrics-exporter-opentelemetry-otel-agent-resources-*.jar')
+            test -f "$agent"
+            repack=$(mktemp -d)
+            (cd "$repack" && "${JAVA_HOME}/bin/jar" xf "$agent")
+            test -f "$repack/lib/opentelemetry-api-1.29.0.jar"
+            test -f "$repack/lib/opentelemetry-context-1.29.0.jar"
+            install -m 0644 "${source.dir}/opentelemetry-api-1.67.0.jar" "$repack/lib/opentelemetry-api-1.29.0.jar"
+            install -m 0644 "${source.dir}/opentelemetry-context-1.67.0.jar" "$repack/lib/opentelemetry-context-1.29.0.jar"
+            unzip -p "$repack/lib/opentelemetry-api-1.29.0.jar" META-INF/MANIFEST.MF | tr -d '\r' | grep -x "Bundle-Version: 1.67.0" > /dev/null
+            unzip -p "$repack/lib/opentelemetry-context-1.29.0.jar" META-INF/MANIFEST.MF | tr -d '\r' | grep -x "Bundle-Version: 1.67.0" > /dev/null
+            (cd "$repack" && "${JAVA_HOME}/bin/jar" --create --file "$repack.jar" --manifest META-INF/MANIFEST.MF -C . .)
+            mv "$repack.jar" "$agent"
+            unzip -l "$agent" | grep 'lib/opentelemetry-api-1.29.0.jar' > /dev/null
+            unzip -l "$agent" | grep 'lib/opentelemetry-context-1.29.0.jar' > /dev/null
+            unzip -l "$agent" | grep 'io/prometheus/otelagent/ResourceAttributesFromOtelAgent.class' > /dev/null
             mv "$home_dir" "$root/grobid-home"
             pdf="$root/grobid-home/pdfalto/$arch"
             lib="$root/grobid-home/lib/$arch"
@@ -490,6 +531,8 @@ contents:
               /opt/docker/sbom/crfpp \
               /opt/docker/sbom/grobid \
               /opt/docker/sbom/grobid-service \
+              /opt/docker/sbom/opentelemetry-api \
+              /opt/docker/sbom/opentelemetry-context \
               "${target.dir}/opt/docker/sbom/"
             test -f "${target.dir}/opt/docker/sbom/pdfalto/.spdx.pdfalto.json"
             test -f "${target.dir}/opt/docker/sbom/xpdf/.spdx.xpdf.json"
@@ -497,6 +540,8 @@ contents:
             test -f "${target.dir}/opt/docker/sbom/crfpp/.spdx.crfpp.json"
             test -f "${target.dir}/opt/docker/sbom/grobid/.spdx.grobid.json"
             test -f "${target.dir}/opt/docker/sbom/grobid-service/.spdx.grobid-service.json"
+            test -f "${target.dir}/opt/docker/sbom/opentelemetry-api/.spdx.opentelemetry-api.json"
+            test -f "${target.dir}/opt/docker/sbom/opentelemetry-context/.spdx.opentelemetry-context.json"
         - uses: dhi/build-pkg:0
           with:
             depends:
@@ -522,11 +567,13 @@ contents:
               - opt/docker/sbom/crfpp
               - opt/docker/sbom/grobid
               - opt/docker/sbom/grobid-service
+              - opt/docker/sbom/opentelemetry-api
+              - opt/docker/sbom/opentelemetry-context
             formats:
               - deb
             license: Apache-2.0 AND GPL-2.0-only AND BSD-2-Clause AND BSD-3-Clause AND (LGPL-2.1-only OR BSD-3-Clause)
             name: grobid-0
-            rel: 10
+            rel: 11
             url: https://github.com/grobidOrg/grobid
             version: 0.9.1
       paths:
