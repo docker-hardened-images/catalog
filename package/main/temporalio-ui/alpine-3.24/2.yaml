@@ -1,0 +1,240 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-temporalio-ui
+variant: runtime
+tags:
+  - 2.58.1-alpine3.24
+  - 2.58.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2025-10-15"
+vars:
+  COMMIT_SHA: 32edd95c5d2e09d5fceaecbe9d4277c794b6df48
+  COREPACK_VERSION: 0.36.0-r0
+  DOCKERIZE_COMMIT_SHA: ffdb7e40867b108a2661e955562bae021e6f71e1
+  DOCKERIZE_VERSION: 0.9.9
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  NODEJS_VERSION: 22.23.5-r0
+  NPM_VERSION: 12.2.2-r2
+  PNPM_VERSION: 10.10.0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.58"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.58.1
+  UI_SERVER_MODULE: /go/src/github.com/temporalio/ui-server/v2
+  VERSION: 2.58.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: temporalio-ui-2
+      work-dir: ${source.dir}
+      environment:
+        GODEBUG: '#{ false ? "fips140=on" : "" }'
+        HUSKY: "0"
+      caches:
+        - path: /root/.cache/pnpm
+        - path: /go/pkg/mod
+      contents:
+        packages:
+          - bash
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+          - mawk
+          - corepack=0.36.0-r0
+          - nodejs-22=22.23.5-r0
+          - npm-12=12.2.2-r2
+          - sed
+        files:
+          - url: git+https://github.com/temporalio/ui.git#v2.58.1
+            checksum: 32edd95c5d2e09d5fceaecbe9d4277c794b6df48
+            path: ${source.dir}/ui
+            spdx:
+              name: temporalio-ui
+              version: 2.58.1
+              packages:
+                - name: temporalio-ui
+                  purl: pkg:dhi/temporalio-ui@2.58.1
+                  license: MIT
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/jwilder/dockerize.git#v0.9.9
+            checksum: ffdb7e40867b108a2661e955562bae021e6f71e1
+            path: ${source.dir}/dockerize
+            spdx:
+              name: dockerize
+              version: 0.9.9
+              packages:
+                - name: dockerize
+                  purl: pkg:golang/github.com/jwilder/dockerize@0.9.9
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: activate pnpm
+          work-dir: ${source.dir}/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            corepack enable
+            corepack prepare "pnpm@10.10.0" --activate
+            pnpm --version | grep -qx "10.10.0"
+        - name: bump go dependencies
+          uses: go/bump@v2
+          work-dir: ${source.dir}/ui/server
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - github.com/gomarkdown/markdown@v0.0.0-20260724235538-61af6e1e6971
+              - github.com/labstack/echo/v4@v4.16.3
+              - google.golang.org/grpc@v1.83.2
+            download: true
+        - name: prepare pnpm for bump
+          work-dir: ${source.dir}/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --ignore-scripts
+        - name: bump pnpm dependencies
+          uses: pnpm/bump@v1
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/pnpm-bumps.json
+            downgrade: true
+            override-location: package.json
+            pnpm-root: ${source.dir}/ui
+        - name: install dependencies
+          work-dir: ${source.dir}/ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            pnpm install --ignore-scripts
+        - name: svelte-kit sync
+          work-dir: ${source.dir}/ui
+          runs: |
+            set -eux -o pipefail
+
+            pnpm exec svelte-kit sync
+        - name: build ui assets
+          work-dir: ${source.dir}/ui
+          runs: |
+            set -eux -o pipefail
+
+            pnpm build:server
+        - name: prepare ui-server module
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p /go/src/github.com/temporalio/ui-server
+            ln -sfn "${source.dir}/ui/server" /go/src/github.com/temporalio/ui-server/v2
+        - name: download ui-server modules
+          work-dir: ${source.dir}/ui/server
+          runs: |
+            set -eux -o pipefail
+
+            go mod download
+        - name: build ui-server
+          uses: go/build@v1
+          work-dir: /go/src/github.com/temporalio/ui-server/v2
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/temporalio/ui-server/v2/server/version.UIVersion=2.58.1
+            output: ${target.dir}/usr/lib/temporalio-ui-2/ui-server
+            packages: ./cmd/server
+        - name: remove dev assets
+          work-dir: ${source.dir}/ui
+          runs: |
+            set -eux -o pipefail
+
+            pnpm prune --prod --ignore-scripts
+        - name: ui sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: temporalio-ui-server
+            source: ${source.dir}/ui/node_modules
+        - name: bump dockerize go dependencies
+          uses: go/bump@v3
+          work-dir: ${source.dir}/dockerize
+          with:
+            deps:
+              - golang.org/x/crypto@v0.56.0
+              - golang.org/x/net@v0.62.0
+            download: true
+        - name: download dockerize modules
+          work-dir: ${source.dir}/dockerize
+          runs: |
+            set -eux -o pipefail
+
+            go mod download
+        - name: build dockerize
+          uses: go/build@v1
+          work-dir: ${source.dir}/dockerize
+          with:
+            fips: false
+            ldflags:
+              - -checklinkname=1
+            output: ${target.dir}/usr/bin/dockerize
+            packages: .
+        - name: stage runtime tree
+          runs: |
+            set -eux -o pipefail
+
+            pkgroot=$(echo "${target.dir}/usr/lib/"*/)
+            install -D -m 0755 "${source.dir}/ui/server/docker/start-ui-server.sh" "${pkgroot}/start-ui-server.sh"
+            cp -a "${source.dir}/ui/server/config" "${pkgroot}/config"
+            mkdir -p "${pkgroot}/ui"
+            cp -a "${source.dir}/ui/server/ui/assets" "${pkgroot}/ui/assets"
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/temporalio-ui /opt/docker/sbom/temporalio-ui-server /opt/docker/sbom/dockerize "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - bash
+            description: Temporal UI web interface and config tooling
+            files:
+              - usr/lib/temporalio-ui-2
+              - usr/bin/dockerize
+              - opt/docker/sbom
+            fips-compliant: '#{ false }'
+            formats:
+              - apk
+              - deb
+            license: MIT
+            name: temporalio-ui-2
+            rel: 0
+            url: https://github.com/temporalio/ui
+            version: 2.58.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/pnpm-bumps.json
+          uid: 0
+          gid: 0
+          source: package/main/temporalio-ui/patch/pnpm-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
