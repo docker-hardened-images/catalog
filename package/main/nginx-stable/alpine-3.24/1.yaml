@@ -1,0 +1,492 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-nginx-stable
+variant: runtime
+tags:
+  - 1.30.8-alpine3.24
+  - 1.30.8-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  BROTLI_COMMIT_SHA: ed738e842d2fbdf2d6459e39267a633c4a9b2f5d
+  BROTLI_MODULE_COMMIT_SHA: 53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
+  BROTLI_MODULE_VERSION: "20261022"
+  BROTLI_VERSION: 1.1.0
+  COMMIT_SHA: 07c14df1341e261a400b37970eca8cfa275854c0
+  NJS_COMMIT_SHA: 9ead4e71f74a27279f3212bdb6cadb0e86981a1b
+  NJS_VERSION: 0.9.9
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.30"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.30.8
+  UPLOAD_PROGRESS_COMMIT_SHA: 463d60b5024d3870280d3a63b1568a2676e24a8c
+  UPLOAD_PROGRESS_VERSION: 0.9.4
+  VERSION: 1.30.8
+  VTS_COMMIT_SHA: 38b8612527ecb003ea15cefe934f302cf1a7c27e
+  VTS_VERSION: 0.2.7
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: nginx-stable apk
+      work-dir: ${source.dir}/nginx-src
+      contents:
+        packages:
+          - brotli-dev
+          - build-base
+          - busybox
+          - gd-dev
+          - geoip-dev
+          - libxml2-dev
+          - libxslt-dev
+          - linux-headers
+          - musl-utils
+          - openssl-dev
+          - pcre2-dev
+          - perl
+          - perl-dev
+          - pkgconf
+          - zlib-dev
+        files:
+          - url: git+https://github.com/nginx/nginx.git#release-1.30.8
+            checksum: 07c14df1341e261a400b37970eca8cfa275854c0
+            path: ${source.dir}/nginx-src
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/nginx/njs.git#0.9.9
+            checksum: 9ead4e71f74a27279f3212bdb6cadb0e86981a1b
+            path: ${source.dir}/njs
+            spdx:
+              name: njs
+              version: 0.9.9
+              packages:
+                - name: njs
+                  purl: pkg:github/nginx/njs@0.9.9
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/google/ngx_brotli.git#53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
+            checksum: 53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
+            path: ${source.dir}/ngx_brotli
+            spdx:
+              name: ngx_brotli
+              version: 53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
+              packages:
+                - name: ngx_brotli
+                  purl: pkg:github/google/ngx_brotli@53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/google/brotli.git#v1.1.0
+            checksum: ed738e842d2fbdf2d6459e39267a633c4a9b2f5d
+            path: ${source.dir}/brotli-src
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/masterzen/nginx-upload-progress-module.git#v0.9.4
+            checksum: 463d60b5024d3870280d3a63b1568a2676e24a8c
+            path: ${source.dir}/ngx_uploadprogress
+            spdx:
+              name: nginx-upload-progress-module
+              version: 0.9.4
+              packages:
+                - name: nginx-upload-progress-module
+                  purl: pkg:github/masterzen/nginx-upload-progress-module@0.9.4
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/vozlt/nginx-module-vts.git#v0.2.7
+            checksum: 38b8612527ecb003ea15cefe934f302cf1a7c27e
+            path: ${source.dir}/ngx_vts
+            spdx:
+              name: nginx-module-vts
+              version: 0.2.7
+              packages:
+                - name: nginx-module-vts
+                  purl: pkg:github/vozlt/nginx-module-vts@0.2.7
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: stop treating warnings as errors
+          runs: |
+            set -eux -o pipefail
+
+            sed -i 's/^CFLAGS="$CFLAGS -Werror"$/CFLAGS="$CFLAGS"/' auto/cc/gcc
+            grep -qx 'CFLAGS="$CFLAGS"' auto/cc/gcc
+        - name: fix upload progress under HTTP/2
+          uses: patch@v1
+          work-dir: ${source.dir}/ngx_uploadprogress
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/upload-progress-http2.patch
+        - name: configure and build
+          runs: |
+            set -eux -o pipefail
+
+            rm -rf ../ngx_brotli/deps/brotli
+            cp -a ../brotli-src ../ngx_brotli/deps/brotli
+
+            export NJS_CFLAGS="-Wno-error=dangling-pointer"
+
+            configure() {
+              ./auto/configure \
+                --prefix=/var/lib/nginx \
+                --sbin-path=/usr/sbin/nginx \
+                --modules-path=/usr/lib/nginx/modules \
+                --conf-path=/etc/nginx/nginx.conf \
+                --pid-path=/run/nginx/nginx.pid \
+                --lock-path=/run/nginx/nginx.lock \
+                --http-client-body-temp-path=/var/lib/nginx/tmp/client_body \
+                --http-proxy-temp-path=/var/lib/nginx/tmp/proxy \
+                --http-fastcgi-temp-path=/var/lib/nginx/tmp/fastcgi \
+                --http-uwsgi-temp-path=/var/lib/nginx/tmp/uwsgi \
+                --http-scgi-temp-path=/var/lib/nginx/tmp/scgi \
+                --with-perl_modules_path=/usr/lib/perl5/vendor_perl \
+                --user=nginx \
+                --group=nginx \
+                --with-threads \
+                --with-file-aio \
+                --with-compat \
+                --with-http_ssl_module \
+                --with-http_v2_module \
+                --with-http_v3_module \
+                --with-http_realip_module \
+                --with-http_addition_module \
+                --with-http_xslt_module=dynamic \
+                --with-http_image_filter_module=dynamic \
+                --with-http_geoip_module=dynamic \
+                --with-http_sub_module \
+                --with-http_dav_module \
+                --with-http_flv_module \
+                --with-http_mp4_module \
+                --with-http_gunzip_module \
+                --with-http_gzip_static_module \
+                --with-http_auth_request_module \
+                --with-http_random_index_module \
+                --with-http_secure_link_module \
+                --with-http_degradation_module \
+                --with-http_slice_module \
+                --with-http_stub_status_module \
+                --with-http_perl_module=dynamic \
+                --with-mail=dynamic \
+                --with-mail_ssl_module \
+                --with-stream=dynamic \
+                --with-stream_ssl_module \
+                --with-stream_realip_module \
+                --with-stream_geoip_module=dynamic \
+                --with-stream_ssl_preread_module \
+                --with-cc-opt='-O2 -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security' \
+                --with-ld-opt='-Wl,-z,relro -Wl,-z,now' \
+                "$@"
+            }
+
+            ncpus=$(getconf _NPROCESSORS_ONLN)
+            ncpus=$((ncpus > 6 ? 6 : ncpus))
+
+            configure --builddir=objs-debug --with-debug
+            make -f objs-debug/Makefile -j"$ncpus"
+
+            configure \
+              --add-dynamic-module=../njs/nginx \
+              --add-dynamic-module=../ngx_brotli \
+              --add-dynamic-module=../ngx_uploadprogress \
+              --add-dynamic-module=../ngx_vts
+            make -j"$ncpus"
+        - name: install and assemble the Alpine layout
+          runs: |
+            set -eux -o pipefail
+
+            make install DESTDIR=${target.dir} INSTALLDIRS=vendor
+            find ${target.dir} -type f \( -name .packlist -o -name perllocal.pod \) -delete
+
+            for so in ngx_http_js_module.so ngx_stream_js_module.so \
+              ngx_http_brotli_filter_module.so ngx_http_brotli_static_module.so \
+              ngx_http_uploadprogress_module.so ngx_http_vhost_traffic_status_module.so; do
+              install -Dm755 "objs/$so" "${target.dir}/usr/lib/nginx/modules/$so"
+            done
+            install -Dm755 objs-debug/nginx ${target.dir}/usr/sbin/nginx-debug
+
+            install -Dm644 LICENSE ${target.dir}/usr/share/licenses/nginx-stable/LICENSE
+            install -Dm644 README.md ${target.dir}/usr/share/doc/nginx/README.md
+            install -Dm644 objs/nginx.8 ${target.dir}/usr/share/man/man8/nginx.8
+
+            install -Dm644 ${source.dir}/layout/nginx.conf ${target.dir}/etc/nginx/nginx.conf
+            install -dm755 ${target.dir}/etc/nginx/http.d ${target.dir}/etc/nginx/modules
+            install -Dm755 ${source.dir}/layout/nginx.initd ${target.dir}/etc/init.d/nginx
+            install -Dm644 ${source.dir}/layout/nginx.confd ${target.dir}/etc/conf.d/nginx
+            install -Dm644 ${source.dir}/layout/nginx.logrotate ${target.dir}/etc/logrotate.d/nginx
+            install -Dm644 ${source.dir}/layout/default.conf ${target.dir}/usr/share/nginx/http-default_server.conf
+
+            install -dm750 ${target.dir}/var/lib/nginx
+            install -dm700 ${target.dir}/var/lib/nginx/tmp
+            install -dm755 ${target.dir}/var/www/localhost/htdocs
+
+            install -dm755 ${target.dir}/var/log
+            mv ${target.dir}/var/lib/nginx/logs ${target.dir}/var/log/nginx
+            ln -sf /usr/lib/nginx/modules ${target.dir}/var/lib/nginx/modules
+            ln -sf /var/log/nginx ${target.dir}/var/lib/nginx/logs
+            ln -sf /run/nginx ${target.dir}/var/lib/nginx/run
+
+            for d in etc/nginx/http.d etc/nginx/modules var/lib/nginx/tmp var/log/nginx var/www/localhost/htdocs; do
+              touch ${target.dir}/$d/.keep
+            done
+
+            rm ${target.dir}/etc/nginx/koi-utf ${target.dir}/etc/nginx/koi-win ${target.dir}/etc/nginx/win-utf
+            rm -rf ${target.dir}/run ${target.dir}/etc/nginx/*.default
+
+            mkdir -p ${target.dir}/usr/share/vim ${target.dir}/etc/nginx/stream.d
+            touch ${target.dir}/etc/nginx/stream.d/.keep
+            cp -r contrib/vim ${target.dir}/usr/share/vim/vimfiles
+
+            mkdir -p ${target.dir}/usr/src/nginx-1.30.8
+            cp -r ./* ${target.dir}/usr/src/nginx-1.30.8/
+            rm -rf ${target.dir}/usr/src/nginx-1.30.8/objs ${target.dir}/usr/src/nginx-1.30.8/objs-debug
+
+            stage=${target.dir}/stage
+            mkdir -p "$stage"
+            stage_module() {
+              conf=$1
+              prefix=$2
+              shift 2
+              for so in "$@"; do
+                mv "${target.dir}/usr/lib/nginx/modules/$so" "$stage/$so"
+                echo "load_module \"modules/$so\";" >> "$stage/$prefix"_"$conf".conf
+              done
+            }
+            stage_module http_geoip 10 ngx_http_geoip_module.so
+            stage_module http_image_filter 10 ngx_http_image_filter_module.so
+            stage_module http_perl 10 ngx_http_perl_module.so
+            stage_module http_xslt_filter 10 ngx_http_xslt_filter_module.so
+            stage_module mail 10 ngx_mail_module.so
+            stage_module stream 10 ngx_stream_module.so
+            stage_module stream_geoip 20 ngx_stream_geoip_module.so
+            stage_module http_js 10 ngx_http_js_module.so
+            stage_module stream_js 20 ngx_stream_js_module.so
+            stage_module http_brotli 10 ngx_http_brotli_filter_module.so ngx_http_brotli_static_module.so
+            stage_module http_upload_progress 10 ngx_http_uploadprogress_module.so
+            stage_module http_vts 10 ngx_http_vhost_traffic_status_module.so
+            install -Dm644 ${source.dir}/layout/stream.conf "$stage/stream.conf"
+
+            install -d ${target.dir}/opt/docker/sbom
+            for name in njs ngx_brotli nginx-upload-progress-module nginx-module-vts; do
+              test -s "/opt/docker/sbom/$name/.spdx.$name.json"
+              cp -a "/opt/docker/sbom/$name" ${target.dir}/opt/docker/sbom/
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            conflicts: nginx-mainline
+            depends:
+              - libcrypto3
+              - libssl3
+              - musl
+              - pcre2
+              - zlib
+            description: HTTP and reverse proxy server (stable version)
+            files:
+              - etc/nginx
+              - etc/logrotate.d/nginx
+              - usr/lib/nginx/modules
+              - usr/sbin/nginx
+              - usr/share/licenses/nginx-stable
+              - usr/share/nginx
+              - var/lib/nginx
+              - var/log/nginx
+              - var/www/localhost/htdocs
+            formats:
+              - apk
+            license: BSD-2-Clause
+            name: nginx-stable
+            rel: 0
+            subpackages:
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                description: nginx built with support for debugging log
+                files:
+                  - usr/sbin/nginx-debug
+                name: nginx-stable-debug
+              - description: HTTP and reverse proxy server (stable version) (documentation)
+                files:
+                  - usr/share/doc/nginx
+                  - usr/share/man/man8/nginx.8
+                name: nginx-stable-doc
+              - description: HTTP and reverse proxy server (stable version) (OpenRC init scripts)
+                files:
+                  - etc/conf.d/nginx
+                  - etc/init.d/nginx
+                name: nginx-stable-openrc
+              - description: HTTP and reverse proxy server (stable version) (vim syntax)
+                files:
+                  - usr/share/vim/vimfiles
+                name: nginx-stable-vim
+              - depends:
+                  - gd-dev
+                  - geoip-dev
+                  - libxslt-dev
+                  - linux-headers
+                  - openssl-dev
+                  - pcre2-dev
+                  - perl-dev
+                  - zlib-dev
+                description: NGINX module development files
+                files:
+                  - usr/src/nginx-1.30.8
+                name: nginx-stable-mod-dev
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - geoip
+                description: Nginx module http-geoip
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_geoip_module.so
+                    source: stage/ngx_http_geoip_module.so
+                  - path: etc/nginx/modules/10_http_geoip.conf
+                    source: stage/10_http_geoip.conf
+                name: nginx-stable-mod-http-geoip
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - gd
+                description: Nginx module http-image-filter
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_image_filter_module.so
+                    source: stage/ngx_http_image_filter_module.so
+                  - path: etc/nginx/modules/10_http_image_filter.conf
+                    source: stage/10_http_image_filter.conf
+                name: nginx-stable-mod-http-image-filter
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - perl
+                description: Nginx module http-perl
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_perl_module.so
+                    source: stage/ngx_http_perl_module.so
+                  - path: etc/nginx/modules/10_http_perl.conf
+                    source: stage/10_http_perl.conf
+                  - usr/lib/perl5
+                name: nginx-stable-mod-http-perl
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - libxml2
+                  - libxslt
+                description: Nginx module http-xslt-filter
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_xslt_filter_module.so
+                    source: stage/ngx_http_xslt_filter_module.so
+                  - path: etc/nginx/modules/10_http_xslt_filter.conf
+                    source: stage/10_http_xslt_filter.conf
+                name: nginx-stable-mod-http-xslt-filter
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                description: Nginx module mail
+                files:
+                  - path: usr/lib/nginx/modules/ngx_mail_module.so
+                    source: stage/ngx_mail_module.so
+                  - path: etc/nginx/modules/10_mail.conf
+                    source: stage/10_mail.conf
+                name: nginx-stable-mod-mail
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                description: Nginx module stream
+                files:
+                  - path: usr/lib/nginx/modules/ngx_stream_module.so
+                    source: stage/ngx_stream_module.so
+                  - path: etc/nginx/modules/10_stream.conf
+                    source: stage/10_stream.conf
+                  - path: etc/nginx/conf.d/stream.conf
+                    source: stage/stream.conf
+                  - etc/nginx/stream.d
+                name: nginx-stable-mod-stream
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - geoip
+                  - nginx-stable-mod-stream=1.30.8-r0
+                description: Nginx module stream-geoip
+                files:
+                  - path: usr/lib/nginx/modules/ngx_stream_geoip_module.so
+                    source: stage/ngx_stream_geoip_module.so
+                  - path: etc/nginx/modules/20_stream_geoip.conf
+                    source: stage/20_stream_geoip.conf
+                name: nginx-stable-mod-stream-geoip
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - libxml2
+                description: Nginx module http-js
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_js_module.so
+                    source: stage/ngx_http_js_module.so
+                  - path: etc/nginx/modules/10_http_js.conf
+                    source: stage/10_http_js.conf
+                  - opt/docker/sbom/njs
+                name: nginx-stable-mod-http-js
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - libxml2
+                  - nginx-stable-mod-stream=1.30.8-r0
+                description: Nginx module stream-js
+                files:
+                  - path: usr/lib/nginx/modules/ngx_stream_js_module.so
+                    source: stage/ngx_stream_js_module.so
+                  - path: etc/nginx/modules/20_stream_js.conf
+                    source: stage/20_stream_js.conf
+                name: nginx-stable-mod-stream-js
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                  - brotli-libs
+                description: Nginx third-party module http-brotli
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_brotli_filter_module.so
+                    source: stage/ngx_http_brotli_filter_module.so
+                  - path: usr/lib/nginx/modules/ngx_http_brotli_static_module.so
+                    source: stage/ngx_http_brotli_static_module.so
+                  - path: etc/nginx/modules/10_http_brotli.conf
+                    source: stage/10_http_brotli.conf
+                  - opt/docker/sbom/ngx_brotli
+                name: nginx-stable-mod-http-brotli
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                description: Nginx third-party module http-upload-progress
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_uploadprogress_module.so
+                    source: stage/ngx_http_uploadprogress_module.so
+                  - path: etc/nginx/modules/10_http_upload_progress.conf
+                    source: stage/10_http_upload_progress.conf
+                  - opt/docker/sbom/nginx-upload-progress-module
+                name: nginx-stable-mod-http-upload-progress
+              - depends:
+                  - nginx-stable=1.30.8-r0
+                description: Nginx third-party module http-vts
+                files:
+                  - path: usr/lib/nginx/modules/ngx_http_vhost_traffic_status_module.so
+                    source: stage/ngx_http_vhost_traffic_status_module.so
+                  - path: etc/nginx/modules/10_http_vts.conf
+                    source: stage/10_http_vts.conf
+                  - opt/docker/sbom/nginx-module-vts
+                name: nginx-stable-mod-http-vts
+            url: https://www.nginx.org/
+            version: 1.30.8
+      paths:
+        - type: directory
+          path: ${source.dir}/layout
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/nginx-stable/alpine-3.24/layout
+        - type: file
+          path: ${source.dir}/patch/upload-progress-http2.patch
+          uid: 0
+          gid: 0
+          source: package/main/nginx-stable/alpine-3.24/patch/upload-progress-http2.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/

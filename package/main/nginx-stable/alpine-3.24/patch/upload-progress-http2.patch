@@ -1,0 +1,29 @@
+Subject: Restore upload progress tracking for HTTP/2 requests
+
+The module installs its own read event handler on the request, but nginx's HTTP/2 request body readers replace r->read_event_handler after the first block of body data, so progress stopped updating after the first block of an upload. The patch detects the replacement, remembers the new handler in the module context and installs the module handler again.
+
+Origin: vendor, https://github.com/alpinelinux/aports/blob/58441ec48848459218e437686825f1113ab80bff/main/nginx/nginx-upload-progress-module~fix-http2.patch
+Base-Tree: git https://github.com/masterzen/nginx-upload-progress-module.git 463d60b5024d3870280d3a63b1568a2676e24a8c
+Drop-When: never: the change is an unmerged pull request, so re-check when upstream merges it
+
+diff --git a/ngx_http_uploadprogress_module.c b/ngx_http_uploadprogress_module.c
+index 33bdaf7..f17ad92 100644
+--- a/ngx_http_uploadprogress_module.c
++++ b/ngx_http_uploadprogress_module.c
+@@ -489,6 +489,16 @@ static void ngx_http_uploadprogress_event_handler(ngx_http_request_t *r)
+     module_ctx = ngx_http_get_module_ctx(r, ngx_http_uploadprogress_module);
+     if (module_ctx != NULL ) {
+         module_ctx->read_event_handler(r);
++        /*
++         * Both ngx_http_v2_read_request_body() and
++         * ngx_http_v2_process_request_body() modify read_event_handler,
++         * we respect the change, but re-interpose our function so we still get
++         * future events, otherwise we miss all upload progress.
++         */
++        if (r->read_event_handler != ngx_http_uploadprogress_event_handler) {
++            module_ctx->read_event_handler = r->read_event_handler;
++            r->read_event_handler = ngx_http_uploadprogress_event_handler;
++        }
+     }
+ 
+     /* at this stage, r is not anymore safe to use */
