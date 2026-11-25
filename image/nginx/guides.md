@@ -69,6 +69,11 @@ FROM dhi.io/nginx:<tag>
 COPY nginx.conf /etc/nginx/nginx.conf
 ```
 
+On the Alpine variants the stream and mail modules are installed as dynamic modules and loaded from
+`/etc/nginx/modules/*.conf`, which the default configuration includes. Put a `stream {}` or `mail {}` block at the top
+level of your own `nginx.conf`. The default `/etc/nginx/conf.d/stream.conf` is empty, because `conf.d` is included
+inside the `http {}` block.
+
 ### Using environment variables in Nginx configuration
 
 **Note:** This feature is only available in the `-dev` variant of the image.
@@ -127,6 +132,12 @@ accomplished by running Nginx as follows:
 
 ```
 $ docker run -d -p 8080:8080 --read-only -v $(pwd)/nginx-cache:/var/cache/nginx -v $(pwd)/nginx-pid:/var/run dhi.io/nginx:<tag>
+```
+
+On the Alpine variants, Nginx writes to `/var/lib/nginx/tmp` and `/run/nginx` instead:
+
+```
+$ docker run -d -p 8080:8080 --read-only -v $(pwd)/nginx-tmp:/var/lib/nginx/tmp -v $(pwd)/nginx-pid:/run/nginx dhi.io/nginx:<tag>
 ```
 
 If you have a more advanced configuration that requires Nginx to write to other locations, simply add more volume mounts
