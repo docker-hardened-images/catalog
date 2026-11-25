@@ -3,8 +3,8 @@
 image: dhi.io/pkg-gnutls28
 variant: runtime
 tags:
-  - 3.8.9-3-deb13u4-dhi2
-  - 3.8.9-3-deb13u4-dhi2-debian13
+  - 3.8.9-3-deb13u4-dhi3
+  - 3.8.9-3-deb13u4-dhi3-debian13
 platforms:
   - linux/amd64
   - linux/arm64
@@ -22,9 +22,9 @@ vars:
   DEBIAN_ORIG_FILENAME: gnutls28_3.8.9.orig.tar.xz
   DEBIAN_ORIG_URL: https://deb.debian.org/debian/pool/main/g/gnutls28/gnutls28_3.8.9.orig.tar.xz
   DEBIAN_VERSION: 3.8.9-3+deb13u4
-  DHI_REL: "2"
-  DHI_VERSION: 3.8.9-3+deb13u4+dhi2
-  TAG_VERSION: 3.8.9-3-deb13u4-dhi2
+  DHI_REL: "3"
+  DHI_VERSION: 3.8.9-3+deb13u4+dhi3
+  TAG_VERSION: 3.8.9-3-deb13u4-dhi3
   UPSTREAM_VERSION: 3.8.9
 contents:
   packages:
@@ -39,6 +39,7 @@ contents:
           - chrpath
           - debhelper
           - dpkg-dev
+          - gawk
           - gperf
           - libcmocka-dev
           - libgmp-dev
@@ -84,24 +85,69 @@ contents:
           with:
             file: gnutls28_3.8.9-3+deb13u4.dsc
             path: gnutls28
+        - uses: dpkg/patch@v1
+          with:
+            apply: true
+            patches:
+              - ${source.dir}/patch/CVE-2026-127039.patch
+              - ${source.dir}/patch/CVE-2026-127040.patch
+              - ${source.dir}/patch/CVE-2011-3389.patch
+              - ${source.dir}/patch/CVE-2026-88648.patch
         - name: gate gnutls-doc behind nodoc build profile
           runs: |
             set -eux -o pipefail
 
-            # gnutls-doc is the only "Architecture: all" stanza in this control file
             grep -c '^Architecture: all$' debian/control | grep -qx 1
             sed -i 's/^Architecture: all$/&\nBuild-Profiles: <!nodoc>/' debian/control
             grep -q '^Build-Profiles: <!nodoc>$' debian/control
+        - name: disable TLS 1.0, TLS 1.1 and DTLS 1.0 at configure time
+          runs: |
+            set -eux -o pipefail
+
+            python3 - << 'PY'
+            from pathlib import Path
+
+            rules = Path("debian/rules")
+            text = rules.read_text()
+            anchor = "CONFIGUREARGS = \\\n"
+            assert text.count(anchor) == 1
+            rules.write_text(text.replace(anchor, anchor + "\t--disable-tls11-support \\\n"))
+            PY
+            grep -Fxc $'\t--disable-tls11-support \\' debian/rules | grep -qx 1
         - uses: dpkg/bump@v1
           with:
             changelog:
-              - DHI Rebuild
-            version: 3.8.9-3+deb13u4+dhi2
+              - Backport upstream fix for CVE-2026-127039 (zeroize certificate list after cleanup)
+              - Backport upstream fix for CVE-2026-127040 (return error from RSA-PSK username copy)
+              - Backport upstream --enable-tls11-support option for CVE-2011-3389 and build with --disable-tls11-support (TLS 1.0, TLS 1.1 and DTLS 1.0 disabled)
+              - Backport upstream name constraint fixes for CVE-2026-88648 and CVE-2026-95184 (unsupported constraint types fail closed)
+            version: 3.8.9-3+deb13u4+dhi3
         - uses: dpkg/build@v1
           environment:
             DEB_BUILD_PROFILES: nodoc
           with:
             args: -uc -us -d
+      paths:
+        - type: file
+          path: ${source.dir}/patch/CVE-2026-127039.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/gnutls28/patch/CVE-2026-127039.patch
+        - type: file
+          path: ${source.dir}/patch/CVE-2026-127040.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/gnutls28/patch/CVE-2026-127040.patch
+        - type: file
+          path: ${source.dir}/patch/CVE-2011-3389.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/gnutls28/patch/CVE-2011-3389.patch
+        - type: file
+          path: ${source.dir}/patch/CVE-2026-88648.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/gnutls28/patch/CVE-2026-88648.patch
 os-release:
   name: Docker Hardened Images (Debian)
   id: debian
