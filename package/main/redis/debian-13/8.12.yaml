@@ -1,0 +1,180 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-redis-upstream
+variant: runtime
+tags:
+  - 8.12.0-0
+  - 8.12.0-0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-11-22"
+vars:
+  COMMIT_SHA: 215f2e33da9dfb2e0783cdd3a7acd29f8f6e9dd2
+  DHI_REL: "0"
+  DHI_VERSION: 8.12.0-0
+  HAS_MODULES: "true"
+  LLVM_VERSION: "21"
+  PACKAGE_NAME: redis-8.12
+  REDIS_FULL_ASSET: redis-full-8.12.0.tar.gz
+  REDIS_FULL_CHECKSUM: sha256:e9d9fb3a6e62960f064f5281fcb42e99692d2c420701d151fbe4327ff57e30bd
+  REDIS_LICENSE: AGPL-3.0-only
+  REDISBLOOM_VERSION: 8.12.0
+  REDISEARCH_VERSION: 8.12.1
+  REDISJSON_VERSION: 8.12.0
+  REDISTIMESERIES_VERSION: 8.12.0
+  SEMVER_MAJOR_MINOR: "8.12"
+  VERSION: 8.12.0
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - '!base-files'
+  builds:
+    - name: redis deb
+      work-dir: ${source.dir}/redis
+      contents:
+        repositories:
+          - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+          - deb [signed-by=/usr/share/keyrings/archive-key-13.asc] http://deb.debian.org/debian trixie-backports main
+        keyring:
+          - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+          - https://ftp-master.debian.org/keys/archive-key-13.asc
+        packages:
+          - build-essential
+          - ca-certificates
+          - clang-21
+          - cmake
+          - curl
+          - debhelper
+          - dpkg-dev
+          - findutils
+          - gawk
+          - git
+          - gnu-which
+          - grep
+          - gzip
+          - libssl-dev
+          - libtool
+          - lld-21
+          - llvm-21
+          - pkg-config
+          - python3
+          - python3-dev
+          - python3-pip
+          - python3-venv
+          - rsync
+          - sed
+          - unzip
+          - wget
+          - xz-utils
+        files:
+          - url: https://github.com/redis/redis/releases/download/8.12.0/redis-full-8.12.0.tar.gz
+            checksum: sha256:e9d9fb3a6e62960f064f5281fcb42e99692d2c420701d151fbe4327ff57e30bd
+            path: ${source.dir}/redis/redis-full.tar.gz
+            spdx:
+              name: redis
+              version: 8.12.0
+              packages:
+                - name: redis
+                  purl: pkg:github/redis/redis@8.12.0
+                  license: AGPL-3.0-only
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: extract full Redis source
+          runs: |
+            set -eux -o pipefail
+
+            tar -xzf redis-full.tar.gz --strip-components=1
+            rm redis-full.tar.gz
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisbloom
+            purl: pkg:github/redisbloom/redisbloom@v8.12.0
+            version: 8.12.0
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisearch
+            purl: pkg:github/redisearch/redisearch@v8.12.1
+            version: 8.12.1
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redisjson
+            purl: pkg:github/redisjson/redisjson@v8.12.0
+            version: 8.12.0
+        - uses: spdx@v1
+          with:
+            license: AGPL-3.0-only
+            name: redistimeseries
+            purl: pkg:github/redistimeseries/redistimeseries@v8.12.0
+            version: 8.12.0
+        - name: patch build
+          runs: |
+            set -eux -o pipefail
+
+            arch="$(uname -m)"
+            if [ "$arch" = aarch64 ]; then
+              jemallocFlags="--build=aarch64-linux-gnu --with-lg-page=16 --with-lg-hugepage=21"
+            else
+              jemallocFlags="--build=x86_64-linux-gnu --with-lg-page=12 --with-lg-hugepage=21"
+            fi
+            grep -F 'cd jemalloc && ./configure ' '${source.dir}/redis/deps/Makefile'
+            sed -ri 's!cd jemalloc && ./configure !&'"$jemallocFlags"' !' '${source.dir}/redis/deps/Makefile'
+            grep -F "cd jemalloc && ./configure $jemallocFlags " '${source.dir}/redis/deps/Makefile'
+        - name: patch config
+          runs: |
+            set -eux -o pipefail
+
+            echo 'include /etc/redis/conf.d/*.conf' >> '${source.dir}/redis/redis.conf'
+        - name: prepare debian packaging
+          runs: |
+            set -eux -o pipefail
+
+            sed -i "s/@PKG@/redis-8.12/g" debian/control.in debian/changelog
+            mv debian/control.in debian/control
+            mv debian/server.install "debian/redis-8.12-server.install"
+            mv debian/tools.install "debian/redis-8.12-tools.install"
+            mv debian/sentinel.install "debian/redis-8.12-sentinel.install"
+
+            if [ "true" = "true" ]; then
+              printf '%s\n' etc/redis/redis-full.conf usr/lib/redis/modules >> "debian/redis-8.12-server.install"
+            fi
+
+            printf 'HAS_MODULES := %s\nLLVM_VERSION := %s\n' "true" "21" > debian/build-env.mk
+        - uses: dpkg/bump@v1
+          with:
+            changelog:
+              - DHI Build
+            version: 8.12.0-0
+        - uses: dpkg/build@v1
+          privileged: true
+          with:
+            args: -b -uc -us -d
+      paths:
+        - type: directory
+          path: ${source.dir}/redis/debian
+          uid: 0
+          gid: 0
+          mode: "0600"
+          source: package/main/redis/debian-13/debian
+        - type: file
+          path: ${source.dir}/redis/debian/rules
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/redis/debian-13/modern-rules/rules
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
