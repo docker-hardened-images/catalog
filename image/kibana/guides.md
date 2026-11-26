@@ -18,6 +18,31 @@ To start a Kibana instance, run the following command. Replace `<tag>` with the 
 $ docker run -p 5601:5601 <yournamespace>/dhi-kibana:<tag>
 ```
 
+### Run Kibana with a read-only root filesystem
+
+Kibana writes its instance UUID to `/usr/share/kibana/data` at start. To run it with `--read-only`, mount a tmpfs there
+that the nonroot user (UID 65532) owns: `--tmpfs /usr/share/kibana/data:uid=65532,gid=65532`. The FIPS variants need no
+other writable path.
+
+### Run Kibana in FIPS mode
+
+The FIPS variants load the OpenSSL FIPS provider into Node.js, so Kibana's HTTPS listener, its TLS connections to
+Elasticsearch and the hashing and encryption Kibana does through Node.js crypto use the validated module. The image sets
+`XPACK_SECURITY_FIPSMODE_ENABLED=true`, which turns on Kibana's FIPS mode (`xpack.security.fipsMode.enabled`) with the
+shipped `kibana.yml` or your own. Kibana requires FIPS mode whenever Node.js runs in FIPS mode.
+
+- If FIPS mode is turned off, for example with `XPACK_SECURITY_FIPSMODE_ENABLED=false`, Kibana exits with code 78 and a
+  `Configuration mismatch error`.
+- Kibana's FIPS mode needs an Elasticsearch cluster with security enabled and a Platinum, Enterprise or trial license.
+  Against a cluster with security disabled or a Basic license, Kibana stops shortly after it connects and logs
+  `does not support running in FIPS mode`.
+- Use PEM files for TLS (`server.ssl.certificate`, `server.ssl.key`, `elasticsearch.ssl.certificateAuthorities`). Kibana
+  refuses to start when a PKCS#12 keystore or truststore (`server.ssl.keystore.path`, `server.ssl.truststore.path`,
+  `elasticsearch.ssl.keystore.path`, `elasticsearch.ssl.truststore.path`) is set.
+
+For the rest of Elastic's FIPS requirements, see
+[FIPS compliance for Kibana](https://www.elastic.co/docs/deploy-manage/security/fips-kib).
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use.
@@ -35,6 +60,10 @@ Docker Hardened Images come in different variants depending on their intended us
   - Run as the root user
   - Include a shell and package manager
   - Are used to build or compile applications
+
+- FIPS variants include `fips` in the variant name and tag. These variants use cryptographic modules that have been
+  validated under FIPS 140, a U.S. government standard for secure cryptographic operations. For example, usage of MD5
+  fails in FIPS variants.
 
 ## Migrate to a Docker Hardened Image
 
