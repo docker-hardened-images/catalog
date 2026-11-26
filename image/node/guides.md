@@ -289,6 +289,18 @@ $ docker debug <container-name>
 
 to get a debug shell into any container or image, even if they don't contain a shell.
 
+### TLS defaults in FIPS variants
+
+FIPS runtime and dev variants disable static RSA key exchange in Node.js's default TLS cipher list. These legacy suites
+are outside the general-use list in [NIST SP 800-52 Rev. 2](https://csrc.nist.gov/pubs/sp/800/52/r2/final). Connections
+to peers that support only static RSA key exchange fail. RSA certificates still work with ECDHE-RSA, and TLS 1.3 AES-GCM
+remains available.
+
+This default uses `--tls-cipher-list` in `NODE_OPTIONS`. If you replace `NODE_OPTIONS`, retain that setting when adding
+your own Node.js flags. Applications can also override their TLS cipher configuration explicitly. This cipher default
+does not establish compliance with every requirement of SP 800-52; see the
+[Node.js TLS configuration documentation](https://nodejs.org/api/tls.html#modifying-the-default-tls-cipher-suite).
+
 ## Image variants
 
 Docker Hardened Images come in different variants depending on their intended use. Image variants are identified by
