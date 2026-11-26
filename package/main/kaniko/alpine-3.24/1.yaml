@@ -1,0 +1,372 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kaniko
+variant: runtime
+tags:
+  - 1.25.23-alpine3.24
+  - 1.25.23-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2020-08-18"
+vars:
+  COMMIT_SHA: 8c3f2f07afb8f362447ff43d439cf0b743687ef0
+  ECR_LOGIN_COMMIT_SHA: 7ff7d6bd7a06408ddb9646c9ebccf97dbd190d55
+  ECR_LOGIN_VERSION: 0.12.0
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: kaniko-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.25"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.25.23
+  VERSION: 1.25.23
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kaniko-1
+      work-dir: /go/src/github.com/chainguard-dev/kaniko
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - mawk
+          - sed
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/chainguard-forks/kaniko.git#v1.25.23
+            checksum: 8c3f2f07afb8f362447ff43d439cf0b743687ef0
+            path: /go/src/github.com/chainguard-dev/kaniko
+            spdx:
+              name: kaniko
+              version: 1.25.23
+              packages:
+                - name: kaniko
+                  purl: pkg:golang/github.com/chainguard-dev/kaniko@1.25.23
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/awslabs/amazon-ecr-credential-helper.git#ecr-login/v0.12.0
+            checksum: 7ff7d6bd7a06408ddb9646c9ebccf97dbd190d55
+            path: /go/src/github.com/awslabs/amazon-ecr-credential-helper
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            grep -qxF '# golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2' vendor/modules.txt
+
+            if [ "false" = "true" ]; then
+              export GOFIPS140=v1.0.0
+              export GODEBUG=fips140=on
+            fi
+
+            go test -count=1 -timeout 30m \
+              -skip '^TestSyscallCredentials$/^existing_username_with_non-existing_gid$' \
+              ./third_party/docker-credential-acr-env/... \
+              ./pkg/creds/... \
+              ./pkg/version/... \
+              ./pkg/util/... \
+              ./cmd/...
+        - name: build executor
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/chainguard-dev/kaniko/pkg/version.version=v1.25.23
+            output: ${target.dir}/kaniko/executor
+            packages: ./cmd/executor
+        - name: build warmer
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X github.com/chainguard-dev/kaniko/pkg/version.version=v1.25.23
+            output: ${target.dir}/kaniko/warmer
+            packages: ./cmd/warmer
+        - name: build docker-credential-gcr
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/kaniko/docker-credential-gcr
+            packages: github.com/GoogleCloudPlatform/docker-credential-gcr/v2
+        - name: build docker-credential-ecr-login
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/kaniko/docker-credential-ecr-login
+            packages: github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login
+        - name: build docker-credential-acr-env
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w
+            output: ${target.dir}/kaniko/docker-credential-acr-env
+            packages: ./third_party/docker-credential-acr-env
+        - name: build executor dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/chainguard-dev/kaniko/pkg/version.version=v1.25.23
+            output: ${target.dir}/dev/kaniko/executor
+            packages: ./cmd/executor
+            strip: false
+        - name: build warmer dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/chainguard-dev/kaniko/pkg/version.version=v1.25.23
+            output: ${target.dir}/dev/kaniko/warmer
+            packages: ./cmd/warmer
+            strip: false
+        - name: build docker-credential-gcr dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w=false
+            output: ${target.dir}/dev/kaniko/docker-credential-gcr
+            packages: github.com/GoogleCloudPlatform/docker-credential-gcr/v2
+            strip: false
+        - name: build docker-credential-ecr-login dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w=false
+            output: ${target.dir}/dev/kaniko/docker-credential-ecr-login
+            packages: github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login
+            strip: false
+        - name: build docker-credential-acr-env dev
+          uses: go/build@v1
+          with:
+            extra-env: GOFLAGS=-buildvcs=false
+            fips: false
+            ldflags:
+              - -w=false
+            output: ${target.dir}/dev/kaniko/docker-credential-acr-env
+            packages: ./third_party/docker-credential-acr-env
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            mod=$(printf 'mod\tgithub.com/chainguard-dev/kaniko\t(devel)')
+            version_x="pkg/version.version=v1.25.23"
+
+            awk '/^# / {print $2, $3}' vendor/modules.txt | LC_ALL=C sort -u > /tmp/vendored.txt
+            test -s /tmp/vendored.txt
+
+            for name in executor warmer docker-credential-gcr docker-credential-ecr-login docker-credential-acr-env; do
+              for bin in "${target.dir}/kaniko/$name" "${target.dir}/dev/kaniko/$name"; do
+                test -x "$bin"
+                go version -m "$bin" > /tmp/buildinfo.txt
+                grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo.txt
+                if grep -qE 'vcs\.|\+dirty' /tmp/buildinfo.txt; then
+                  echo "$bin: VCS stamping leaked into build info" >&2
+                  exit 1
+                fi
+                awk '$1 == "mod" || $1 == "dep" {print $2, $3}' /tmp/buildinfo.txt | grep -vxF 'github.com/chainguard-dev/kaniko (devel)' | LC_ALL=C sort -u > /tmp/deps.txt
+                test -s /tmp/deps.txt
+                if LC_ALL=C comm -13 /tmp/vendored.txt /tmp/deps.txt | grep .; then
+                  echo "$bin: module versions differ from vendor/modules.txt" >&2
+                  exit 1
+                fi
+                if grep -E 'github\.com/andybalholm/brotli|golang\.org/x/crypto/openpgp' /tmp/buildinfo.txt; then
+                  echo "$bin: links a module the disposition says is absent" >&2
+                  exit 1
+                fi
+                if [ "false" = "true" ]; then
+                  grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0(-[0-9a-f]+)?$' /tmp/buildinfo.txt
+                  grep -qE '^[[:space:]]+build[[:space:]]+DefaultGODEBUG=(.*,)?fips140=on(,|$)' /tmp/buildinfo.txt
+                elif grep -q fips140 /tmp/buildinfo.txt; then
+                  echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                  exit 1
+                fi
+                case "$name" in
+                  executor | warmer)
+                    grep -qF "$mod" /tmp/buildinfo.txt
+                    grep -qF -- "$version_x" /tmp/buildinfo.txt
+                    ;;
+                  docker-credential-gcr)
+                    grep -qxF 'github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.1' /tmp/deps.txt
+                    ;;
+                  docker-credential-ecr-login)
+                    grep -qxF 'github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.12.0' /tmp/deps.txt
+                    ;;
+                  docker-credential-acr-env)
+                    grep -qF "$mod" /tmp/buildinfo.txt
+                    ;;
+                esac
+                if [ "$name" = executor ]; then
+                  grep -qxF 'golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2' /tmp/deps.txt
+                fi
+              done
+
+              runtime="${target.dir}/kaniko/$name"
+              dev="${target.dir}/dev/kaniko/$name"
+              go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+              go version -m "$runtime" | grep -qE -- '-ldflags="?(-s )?-w( |"|$)'
+              if go version -m "$dev" | grep -E -- '-trimpath=true|-ldflags="?(.* )?-(s|w)( |"|$)'; then
+                echo "$dev: dev binary must keep symbols and paths" >&2
+                exit 1
+              fi
+            done
+
+            if go list -deps ./cmd/executor ./cmd/warmer \
+                github.com/GoogleCloudPlatform/docker-credential-gcr/v2 \
+                github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login \
+                ./third_party/docker-credential-acr-env | grep -E '^github\.com/andybalholm/brotli|^golang\.org/x/crypto/openpgp'; then
+              echo "a shipped binary imports brotli or x/crypto/openpgp" >&2
+              exit 1
+            fi
+        - name: verify docker-credential-acr-env
+          runs: |
+            set -eux -o pipefail
+
+            for bin in "${target.dir}/kaniko/docker-credential-acr-env" "${target.dir}/dev/kaniko/docker-credential-acr-env"; do
+              info=$(go version -m "$bin")
+              printf '%s\n' "$info" | grep -Eq '^[[:space:]]*path[[:space:]]+github\.com/chainguard-dev/kaniko/third_party/docker-credential-acr-env$'
+              if printf '%s\n' "$info" | grep -q 'github\.com/chrismellard'; then
+                echo "$bin links the unpatched upstream helper" >&2
+                exit 1
+              fi
+              out=$(printf 'evil.azurecr.io.example.invalid' | env -i HOME=/tmp AZURE_ENVIRONMENT=no-such-cloud "$bin" get 2>&1 || true)
+              echo "$out"
+              case "$out" in
+                *"credentials not found"*) ;;
+                *)
+                  echo "$bin did not reject a lookalike ACR host" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+        - name: stage licenses and sbom
+          runs: |
+            set -eux -o pipefail
+
+            export ECR_LOGIN_VERSION="0.12.0"
+            ecr=/go/src/github.com/awslabs/amazon-ecr-credential-helper
+            bin="${target.dir}/kaniko"
+
+            bash "${source.dir}/stage-licenses.sh" "${target.dir}/usr/share/licenses/kaniko" "$ecr" \
+              "./cmd/executor=$bin/executor" \
+              "github.com/GoogleCloudPlatform/docker-credential-gcr/v2=$bin/docker-credential-gcr" \
+              "github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login=$bin/docker-credential-ecr-login" \
+              "./third_party/docker-credential-acr-env=$bin/docker-credential-acr-env"
+            bash "${source.dir}/stage-licenses.sh" "${target.dir}/usr/share/licenses/kaniko-warmer" - \
+              "./cmd/warmer=$bin/warmer"
+
+            test -s /opt/docker/sbom/kaniko/.spdx.kaniko.json
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/dev/usr/share/licenses" "${target.dir}/dev/opt/docker/sbom"
+            cp -a /opt/docker/sbom/kaniko "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/kaniko "${target.dir}/dev/opt/docker/sbom/"
+            cp -a "${target.dir}/usr/share/licenses/kaniko" "${target.dir}/usr/share/licenses/kaniko-warmer" "${target.dir}/dev/usr/share/licenses/"
+            diff -r "${target.dir}/usr/share/licenses" "${target.dir}/dev/usr/share/licenses"
+            diff -r "${target.dir}/opt/docker/sbom" "${target.dir}/dev/opt/docker/sbom"
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - ca-certificates-bundle
+            description: Kaniko executor and credential helpers for building container images without a daemon
+            files:
+              - kaniko/executor
+              - kaniko/docker-credential-gcr
+              - kaniko/docker-credential-ecr-login
+              - kaniko/docker-credential-acr-env
+              - usr/share/licenses/kaniko
+              - opt/docker/sbom/kaniko
+            license: Apache-2.0
+            name: kaniko-1
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: kaniko/executor
+                    source: dev/kaniko/executor
+                  - path: kaniko/docker-credential-gcr
+                    source: dev/kaniko/docker-credential-gcr
+                  - path: kaniko/docker-credential-ecr-login
+                    source: dev/kaniko/docker-credential-ecr-login
+                  - path: kaniko/docker-credential-acr-env
+                    source: dev/kaniko/docker-credential-acr-env
+                  - path: usr/share/licenses/kaniko
+                    source: dev/usr/share/licenses/kaniko
+                  - path: opt/docker/sbom/kaniko
+                    source: dev/opt/docker/sbom/kaniko
+                name: kaniko-1-dev
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: kaniko/warmer
+                  - path: usr/share/licenses/kaniko-warmer
+                name: kaniko-warmer-1
+              - depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: kaniko/warmer
+                    source: dev/kaniko/warmer
+                  - path: usr/share/licenses/kaniko-warmer
+                    source: dev/usr/share/licenses/kaniko-warmer
+                name: kaniko-warmer-1-dev
+            url: https://github.com/chainguard-forks/kaniko
+            version: 1.25.23
+      paths:
+        - type: file
+          path: ${source.dir}/stage-licenses.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kaniko/stage-licenses.sh
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
