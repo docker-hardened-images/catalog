@@ -1,0 +1,302 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-metallb-frr-k8s
+variant: runtime
+tags:
+  - 0.0.27-alpine3.24
+  - 0.0.27-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  PACKAGE_NAME: metallb-frr-k8s-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.0"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.0.27
+  VERSION: 0.0.27
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: metallb-frr-k8s-0
+      work-dir: /go/src/github.com/metallb/frr-k8s
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - mawk
+          - sed
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/metallb/frr-k8s.git#v0.0.27
+            checksum: 7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+            path: /go/src/github.com/metallb/frr-k8s
+            spdx:
+              name: frr-k8s
+              version: 0.0.27
+              packages:
+                - name: frr-k8s
+                  purl: pkg:golang/github.com/metallb/frr-k8s@0.0.27
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - go.opentelemetry.io/otel@v1.47.0
+              - go.opentelemetry.io/otel/metric@v1.47.0
+              - go.opentelemetry.io/otel/sdk@v1.47.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+              - github.com/google/cel-go@v0.30.0
+            download: true
+        - name: unit tests
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 GOTOOLCHAIN=local go test -short ./internal/frr -run '^(TestNeighbour|TestNeighbours|TestUnnumberedNeighbours|TestRoutes|TestBFDPeers|TestVRFs|TestDebounce|TestDebounceRetry|TestDebounceReuseOld|TestDebounceSameConfig)$' -count=1
+            CGO_ENABLED=0 GOTOOLCHAIN=local go test -short -count=1 \
+              ./cmd/frr-k8s-controller \
+              ./cmd/metrics/collector \
+              ./cmd/metrics/liveness \
+              ./cmd/status/controller \
+              ./cmd/statuscleaner \
+              ./internal/community \
+              ./internal/controller \
+              ./internal/ipfamily \
+              ./internal/logging \
+              ./internal/tlsconfig \
+              ./internal/webhooks
+        - name: commit dependency updates and retag
+          runs: |
+            set -eux -o pipefail
+
+            git config --global --add safe.directory "$(pwd)"
+            git add -A
+            git -c user.name=build -c user.email=build@build commit -q -m "dependency updates" --no-verify --no-gpg-sign
+            git tag -f "v0.0.27"
+            test -z "$(git status --porcelain)"
+        - name: build frr-k8s
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/bin/frr-k8s
+            packages: ./cmd/frr-k8s-controller
+        - name: build frr-k8s dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/bin/frr-k8s-dev
+            packages: ./cmd/frr-k8s-controller
+            strip: false
+        - name: build statuscleaner
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/bin/statuscleaner
+            packages: ./cmd/statuscleaner
+        - name: build statuscleaner dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/bin/statuscleaner-dev
+            packages: ./cmd/statuscleaner
+            strip: false
+        - name: build frr-metrics
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics
+            packages: ./cmd/metrics
+        - name: build frr-metrics dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics-dev
+            packages: ./cmd/metrics
+            strip: false
+        - name: build frr-status
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/lib/metallb-frr-k8s/frr-status
+            packages: ./cmd/status
+        - name: build frr-status dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/metallb/frr-k8s/internal/version.gitCommit=7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b
+              - -X github.com/metallb/frr-k8s/internal/version.gitBranch=v0.0.27
+            output: ${target.dir}/usr/lib/metallb-frr-k8s/frr-status-dev
+            packages: ./cmd/status
+            strip: false
+        - name: install frr-reloader.sh and license
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 cmd/reloader/frr-reloader.sh "${target.dir}/usr/lib/metallb-frr-k8s/frr-reloader.sh"
+            install -D -m 0644 LICENSE "${target.dir}/usr/share/licenses/metallb-frr-k8s/LICENSE"
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/frr-k8s "${target.dir}/opt/docker/sbom/"
+            set -- /opt/docker/sbom/frr-k8s/.spdx.*.json
+            test -s "$1"
+            install -D -m 0644 "${source.dir}/third-party-licenses.tsv" "${target.dir}/usr/share/licenses/metallb-frr-k8s/third-party-licenses.tsv"
+        - name: verify built binaries
+          runs: |
+            set -eux -o pipefail
+
+            for b in "${target.dir}/usr/bin/frr-k8s" "${target.dir}/usr/bin/statuscleaner" "${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics" "${target.dir}/usr/lib/metallb-frr-k8s/frr-status" "${target.dir}/usr/bin/frr-k8s-dev" "${target.dir}/usr/bin/statuscleaner-dev" "${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics-dev" "${target.dir}/usr/lib/metallb-frr-k8s/frr-status-dev"; do
+              info=$(go version -m "$b")
+              printf '%s\n' "$info" | awk 'NR==1 && index($0, "go1.26") {ok=1} END {exit !ok}'
+              printf '%s\n' "$info" | awk -F'\t' '$2 == "build" && $3 == "CGO_ENABLED=0" {ok=1} END {exit !ok}'
+              printf '%s\n' "$info" | awk -F'\t' -v v="v0.0.27" '$2 == "mod" && $3 == "github.com/metallb/frr-k8s" && $4 == v {ok=1} END {exit !ok}'
+              printf '%s\n' "$info" | awk -v c="7d1dd6e63e37acf9c8864d81c1d2d5bb6b074b8b" -v br="v0.0.27" 'index($0, "gitCommit=" c) && index($0, "gitBranch=" br) {ok=1} END {exit !ok}'
+              if [ "true" = "false" ]; then
+                grep -aq 'crypto/internal/fips140/v' "$b"
+              else
+                ! grep -aq 'crypto/internal/fips140/v' "$b"
+              fi
+            done
+        - name: third-party licences drift check
+          runs: |
+            set -eux -o pipefail
+
+            out=/tmp/third-party
+            rm -rf "$out"
+            mkdir -p "$out"
+            export GOPROXY=off
+
+            for b in "${target.dir}/usr/bin/frr-k8s" "${target.dir}/usr/bin/statuscleaner" "${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics" "${target.dir}/usr/lib/metallb-frr-k8s/frr-status" "${target.dir}/usr/bin/frr-k8s-dev" "${target.dir}/usr/bin/statuscleaner-dev" "${target.dir}/usr/lib/metallb-frr-k8s/frr-metrics-dev" "${target.dir}/usr/lib/metallb-frr-k8s/frr-status-dev"; do
+              go version -m "$b"
+            done | awk -F'\t' '
+              $2 == "=>" { print "replace directive in buildinfo, not supported: " $0 > "/dev/stderr"; exit 1 }
+              $2 == "dep" && $3 != "github.com/metallb/frr-k8s" { print $3 "@" $4 }
+            ' | LC_ALL=C sort -u > "$out/modules"
+            test -s "$out/modules"
+
+            : > "$out/rows"
+            while IFS='@' read -r m v; do
+              dir=$(go mod download -json "$m@$v" | awk -F'"' '/"Dir":/ {print $4; exit}')
+              test -d "$dir"
+              files=$(cd "$dir" && find . -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) ! -name '*.go' -not -path '*/testdata/*' -not -path '*/vendor/*' | sed 's|^\./||' | LC_ALL=C sort)
+              test -n "$files"
+              printf '%s\n' "$files" | awk '!/\// && /^(LICENSE|LICENCE|COPYING)/ {ok=1} END {exit !ok}'
+              joined=$(printf '%s\n' "$files" | awk 'NR > 1 {printf ","} {printf "%s", $0}')
+              hash=$(cd "$dir" && printf '%s\n' "$files" | xargs sha256sum | sha256sum | cut -d' ' -f1)
+              printf '%s\t%s\t%s\n' "$m" "$joined" "$hash" >> "$out/rows"
+              printf '%s\n' "$files" | while read -r f; do
+                install -D -m 0644 "$dir/$f" "${target.dir}/usr/share/licenses/metallb-frr-k8s/third_party/$m/$f"
+              done
+            done < "$out/modules"
+
+            awk -F'\t' '$0 !~ /^#/ && NF == 4 {print $1 "\t" $3 "\t" $4}' "${source.dir}/third-party-licenses.tsv" | LC_ALL=C sort > "$out/expected"
+            LC_ALL=C sort "$out/rows" > "$out/actual"
+            cmp "$out/expected" "$out/actual"
+        - name: stage dev shared payload
+          runs: |
+            set -eux -o pipefail
+
+            dev="${target.dir}/dev"
+            install -D -m 0755 "${target.dir}/usr/lib/metallb-frr-k8s/frr-reloader.sh" "$dev/usr/lib/metallb-frr-k8s/frr-reloader.sh"
+            install -d "$dev/usr/share/licenses"
+            cp -a "${target.dir}/usr/share/licenses/metallb-frr-k8s" "$dev/usr/share/licenses/"
+            install -d "$dev/opt/docker/sbom"
+            cp -a "${target.dir}/opt/docker/sbom/frr-k8s" "$dev/opt/docker/sbom/"
+            test -x "$dev/usr/lib/metallb-frr-k8s/frr-reloader.sh"
+            test -s "$dev/usr/share/licenses/metallb-frr-k8s/LICENSE"
+            test -s "$dev/usr/share/licenses/metallb-frr-k8s/third-party-licenses.tsv"
+            test -s "$dev/usr/share/licenses/metallb-frr-k8s/third_party/sigs.k8s.io/yaml/LICENSE"
+            set -- "$dev"/opt/docker/sbom/frr-k8s/.spdx.*.json
+            test -s "$1"
+        - uses: dhi/build-pkg:0
+          with:
+            description: MetalLB FRR-K8s controller, status cleaner and FRR-side helpers
+            files:
+              - usr/bin/frr-k8s
+              - usr/bin/statuscleaner
+              - usr/lib/metallb-frr-k8s/frr-metrics
+              - usr/lib/metallb-frr-k8s/frr-status
+              - usr/lib/metallb-frr-k8s/frr-reloader.sh
+              - usr/share/licenses/metallb-frr-k8s/LICENSE
+              - usr/share/licenses/metallb-frr-k8s/third-party-licenses.tsv
+              - usr/share/licenses/metallb-frr-k8s/third_party
+              - opt/docker/sbom/frr-k8s
+            license: Apache-2.0
+            name: metallb-frr-k8s-0
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/frr-k8s
+                    source: usr/bin/frr-k8s-dev
+                  - path: usr/bin/statuscleaner
+                    source: usr/bin/statuscleaner-dev
+                  - path: usr/lib/metallb-frr-k8s/frr-metrics
+                    source: usr/lib/metallb-frr-k8s/frr-metrics-dev
+                  - path: usr/lib/metallb-frr-k8s/frr-status
+                    source: usr/lib/metallb-frr-k8s/frr-status-dev
+                  - path: usr/lib/metallb-frr-k8s/frr-reloader.sh
+                    source: dev/usr/lib/metallb-frr-k8s/frr-reloader.sh
+                  - path: usr/share/licenses/metallb-frr-k8s/LICENSE
+                    source: dev/usr/share/licenses/metallb-frr-k8s/LICENSE
+                  - path: usr/share/licenses/metallb-frr-k8s/third-party-licenses.tsv
+                    source: dev/usr/share/licenses/metallb-frr-k8s/third-party-licenses.tsv
+                  - path: usr/share/licenses/metallb-frr-k8s/third_party
+                    source: dev/usr/share/licenses/metallb-frr-k8s/third_party
+                  - path: opt/docker/sbom/frr-k8s
+                    source: dev/opt/docker/sbom/frr-k8s
+                name: metallb-frr-k8s-0-dev
+            url: https://github.com/metallb/frr-k8s
+            version: 0.0.27
+      paths:
+        - type: file
+          path: ${source.dir}/third-party-licenses.tsv
+          uid: 0
+          gid: 0
+          source: package/main/metallb-frr-k8s/third-party-licenses.tsv
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
