@@ -3,14 +3,18 @@
 image: dhi.io/pkg-npm
 variant: runtime
 tags:
-  - 12.2.3-1
-  - 12.2.3-1-debian13
+  - 12.2.3-2
+  - 12.2.3-2-debian13
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
-  DHI_REL: "1"
-  DHI_VERSION: 12.2.3-1
+  BOOTSTRAP_NODE_VERSION: 26.13.1-0
+  BOOTSTRAP_NPM_VERSION: 11.21.3-1
+  DHI_REL: "2"
+  DHI_VERSION: 12.2.3-2
+  MINIMATCH_COMMIT_SHA: 693c82377d0948401be4c6d3220c9a74132ab112
+  MINIMATCH_VERSION: 10.2.5
   PACKAGE_NAME: npm-12
   SEMVER_MAJOR_VERSION: "12"
   VERSION: 12.2.3
@@ -22,11 +26,17 @@ contents:
       work-dir: ${source.dir}/npm-12
       contents:
         packages:
+          - npm=11.21.3-1
           - build-essential
           - debhelper
           - dpkg-dev
-          - nodejs
+          - nodejs-26=26.13.1-0
         files:
+          - url: git+https://github.com/isaacs/minimatch.git#v10.2.5
+            checksum: 693c82377d0948401be4c6d3220c9a74132ab112
+            path: ${source.dir}/minimatch
+            uid: 0
+            gid: 0
           - url: https://registry.npmjs.org/npm/-/npm-12.2.3.tgz
             path: ${source.dir}/npm-12.2.3.tgz
             uid: 0
@@ -71,6 +81,29 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: prepare backport output
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${source.dir}/vendor
+        - name: backport minimatch preprocessing limits
+          uses: patch@v1
+          work-dir: ${source.dir}/minimatch
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/cve-2026-118764-minimatch-preprocess.patch
+        - name: build patched minimatch
+          work-dir: ${source.dir}/minimatch
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci --ignore-scripts --no-audit --no-fund
+            npm run prepare
+            npm exec tap -- --disable-coverage
+            node ${source.dir}/tests/pattern-regressions.cjs --minimatch-only ${source.dir}/minimatch
+            npm pack --ignore-scripts --pack-destination ${source.dir}/vendor
         - name: setup
           runs: |
             set -eux -o pipefail
@@ -90,11 +123,22 @@ contents:
             changelog:
               - Bump brace-expansion to 5.0.12 (CVE-2026-102276, CVE-2026-102277, CVE-2026-102278), undici to 6.29.1 (CVE-2026-19534, CVE-2026-85024, CVE-2026-18540, CVE-2026-87018, CVE-2026-109869, CVE-2026-109383, CVE-2026-109932, CVE-2026-109924), http-cache-semantics to 4.3.0 (CVE-2026-93748), ip-address to 10.7.6 (CVE-2026-101910, CVE-2026-101911, CVE-2026-101912, CVE-2026-101913, CVE-2026-111997), and postcss-selector-parser to 7.1.6 (CVE-2026-104844)
               - Bump glob to 13.0.7 (CVE-2026-118773)
-            version: 12.2.3-1
+              - Backport minimatch preprocessing limits (CVE-2026-118764)
+            version: 12.2.3-2
         - uses: dpkg/build@v1
           with:
             args: -b -uc -us -d
       paths:
+        - type: file
+          path: ${source.dir}/patch/cve-2026-118764-minimatch-preprocess.patch
+          uid: 0
+          gid: 0
+          source: package/deb/main/npm/patch/cve-2026-118764-minimatch-preprocess.patch
+        - type: file
+          path: ${source.dir}/tests/pattern-regressions.cjs
+          uid: 0
+          gid: 0
+          source: package/deb/main/npm/tests/pattern-regressions.cjs
         - type: directory
           path: ${source.dir}/npm-12/debian
           uid: 0

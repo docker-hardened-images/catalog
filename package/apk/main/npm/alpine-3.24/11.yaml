@@ -4,16 +4,20 @@ image: dhi.io/pkg-npm
 variant: runtime
 tags:
   - 11.21.3-alpine3.24
-  - 11.21.3-r0-alpine3.24
+  - 11.21.3-r1-alpine3.24
 platforms:
   - linux/amd64
   - linux/arm64
 vars:
   _REL: "0"
   _VERSION: 11.12.1
+  BOOTSTRAP_NODE_VERSION: 26.13.1-r0
+  BOOTSTRAP_NPM_VERSION: 11.21.3-r0
   COMMIT_SHA: c331ddc80f97bde2e3ab83edb2cd645e6836e66f
+  MINIMATCH_COMMIT_SHA: 693c82377d0948401be4c6d3220c9a74132ab112
+  MINIMATCH_VERSION: 10.2.5
   PACKAGE_NAME: community/npm
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "11.21"
   SEMVER_MAJOR_VERSION: "11"
   SEMVER_VERSION: 11.21.3
@@ -33,14 +37,25 @@ contents:
       work-dir: ${source.dir}/aports/community/npm
       contents:
         packages:
-          - nodejs
+          - npm=11.21.3-r0
+          - nodejs-26=26.13.1-r0
         files:
+          - url: git+https://github.com/isaacs/minimatch.git#v10.2.5
+            checksum: 693c82377d0948401be4c6d3220c9a74132ab112
+            path: ${source.dir}/minimatch
+            uid: 0
+            gid: 0
           - url: git+https://github.com/alpinelinux/aports.git#c331ddc80f97bde2e3ab83edb2cd645e6836e66f
             path: ${source.dir}/aports
             uid: 0
             gid: 0
           - url: https://registry.npmjs.org/npm/-/npm-11.21.3.tgz
             path: /var/cache/distfiles/npm-11.21.3.tgz
+            uid: 0
+            gid: 0
+          - url: https://registry.npmjs.org/glob/-/glob-13.0.7.tgz
+            checksum: sha256:58342994ba61c09d9c27365d0930195c5583fe31e80c1683544805cebc065fd4
+            path: ${source.dir}/aports/community/npm/glob-13.0.7.tgz
             uid: 0
             gid: 0
           - url: https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz
@@ -68,6 +83,29 @@ contents:
             uid: 0
             gid: 0
       pipeline:
+        - name: prepare backport output
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${source.dir}/vendor
+        - name: backport minimatch preprocessing limits
+          uses: patch@v1
+          work-dir: ${source.dir}/minimatch
+          with:
+            options: -p1
+            patches:
+              - ${source.dir}/patch/cve-2026-118764-minimatch-preprocess.patch
+        - name: build patched minimatch
+          work-dir: ${source.dir}/minimatch
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            npm ci --ignore-scripts --no-audit --no-fund
+            npm run prepare
+            npm exec tap -- --disable-coverage
+            node ${source.dir}/tests/pattern-regressions.cjs --minimatch-only ${source.dir}/minimatch
+            npm pack --ignore-scripts --pack-destination ${source.dir}/vendor
         - uses: abuild/setup@v1
         - runs: |
             set -eux -o pipefail
@@ -84,6 +122,10 @@ contents:
                 tar -xzf "${source.dir}/aports/community/npm"/"$pkg"-"$ver".tgz -C "$dir"
                 mv "$dir"/package "$dir"/"$pkg"
             }
+            _patch_minimatch() {
+                test "$(node -p 'require("./node_modules/minimatch/package.json").version')" = 10.2.5
+                tar -xzf "${source.dir}/vendor/minimatch-10.2.5+dhi.1.tgz" -C node_modules/minimatch --strip-components=1
+            }
             _clean_socks() {
                 rm -rf node_modules/socks/.claude
             }
@@ -98,15 +140,28 @@ contents:
             sed -i 's,default_prepare,default_prepare\n\t_vendor_replace undici 6.29.1 node_modules,' APKBUILD
             # CVE-2026-54272, CVE-2026-69192, CVE-2026-69198, CVE-2026-101910, CVE-2026-101911, CVE-2026-101912, CVE-2026-101913, CVE-2026-111997: ip-address
             sed -i 's,default_prepare,default_prepare\n\t_vendor_replace ip-address 10.7.5 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_vendor_replace glob 13.0.7 node_modules,' APKBUILD
+            sed -i 's,default_prepare,default_prepare\n\t_patch_minimatch,' APKBUILD
             sed -i 's,default_prepare,default_prepare\n\t_clean_socks,' APKBUILD
         - uses: abuild/bump@v1
           with:
-            set: 0
+            set: 1
             version: 11.21.3
         - uses: abuild/build@v1
           with:
             command: checksum
         - uses: abuild/build@v1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/cve-2026-118764-minimatch-preprocess.patch
+          uid: 0
+          gid: 0
+          source: package/apk/main/npm/patch/cve-2026-118764-minimatch-preprocess.patch
+        - type: file
+          path: ${source.dir}/tests/pattern-regressions.cjs
+          uid: 0
+          gid: 0
+          source: package/apk/main/npm/tests/pattern-regressions.cjs
 os-release:
   name: Docker Hardened Images (Alpine)
   id: alpine
