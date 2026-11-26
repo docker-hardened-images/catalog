@@ -1,0 +1,365 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-icingadb
+variant: runtime
+tags:
+  - 1.5.1-alpine3.24
+  - 1.5.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7a66f3ad8be0cc8b0edad8028d761eedfc721cab
+  GO_RELEASE: 1.27.4
+  GOLANG_VERSION: 1.27.4-r1
+  MYSQL_SCHEMA_VERSION: "7"
+  PACKAGE_NAME: icingadb-1.5
+  PGSQL_SCHEMA_VERSION: "5"
+  REL: "0"
+  SCHEMA_FILE_COUNT: "14"
+  SEMVER_MAJOR_MINOR_VERSION: "1.5"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.5.1
+  VERSION: 1.5.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: icingadb-1.5
+      work-dir: /go/src/github.com/icinga/icingadb
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - busybox
+          - bash
+          - binutils
+          - ca-certificates-bundle
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/Icinga/icingadb.git#v1.5.1
+            checksum: 7a66f3ad8be0cc8b0edad8028d761eedfc721cab
+            path: /go/src/github.com/icinga/icingadb
+            spdx:
+              name: icingadb
+              version: 1.5.1
+              packages:
+                - name: icingadb
+                  purl: pkg:golang/github.com/icinga/icingadb@1.5.1
+                  license: GPL-2.0-only
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/golang/go/go1.27.4/LICENSE
+            checksum: sha256:911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad
+            path: /go/src/go-license/LICENSE
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.5 only)
+          uses: go/bump@v3
+          with:
+            deps:
+              - filippo.io/edwards25519@v1.1.1
+              - golang.org/x/sys@v0.44.0
+            download: true
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps: []
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            test "$(go env GOTOOLCHAIN)" = local
+            go version | grep -q 'go1\.27\.'
+            GODEBUG='' go test ./... -count=1
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+            output: ${target.dir}/usr/sbin/icingadb
+            packages: ./cmd/icingadb
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -checklinkname=1
+            output: ${target.dir}/usr/sbin/icingadb-dev
+            packages: ./cmd/icingadb
+            strip: false
+        - name: verify build
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/sbin/icingadb
+            devbin=${target.dir}/usr/sbin/icingadb-dev
+            test -x "$runtime"
+            test -x "$devbin"
+
+            "$runtime" --version > /tmp/version.txt
+            head -n 1 /tmp/version.txt | grep -q '^Icinga DB version: 1.5.1'
+
+            for bin in "$runtime" "$devbin"; do
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -q 'go1.27.4' /tmp/buildinfo.txt
+              grep -Eq '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo.txt
+              if grep -Eq '^[[:space:]]+dep[[:space:]]+github.com/mattn/go-sqlite3[[:space:]]' /tmp/buildinfo.txt; then
+                echo "$bin must not link go-sqlite3" >&2
+                exit 1
+              fi
+              if readelf -lW "$bin" | grep -q 'INTERP'; then
+                echo "$bin must be statically linked" >&2
+                exit 1
+              fi
+              readelf -SW "$bin" > /tmp/sections.txt
+              if [ "$bin" = "$runtime" ]; then
+                if grep -Fq '.symtab' /tmp/sections.txt; then
+                  echo "runtime binary must have no symbol table" >&2
+                  exit 1
+                fi
+                if grep -Eq '\.z?debug_info' /tmp/sections.txt; then
+                  echo "runtime binary must have no DWARF" >&2
+                  exit 1
+                fi
+              else
+                grep -Fq '.symtab' /tmp/sections.txt
+                grep -Eq '\.z?debug_info' /tmp/sections.txt
+              fi
+              if [ "false" = "true" ]; then
+                grep -q 'GOFIPS140=' /tmp/buildinfo.txt
+                grep -aqF 'crypto/internal/fips140/v' "$bin"
+              elif grep -aqF 'crypto/internal/fips140/v' "$bin"; then
+                echo "$bin must not link the Go FIPS module" >&2
+                exit 1
+              fi
+            done
+        - name: stage licenses
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/icinga/icingadb
+            runtime=${target.dir}/usr/sbin/icingadb
+            devbin=${target.dir}/usr/sbin/icingadb-dev
+            lic=${target.dir}/usr/share/licenses/icingadb
+
+            test -s "$src/LICENSE"
+            grep -q 'GNU GENERAL PUBLIC LICENSE' "$src/LICENSE"
+            grep -q 'Version 2' "$src/LICENSE"
+
+            go version -m "$runtime" > /tmp/runtime-buildinfo.txt
+            go version -m "$devbin" > /tmp/dev-buildinfo.txt
+            if awk '$1=="=>"' /tmp/runtime-buildinfo.txt | grep -q .; then
+              echo "replaced modules are not handled" >&2
+              exit 1
+            fi
+            awk '$1=="dep"{print $2, $3}' /tmp/runtime-buildinfo.txt | sort -u > /tmp/bin-mods.txt
+            awk '$1=="dep"{print $2, $3}' /tmp/dev-buildinfo.txt | sort -u > /tmp/dev-mods.txt
+            test -s /tmp/bin-mods.txt
+            diff /tmp/bin-mods.txt /tmp/dev-mods.txt
+
+            go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/icingadb \
+              | awk 'NF' | sort -u > /tmp/dep-mods-dirs.txt
+            awk '{print $1, $2}' /tmp/dep-mods-dirs.txt | sort -u > /tmp/dep-mods.txt
+            diff /tmp/bin-mods.txt /tmp/dep-mods.txt
+
+            cat > /tmp/license-map.txt << 'EOF'
+            filippo.io/edwards25519 BSD-3-Clause
+            github.com/caarlos0/env/v11 MIT
+            github.com/cespare/xxhash/v2 MIT
+            github.com/creasty/defaults MIT
+            github.com/dgryski/go-rendezvous MIT
+            github.com/fatih/color MIT
+            github.com/fsnotify/fsnotify BSD-3-Clause
+            github.com/go-sql-driver/mysql MPL-2.0
+            github.com/goccy/go-yaml MIT
+            github.com/google/go-cmp BSD-3-Clause
+            github.com/google/uuid BSD-3-Clause
+            github.com/icinga/icinga-go-library MIT
+            github.com/jessevdk/go-flags BSD-3-Clause
+            github.com/jmoiron/sqlx MIT
+            github.com/lib/pq MIT
+            github.com/mattn/go-colorable MIT
+            github.com/mattn/go-isatty MIT
+            github.com/okzk/sdnotify MIT
+            github.com/pkg/errors BSD-2-Clause
+            github.com/redis/go-redis/v9 BSD-2-Clause
+            github.com/ssgreg/journald MIT
+            github.com/theory/jsonpath MIT
+            go.uber.org/atomic MIT
+            go.uber.org/multierr MIT
+            go.uber.org/zap MIT
+            golang.org/x/exp BSD-3-Clause
+            golang.org/x/sync BSD-3-Clause
+            golang.org/x/sys BSD-3-Clause
+            EOF
+            test "$(awk 'NF != 2' /tmp/license-map.txt | wc -l)" -eq 0
+            awk '{print $1}' /tmp/license-map.txt | sort > /tmp/map-paths.txt
+            awk '{print $1}' /tmp/bin-mods.txt | sort > /tmp/bin-paths.txt
+            awk 'NR==FNR{m[$1]=1; next} !($1 in m){print "no SPDX id for linked module " $1; bad=1} END{exit bad}' /tmp/map-paths.txt /tmp/bin-paths.txt
+
+            test "$(go env GOVERSION)" = "go1.27.4"
+            grep -q 'Copyright 2009 The Go Authors' /go/src/go-license/LICENSE
+
+            install -d "$lic/third_party/go"
+            install -m 0644 "$src/LICENSE" "$lic/LICENSE"
+            install -m 0644 /go/src/go-license/LICENSE "$lic/third_party/go/LICENSE"
+            : > /tmp/modules.txt
+
+            while read -r path version dir; do
+              test -n "$dir"
+              test -d "$dir"
+              spdx=$(awk -v p="$path" '$1==p {print $2}' /tmp/license-map.txt)
+              test -n "$spdx"
+              dest="$lic/third_party/$path"
+              install -d "$dest"
+              find "$dir" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'PATENTS*' \) ! -name '*.go' > /tmp/notices.txt
+              if ! grep -q . /tmp/notices.txt; then
+                echo "no license files for $path $version" >&2
+                exit 1
+              fi
+              while read -r notice; do
+                install -m 0644 "$notice" "$dest/"
+              done < /tmp/notices.txt
+
+              find "$dir" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' \) ! -name '*.go' -exec cat {} + > /tmp/license-text.txt
+              test -s /tmp/license-text.txt
+              case "$spdx" in
+                MIT)
+                  grep -q 'Permission is hereby granted' /tmp/license-text.txt
+                  ;;
+                BSD-2-Clause)
+                  grep -q 'Redistribution and use' /tmp/license-text.txt
+                  if grep -q 'Neither the name' /tmp/license-text.txt; then
+                    echo "$path is mapped to BSD-2-Clause but its license has a third clause" >&2
+                    exit 1
+                  fi
+                  ;;
+                BSD-3-Clause)
+                  grep -q 'Redistribution and use' /tmp/license-text.txt
+                  grep -q 'Neither the name' /tmp/license-text.txt
+                  ;;
+                MPL-2.0)
+                  grep -q 'Mozilla Public License Version 2.0' /tmp/license-text.txt
+                  ;;
+                *)
+                  echo "no signature check for $spdx ($path)" >&2
+                  exit 1
+                  ;;
+              esac
+              printf '%s %s %s\n' "$path" "$version" "$spdx" >> /tmp/modules.txt
+            done < /tmp/dep-mods-dirs.txt
+
+            install -m 0644 /tmp/modules.txt "$lic/third_party/MODULES.txt"
+            test "$(wc -l < "$lic/third_party/MODULES.txt")" -eq "$(wc -l < /tmp/bin-mods.txt)"
+            awk '{print $1, $2}' "$lic/third_party/MODULES.txt" | sort | diff /tmp/bin-mods.txt -
+
+            while read -r path version; do
+              test -d "$lic/third_party/$path"
+            done < /tmp/bin-mods.txt
+            test "$(find "$lic/third_party" -type f ! -path "$lic/third_party/go/*" ! -name MODULES.txt -exec dirname {} \; | sort -u | wc -l)" -eq "$(wc -l < /tmp/bin-mods.txt)"
+
+            install -d "${target.dir}/dev/usr/share/licenses"
+            cp -a "$lic" "${target.dir}/dev/usr/share/licenses/icingadb"
+            diff -r "$lic" "${target.dir}/dev/usr/share/licenses/icingadb"
+        - name: binary sbom
+          uses: sbom@v1
+          with:
+            prefix: icingadb-bin
+            source: ${target.dir}/usr/sbin/icingadb
+        - name: reconcile sbom
+          runs: |
+            set -eux -o pipefail
+
+            sbom=/opt/docker/sbom/icingadb-bin/.spdx.icingadb-bin.json
+            test -s "$sbom"
+            while read -r path version; do
+              grep -qF "pkg:golang/$path@$version" "$sbom"
+            done < /tmp/bin-mods.txt
+            grep -qF 'github.com/redis/go-redis/v9' "$sbom"
+            grep -qF 'github.com/go-sql-driver/mysql' "$sbom"
+        - name: stage payload
+          runs: |
+            set -eux -o pipefail
+
+            src=/go/src/github.com/icinga/icingadb
+
+            test "$(find "$src/schema" -type f | wc -l)" -eq 14
+            test -s "$src/schema/mysql/schema.sql"
+            test -s "$src/schema/pgsql/schema.sql"
+            grep -A1 'INSERT INTO icingadb_schema' "$src/schema/mysql/schema.sql" | grep -q 'VALUES (7,'
+            grep -A1 'INSERT INTO icingadb_schema' "$src/schema/pgsql/schema.sql" | grep -q 'VALUES (5,'
+
+            source_sbom=/opt/docker/sbom/icingadb/.spdx.icingadb.json
+            test -s "$source_sbom"
+            grep -qF 'pkg:golang/github.com/icinga/icingadb@1.5.1' "$source_sbom"
+
+            for root in "${target.dir}" "${target.dir}/dev"; do
+              install -d "$root/usr/share/icingadb/schema"
+              cp -R "$src/schema/." "$root/usr/share/icingadb/schema/"
+              test "$(find "$root/usr/share/icingadb/schema" -type f | wc -l)" -eq 14
+              test -z "$(find "$root/usr/share/icingadb/schema" -type f ! -perm 0644)"
+              test -z "$(find "$root/usr/share/icingadb/schema" -type d ! -perm 0755)"
+              diff -r "$src/schema" "$root/usr/share/icingadb/schema"
+
+              install -d "$root/opt/docker/sbom"
+              cp -a /opt/docker/sbom/icingadb "$root/opt/docker/sbom/"
+              cp -a /opt/docker/sbom/icingadb-bin "$root/opt/docker/sbom/"
+              test -s "$root/opt/docker/sbom/icingadb/.spdx.icingadb.json"
+              test -s "$root/opt/docker/sbom/icingadb-bin/.spdx.icingadb-bin.json"
+              test -s "$root/usr/share/licenses/icingadb/LICENSE"
+              test -s "$root/usr/share/licenses/icingadb/third_party/MODULES.txt"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            commit: 7a66f3ad8be0cc8b0edad8028d761eedfc721cab
+            depends:
+              - ca-certificates-bundle
+            description: Icinga DB daemon, synchronizes Icinga 2 monitoring data from Redis into MySQL, MariaDB or PostgreSQL
+            files:
+              - usr/sbin/icingadb
+              - usr/share/icingadb/schema
+              - usr/share/licenses/icingadb
+              - opt/docker/sbom/icingadb
+              - opt/docker/sbom/icingadb-bin
+            license: GPL-2.0-only AND MIT AND BSD-2-Clause AND BSD-3-Clause AND MPL-2.0
+            name: icingadb-1.5
+            rel: 0
+            subpackages:
+              - depends:
+                  - ca-certificates-bundle
+                description: Icinga DB daemon with symbols and DWARF, for debugging
+                files:
+                  - path: usr/sbin/icingadb
+                    source: usr/sbin/icingadb-dev
+                  - path: usr/share/icingadb/schema
+                    source: dev/usr/share/icingadb/schema
+                  - path: usr/share/licenses/icingadb
+                    source: dev/usr/share/licenses/icingadb
+                  - path: opt/docker/sbom/icingadb
+                    source: dev/opt/docker/sbom/icingadb
+                  - path: opt/docker/sbom/icingadb-bin
+                    source: dev/opt/docker/sbom/icingadb-bin
+                name: icingadb-1.5-dev
+            url: https://github.com/Icinga/icingadb
+            version: 1.5.1
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
