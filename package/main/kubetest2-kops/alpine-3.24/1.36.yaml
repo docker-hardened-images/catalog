@@ -1,0 +1,206 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kubetest2-kops
+variant: runtime
+tags:
+  - 1.36.3-alpine3.24
+  - 1.36.3-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 7777de0a2ddbd93f0769d8e6a6cb4113e3eb9622
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: kubetest2-kops-1.36
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.36"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.36.3
+  UNIT_TEST_SKIP: ^TestRandomZones$/^6_zones$
+  VERSION: 1.36.3
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubetest2-kops-1.36
+      work-dir: /go/src/k8s.io/kops/tests/e2e
+      contents:
+        packages:
+          - busybox
+          - ca-certificates-bundle
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+          - openssh-client-default
+        files:
+          - url: git+https://github.com/kubernetes/kops.git#v1.36.3
+            checksum: 7777de0a2ddbd93f0769d8e6a6cb4113e3eb9622
+            path: /go/src/k8s.io/kops
+            spdx:
+              name: kops
+              version: 1.36.3
+              packages:
+                - name: kops-tests-e2e
+                  purl: pkg:golang/k8s.io/kops/tests/e2e@1.36.3
+                  license: Apache-2.0
+                - name: kops
+                  purl: pkg:golang/k8s.io/kops@1.36.3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies (1.36)
+          uses: go/bump@v3
+          with:
+            deps:
+              - k8s.io/kops@v1.36.3
+              - github.com/go-chi/chi/v5@v5.4.0
+              - github.com/go-jose/go-jose/v4@v4.1.6
+              - github.com/klauspost/compress@v1.20.2
+              - go.opentelemetry.io/otel/sdk@v1.47.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+              - golang.org/x/net@v0.62.0
+              - github.com/cloudflare/circl@v1.6.5
+              - github.com/go-git/go-billy/v5@v5.9.1
+              - github.com/go-git/go-git/v5@v5.19.2
+              - github.com/in-toto/in-toto-golang@v0.11.0
+              - github.com/sigstore/cosign/v2@v2.6.5
+              - github.com/sigstore/fulcio@v1.8.8
+              - github.com/sigstore/rekor@v1.5.4
+              - github.com/sigstore/sigstore-go@v1.3.0
+              - github.com/sigstore/timestamp-authority/v2@v2.1.3
+              - github.com/theupdateframework/go-tuf/v2@v2.4.2
+              - go.mongodb.org/mongo-driver@v1.17.7
+              - google.golang.org/grpc@v1.84.0
+            downgrade: true
+            download: true
+            pin-only: true
+            replaces:
+              - k8s.io/kops=k8s.io/kops@v1.36.3
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            KOPS_STATE_STORE=s3://unit-test CGO_ENABLED=0 \
+              go test -skip '^TestRandomZones$/^6_zones$' ./kubetest2-kops/... ./kubetest2-tester-kops/... ./pkg/...
+        - name: build kubetest2-kops
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kubetest2-kops
+            packages: ./kubetest2-kops
+        - name: build kubetest2-kops dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kubetest2-kops-dev
+            packages: ./kubetest2-kops
+            strip: false
+        - name: build kubetest2-tester-kops
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kubetest2-tester-kops
+            packages: ./kubetest2-tester-kops
+        - name: build kubetest2-tester-kops dev
+          uses: go/build@v1
+          with:
+            fips: false
+            output: ${target.dir}/usr/bin/kubetest2-tester-kops-dev
+            packages: ./kubetest2-tester-kops
+            strip: false
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF '"pkg:golang/k8s.io/kops/tests/e2e@1.36.3"' /opt/docker/sbom/kops/.spdx.kops.json
+            grep -qF '"pkg:golang/k8s.io/kops@1.36.3"' /opt/docker/sbom/kops/.spdx.kops.json
+            for b in kubetest2-kops kubetest2-tester-kops; do
+              for d in sbom sbom-dev; do
+                install -d "${target.dir}/opt/docker/$d/$b"
+                cp -a /opt/docker/sbom/kops/. "${target.dir}/opt/docker/$d/$b/"
+              done
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - go
+                - openssh-client-default
+            deb:
+              depends:
+                - golang-1.27 | golang-1.26
+                - openssh-client
+                - kubectl-1.37 | kubectl-1.36 | kubectl-1.35
+            depends:
+              - bash
+              - cloud-sdk
+              - coreutils
+              - findutils
+              - git
+              - make
+            description: kubetest2-kops is the kubetest2 deployer that creates and deletes kops clusters for end-to-end tests
+            files:
+              - usr/bin/kubetest2-kops
+              - opt/docker/sbom/kubetest2-kops
+            license: Apache-2.0
+            name: kubetest2-kops-1.36
+            rel: 0
+            subpackages:
+              - apk:
+                  depends:
+                    - go
+                    - openssh-client-default
+                deb:
+                  depends:
+                    - golang-1.27 | golang-1.26
+                    - openssh-client
+                    - kubectl-1.37 | kubectl-1.36 | kubectl-1.35
+                depends:
+                  - bash
+                  - cloud-sdk
+                  - coreutils
+                  - findutils
+                  - git
+                  - make
+                files:
+                  - path: usr/bin/kubetest2-kops
+                    source: usr/bin/kubetest2-kops-dev
+                  - path: opt/docker/sbom/kubetest2-kops
+                    source: opt/docker/sbom-dev/kubetest2-kops
+                name: kubetest2-kops-1.36-dev
+              - deb:
+                  depends:
+                    - kubectl-1.37 | kubectl-1.36 | kubectl-1.35
+                depends: []
+                files:
+                  - usr/bin/kubetest2-tester-kops
+                  - opt/docker/sbom/kubetest2-tester-kops
+                name: kubetest2-tester-kops-1.36
+              - deb:
+                  depends:
+                    - kubectl-1.37 | kubectl-1.36 | kubectl-1.35
+                depends: []
+                files:
+                  - path: usr/bin/kubetest2-tester-kops
+                    source: usr/bin/kubetest2-tester-kops-dev
+                  - path: opt/docker/sbom/kubetest2-tester-kops
+                    source: opt/docker/sbom-dev/kubetest2-tester-kops
+                name: kubetest2-tester-kops-1.36-dev
+            url: https://github.com/kubernetes/kops/tree/master/tests/e2e
+            version: 1.36.3
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
