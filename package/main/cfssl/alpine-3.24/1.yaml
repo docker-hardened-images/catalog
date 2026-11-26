@@ -1,0 +1,349 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-cfssl
+variant: runtime
+tags:
+  - 1.7.2-alpine3.24
+  - 1.7.2-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: e67926cc38c87f38a7c11a2d77d6d46b72163b3b
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.4-r1
+  PACKAGE_NAME: cfssl-1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "1.7"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.7.2
+  VERSION: 1.7.2
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: cfssl-1
+      work-dir: /go/src/github.com/cloudflare/cfssl
+      contents:
+        packages:
+          - busybox
+          - ca-certificates-bundle
+          - golang-1.27=1.27.4-r1
+          - golang-1.27-oci-config=1.27.4-r1
+        files:
+          - url: git+https://github.com/cloudflare/cfssl.git#v1.7.2
+            checksum: e67926cc38c87f38a7c11a2d77d6d46b72163b3b
+            path: /go/src/github.com/cloudflare/cfssl
+            spdx:
+              name: cfssl
+              version: 1.7.2
+              packages:
+                - name: cfssl
+                  purl: pkg:golang/github.com/cloudflare/cfssl@1.7.2
+                  license: BSD-2-Clause
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/sys@v0.44.0
+              - golang.org/x/text@v0.41.0
+              - filippo.io/edwards25519@v1.1.1
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.59.0
+            vendor: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            install -d /tmp/cfssl-bin
+            CGO_ENABLED=0 go build -o /tmp/cfssl-bin/ ./cmd/...
+            race=
+            if [ "$(uname -m)" = x86_64 ]; then race=-race; fi
+            PATH="/tmp/cfssl-bin:$PATH" CGO_ENABLED=1 go test -p 1 $race \
+              -skip '^(TestLdap|TestCachedCRLSet)$' \
+              $(go list ./... | grep -v /scan/crypto)
+            rm -r /tmp/cfssl-bin
+        - name: build cfssl
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl
+            packages: ./cmd/cfssl
+        - name: build cfssl dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-dev
+            packages: ./cmd/cfssl
+            strip: false
+        - name: build cfssljson
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssljson
+            packages: ./cmd/cfssljson
+        - name: build cfssljson dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssljson-dev
+            packages: ./cmd/cfssljson
+            strip: false
+        - name: build cfssl-bundle
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-bundle
+            packages: ./cmd/cfssl-bundle
+        - name: build cfssl-bundle dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-bundle-dev
+            packages: ./cmd/cfssl-bundle
+            strip: false
+        - name: build cfssl-certinfo
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-certinfo
+            packages: ./cmd/cfssl-certinfo
+        - name: build cfssl-certinfo dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-certinfo-dev
+            packages: ./cmd/cfssl-certinfo
+            strip: false
+        - name: build cfssl-newkey
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-newkey
+            packages: ./cmd/cfssl-newkey
+        - name: build cfssl-newkey dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-newkey-dev
+            packages: ./cmd/cfssl-newkey
+            strip: false
+        - name: build cfssl-scan
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-scan
+            packages: ./cmd/cfssl-scan
+        - name: build cfssl-scan dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/cfssl-scan-dev
+            packages: ./cmd/cfssl-scan
+            strip: false
+        - name: build mkbundle
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/mkbundle
+            packages: ./cmd/mkbundle
+        - name: build mkbundle dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/mkbundle-dev
+            packages: ./cmd/mkbundle
+            strip: false
+        - name: build multirootca
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -s
+              - -w
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/multirootca
+            packages: ./cmd/multirootca
+        - name: build multirootca dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X=github.com/cloudflare/cfssl/cli/version.version=1.7.2
+            output: ${target.dir}/usr/bin/multirootca-dev
+            packages: ./cmd/multirootca
+            strip: false
+        - name: stage sbom
+          runs: |
+            set -eux -o pipefail
+
+            grep -qF '"pkg:golang/github.com/cloudflare/cfssl@1.7.2"' /opt/docker/sbom/cfssl/.spdx.cfssl.json
+            for b in cfssl cfssljson cfssl-bundle cfssl-certinfo cfssl-newkey cfssl-scan mkbundle multirootca; do
+              for d in sbom sbom-dev; do
+                install -d "${target.dir}/opt/docker/$d/$b"
+                cp -a /opt/docker/sbom/cfssl/. "${target.dir}/opt/docker/$d/$b/"
+              done
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            description: cfssl is CloudFlare's PKI and TLS toolkit for signing, verifying and bundling TLS certificates
+            files:
+              - usr/bin/cfssl
+              - opt/docker/sbom/cfssl
+            license: BSD-2-Clause
+            name: cfssl-1
+            rel: 0
+            subpackages:
+              - depends: []
+                files:
+                  - path: usr/bin/cfssl
+                    source: usr/bin/cfssl-dev
+                  - path: opt/docker/sbom/cfssl
+                    source: opt/docker/sbom-dev/cfssl
+                name: cfssl-1-dev
+              - depends: []
+                files:
+                  - usr/bin/cfssljson
+                  - opt/docker/sbom/cfssljson
+                name: cfssl-1-cfssljson
+              - depends: []
+                files:
+                  - path: usr/bin/cfssljson
+                    source: usr/bin/cfssljson-dev
+                  - path: opt/docker/sbom/cfssljson
+                    source: opt/docker/sbom-dev/cfssljson
+                name: cfssl-1-cfssljson-dev
+              - depends: []
+                files:
+                  - usr/bin/cfssl-bundle
+                  - opt/docker/sbom/cfssl-bundle
+                name: cfssl-1-bundle
+              - depends: []
+                files:
+                  - path: usr/bin/cfssl-bundle
+                    source: usr/bin/cfssl-bundle-dev
+                  - path: opt/docker/sbom/cfssl-bundle
+                    source: opt/docker/sbom-dev/cfssl-bundle
+                name: cfssl-1-bundle-dev
+              - depends: []
+                files:
+                  - usr/bin/cfssl-certinfo
+                  - opt/docker/sbom/cfssl-certinfo
+                name: cfssl-1-certinfo
+              - depends: []
+                files:
+                  - path: usr/bin/cfssl-certinfo
+                    source: usr/bin/cfssl-certinfo-dev
+                  - path: opt/docker/sbom/cfssl-certinfo
+                    source: opt/docker/sbom-dev/cfssl-certinfo
+                name: cfssl-1-certinfo-dev
+              - depends: []
+                files:
+                  - usr/bin/cfssl-newkey
+                  - opt/docker/sbom/cfssl-newkey
+                name: cfssl-1-newkey
+              - depends: []
+                files:
+                  - path: usr/bin/cfssl-newkey
+                    source: usr/bin/cfssl-newkey-dev
+                  - path: opt/docker/sbom/cfssl-newkey
+                    source: opt/docker/sbom-dev/cfssl-newkey
+                name: cfssl-1-newkey-dev
+              - depends: []
+                files:
+                  - usr/bin/cfssl-scan
+                  - opt/docker/sbom/cfssl-scan
+                name: cfssl-1-scan
+              - depends: []
+                files:
+                  - path: usr/bin/cfssl-scan
+                    source: usr/bin/cfssl-scan-dev
+                  - path: opt/docker/sbom/cfssl-scan
+                    source: opt/docker/sbom-dev/cfssl-scan
+                name: cfssl-1-scan-dev
+              - depends: []
+                files:
+                  - usr/bin/mkbundle
+                  - opt/docker/sbom/mkbundle
+                name: cfssl-1-mkbundle
+              - depends: []
+                files:
+                  - path: usr/bin/mkbundle
+                    source: usr/bin/mkbundle-dev
+                  - path: opt/docker/sbom/mkbundle
+                    source: opt/docker/sbom-dev/mkbundle
+                name: cfssl-1-mkbundle-dev
+              - depends: []
+                files:
+                  - usr/bin/multirootca
+                  - opt/docker/sbom/multirootca
+                name: cfssl-1-multirootca
+              - depends: []
+                files:
+                  - path: usr/bin/multirootca
+                    source: usr/bin/multirootca-dev
+                  - path: opt/docker/sbom/multirootca
+                    source: opt/docker/sbom-dev/multirootca
+                name: cfssl-1-multirootca-dev
+            url: https://github.com/cloudflare/cfssl
+            version: 1.7.2
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
