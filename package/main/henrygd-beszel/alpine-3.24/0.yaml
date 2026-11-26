@@ -1,0 +1,258 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-henrygd-beszel
+variant: runtime
+tags:
+  - 0.21.1-alpine3.24
+  - 0.21.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2024-07-24"
+vars:
+  BUN_VERSION: 1.4.3-r0
+  COMMIT_SHA: e2ed147a5aa6472e6462521632ccc7101668132c
+  GOLANG_MAJOR_MINOR_VERSION: "1.27"
+  GOLANG_VERSION: 1.27.3-r0
+  PACKAGE_NAME: beszel-0
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.21"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.21.1
+  VERSION: 0.21.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: beszel-0
+      work-dir: /go/src/github.com/henrygd/beszel
+      environment:
+        CGO_ENABLED: "0"
+        GOTOOLCHAIN: local
+      caches:
+        - path: /root/.cache/go-build
+        - path: /root/.bun
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - mawk
+          - sed
+          - bun=1.4.3-r0
+          - golang-1.27=1.27.3-r0
+          - golang-1.27-oci-config=1.27.3-r0
+        files:
+          - url: git+https://github.com/henrygd/beszel.git#v0.21.1
+            checksum: e2ed147a5aa6472e6462521632ccc7101668132c
+            path: /go/src/github.com/henrygd/beszel
+            spdx:
+              name: henrygd-beszel
+              version: 0.21.1
+              packages:
+                - name: henrygd-beszel
+                  purl: pkg:dhi/henrygd-beszel@0.21.1
+                  license: MIT
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: remove update command
+          uses: patch@v1
+          with:
+            options: -p1 --remove-empty-files
+            patches:
+              - ${source.dir}/patch/remove-update-command.patch
+              - ${source.dir}/patch/bump-frontend-deps.patch
+        - name: build hub ui
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            test -f internal/site/bun.lock
+            test -f internal/site/package.json
+            bun install --frozen-lockfile --cwd internal/site
+            bun run --cwd internal/site build
+            test -s internal/site/dist/index.html
+            grep -q 'Beszel' internal/site/dist/index.html
+        - name: download go modules
+          uses: go/bump@v2
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            test ! -e internal/hub/update.go
+            grep -q 'Version = "0.21.1"' beszel.go
+            if grep -q 'Version = "0.21.1-r' beszel.go; then
+              echo "beszel.go version includes a package revision" >&2
+              exit 1
+            fi
+            CGO_ENABLED=0 go test -tags='testing no_ui' -count=1 ./internal/hub/... ./internal/migrations/...
+        - name: build hub
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -s -w
+            output: ${target.dir}/usr/bin/beszel
+            packages: ./internal/cmd/hub
+        - name: build hub dev
+          uses: go/build@v1
+          with:
+            cgo_enabled: 0
+            fips: false
+            ldflags:
+              - -linkmode=internal
+            output: ${target.dir}/usr/bin/beszel-dev
+            packages: ./internal/cmd/hub
+            strip: false
+        - name: verify binaries
+          runs: |
+            set -eux -o pipefail
+
+            runtime="${target.dir}/usr/bin/beszel"
+            dev="${target.dir}/usr/bin/beszel-dev"
+            test -x "${runtime}"
+            test -x "${dev}"
+            grep -aqF '3.53.4' "${runtime}"
+            grep -aqF '3.53.4' "${dev}"
+
+            runtime_meta=$(go version -m "${runtime}")
+            dev_meta=$(go version -m "${dev}")
+            runtime_ldflags=$(printf '%s\n' "${runtime_meta}" | grep -F -- '-ldflags=')
+            printf '%s\n' "${runtime_ldflags}" | grep -F -- '-s -w'
+            dev_ldflags=$(printf '%s\n' "${dev_meta}" | grep -F -- '-ldflags=')
+            if printf '%s\n' "${dev_ldflags}" | grep -F -- '-s'; then
+              echo "dev binary ldflags must not include -s" >&2
+              exit 1
+            fi
+            if printf '%s\n' "${dev_ldflags}" | grep -F -- '-w'; then
+              echo "dev binary ldflags must not include -w" >&2
+              exit 1
+            fi
+
+            if [ "false" = "true" ]; then
+              printf '%s\n' "${runtime_meta}" | grep -F 'GOFIPS140=v1.0.0'
+              printf '%s\n' "${dev_meta}" | grep -F 'GOFIPS140=v1.0.0'
+            else
+              if printf '%s\n' "${runtime_meta}" | grep -F 'GOFIPS140='; then
+                echo "runtime binary must not be a Go FIPS build" >&2
+                exit 1
+              fi
+            fi
+        - name: sqlite sbom
+          uses: spdx@v1
+          with:
+            license: blessing
+            name: sqlite
+            purl: pkg:generic/sqlite@3.53.4
+            version: 3.53.4
+        - name: production ui inventory
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            test -d internal/site/node_modules
+            rm -r internal/site/node_modules
+            bun install --frozen-lockfile --production --ignore-scripts --cwd internal/site
+            test -d internal/site/node_modules
+            if [ -d internal/site/node_modules/@esbuild ]; then
+              rm -r internal/site/node_modules/@esbuild
+            fi
+            esbuild_dirs=$(find internal/site/node_modules -type d -name esbuild)
+            if [ -n "${esbuild_dirs}" ]; then
+              printf '%s\n' "${esbuild_dirs}" | xargs rm -r
+            fi
+            ts_dirs=$(find internal/site/node_modules -type d -name typescript)
+            if [ -n "${ts_dirs}" ]; then
+              printf '%s\n' "${ts_dirs}" | xargs rm -r
+            fi
+            left=$(find internal/site/node_modules -type d \( -name esbuild -o -name '@esbuild' -o -name typescript \))
+            test -z "${left}"
+        - name: frontend sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: javascript-package-cataloger
+            prefix: beszel-frontend
+            source: /go/src/github.com/henrygd/beszel/internal/site
+        - name: stage license and sbom
+          runs: |
+            set -eux -o pipefail
+
+            test -s LICENSE
+            grep -q 'MIT License' LICENSE
+            grep -q 'Copyright (c) 2024 henrygd' LICENSE
+            install -D -m 0644 LICENSE "${target.dir}/usr/share/licenses/beszel/LICENSE"
+            test -s "${target.dir}/usr/share/licenses/beszel/LICENSE"
+
+            test -f /opt/docker/sbom/henrygd-beszel/.spdx.henrygd-beszel.json
+            test -f /opt/docker/sbom/beszel-frontend/.spdx.beszel-frontend.json
+            test -f /opt/docker/sbom/sqlite/.spdx.sqlite.json
+            install -d "${target.dir}/opt/docker/sbom"
+            cp -a /opt/docker/sbom/henrygd-beszel /opt/docker/sbom/beszel-frontend /opt/docker/sbom/sqlite "${target.dir}/opt/docker/sbom/"
+        - uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - ca-certificates-bundle
+            deb:
+              depends:
+                - ca-certificates-bundle
+            description: Beszel hub
+            files:
+              - usr/bin/beszel
+              - usr/share/licenses/beszel/LICENSE
+              - opt/docker/sbom/henrygd-beszel
+              - opt/docker/sbom/beszel-frontend
+              - opt/docker/sbom/sqlite
+            license: MIT
+            name: beszel-0
+            rel: 0
+            subpackages:
+              - apk:
+                  depends:
+                    - ca-certificates-bundle
+                deb:
+                  depends:
+                    - ca-certificates-bundle
+                description: Beszel hub without strip
+                files:
+                  - path: usr/bin/beszel
+                    source: usr/bin/beszel-dev
+                name: beszel-0-dev
+            url: https://github.com/henrygd/beszel
+            version: 0.21.1
+      paths:
+        - type: file
+          path: ${source.dir}/patch/remove-update-command.patch
+          uid: 0
+          gid: 0
+          source: package/main/henrygd-beszel/alpine-3.24/patch/remove-update-command.patch
+        - type: file
+          path: ${source.dir}/patch/bump-frontend-deps.patch
+          uid: 0
+          gid: 0
+          source: package/main/henrygd-beszel/alpine-3.24/patch/bump-frontend-deps.patch
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
