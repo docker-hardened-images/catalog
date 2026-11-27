@@ -1,0 +1,213 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kubeflow-tensorboards-web-app
+variant: runtime
+tags:
+  - 1.11.1-alpine3.24
+  - 1.11.1-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-04"
+vars:
+  CARGO_VERSION: 1.96.1-r0
+  COMMIT_SHA: 88fbd77f777ceea627101699879b7ed5677b8c09
+  NODEJS_VERSION: 24.22.3-r0
+  NPM_VERSION: 11.21.2-r2
+  PACKAGE_NAME: kubeflow-tensorboards-web-app-1
+  PY3_PIP_VERSION: 26.3-r1
+  PY3_SETUPTOOLS_VERSION: 84.0.0-r1
+  PYTHON_VERSION: 3.12.16-r3
+  REL: "0"
+  RUST_VERSION: 1.96.1-r0
+  SEMVER_MAJOR_MINOR_VERSION: "1.11"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.11.1
+  VERSION: 1.11.1
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kubeflow-tensorboards-web-app
+      work-dir: ${source.dir}
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      caches:
+        - path: /root/.npm
+        - path: /root/.cargo/registry
+      contents:
+        packages:
+          - bash
+          - binutils
+          - build-base
+          - c-ares-dev
+          - ca-certificates-bundle
+          - cargo=1.96.1-r0
+          - coreutils
+          - diffutils
+          - findutils
+          - grep
+          - libev-dev
+          - libffi-dev
+          - libuv-dev
+          - nodejs-24=24.22.3-r0
+          - npm=11.21.2-r2
+          - openssl-dev
+          - pkgconf
+          - py3.12-pip=26.3-r1
+          - py3.12-setuptools=84.0.0-r1
+          - python-3.12-dev=3.12.16-r3
+          - python-3.12=3.12.16-r3
+          - rust=1.96.1-r0
+          - sed
+          - yaml-dev
+          - zlib-dev
+          - zstd-dev
+        files:
+          - url: git+https://github.com/kubeflow/notebooks.git#v1.11.1
+            checksum: 88fbd77f777ceea627101699879b7ed5677b8c09
+            path: ${source.dir}/notebooks
+            spdx:
+              name: kubeflow-tensorboards-web-app
+              version: 1.11.1
+              packages:
+                - name: kubeflow-tensorboards-web-app
+                  purl: pkg:github/kubeflow/notebooks@v1.11.1
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump python dependencies
+          uses: python/bump@v1
+          privileged: true
+          environment:
+            UV_OVERRIDE: patch/uv-overrides.txt
+          with:
+            bumps: ${source.dir}/patch/python-bumps.json
+            hashes: require
+            mode: requirements
+            python: /usr/bin/python3.12
+            requirements:
+              - requirements-lock.txt
+        - name: bump frontend dependencies
+          uses: npm/bump@v2
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/tensorboards-frontend/npm-bumps.json
+            lockfile-only: true
+            npm-root: ${source.dir}/notebooks/components/crud-web-apps/tensorboards/frontend
+        - name: build and stage payload
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" \
+              TARGET_DIR="${target.dir}" \
+              UPSTREAM_DIR="${source.dir}/notebooks" \
+              PYTHON_BIN=/usr/bin/python3.12 \
+              VERSION="1.11.1"
+            bash "${source.dir}/build-tensorboards-web-app.sh"
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: kubeflow-crud-backend
+            purl: pkg:github/kubeflow/notebooks@v1.11.1#components/crud-web-apps/common/backend
+            version: 1.11.1
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: kubeflow-common-lib
+            purl: pkg:github/kubeflow/notebooks@v1.11.1#components/crud-web-apps/common/frontend/kubeflow-common-lib
+            version: 1.11.1
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: roboto
+            purl: pkg:generic/google/roboto@2.137
+            version: "2.137"
+        - name: stage sbom fragments
+          runs: |
+            set -eux -o pipefail
+
+            sbom="${target.dir}/opt/docker/sbom/kubeflow-tensorboards-web-app"
+            test -d "${sbom}"
+            for name in kubeflow-tensorboards-web-app kubeflow-crud-backend kubeflow-common-lib roboto; do
+              test -d "/opt/docker/sbom/${name}"
+              cp -a "/opt/docker/sbom/${name}" "${sbom}/${name}"
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            depends:
+              - python-3.12
+              - libssl3
+              - libffi
+              - yaml
+              - c-ares
+              - libev
+              - libuv
+              - libstdc++
+              - libgcc
+            description: Kubeflow Tensorboards web app (Flask backend and Angular frontend)
+            files:
+              - usr/lib/kubeflow-tensorboards-web-app
+              - usr/bin/gunicorn
+              - opt/docker/sbom/kubeflow-tensorboards-web-app
+            formats:
+              - apk
+            license: Apache-2.0
+            name: kubeflow-tensorboards-web-app-1
+            rel: 0
+            url: https://github.com/kubeflow/notebooks
+            version: 1.11.1
+      paths:
+        - type: file
+          path: ${source.dir}/build-tensorboards-web-app.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-tensorboards-web-app/build-tensorboards-web-app.sh
+        - type: file
+          path: ${source.dir}/requirements-lock.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-tensorboards-web-app/requirements-lock.txt
+        - type: file
+          path: ${source.dir}/requirements-build.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-tensorboards-web-app/requirements-build.txt
+        - type: file
+          path: ${source.dir}/patch/python-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-tensorboards-web-app/patch/python-bumps.json
+        - type: file
+          path: ${source.dir}/patch/uv-overrides.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-tensorboards-web-app/patch/uv-overrides.txt
+        - type: file
+          path: ${source.dir}/patch/tensorboards-frontend/npm-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-tensorboards-web-app/patch/tensorboards-frontend/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
