@@ -1,0 +1,161 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-kai-scheduler-nodescaleadjuster
+variant: runtime
+tags:
+  - 0.18.8-alpine3.24
+  - 0.18.8-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-09-23"
+  end-of-life: "2027-09-23"
+vars:
+  COMMIT_SHA: b7fa1346b24c77abad3ee431dec179f8e38720e0
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  LICENSE_FILES: LICENSE,NOTICE
+  PACKAGE_NAME: kai-scheduler-nodescaleadjuster-0.18
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "0.18"
+  SEMVER_MAJOR_VERSION: "0"
+  SEMVER_VERSION: 0.18.8
+  VERSION: 0.18.8
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: kai-scheduler-nodescaleadjuster-0.18
+      work-dir: /go/src/github.com/kai-scheduler/KAI-scheduler
+      contents:
+        packages:
+          - busybox
+          - bash
+          - ca-certificates-bundle
+          - coreutils
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/kai-scheduler/KAI-scheduler.git#v0.18.8
+            checksum: b7fa1346b24c77abad3ee431dec179f8e38720e0
+            path: /go/src/github.com/kai-scheduler/KAI-scheduler
+            spdx:
+              name: kai-scheduler-nodescaleadjuster
+              version: 0.18.8
+              packages:
+                - name: kai-scheduler-nodescaleadjuster
+                  purl: pkg:golang/github.com/kai-scheduler/KAI-scheduler@0.18.8
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            go test -count=1 ./pkg/nodescaleadjuster/... ./cmd/nodescaleadjuster/...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitVersion=v0.18.8
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitCommit=b7fa1346b24c77abad3ee431dec179f8e38720e0
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitTreeState=clean
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/nodescaleadjuster
+            packages: ./cmd/nodescaleadjuster
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitVersion=v0.18.8
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitCommit=b7fa1346b24c77abad3ee431dec179f8e38720e0
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.gitTreeState=clean
+              - -X github.com/kai-scheduler/KAI-scheduler/pkg/scheduler/version.buildDate=$(date -ud @${SOURCE_DATE_EPOCH} +'%Y-%m-%dT%H:%M:%SZ')
+            output: ${target.dir}/usr/bin/nodescaleadjuster-dev
+            packages: ./cmd/nodescaleadjuster
+            strip: false
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            runtime=${target.dir}/usr/bin/nodescaleadjuster
+            devbin=${target.dir}/usr/bin/nodescaleadjuster-dev
+            for bin in "$runtime" "$devbin"; do
+              test -x "$bin"
+              go version -m "$bin" > /tmp/buildinfo.txt
+              grep -qxF "$(printf '\tbuild\tCGO_ENABLED=0')" /tmp/buildinfo.txt
+              grep -qF "pkg/scheduler/version.gitVersion=v0.18.8 " /tmp/buildinfo.txt
+              grep -qF "pkg/scheduler/version.gitCommit=b7fa1346b24c77abad3ee431dec179f8e38720e0" /tmp/buildinfo.txt
+              if [ "false" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v1\.0\.0' /tmp/buildinfo.txt
+              elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                exit 1
+              fi
+            done
+            go version -m "$runtime" | grep -qxF "$(printf '\tbuild\t-trimpath=true')"
+            if go version -m "$devbin" | grep -E -- '-trimpath=true|-w( |"|$)'; then
+              echo "$devbin: dev binary must keep symbols and paths" >&2
+              exit 1
+            fi
+        - name: stage sbom and licenses
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/kai-scheduler-nodescaleadjuster/.spdx.kai-scheduler-nodescaleadjuster.json
+            grep -q 'Apache License' LICENSE
+            grep -q 'Version 2.0' LICENSE
+            install -d "${target.dir}/opt/docker/sbom" "${target.dir}/opt/docker/sbom-dev"
+            cp -a /opt/docker/sbom/kai-scheduler-nodescaleadjuster "${target.dir}/opt/docker/sbom/"
+            cp -a /opt/docker/sbom/kai-scheduler-nodescaleadjuster "${target.dir}/opt/docker/sbom-dev/"
+            for pkg in kai-scheduler-nodescaleadjuster-0.18 kai-scheduler-nodescaleadjuster-0.18-dev; do
+              for f in $(echo "LICENSE,NOTICE" | tr ',' ' '); do
+                test -s "$f"
+                install -D -m 0644 "$f" "${target.dir}/usr/share/licenses/$pkg/$f"
+              done
+            done
+        - uses: dhi/build-pkg:0
+          with:
+            description: KAI Scheduler node scale adjuster
+            files:
+              - usr/bin/nodescaleadjuster
+              - opt/docker/sbom/kai-scheduler-nodescaleadjuster
+              - usr/share/licenses/kai-scheduler-nodescaleadjuster-0.18
+            license: Apache-2.0
+            name: kai-scheduler-nodescaleadjuster-0.18
+            rel: 0
+            subpackages:
+              - files:
+                  - path: usr/bin/nodescaleadjuster
+                    source: usr/bin/nodescaleadjuster-dev
+                  - path: opt/docker/sbom/kai-scheduler-nodescaleadjuster
+                    source: opt/docker/sbom-dev/kai-scheduler-nodescaleadjuster
+                  - path: usr/share/licenses/kai-scheduler-nodescaleadjuster-0.18-dev
+                name: kai-scheduler-nodescaleadjuster-0.18-dev
+            url: https://github.com/kai-scheduler/KAI-scheduler
+            version: 0.18.8
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
