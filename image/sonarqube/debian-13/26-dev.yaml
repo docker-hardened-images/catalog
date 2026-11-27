@@ -24,6 +24,7 @@ vars:
   ELASTICSEARCH_LINUX_ARCH: '#{ target.arch == "arm64" ? "aarch64" : "x86_64" }'
   ELASTICSEARCH_LINUX_SHA512: '#{ target.arch == "arm64" ? "8b7b38b4b8d4049844d550024e58389c8953dfcbc46f6d2edc0def7a5883820b15bf8d73188ba88e4e74e34afbbee6b01bad00836b8da1ed9df0ceaefb556d80" : "e846908391081231a1a2ae4d1350dada9b7cc5cc1a3f5a6bb394ee6a83b94f07dc04d99919167f806db0a3b29b682d76dbb858b5bd6598af98abee97e291d3e3" }'
   ELASTICSEARCH_VERSION: 9.4.7
+  FAILUREACCESS_VERSION: 1.0.3
   GUAVA_VERSION: 33.7.2-jre
   HTTPCLIENT5_VERSION: 5.6.3
   HTTPCORE5_VERSION: 5.4.3
@@ -280,6 +281,18 @@ contents:
               packages:
                 - name: guava
                   purl: pkg:maven/com.google.guava/guava@33.7.2-jre
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://maven-central.storage-download.googleapis.com/maven2/com/google/guava/failureaccess/1.0.3/failureaccess-1.0.3.jar
+            checksum: sha256:cbfc3906b19b8f55dd7cfd6dfe0aa4532e834250d7f080bd8d211a3e246b59cb
+            path: ${source.dir}/patch/deps/failureaccess-1.0.3.jar
+            spdx:
+              name: failureaccess
+              version: 1.0.3
+              packages:
+                - name: failureaccess
+                  purl: pkg:maven/com.google.guava/failureaccess@1.0.3
                   license: Apache-2.0
             uid: 0
             gid: 0
@@ -568,8 +581,17 @@ contents:
             shopt -s nullglob
 
             patch_jar="${source.dir}/patch/deps/guava-33.7.2-jre.jar"
+            failureaccess_jar="${source.dir}/patch/deps/failureaccess-1.0.3.jar"
             metadata_dir="META-INF/maven/com.google.guava/guava"
+            failureaccess_metadata_dir="META-INF/maven/com.google.guava/failureaccess"
+            failureaccess_class="com/google/common/util/concurrent/internal/InternalFutureFailureAccess.class"
             patched_count=0
+
+            assert_failureaccess() {
+              local jar_file="$1"
+              unzip -l "${jar_file}" "${failureaccess_class}" > /dev/null
+              unzip -p "${jar_file}" "${failureaccess_metadata_dir}/pom.properties" | grep -q "version=1.0.3"
+            }
 
             patch_guava_in_jar() {
               local outer_jar="$1"
@@ -591,19 +613,23 @@ contents:
               fi
 
               rm -rf "${overlay_dir:?}"/*
-              (cd "${overlay_dir}" && jar xf "${patch_jar}")
+              (cd "${overlay_dir}" && jar xf "${patch_jar}" && jar xf "${failureaccess_jar}")
 
               rm -rf "${repack_dir:?}/com/google/common" \
                 "${repack_dir:?}/com/google/thirdparty" \
-                "${repack_dir:?}/${metadata_dir}"
+                "${repack_dir:?}/${metadata_dir}" \
+                "${repack_dir:?}/${failureaccess_metadata_dir}"
               mkdir -p "${repack_dir}/com/google" "${repack_dir}/META-INF/maven/com.google.guava"
               cp -a "${overlay_dir}/com/google/common" "${repack_dir}/com/google/common"
               if [[ -d "${overlay_dir}/com/google/thirdparty" ]]; then
                 cp -a "${overlay_dir}/com/google/thirdparty" "${repack_dir}/com/google/thirdparty"
               fi
               cp -a "${overlay_dir}/${metadata_dir}" "${repack_dir}/${metadata_dir}"
+              cp -a "${overlay_dir}/${failureaccess_metadata_dir}" "${repack_dir}/${failureaccess_metadata_dir}"
 
               grep -q "version=33.7.2-jre" "${repack_dir}/${metadata_dir}/pom.properties"
+              grep -q "version=1.0.3" "${repack_dir}/${failureaccess_metadata_dir}/pom.properties"
+              test -f "${repack_dir}/${failureaccess_class}"
 
               case "$(basename "${outer_jar}")" in
                 sonar-python-plugin-*.jar)
@@ -640,6 +666,7 @@ contents:
               exit 1
             fi
             unzip -p "${js_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+            assert_failureaccess "${js_jar}"
 
             python_jar=$(find "${target.dir}/sonarqube/lib/extensions" -maxdepth 1 -name 'sonar-python-plugin-*.jar' -type f | head -1)
             if [[ -z "${python_jar}" ]]; then
@@ -647,6 +674,7 @@ contents:
               exit 1
             fi
             unzip -p "${python_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+            assert_failureaccess "${python_jar}"
 
             app_jar=$(find "${target.dir}/sonarqube/lib" -maxdepth 1 -name 'sonar-application-*.jar' -type f | head -1)
             if [[ -z "${app_jar}" ]]; then
@@ -654,6 +682,7 @@ contents:
               exit 1
             fi
             unzip -p "${app_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+            assert_failureaccess "${app_jar}"
 
             scanner_jar=$(find "${target.dir}/sonarqube/lib/scanner" -maxdepth 1 -name 'sonar-scanner-engine-community-*.jar' -type f | head -1)
             if [[ -z "${scanner_jar}" ]]; then
@@ -661,6 +690,7 @@ contents:
               exit 1
             fi
             unzip -p "${scanner_jar}" "${metadata_dir}/pom.properties" | grep -q "version=33.7.2-jre"
+            assert_failureaccess "${scanner_jar}"
 
             echo "Patched ${patched_count} bundled guava JAR(s)"
         - name: patch bundled jackson core
