@@ -1,0 +1,347 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-rancher-agent
+variant: runtime
+tags:
+  - 2.15-alpine3.24
+  - 2.15.4-alpine3.24
+  - 2.15.4-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  CATATONIT_COMMIT_SHA: bb3b96b99668e544618c5aec427c1f4b6b9ee9bb
+  CATATONIT_VERSION: 0.2.1
+  COMMIT_SHA: ce34ff101b71dce516e898cabc819d3fad87f4da
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  INIT: catatonit
+  KDM_COMMIT_SHA: bef6e9a2b21abd73b698015247ebdd2151a66b78
+  KDM_DATA_SHA256: 12892ba28d89c74cba5dea7d01f846b79d617219d5f7e0ac5d63c7674b1f410d
+  KUBECTL_MAJOR_MINOR_VERSION: "1.36"
+  LICENSE_DIR: usr/share/licenses/rancher-agent-2.15
+  PACKAGE_NAME: rancher-agent-2.15
+  RANCHER_COMMIT_TIME: "2026-11-24T22:29:23Z"
+  RANCHER_PKG_APIS_VERSION: v0.0.0-20260520140148-1f22fcaec55b
+  RANCHER_PKG_CLIENT_VERSION: v0.0.0
+  RANCHER_PKG_MODULES: apis=v0.0.0-20260520140148-1f22fcaec55b client=v0.0.0 plan=v0.0.0-20260428222332-2696373f4152
+  RANCHER_PKG_PLAN_VERSION: v0.0.0-20260428222332-2696373f4152
+  REL: "0"
+  SBOM_DOCUMENTS: rancher-agent rancher-pkg-apis rancher-pkg-client rancher-pkg-plan kontainer-driver-metadata catatonit
+  SEMVER_MAJOR_MINOR_VERSION: "2.15"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.15.4
+  VERSION: 2.15.4
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: rancher-agent-2.15
+      work-dir: /go/src/github.com/rancher/rancher
+      environment:
+        GOFLAGS: -buildvcs=false
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - autoconf
+          - automake
+          - build-base
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - git
+          - grep
+          - libtool
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/rancher/rancher.git#v2.15.4
+            checksum: ce34ff101b71dce516e898cabc819d3fad87f4da
+            path: /go/src/github.com/rancher/rancher
+            spdx:
+              name: rancher-agent
+              version: 2.15.4
+              packages:
+                - name: rancher-agent
+                  purl: pkg:golang/github.com/rancher/rancher@2.15.4
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/rancher/kontainer-driver-metadata.git#bef6e9a2b21abd73b698015247ebdd2151a66b78
+            checksum: bef6e9a2b21abd73b698015247ebdd2151a66b78
+            path: ${source.dir}/kontainer-driver-metadata
+            spdx:
+              name: kontainer-driver-metadata
+              version: bef6e9a2b21abd73b698015247ebdd2151a66b78
+              packages:
+                - name: kontainer-driver-metadata
+                  purl: pkg:github/rancher/kontainer-driver-metadata@bef6e9a2b21abd73b698015247ebdd2151a66b78
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/openSUSE/catatonit.git#v0.2.1
+            checksum: bb3b96b99668e544618c5aec427c1f4b6b9ee9bb
+            path: ${source.dir}/catatonit
+            spdx:
+              name: catatonit
+              version: 0.2.1
+              packages:
+                - name: catatonit
+                  purl: pkg:github/openSUSE/catatonit@v0.2.1
+                  license: GPL-2.0-or-later
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update go dependencies
+          uses: go/bump@v3
+          with:
+            deps: []
+            download: true
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            GODEBUG='' CGO_ENABLED=0 go test -tags k8s -count=1 \
+              -skip '^Test_(Ensure|Head|Update)$' \
+              ./cmd/agent/... ./pkg/agent/... ./pkg/catalogv2/git/...
+        - name: build
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.VERSION=v2.15.4
+              - -s
+            output: ${target.dir}/usr/bin/agent
+            packages: ./cmd/agent
+            tags: k8s
+        - name: build dev
+          uses: go/build@v1
+          with:
+            fips: false
+            ldflags:
+              - -X main.VERSION=v2.15.4
+            output: ${target.dir}/usr/bin/agent-dev
+            packages: ./cmd/agent
+            strip: false
+            tags: k8s
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            fips='false'
+            expected=$(printf '%s\n' apis=v0.0.0-20260520140148-1f22fcaec55b client=v0.0.0 plan=v0.0.0-20260428222332-2696373f4152 | cut -d= -f1 | sort | tr '\n' ' ')
+            for bin in ${target.dir}/usr/bin/agent ${target.dir}/usr/bin/agent-dev; do
+              go version -m "$bin" > /tmp/buildinfo
+              grep -E '^[[:space:]]+build[[:space:]]' /tmp/buildinfo
+              actual=$(awk '$1 == "dep" && $2 ~ /^github\.com\/rancher\/rancher\/pkg\// { sub(/^github\.com\/rancher\/rancher\/pkg\//, "", $2); print $2 }' /tmp/buildinfo | sort | tr '\n' ' ')
+              test "$actual" = "$expected"
+              for module in apis=v0.0.0-20260520140148-1f22fcaec55b client=v0.0.0 plan=v0.0.0-20260428222332-2696373f4152; do
+                name=${module%%=*}
+                version=${module#*=}
+                awk -v mod="github.com/rancher/rancher/pkg/$name" -v ver="$version" -v dir="./pkg/$name" '
+                  $1 == "dep" && $2 == mod { found = ($3 == ver); getline; ok = found && $1 == "=>" && $2 == dir && $3 == "(devel)" }
+                  END { exit ok ? 0 : 1 }
+                ' /tmp/buildinfo
+              done
+              grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$' /tmp/buildinfo
+              if [ "$fips" = "true" ]; then
+                grep -qE '^[[:space:]]+build[[:space:]]+-tags=k8s,fips140v[0-9.]+$' /tmp/buildinfo
+                grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=v' /tmp/buildinfo
+              else
+                grep -qE '^[[:space:]]+build[[:space:]]+-tags=k8s$' /tmp/buildinfo
+                if grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' /tmp/buildinfo; then
+                  echo "$bin was built with GOFIPS140" >&2
+                  exit 1
+                fi
+              fi
+            done
+        - name: install scripts, driver metadata and licenses
+          runs: |
+            set -eux -o pipefail
+
+            install -D -m 0755 package/run.sh ${target.dir}/usr/bin/run.sh
+            install -D -m 0755 package/loglevel ${target.dir}/usr/bin/loglevel
+            grep -qx 'exec catatonit -- agent' ${target.dir}/usr/bin/run.sh
+
+            kdm=${source.dir}/kontainer-driver-metadata
+            echo "12892ba28d89c74cba5dea7d01f846b79d617219d5f7e0ac5d63c7674b1f410d  $kdm/data/data.json" | sha256sum -c -
+            install -D -m 0644 $kdm/data/data.json ${target.dir}/var/lib/rancher-data/driver-metadata/data.json
+
+            install -D -m 0644 LICENSE ${target.dir}/usr/share/licenses/rancher-agent-2.15/LICENSE
+            install -D -m 0644 $kdm/LICENSE ${target.dir}/usr/share/licenses/rancher-agent-2.15/kontainer-driver-metadata/LICENSE
+        - name: build catatonit
+          work-dir: ${source.dir}/catatonit
+          runs: |
+            set -eux -o pipefail
+
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make catatonit_LDFLAGS=
+            install -D -s -m 0755 catatonit ${target.dir}/usr/bin/catatonit
+            install -D -m 0644 COPYING ${target.dir}/usr/share/licenses/rancher-agent-2.15/catatonit/COPYING
+
+            readelf -l ${target.dir}/usr/bin/catatonit > /tmp/catatonit.phdr
+            grep -qE 'Requesting program interpreter: /lib/ld-musl-[a-z0-9_]+\.so\.1' /tmp/catatonit.phdr
+            ${target.dir}/usr/bin/catatonit --version | grep -qx 'tini version 0.2.1_catatonit'
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: rancher-pkg-apis
+            purl: pkg:golang/github.com/rancher/rancher/pkg/apis@v0.0.0-20260520140148-1f22fcaec55b
+            version: v0.0.0-20260520140148-1f22fcaec55b
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: rancher-pkg-client
+            purl: pkg:golang/github.com/rancher/rancher/pkg/client@v0.0.0
+            version: v0.0.0
+        - uses: spdx@v1
+          with:
+            license: Apache-2.0
+            name: rancher-pkg-plan
+            purl: pkg:golang/github.com/rancher/rancher/pkg/plan@v0.0.0-20260428222332-2696373f4152
+            version: v0.0.0-20260428222332-2696373f4152
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p ${target.dir}/opt/docker/sbom
+            for d in rancher-agent rancher-pkg-apis rancher-pkg-client rancher-pkg-plan kontainer-driver-metadata catatonit; do
+              test -d /opt/docker/sbom/$d
+              cp -a /opt/docker/sbom/$d ${target.dir}/opt/docker/sbom/
+            done
+        - name: package deb
+          uses: dhi/build-pkg:0
+          with:
+            deb:
+              depends:
+                - rancher-agent-2.15-common
+            description: Rancher agent, which connects a downstream cluster or node to Rancher
+            files:
+              - usr/bin/agent
+            formats:
+              - deb
+            license: Apache-2.0
+            name: rancher-agent-2.15
+            rel: 0
+            subpackages:
+              - deb:
+                  depends:
+                    - bash
+                    - ca-certificates
+                    - catatonit
+                    - coreutils
+                    - curl
+                    - findutils
+                    - gawk
+                    - git
+                    - grep
+                    - hostname
+                    - iproute2
+                    - jq
+                    - kubectl-1.36
+                    - libc-bin
+                    - openssh-client
+                    - openssl
+                    - sed
+                files:
+                  - usr/bin/run.sh
+                  - usr/bin/loglevel
+                  - var/lib/rancher-data/driver-metadata/data.json
+                  - usr/share/licenses/rancher-agent-2.15/LICENSE
+                  - usr/share/licenses/rancher-agent-2.15/kontainer-driver-metadata
+                  - opt/docker/sbom/rancher-agent
+                  - opt/docker/sbom/rancher-pkg-apis
+                  - opt/docker/sbom/rancher-pkg-client
+                  - opt/docker/sbom/rancher-pkg-plan
+                  - opt/docker/sbom/kontainer-driver-metadata
+                name: rancher-agent-2.15-common
+              - apk:
+                  depends:
+                    - rancher-agent-2.15-common
+                deb:
+                  depends:
+                    - rancher-agent-2.15-common
+                files:
+                  - path: usr/bin/agent
+                    source: usr/bin/agent-dev
+                name: rancher-agent-2.15-dev
+            url: https://github.com/rancher/rancher
+            version: 2.15.4
+        - name: package apk
+          uses: dhi/build-pkg:0
+          with:
+            apk:
+              depends:
+                - rancher-agent-2.15-common
+            description: Rancher agent, which connects a downstream cluster or node to Rancher
+            files:
+              - usr/bin/agent
+            formats:
+              - apk
+            license: Apache-2.0 AND GPL-2.0-or-later
+            name: rancher-agent-2.15
+            rel: 0
+            subpackages:
+              - apk:
+                  depends:
+                    - bash
+                    - ca-certificates-bundle
+                    - coreutils
+                    - curl
+                    - findutils
+                    - gawk
+                    - git
+                    - grep
+                    - iproute2-minimal
+                    - jq
+                    - kubectl-1.36
+                    - musl
+                    - musl-utils
+                    - net-tools
+                    - openssh-client-default
+                    - openssl
+                    - sed
+                files:
+                  - usr/bin/run.sh
+                  - usr/bin/loglevel
+                  - usr/bin/catatonit
+                  - var/lib/rancher-data/driver-metadata/data.json
+                  - usr/share/licenses/rancher-agent-2.15/LICENSE
+                  - usr/share/licenses/rancher-agent-2.15/kontainer-driver-metadata
+                  - usr/share/licenses/rancher-agent-2.15/catatonit
+                  - opt/docker/sbom/rancher-agent
+                  - opt/docker/sbom/rancher-pkg-apis
+                  - opt/docker/sbom/rancher-pkg-client
+                  - opt/docker/sbom/rancher-pkg-plan
+                  - opt/docker/sbom/kontainer-driver-metadata
+                  - opt/docker/sbom/catatonit
+                name: rancher-agent-2.15-common
+              - apk:
+                  depends:
+                    - rancher-agent-2.15-common
+                deb:
+                  depends:
+                    - rancher-agent-2.15-common
+                files:
+                  - path: usr/bin/agent
+                    source: usr/bin/agent-dev
+                name: rancher-agent-2.15-dev
+            url: https://github.com/rancher/rancher
+            version: 2.15.4
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
