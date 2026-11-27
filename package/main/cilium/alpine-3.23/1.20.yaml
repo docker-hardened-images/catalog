@@ -4,7 +4,7 @@ image: dhi.io/pkg-cilium
 variant: runtime
 tags:
   - 1.20.5-alpine3.23
-  - 1.20.5-r0-alpine3.23
+  - 1.20.5-r1-alpine3.23
 platforms:
   - linux/amd64
   - linux/arm64
@@ -22,7 +22,7 @@ vars:
   PROTOC_GEN_GO_GRPC_VERSION: 1.5.1
   PROTOC_GEN_GO_JSON_VERSION: 1.5.0
   PROTOC_GEN_GO_VERSION: 1.36.10
-  REL: "0"
+  REL: "1"
   SEMVER_MAJOR_MINOR_VERSION: "1.20"
   SEMVER_MAJOR_VERSION: "1"
   SEMVER_VERSION: 1.20.5
@@ -63,18 +63,6 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
-          - url: git+https://github.com/kubernetes-sigs/iptables-wrappers.git#v3
-            checksum: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
-            path: /go/src/github.com/kubernetes-sigs/iptables-wrappers
-            spdx:
-              name: iptables-wrappers
-              version: "3"
-              packages:
-                - name: iptables-wrappers
-                  purl: pkg:github/kubernetes-sigs/iptables-wrappers@3
-                  license: Apache-2.0
-            uid: 0
-            gid: 0
       pipeline:
         - name: install BPF sources
           runs: |
@@ -90,18 +78,6 @@ contents:
           runs: |
             set -eux -o pipefail
             install -D -m 755 /usr/bin/loopback ${target.dir}/cni/loopback
-        - name: install iptables wrapper
-          runs: |
-            set -eux -o pipefail
-            cd /go/src/github.com/kubernetes-sigs/iptables-wrappers
-            go mod download
-            mkdir -p ${target.dir}/usr/sbin
-            CGO_ENABLED=0 go build \
-              -ldflags="-s -w -extldflags=-static -buildid=" \
-              -o ${target.dir}/usr/sbin/iptables-wrapper \
-              ./
-            ln -sf /usr/sbin/iptables-wrapper ${target.dir}/usr/sbin/iptables
-            ln -sf /usr/sbin/iptables-wrapper ${target.dir}/usr/sbin/ip6tables
         - name: create cilium-libs package (1.20 only)
           uses: dhi/build-pkg:0
           with:
@@ -111,16 +87,13 @@ contents:
               - install-plugin.sh
               - cni-uninstall.sh
               - cni/loopback
-              - usr/sbin/iptables-wrapper
-              - usr/sbin/iptables
-              - usr/sbin/ip6tables
               - var/lib/cilium
             formats:
               - deb
             license: Apache-2.0
             name: cilium-1.20-libs
             priority: optional
-            rel: 0
+            rel: 1
             url: https://github.com/cilium/cilium
             version: 1.20.5
     - name: cilium-1.20
@@ -146,7 +119,41 @@ contents:
                   license: Apache-2.0
             uid: 0
             gid: 0
+          - url: git+https://github.com/kubernetes-sigs/iptables-wrappers.git#v3
+            checksum: bfef9e5087a198b50a4124bb9ce9d2c7c99025dd
+            path: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+            spdx:
+              name: iptables-wrappers
+              version: "3"
+              packages:
+                - name: iptables-wrappers
+                  purl: pkg:github/kubernetes-sigs/iptables-wrappers@3
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
       pipeline:
+        - name: build iptables-wrapper (1.20 only)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+          with:
+            fips: false
+            ldflags:
+              - -s -w
+            output: ${target.dir}/usr/sbin/iptables-wrapper
+        - name: build iptables-wrapper dev (1.20 only)
+          uses: go/build@v1
+          work-dir: /go/src/github.com/kubernetes-sigs/iptables-wrappers
+          with:
+            fips: false
+            ldflags: []
+            output: ${target.dir}/usr/sbin/iptables-wrapper-dev
+            strip: false
+        - name: link iptables to iptables-wrapper (1.20 only)
+          runs: |
+            set -eux -o pipefail
+            for name in iptables ip6tables iptables-dev ip6tables-dev; do
+              ln -sf /usr/sbin/iptables-wrapper ${target.dir}/usr/sbin/${name}
+            done
         - name: update go dependencies (1.20 only)
           uses: go/bump@v2
           with:
@@ -371,8 +378,12 @@ contents:
           uses: dhi/build-pkg:0
           with:
             deb:
+              breaks:
+                - cilium-1.20-libs (<< 1.20.5-1)
               depends:
                 - cilium-1.20-libs
+              replaces:
+                - cilium-1.20-libs<<1.20.5-1
             description: Cilium binaries
             files:
               - usr/bin/cilium-agent
@@ -385,16 +396,23 @@ contents:
               - usr/bin/hubble
               - opt/cni/bin/cilium-cni
               - usr/bin/cilium-envoy-bootstrap-locality
+              - usr/sbin/iptables-wrapper
+              - usr/sbin/iptables
+              - usr/sbin/ip6tables
             formats:
               - deb
             license: Apache-2.0
             name: cilium-1.20
             priority: optional
-            rel: 0
+            rel: 1
             subpackages:
               - deb:
+                  breaks:
+                    - cilium-1.20-libs (<< 1.20.5-1)
                   depends:
                     - cilium-1.20-libs
+                  replaces:
+                    - cilium-1.20-libs<<1.20.5-1
                 files:
                   - path: usr/bin/cilium-agent
                     source: usr/bin/cilium-agent-dev
@@ -416,6 +434,12 @@ contents:
                     source: opt/cni/bin/cilium-cni-dev
                   - path: usr/bin/cilium-envoy-bootstrap-locality
                     source: usr/bin/cilium-envoy-bootstrap-locality-dev
+                  - path: usr/sbin/iptables-wrapper
+                    source: usr/sbin/iptables-wrapper-dev
+                  - path: usr/sbin/iptables
+                    source: usr/sbin/iptables-dev
+                  - path: usr/sbin/ip6tables
+                    source: usr/sbin/ip6tables-dev
                 name: cilium-1.20-dev
             url: https://github.com/cilium/cilium
             version: 1.20.5
