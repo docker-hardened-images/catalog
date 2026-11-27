@@ -1,0 +1,291 @@
+# syntax=dhi.io/build:2-debian13
+
+image: dhi.io/pkg-kubeflow-volumes-web-app
+variant: runtime
+tags:
+  - 1.11.1
+  - 1.11.1-r0
+  - 1.11.1-debian13
+  - 1.11.1-r0-debian13
+platforms:
+  - linux/amd64
+  - linux/arm64
+dates:
+  release: "2026-06-04"
+vars:
+  CARGO_VERSION: 1.100.0-0
+  COMMIT_SHA: 88fbd77f777ceea627101699879b7ed5677b8c09
+  NODEJS_VERSION: 24.22.3-0
+  NPM_VERSION: 11.21.2-1
+  PACKAGE_NAME: kubeflow-volumes-web-app-1
+  PYTHON_MINOR: "3.12"
+  PYTHON_VERSION: 3.12.16-7
+  REL: "0"
+  RUST_MINOR: "1.100"
+  RUSTC_VERSION: 1.100.0-0
+  SEMVER_MAJOR_MINOR_VERSION: "1.11"
+  SEMVER_MAJOR_VERSION: "1"
+  SEMVER_VERSION: 1.11.1
+  UV_VERSION: 0.13.8-0
+  VERSION: 1.11.1
+contents:
+  repositories:
+    - deb [signed-by=/usr/share/keyrings/dhi-deb-main.gpg] http://dhi.io/deb/debian/main trixie main
+  keyring:
+    - https://dhi.io/keyring/dhi-deb-gpg.D46852F6925E9F71.key
+  packages:
+    - base-files
+  builds:
+    - name: kubeflow-volumes-web-app
+      work-dir: ${source.dir}
+      caches:
+        - path: /root/.npm
+      contents:
+        packages:
+          - bash
+          - binutils
+          - build-essential
+          - ca-certificates
+          - coreutils
+          - diffutils
+          - findutils
+          - gcc
+          - git
+          - grep
+          - gzip
+          - jq
+          - mawk
+          - pkgconf
+          - sed
+          - tar
+          - libpython-3.12=3.12.16-7
+          - libpython-3.12-dev=3.12.16-7
+          - libpython-3.12-minimal=3.12.16-7
+          - libpython-3.12-stdlib=3.12.16-7
+          - python-3.12=3.12.16-7
+          - python-3.12-dev=3.12.16-7
+          - python-3.12-minimal=3.12.16-7
+          - nodejs-24=24.22.3-0
+          - npm=11.21.2-1
+          - rustc-1.100=1.100.0-0
+          - cargo-1.100=1.100.0-0
+          - uv=0.13.8-0
+          - libbz2-1.0
+          - libc6
+          - libcrypt1
+          - libcurl4t64
+          - libdb5.3t64
+          - libexpat1
+          - libexpat1-dev
+          - libffi8
+          - libgcc-s1
+          - libgdbm-compat4t64
+          - libgdbm6
+          - liblzma5
+          - libncursesw6
+          - libreadline8t64
+          - libsqlite3-0
+          - libssl3t64
+          - libstdc++6
+          - libtinfo6
+          - libuuid1
+          - libzstd1
+          - zlib1g
+          - zlib1g-dev
+          - libc-ares-dev
+          - libev-dev
+          - libffi-dev
+          - libssl-dev
+          - libuv1-dev
+          - libyaml-dev
+          - libzstd-dev
+        files:
+          - url: git+https://github.com/kubeflow/notebooks.git#v1.11.1
+            checksum: 88fbd77f777ceea627101699879b7ed5677b8c09
+            path: ${source.dir}/notebooks
+            spdx:
+              name: kubeflow-volumes-web-app
+              version: 1.11.1
+              packages:
+                - name: kubeflow-volumes-web-app
+                  purl: pkg:github/kubeflow/notebooks@1.11.1#components/crud-web-apps/volumes
+                  license: Apache-2.0
+            uid: 0
+            gid: 0
+          - url: https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz
+            checksum: sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5
+            path: ${source.dir}/cryptography-50.0.2.tar.gz
+            uid: 0
+            gid: 0
+          - url: https://raw.githubusercontent.com/corydolphin/flask-cors/6.0.5/LICENSE
+            checksum: sha256:134a20d852c0cf9e0f3c228767921b76f4bfc4af4a2fc7c4cc90f6b4fd407b5c
+            path: ${source.dir}/flask-cors-6.0.5-LICENSE
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: bump npm dependencies
+          uses: npm/bump@v2
+          privileged: true
+          with:
+            bumps: ${source.dir}/patch/npm-bumps.json
+            lockfile-only: "true"
+            npm-root: ${source.dir}/notebooks/components/crud-web-apps/volumes/frontend
+        - name: build frontend
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}"
+            bash "${source.dir}/build-frontend.sh"
+        - name: verify cryptography crate inventory
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}"
+            bash "${source.dir}/check-crate-inventory.sh"
+        - name: cargo sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: rust-cargo-lock-cataloger
+            prefix: kubeflow-volumes-web-app-cargo
+            source: ${source.dir}/cargo-sbom
+        - name: build venv at final path and stage it
+          privileged: true
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}" PYTHON_BIN=/usr/bin/python3.12
+            bash "${source.dir}/build-venv.sh"
+        - name: stage app
+          work-dir: ${source.dir}/notebooks/components/crud-web-apps/volumes
+          runs: |
+            set -eux -o pipefail
+
+            APP="${target.dir}/usr/lib/kubeflow-volumes-web-app/src"
+            mkdir -p "${APP}"
+            cp -a backend/apps "${APP}/apps"
+            install -m 0755 backend/entrypoint.py "${APP}/entrypoint.py"
+            test ! -e "${APP}/apps/default/static"
+            mkdir -p "${APP}/apps/default/static"
+            cp -a frontend/dist/default/. "${APP}/apps/default/static/"
+            install -D -m 0644 "${source.dir}/notebooks/LICENSE" \
+              "${target.dir}/usr/share/licenses/kubeflow-volumes-web-app/LICENSE"
+        - name: stage notices
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}"
+            bash "${source.dir}/stage-notices.sh"
+        - name: python sbom
+          uses: sbom@v1
+          with:
+            extra-scanners: python-package-cataloger
+            prefix: kubeflow-volumes-web-app-python
+            source: ${target.dir}/usr/lib/kubeflow-volumes-web-app/venv
+        - name: stage sbom documents
+          runs: |
+            set -eux -o pipefail
+
+            mkdir -p "${target.dir}/opt/docker/sbom"
+            for d in kubeflow-volumes-web-app kubeflow-volumes-web-app-python kubeflow-volumes-web-app-cargo; do
+              test -d "/opt/docker/sbom/$d"
+              cp -a "/opt/docker/sbom/$d" "${target.dir}/opt/docker/sbom/"
+            done
+        - name: verify notices and sbom
+          runs: |
+            set -eux -o pipefail
+
+            export SOURCE_DIR="${source.dir}" TARGET_DIR="${target.dir}"
+            bash "${source.dir}/verify-payload.sh"
+        - uses: dhi/build-pkg:0
+          with:
+            commit: 88fbd77f777ceea627101699879b7ed5677b8c09
+            depends:
+              - python-3.12
+              - libc-ares2
+              - libc6
+              - libev4t64
+              - libffi8
+              - libgcc-s1
+              - libssl3t64
+              - libstdc++6
+              - libuv1t64
+              - libyaml-0-2
+            description: Kubeflow Volumes Web App, the Flask backend and Angular UI for managing PVCs in Kubeflow profiles
+            files:
+              - usr/lib/kubeflow-volumes-web-app
+              - usr/share/licenses/kubeflow-volumes-web-app
+              - opt/docker/sbom/kubeflow-volumes-web-app
+              - opt/docker/sbom/kubeflow-volumes-web-app-python
+              - opt/docker/sbom/kubeflow-volumes-web-app-cargo
+              - opt/docker/sbom/kubeflow-volumes-web-app-frontend
+            formats:
+              - deb
+            license: Apache-2.0
+            name: kubeflow-volumes-web-app-1
+            rel: 0
+            url: https://www.kubeflow.org/docs/components/notebooks/
+            version: 1.11.1
+      paths:
+        - type: file
+          path: ${source.dir}/build-frontend.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-volumes-web-app/build-frontend.sh
+        - type: file
+          path: ${source.dir}/check-crate-inventory.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-volumes-web-app/check-crate-inventory.sh
+        - type: file
+          path: ${source.dir}/build-venv.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-volumes-web-app/build-venv.sh
+        - type: file
+          path: ${source.dir}/stage-notices.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-volumes-web-app/stage-notices.sh
+        - type: file
+          path: ${source.dir}/verify-payload.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/kubeflow-volumes-web-app/verify-payload.sh
+        - type: file
+          path: ${source.dir}/requirements-lock.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-volumes-web-app/requirements-lock.txt
+        - type: file
+          path: ${source.dir}/build-constraints.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-volumes-web-app/build-constraints.txt
+        - type: file
+          path: ${source.dir}/cryptography-cargo-inventory.txt
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-volumes-web-app/cryptography-cargo-inventory.txt
+        - type: file
+          path: ${source.dir}/patch/npm-bumps.json
+          uid: 0
+          gid: 0
+          mode: "0644"
+          source: package/main/kubeflow-volumes-web-app/patch/npm-bumps.json
+os-release:
+  name: Docker Hardened Images (Debian)
+  id: debian
+  version-id: "13"
+  version-codename: trixie
+  pretty-name: Docker Hardened Images/Debian GNU/Linux 13 (trixie)
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
