@@ -1,0 +1,326 @@
+# syntax=dhi.io/build:2-alpine3.24
+
+image: dhi.io/pkg-consul-dataplane
+variant: runtime
+tags:
+  - 2.1.0-alpine3.24
+  - 2.1.0-r0-alpine3.24
+platforms:
+  - linux/amd64
+  - linux/arm64
+vars:
+  COMMIT_SHA: 8cccd9fba303d4d0553d067499fc52c702d4874f
+  CONSUL_DATAPLANE_SRC: /go/src/github.com/hashicorp/consul-dataplane
+  ENVOY_MAJOR_MINOR_VERSION: "1.39"
+  ENVOY_VERSION: 1.39.1
+  FIPS_VERSION_SUFFIX: +fips1403
+  GIT_COMMIT_SHORT: 8cccd9fb
+  GO_DISCOVER_COMMIT_SHA: 8f14004e9a7f17e73e6908db44c42f1a724ea7ca
+  GO_DISCOVER_SRC: /go/src/github.com/hashicorp/go-discover
+  GO_DISCOVER_VERSION: 1.5.0
+  GO_FIPS_TAGS: hashicorpmetrics,fips
+  GO_TAGS: hashicorpmetrics
+  GOLANG_MAJOR_MINOR_VERSION: "1.26"
+  GOLANG_VERSION: 1.26.11-r1
+  LICENSE_DIR: usr/share/licenses/consul-dataplane
+  PACKAGE_NAME: consul-dataplane-2.1
+  REL: "0"
+  SEMVER_MAJOR_MINOR_VERSION: "2.1"
+  SEMVER_MAJOR_VERSION: "2"
+  SEMVER_VERSION: 2.1.0
+  TEST_CONSUL_IMAGE: hashicorp/consul:2.1.0@sha256:259fd02f2544fe1aa03fa49efd3b105c8dd67106d710a72f5e898110266356f7
+  TEST_ENVOY_FIPS_PACKAGE_IMAGE: dhi/pkg-envoy:1.39.6-debian13-fips@sha256:6c7e403248c817d5ac451adbda7c85dc88f5f9d0db98ae2534793b65d697a016
+  VERSION: 2.1.0
+contents:
+  repositories:
+    - https://dhi.io/apk/alpine/v3.24/main
+    - https://dhi.io/apk/alpine/v3.23/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  keyring:
+    - https://dhi.io/keyring/dhi-apk@docker-0F81AD7700D99184.rsa.pub
+  packages:
+    - alpine-baselayout-data
+  builds:
+    - name: consul-dataplane-2.1
+      work-dir: /go/src/github.com/hashicorp/consul-dataplane
+      environment:
+        GOTOOLCHAIN: local
+      contents:
+        packages:
+          - bash
+          - binutils
+          - busybox
+          - ca-certificates-bundle
+          - coreutils
+          - findutils
+          - jq
+          - trivy
+          - golang-1.26=1.26.11-r1
+          - golang-1.26-oci-config=1.26.11-r1
+        files:
+          - url: git+https://github.com/hashicorp/consul-dataplane.git#v2.1.0
+            checksum: 8cccd9fba303d4d0553d067499fc52c702d4874f
+            path: /go/src/github.com/hashicorp/consul-dataplane
+            spdx:
+              name: consul-dataplane
+              version: 2.1.0
+              packages:
+                - name: consul-dataplane
+                  purl: pkg:golang/github.com/hashicorp/consul-dataplane@2.1.0
+                  license: MPL-2.0
+            uid: 0
+            gid: 0
+          - url: git+https://github.com/hashicorp/go-discover.git#8f14004e9a7f17e73e6908db44c42f1a724ea7ca
+            checksum: 8f14004e9a7f17e73e6908db44c42f1a724ea7ca
+            path: /go/src/github.com/hashicorp/go-discover
+            spdx:
+              name: go-discover
+              version: 1.5.0
+              packages:
+                - name: go-discover
+                  purl: pkg:golang/github.com/hashicorp/go-discover@1.5.0
+                  license: MPL-2.0
+            uid: 0
+            gid: 0
+      pipeline:
+        - name: update consul-dataplane dependencies
+          uses: go/bump@v3
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+        - uses: go/hermetic@v1
+        - name: test
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./... -p 1 -tags=hashicorpmetrics -count=1 \
+              -skip '^TestMetricsServerEnabled$|^TestLifecycleServer_(Startup|Shutdown)$|^TestDNS_suite$/^Test_ServerStop$'
+        - name: build consul-dataplane
+          uses: go/build@v1
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/consul-dataplane/pkg/version.GitCommit=8cccd9fb
+              - -X github.com/hashicorp/consul-dataplane/pkg/version.Version=2.1.0
+            output: ${target.dir}/usr/bin/consul-dataplane
+            packages: ./cmd/consul-dataplane
+            tags: hashicorpmetrics
+        - name: build consul-dataplane dev
+          uses: go/build@v1
+          with:
+            extra-args: -buildvcs=false
+            fips: false
+            ldflags:
+              - -X github.com/hashicorp/consul-dataplane/pkg/version.GitCommit=8cccd9fb
+              - -X github.com/hashicorp/consul-dataplane/pkg/version.Version=2.1.0
+            output: ${target.dir}/usr/bin/consul-dataplane-dev
+            packages: ./cmd/consul-dataplane
+            strip: false
+            tags: hashicorpmetrics
+        - name: collect consul-dataplane licenses
+          runs: |
+            set -eux -o pipefail
+
+            ${source.dir}/license-inventory.sh collect /tmp/license-inventory ${source.dir} \
+              /go/src/github.com/hashicorp/consul-dataplane/LICENSE ${target.dir}/usr/bin/consul-dataplane
+        - name: update discover dependencies
+          uses: go/bump@v3
+          work-dir: /go/src/github.com/hashicorp/go-discover
+          with:
+            deps:
+              - golang.org/x/net@v0.62.0
+              - golang.org/x/crypto@v0.59.0
+              - golang.org/x/text@v0.44.0
+              - google.golang.org/grpc@v1.83.2
+              - go.opentelemetry.io/otel@v1.47.0
+              - go.opentelemetry.io/otel/trace@v1.47.0
+            downgrade: true
+        - uses: go/hermetic@v1
+          work-dir: /go/src/github.com/hashicorp/go-discover
+        - name: test discover
+          work-dir: /go/src/github.com/hashicorp/go-discover
+          runs: |
+            set -eux -o pipefail
+
+            CGO_ENABLED=0 go test ./... -p 2 -count=1 -json > /tmp/discover-test.json || true
+            jq -r 'select(.Test == null and (.Action == "pass" or .Action == "fail")) | "\(.Action) \(.Package)"' \
+              /tmp/discover-test.json | sort -k2 | tee /tmp/discover-results
+            if grep -E '^fail ' /tmp/discover-results \
+              | grep -vxE 'fail github.com/hashicorp/go-discover/provider/(mdns|srv|tencentcloud)'; then
+              exit 1
+            fi
+            find . -name '*_test.go' -not -path '*/vendor/*' -not -path './provider/gce/*' -exec dirname {} + | sort -u \
+              | sed 's#^\.#pass github.com/hashicorp/go-discover#' \
+              | grep -vxE 'pass github.com/hashicorp/go-discover/provider/(mdns|srv|tencentcloud)' > /tmp/discover-expected
+            if grep -vxFf /tmp/discover-results /tmp/discover-expected; then
+              exit 1
+            fi
+        - name: build discover
+          uses: go/build@v1
+          work-dir: /go/src/github.com/hashicorp/go-discover
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=1.5.0
+            output: ${target.dir}/usr/bin/discover
+            packages: ./cmd/discover
+        - name: build discover dev
+          uses: go/build@v1
+          work-dir: /go/src/github.com/hashicorp/go-discover
+          with:
+            fips: false
+            ldflags:
+              - -X main.version=1.5.0
+            output: ${target.dir}/usr/bin/discover-dev
+            packages: ./cmd/discover
+            strip: false
+        - name: collect discover licenses
+          runs: |
+            set -eux -o pipefail
+
+            ${source.dir}/license-inventory.sh collect /tmp/license-inventory ${source.dir} \
+              /go/src/github.com/hashicorp/go-discover/LICENSE ${target.dir}/usr/bin/discover
+        - name: verify build info
+          runs: |
+            set -eux -o pipefail
+
+            grep -qxF "$(printf '\tVersion = "%s"' "2.1.0")" /go/src/github.com/hashicorp/consul-dataplane/pkg/version/version.go
+            for name in consul-dataplane discover; do
+              runtime=${target.dir}/usr/bin/$name
+              devbin=${target.dir}/usr/bin/$name-dev
+              want=""
+              verflag="-X main.version=1.5.0"
+              if [ "$name" = consul-dataplane ]; then
+                want="hashicorpmetrics"
+                verflag="-X github.com/hashicorp/consul-dataplane/pkg/version.Version=2.1.0"
+              fi
+              if [ "false" = "true" ]; then
+                want=$(printf '%s\n' $want fips140v1.0 | paste -sd, -)
+              fi
+              for bin in "$runtime" "$devbin"; do
+                test -x "$bin"
+                go version -m "$bin" > /tmp/buildinfo.txt
+                head -n1 /tmp/buildinfo.txt | grep -qE ": go1.26\.[0-9]+$"
+                grep -qxF "$(printf '\tbuild\tCGO_ENABLED=0')" /tmp/buildinfo.txt
+                grep -E '^[[:space:]]+build[[:space:]]+-ldflags=' /tmp/buildinfo.txt | grep -qF -- "$verflag"
+                if [ -n "$want" ]; then
+                  grep -qxF "$(printf '\tbuild\t-tags=%s' "$want")" /tmp/buildinfo.txt
+                elif grep -q -- '-tags=' /tmp/buildinfo.txt; then
+                  echo "$bin: unexpected build tags" >&2
+                  exit 1
+                fi
+                if [ "false" = "true" ]; then
+                  grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' /tmp/buildinfo.txt
+                elif grep -q 'GOFIPS140' /tmp/buildinfo.txt; then
+                  echo "$bin: FIPS build settings on a non-FIPS build" >&2
+                  exit 1
+                fi
+                readelf -lW "$bin" > /tmp/phdr.txt
+                if grep -q INTERP /tmp/phdr.txt; then
+                  echo "$bin: dynamically linked" >&2
+                  exit 1
+                fi
+                grep '^[[:space:]]*dep[[:space:]]' /tmp/buildinfo.txt > "/tmp/deps-$(basename "$bin")"
+              done
+              cmp "/tmp/deps-$name" "/tmp/deps-$name-dev"
+            done
+
+            suffix=""
+            if [ "false" = "true" ]; then
+              suffix="+fips1403"
+            fi
+            for bin in consul-dataplane consul-dataplane-dev; do
+              ${target.dir}/usr/bin/$bin -version > /tmp/version.txt
+              test "$(sed -n 1p /tmp/version.txt)" = "Consul Dataplane v2.1.0$suffix"
+              test "$(sed -n 2p /tmp/version.txt)" = "Revision 8cccd9fb"
+            done
+            go version -m ${target.dir}/usr/bin/discover > /tmp/buildinfo.txt
+            grep -qE "^[[:space:]]+mod[[:space:]]+github.com/hashicorp/go-discover[[:space:]]" /tmp/buildinfo.txt
+        - name: check licenses
+          runs: |
+            set -eux -o pipefail
+
+            ${source.dir}/license-inventory.sh check /tmp/license-inventory ${source.dir} ${target.dir}/usr/share/licenses/consul-dataplane \
+              "https://github.com/hashicorp/consul-dataplane at v2.1.0; https://github.com/hashicorp/go-discover at 8f14004e9a7f17e73e6908db44c42f1a724ea7ca"
+        - name: stage sbom and license
+          runs: |
+            set -eux -o pipefail
+
+            test -s /opt/docker/sbom/consul-dataplane/.spdx.consul-dataplane.json
+            test -s /opt/docker/sbom/go-discover/.spdx.go-discover.json
+            grep -qF 'Mozilla Public License Version 2.0' /go/src/github.com/hashicorp/consul-dataplane/LICENSE
+            grep -qiF 'Mozilla Public License, version 2.0' /go/src/github.com/hashicorp/go-discover/LICENSE
+            install -m 0644 /go/src/github.com/hashicorp/consul-dataplane/LICENSE ${target.dir}/usr/share/licenses/consul-dataplane/LICENSE
+            install -m 0644 /go/src/github.com/hashicorp/go-discover/LICENSE ${target.dir}/usr/share/licenses/consul-dataplane/go-discover-LICENSE
+            install -d ${target.dir}/opt/docker/sbom ${target.dir}/dev/opt/docker/sbom ${target.dir}/dev/usr/share/licenses
+            cp -a /opt/docker/sbom/consul-dataplane /opt/docker/sbom/go-discover ${target.dir}/opt/docker/sbom/
+            cp -a /opt/docker/sbom/consul-dataplane /opt/docker/sbom/go-discover ${target.dir}/dev/opt/docker/sbom/
+            cp -a ${target.dir}/usr/share/licenses/consul-dataplane ${target.dir}/dev/usr/share/licenses/
+        - uses: dhi/build-pkg:0
+          with:
+            deb:
+              depends:
+                - envoy-1.39
+            depends:
+              - ca-certificates-bundle
+            description: Consul Dataplane, the Envoy lifecycle manager for Consul service mesh, with go-discover
+            files:
+              - usr/bin/consul-dataplane
+              - usr/bin/discover
+              - opt/docker/sbom/consul-dataplane
+              - opt/docker/sbom/go-discover
+              - usr/share/licenses/consul-dataplane
+            license: MPL-2.0
+            name: consul-dataplane-2.1
+            rel: 0
+            subpackages:
+              - deb:
+                  depends:
+                    - envoy-1.39
+                depends:
+                  - ca-certificates-bundle
+                files:
+                  - path: usr/bin/consul-dataplane
+                    source: usr/bin/consul-dataplane-dev
+                  - path: usr/bin/discover
+                    source: usr/bin/discover-dev
+                  - path: opt/docker/sbom/consul-dataplane
+                    source: dev/opt/docker/sbom/consul-dataplane
+                  - path: opt/docker/sbom/go-discover
+                    source: dev/opt/docker/sbom/go-discover
+                  - path: usr/share/licenses/consul-dataplane
+                    source: dev/usr/share/licenses/consul-dataplane
+                name: consul-dataplane-2.1-dev
+            url: https://github.com/hashicorp/consul-dataplane
+            version: 2.1.0
+      paths:
+        - type: file
+          path: ${source.dir}/license-inventory.sh
+          uid: 0
+          gid: 0
+          mode: "0755"
+          source: package/main/consul-dataplane/license-inventory.sh
+        - type: file
+          path: ${source.dir}/licenses.tsv
+          uid: 0
+          gid: 0
+          source: package/main/consul-dataplane/licenses.tsv
+        - type: file
+          path: ${source.dir}/license-allowlist.txt
+          uid: 0
+          gid: 0
+          source: package/main/consul-dataplane/license-allowlist.txt
+        - type: file
+          path: ${source.dir}/license-exceptions.tsv
+          uid: 0
+          gid: 0
+          source: package/main/consul-dataplane/license-exceptions.tsv
+os-release:
+  name: Docker Hardened Images (Alpine)
+  id: alpine
+  version-id: "3.24"
+  pretty-name: Docker Hardened Images/Alpine Linux v3.24
+  home-url: https://docker.com/products/hardened-images/
+  bug-report-url: https://docker.com/support/
